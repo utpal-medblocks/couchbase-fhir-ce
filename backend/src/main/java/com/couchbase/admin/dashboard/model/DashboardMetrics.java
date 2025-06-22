@@ -12,6 +12,7 @@ public class DashboardMetrics {
     private Map<String, Object> systemMetrics;
     private Map<String, Object> jvmMetrics;
     private Map<String, Object> applicationMetrics;
+    private Map<String, Object> fhirMetrics; // Added FHIR metrics
     private String uptime;
     private long timestamp;
     

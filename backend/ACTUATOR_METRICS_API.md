@@ -48,6 +48,43 @@ Returns comprehensive metrics including health, system, JVM, and application met
     "http.requests.total": 1250,
     "http.connections.active": 5
   },
+  "fhirMetrics": {
+    "server": {
+      "status": "UP",
+      "uptime": "2d 5h 30m 15s",
+      "cpuUsage": 25.5,
+      "memoryUsage": 65.3,
+      "diskUsage": 45.2,
+      "jvmThreads": 42
+    },
+    "version": {
+      "fhirVersion": "R4",
+      "serverVersion": "1.0.0-SNAPSHOT",
+      "buildNumber": "build-2025.01.15-1234"
+    },
+    "operations": {
+      "read": {
+        "count": 756,
+        "avgLatency": 95,
+        "successRate": 99.2
+      },
+      "create": {
+        "count": 234,
+        "avgLatency": 185,
+        "successRate": 98.5
+      },
+      "search": {
+        "count": 289,
+        "avgLatency": 145,
+        "successRate": 96.8
+      }
+    },
+    "overall": {
+      "totalOperations": 1279,
+      "currentOpsPerSec": 2.8,
+      "avgOpsPerSec": 2.3
+    }
+  },
   "uptime": "2d 5h 30m 15s",
   "timestamp": 1640995200000
 }
@@ -133,6 +170,59 @@ Records FHIR operation metrics.
 - `operation` (required): The FHIR operation (READ, CREATE, SEARCH, etc.)
 - `resourceType` (required): The FHIR resource type (Patient, Observation, etc.)
 - `duration` (optional): Operation duration in milliseconds
+
+### 6. Get FHIR Metrics
+
+**GET** `/fhir-metrics`
+
+Returns FHIR server metrics including server status, version info, operations, and performance data.
+
+**Response:**
+
+```json
+{
+  "fhirMetrics": {
+    "server": {
+      "status": "UP",
+      "uptime": "2d 5h 30m 15s",
+      "cpuUsage": 25.5,
+      "memoryUsage": 65.3,
+      "diskUsage": 45.2,
+      "jvmThreads": 42
+    },
+    "version": {
+      "fhirVersion": "R4",
+      "serverVersion": "1.0.0-SNAPSHOT",
+      "buildNumber": "build-2025.01.15-1234"
+    },
+    "operations": {
+      "read": {
+        "count": 756,
+        "avgLatency": 95,
+        "successRate": 99.2
+      },
+      "create": {
+        "count": 234,
+        "avgLatency": 185,
+        "successRate": 98.5
+      },
+      "search": {
+        "count": 289,
+        "avgLatency": 145,
+        "successRate": 96.8
+      }
+    },
+    "overall": {
+      "totalOperations": 1279,
+      "currentOpsPerSec": 2.8,
+      "avgOpsPerSec": 2.3
+    }
+  },
+  "timestamp": 1640995200000
+}
+```
+
+**Note:** Currently returns mock data for FHIR-specific metrics (operations, version info) while using real system metrics (CPU, memory, disk, JVM threads). The BE team can replace mock data with real FHIR server metrics when implementing the HAPI FHIR server.
 
 ## Built-in Actuator Endpoints
 

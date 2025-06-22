@@ -1,12 +1,15 @@
 import { Box, Typography, Card, CardContent } from "@mui/material";
-import DashboardConnectionFooter from "./DashboardConnectionFooter";
+import DashboardCouchbaseServer from "./DashboardCouchbaseServer";
 import DashboardFhirServer from "./DashboardFhirServer";
 import ChipsArray from "../../utilities/ChipsArray";
 import { useConnectionInfo } from "../Layout/DisplayContext";
 
 export default function Dashboard() {
+  console.log("🏠 Dashboard: Component rendering");
   const version = "1.0.0";
   const connection = useConnectionInfo();
+
+  console.log("🔗 Dashboard: Connection info loaded:", connection);
 
   return (
     <Box
@@ -79,7 +82,7 @@ export default function Dashboard() {
                 <br />
                 <br />
               </Typography>
-              <DashboardConnectionFooter />
+              <DashboardCouchbaseServer />
             </CardContent>
           </Card>
         </Box>

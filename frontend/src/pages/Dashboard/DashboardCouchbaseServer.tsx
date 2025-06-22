@@ -3,7 +3,7 @@ import { Box, Typography } from "@mui/material";
 
 import { useConnectionInfo } from "../Layout/DisplayContext";
 
-const DashboardConnectionFooter: React.FC = () => {
+const DashboardCouchbaseServer: React.FC = () => {
   const connection = useConnectionInfo();
 
   if (!connection.isConnected) {
@@ -55,4 +55,4 @@ const DashboardConnectionFooter: React.FC = () => {
   );
 };
 
-export default DashboardConnectionFooter;
+export default DashboardCouchbaseServer;

@@ -21,10 +21,17 @@ public class DashboardMetricsController {
     @GetMapping("/metrics")
     @Cacheable(value = "dashboardMetrics", unless = "#result.body == null")
     public ResponseEntity<DashboardMetrics> getDashboardMetrics() {
+        long startTime = System.currentTimeMillis();
+        System.out.println("🚀 DashboardMetricsController: Starting getDashboardMetrics");
+        
         try {
             DashboardMetrics metrics = actuatorAggregatorService.getAggregatedMetrics();
+            long endTime = System.currentTimeMillis();
+            System.out.println("✅ DashboardMetricsController: getDashboardMetrics completed in " + (endTime - startTime) + "ms");
             return ResponseEntity.ok(metrics);
         } catch (Exception e) {
+            long endTime = System.currentTimeMillis();
+            System.out.println("❌ DashboardMetricsController: getDashboardMetrics failed after " + (endTime - startTime) + "ms");
             // Return partial metrics with error information
             DashboardMetrics errorMetrics = new DashboardMetrics();
             Map<String, Object> errorInfo = new HashMap<>();
@@ -123,6 +130,22 @@ public class DashboardMetricsController {
         } catch (Exception e) {
             Map<String, Object> errorResponse = new HashMap<>();
             errorResponse.put("error", e.getMessage());
+            errorResponse.put("timestamp", System.currentTimeMillis());
+            return ResponseEntity.ok(errorResponse);
+        }
+    }
+
+    @GetMapping("/fhir-metrics")
+    public ResponseEntity<Map<String, Object>> getFhirMetrics() {
+        try {
+            DashboardMetrics metrics = actuatorAggregatorService.getAggregatedMetrics();
+            Map<String, Object> fhirResponse = new HashMap<>();
+            fhirResponse.put("fhirMetrics", metrics.getFhirMetrics());
+            fhirResponse.put("timestamp", System.currentTimeMillis());
+            return ResponseEntity.ok(fhirResponse);
+        } catch (Exception e) {
+            Map<String, Object> errorResponse = new HashMap<>();
+            errorResponse.put("error", "Failed to fetch FHIR metrics: " + e.getMessage());
             errorResponse.put("timestamp", System.currentTimeMillis());
             return ResponseEntity.ok(errorResponse);
         }

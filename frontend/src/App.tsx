@@ -10,6 +10,7 @@ import AppRoutes from "./routes/AppRoutes";
 import { ThemeProvider, useThemeContext } from "./contexts/ThemeContext";
 
 function AppContent() {
+  console.log("🏗️ AppContent: Starting to render");
   const { themeMode } = useThemeContext();
 
   // Create theme based on current mode
@@ -34,6 +35,7 @@ function AppContent() {
 }
 
 function App() {
+  console.log("📱 App: Component starting to render");
   return (
     <ThemeProvider>
       <AppContent />

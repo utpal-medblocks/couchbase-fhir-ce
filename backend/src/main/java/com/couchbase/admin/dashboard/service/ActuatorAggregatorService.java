@@ -59,6 +59,9 @@ public class ActuatorAggregatorService {
         // Custom Application Metrics
         metrics.setApplicationMetrics(getApplicationMetrics());
 
+        // FHIR Metrics (Mock data for now)
+        metrics.setFhirMetrics(getFhirMetrics());
+
         // Uptime
         metrics.setUptime(getUptime());
 
@@ -216,5 +219,63 @@ public class ActuatorAggregatorService {
                 "operation", operation, 
                 "resource.type", resourceType)
                 .record(java.time.Duration.ofMillis(milliseconds));
+    }
+
+    // Generate mock FHIR metrics
+    private Map<String, Object> getFhirMetrics() {
+        Map<String, Object> fhirMetrics = new HashMap<>();
+        
+        // Server status (FHIR server specific, not system metrics)
+        Map<String, Object> server = new HashMap<>();
+        server.put("status", "UP");
+        server.put("uptime", getUptime());
+        
+        // FHIR server should not include system metrics - those belong in systemMetrics
+        // Only include FHIR-specific server info
+        server.put("cpuUsage", 0); // Will be replaced with real FHIR server metrics later
+        server.put("memoryUsage", 0); // Will be replaced with real FHIR server metrics later
+        server.put("diskUsage", 0); // Will be replaced with real FHIR server metrics later
+        server.put("jvmThreads", 0); // Will be replaced with real FHIR server metrics later
+        
+        fhirMetrics.put("server", server);
+        
+        // Version info (mock)
+        Map<String, Object> version = new HashMap<>();
+        version.put("fhirVersion", "R4");
+        version.put("serverVersion", "1.0.0-SNAPSHOT");
+        version.put("buildNumber", "build-2025.01.15-1234");
+        fhirMetrics.put("version", version);
+        
+        // Operations (mock)
+        Map<String, Object> operations = new HashMap<>();
+        
+        Map<String, Object> readOps = new HashMap<>();
+        readOps.put("count", 756);
+        readOps.put("avgLatency", 95);
+        readOps.put("successRate", 99.2);
+        operations.put("read", readOps);
+        
+        Map<String, Object> createOps = new HashMap<>();
+        createOps.put("count", 234);
+        createOps.put("avgLatency", 185);
+        createOps.put("successRate", 98.5);
+        operations.put("create", createOps);
+        
+        Map<String, Object> searchOps = new HashMap<>();
+        searchOps.put("count", 289);
+        searchOps.put("avgLatency", 145);
+        searchOps.put("successRate", 96.8);
+        operations.put("search", searchOps);
+        
+        fhirMetrics.put("operations", operations);
+        
+        // Overall performance (mock)
+        Map<String, Object> overall = new HashMap<>();
+        overall.put("totalOperations", 1279);
+        overall.put("currentOpsPerSec", 2.8);
+        overall.put("avgOpsPerSec", 2.3);
+        fhirMetrics.put("overall", overall);
+        
+        return fhirMetrics;
     }
 }
