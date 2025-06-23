@@ -7,15 +7,19 @@ import {
   Chip,
   CircularProgress,
   Alert,
-  LinearProgress,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  useTheme,
 } from "@mui/material";
-import {
-  BsCheckCircle,
-  BsExclamationTriangle,
-  BsCpu,
-  BsMemory,
-  BsHdd,
-} from "react-icons/bs";
+import { BsCheckCircle, BsExclamationTriangle } from "react-icons/bs";
+import { GaugeChart } from "../../components/GuageChart";
+import LinearProgressWithLabel from "../../components/LinearProgressWithLabel";
+import { tableCellStyle, tableHeaderStyle } from "../../styles/styles";
+import { blueGrey } from "@mui/material/colors";
 
 interface FhirMetrics {
   // FHIR Server Health
@@ -57,20 +61,20 @@ const DashboardFhirServer: React.FC = () => {
 
   useEffect(() => {
     const fetchMetrics = async () => {
-      console.log("🚀 DashboardFhirServer: Starting fetchMetrics");
+      //      console.log("🚀 DashboardFhirServer: Starting fetchMetrics");
       const startTime = performance.now();
 
       try {
         setLoading(true);
-        console.log("⏱️ DashboardFhirServer: Set loading state");
+        //        console.log("⏱️ DashboardFhirServer: Set loading state");
 
         // Call the real backend API with timeout
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 second timeout
 
-        console.log(
-          "🌐 DashboardFhirServer: Making API call to /api/dashboard/metrics"
-        );
+        // console.log(
+        //   "🌐 DashboardFhirServer: Making API call to /api/dashboard/metrics"
+        // );
         const apiStartTime = performance.now();
 
         const response = await fetch("/api/dashboard/metrics", {
@@ -78,11 +82,11 @@ const DashboardFhirServer: React.FC = () => {
         });
 
         const apiEndTime = performance.now();
-        console.log(
-          `✅ DashboardFhirServer: API call completed in ${(
-            apiEndTime - apiStartTime
-          ).toFixed(2)}ms`
-        );
+        // console.log(
+        //   `✅ DashboardFhirServer: API call completed in ${(
+        //     apiEndTime - apiStartTime
+        //   ).toFixed(2)}ms`
+        // );
 
         clearTimeout(timeoutId);
 
@@ -90,21 +94,21 @@ const DashboardFhirServer: React.FC = () => {
           throw new Error(`HTTP error! status: ${response.status}`);
         }
 
-        console.log("📊 DashboardFhirServer: Parsing JSON response");
+        //        console.log("📊 DashboardFhirServer: Parsing JSON response");
         const parseStartTime = performance.now();
         const data = await response.json();
         const parseEndTime = performance.now();
-        console.log(
-          `✅ DashboardFhirServer: JSON parsing completed in ${(
-            parseEndTime - parseStartTime
-          ).toFixed(2)}ms`
-        );
+        // console.log(
+        //   `✅ DashboardFhirServer: JSON parsing completed in ${(
+        //     parseEndTime - parseStartTime
+        //   ).toFixed(2)}ms`
+        // );
 
         if (data.error) {
           throw new Error(data.error);
         }
 
-        console.log("🔄 DashboardFhirServer: Transforming data");
+        //        console.log("🔄 DashboardFhirServer: Transforming data");
         const transformStartTime = performance.now();
 
         // Combine FHIR data with real system metrics
@@ -151,24 +155,24 @@ const DashboardFhirServer: React.FC = () => {
         };
 
         const transformEndTime = performance.now();
-        console.log(
-          `✅ DashboardFhirServer: Data transformation completed in ${(
-            transformEndTime - transformStartTime
-          ).toFixed(2)}ms`
-        );
+        // console.log(
+        //   `✅ DashboardFhirServer: Data transformation completed in ${(
+        //     transformEndTime - transformStartTime
+        //   ).toFixed(2)}ms`
+        // );
 
-        console.log("💾 DashboardFhirServer: Setting metrics state");
+        //        console.log("💾 DashboardFhirServer: Setting metrics state");
         setMetrics(transformedData);
         setError(null);
 
         const endTime = performance.now();
-        console.log(
-          `🎉 DashboardFhirServer: Total fetchMetrics completed in ${(
-            endTime - startTime
-          ).toFixed(2)}ms`
-        );
+        // console.log(
+        //   `🎉 DashboardFhirServer: Total fetchMetrics completed in ${(
+        //     endTime - startTime
+        //   ).toFixed(2)}ms`
+        // );
       } catch (err: any) {
-        console.error("❌ DashboardFhirServer: Error occurred:", err);
+        //        console.error("❌ DashboardFhirServer: Error occurred:", err);
         if (err.name === "AbortError") {
           setError("Request timed out - backend may not be responding");
         } else if (err.message.includes("404")) {
@@ -176,21 +180,22 @@ const DashboardFhirServer: React.FC = () => {
         } else {
           setError("Failed to fetch FHIR metrics");
         }
-        console.error("Error fetching FHIR metrics:", err);
+        //        console.error("Error fetching FHIR metrics:", err);
       } finally {
-        console.log("🏁 DashboardFhirServer: Setting loading to false");
+        //        console.log("🏁 DashboardFhirServer: Setting loading to false");
         setLoading(false);
       }
     };
 
-    console.log(
-      "🔄 DashboardFhirServer: useEffect triggered, calling fetchMetrics"
-    );
+    // console.log(
+    //   "🔄 DashboardFhirServer: useEffect triggered, calling fetchMetrics"
+    // );
     fetchMetrics();
 
     // Refresh every 60 seconds instead of 30 to reduce load
-    const interval = setInterval(fetchMetrics, 60000);
-    return () => clearInterval(interval);
+    // TEMPORARILY DISABLED FOR DEVELOPMENT
+    // const interval = setInterval(fetchMetrics, 60000);
+    // return () => clearInterval(interval);
   }, []);
 
   if (loading) {
@@ -325,350 +330,276 @@ const DashboardFhirServer: React.FC = () => {
     return <Alert severity="info">No FHIR metrics available</Alert>;
   }
 
-  const getUsageColor = (usage: number) => {
-    if (usage < 50) return "success";
-    if (usage < 80) return "warning";
-    return "error";
-  };
-
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
       {/* Version Info - Full Width */}
-      <Card sx={{ paddingBottom: 0 }}>
-        <CardContent sx={{ p: 0 }}>
-          <Box
-            sx={{
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-            }}
-          >
-            {/* <Box sx={{ flex: 1, textAlign: "center" }}>
-              <Typography variant="body2" color="text.secondary">
-                FHIR Version
-              </Typography>
-              <Typography variant="h6" fontWeight="bold">
-                {safeMetrics.version.fhirVersion}
-              </Typography>
-            </Box> */}
-            <Box sx={{ flex: 1, textAlign: "center" }}>
-              <Typography variant="body2" color="text.secondary">
-                Server Version
-              </Typography>
-              <Typography variant="body1">
-                {safeMetrics.version.serverVersion}
-              </Typography>
-            </Box>
-            <Box sx={{ flex: 1, textAlign: "center" }}>
-              <Typography variant="body2" color="text.secondary">
-                Build
-              </Typography>
-              <Typography variant="body1">
-                {safeMetrics.version.buildNumber}
-              </Typography>
-            </Box>
-          </Box>
-        </CardContent>
-      </Card>
+      {/* <Card sx={{ paddingBottom: 0 }}>
+        <CardContent sx={{ p: 0 }}> */}
+      <Box
+        sx={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+        }}
+      >
+        <Box sx={{ flex: 1, textAlign: "center" }}>
+          <Typography variant="body2" color="text.secondary">
+            Server Version
+          </Typography>
+          <Typography variant="body1">
+            {safeMetrics.version.serverVersion}
+          </Typography>
+        </Box>
+        <Box sx={{ flex: 1, textAlign: "center" }}>
+          <Typography variant="body2" color="text.secondary">
+            Build
+          </Typography>
+          <Typography variant="body1">
+            {safeMetrics.version.buildNumber}
+          </Typography>
+        </Box>
+      </Box>
+      {/* </CardContent>
+      </Card> */}
 
       {/* Server Status and System Resources - Full Width */}
-      <Card sx={{ paddingBottom: 0 }}>
-        <CardContent sx={{ p: 0 }}>
-          <Box sx={{ display: "flex", gap: 2 }}>
-            {/* Server Status - 40% width */}
-            <Box sx={{ width: "40%" }}>
-              <Typography variant="subtitle2" gutterBottom>
-                Server Status
+      {/* <Card sx={{ paddingBottom: 0 }}>
+        <CardContent sx={{ p: 0 }}> */}
+      <Box sx={{ display: "flex", gap: 1, p: 1 }}>
+        {/* Server Status - 40% width */}
+        <Box sx={{ width: "40%" }}>
+          <Typography variant="subtitle1" gutterBottom>
+            Server Status
+          </Typography>
+          <TableContainer>
+            <Table
+              stickyHeader
+              size="small"
+              sx={{ border: "1px solid divider" }}
+            >
+              <TableBody>
+                <TableRow>
+                  <TableCell sx={tableCellStyle}>Status</TableCell>
+                  <TableCell sx={tableCellStyle}>
+                    {safeMetrics.server.status}
+                  </TableCell>
+                </TableRow>
+                <TableRow>
+                  <TableCell sx={tableCellStyle}>Uptime</TableCell>
+                  <TableCell sx={tableCellStyle}>
+                    {safeMetrics.server.uptime}
+                  </TableCell>
+                </TableRow>
+                <TableRow>
+                  <TableCell sx={tableCellStyle}>JVM Threads</TableCell>
+                  <TableCell sx={tableCellStyle}>
+                    {safeMetrics.server.jvmThreads}
+                  </TableCell>
+                </TableRow>
+                <TableRow>
+                  <TableCell sx={tableCellStyle}>Current Ops/Sec</TableCell>
+                  <TableCell sx={tableCellStyle}>
+                    {safeMetrics.overall.currentOpsPerSec.toFixed(1)}
+                  </TableCell>
+                </TableRow>
+                <TableRow>
+                  <TableCell sx={tableCellStyle}>Total Ops</TableCell>
+                  <TableCell sx={tableCellStyle}>
+                    {safeMetrics.overall.totalOperations.toLocaleString()}
+                  </TableCell>
+                </TableRow>
+              </TableBody>
+            </Table>
+          </TableContainer>
+
+          {/* <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
+            <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+              {safeMetrics.server.status === "UP" ? (
+                <BsCheckCircle style={{ color: "#2e7d32", fontSize: "16px" }} />
+              ) : (
+                <BsExclamationTriangle
+                  style={{ color: "#d32f2f", fontSize: "16px" }}
+                />
+              )}
+              <Typography variant="body2">
+                Status: {safeMetrics.server.status}
               </Typography>
-              <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
-                <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-                  {safeMetrics.server.status === "UP" ? (
-                    <BsCheckCircle
-                      style={{ color: "#2e7d32", fontSize: "16px" }}
-                    />
-                  ) : (
-                    <BsExclamationTriangle
-                      style={{ color: "#d32f2f", fontSize: "16px" }}
-                    />
-                  )}
-                  <Typography variant="body2">
-                    Status: {safeMetrics.server.status}
-                  </Typography>
-                </Box>
-                <Typography variant="body2">
-                  Uptime: {safeMetrics.server.uptime}
-                </Typography>
-                <Typography variant="body2">
-                  JVM Threads: {safeMetrics.server.jvmThreads}
-                </Typography>
-                <Typography variant="body2">
-                  Current Ops/Sec:{" "}
-                  {safeMetrics.overall.currentOpsPerSec.toFixed(1)}
-                </Typography>
-                <Typography variant="body2">
-                  Total Ops:{" "}
-                  {safeMetrics.overall.totalOperations.toLocaleString()}
-                </Typography>
-              </Box>
             </Box>
-
-            {/* System Resources - 60% width */}
-            <Box sx={{ width: "60%" }}>
-              <Typography variant="subtitle2" gutterBottom>
-                System Resources
-              </Typography>
-              <Box sx={{ display: "flex", gap: 2 }}>
-                {/* CPU Gauge - 33% */}
-                <Box sx={{ width: "33%" }}>
-                  <Box
-                    sx={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 1,
-                      mb: 1,
-                    }}
-                  >
-                    <BsCpu style={{ fontSize: "16px", color: "#1976d2" }} />
-                    <Typography variant="body2">CPU</Typography>
-                  </Box>
-                  <Box sx={{ textAlign: "center", mb: 1 }}>
-                    <Typography
-                      variant="h5"
-                      color={
-                        getUsageColor(safeMetrics.server.cpuUsage) + ".main"
-                      }
-                    >
-                      {safeMetrics.server.cpuUsage.toFixed(1)}%
-                    </Typography>
-                  </Box>
-                  <LinearProgress
-                    variant="determinate"
-                    value={safeMetrics.server.cpuUsage}
-                    color={getUsageColor(safeMetrics.server.cpuUsage) as any}
-                    sx={{ height: 8, borderRadius: 4 }}
-                  />
-                </Box>
-
-                {/* Memory Gauge - 33% */}
-                <Box sx={{ width: "33%" }}>
-                  <Box
-                    sx={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 1,
-                      mb: 1,
-                    }}
-                  >
-                    <BsMemory style={{ fontSize: "16px", color: "#2e7d32" }} />
-                    <Typography variant="body2">Memory</Typography>
-                  </Box>
-                  <Box sx={{ textAlign: "center", mb: 1 }}>
-                    <Typography
-                      variant="h5"
-                      color={
-                        getUsageColor(safeMetrics.server.memoryUsage) + ".main"
-                      }
-                    >
-                      {safeMetrics.server.memoryUsage.toFixed(1)}%
-                    </Typography>
-                  </Box>
-                  <LinearProgress
-                    variant="determinate"
-                    value={safeMetrics.server.memoryUsage}
-                    color={getUsageColor(safeMetrics.server.memoryUsage) as any}
-                    sx={{ height: 8, borderRadius: 4 }}
-                  />
-                </Box>
-
-                {/* Disk Gauge - 33% */}
-                <Box sx={{ width: "33%" }}>
-                  <Box
-                    sx={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 1,
-                      mb: 1,
-                    }}
-                  >
-                    <BsHdd style={{ fontSize: "16px", color: "#ed6c02" }} />
-                    <Typography variant="body2">Disk</Typography>
-                  </Box>
-                  <Box sx={{ textAlign: "center", mb: 1 }}>
-                    <Typography
-                      variant="h5"
-                      color={
-                        getUsageColor(safeMetrics.server.diskUsage) + ".main"
-                      }
-                    >
-                      {safeMetrics.server.diskUsage.toFixed(1)}%
-                    </Typography>
-                  </Box>
-                  <LinearProgress
-                    variant="determinate"
-                    value={safeMetrics.server.diskUsage}
-                    color={getUsageColor(safeMetrics.server.diskUsage) as any}
-                    sx={{ height: 8, borderRadius: 4 }}
-                  />
-                </Box>
-              </Box>
-            </Box>
+            <Typography variant="body2">
+              Uptime: {safeMetrics.server.uptime}
+            </Typography>
+            <Typography variant="body2">
+              JVM Threads: {safeMetrics.server.jvmThreads}
+            </Typography>
+            <Typography variant="body2">
+              Current Ops/Sec: {safeMetrics.overall.currentOpsPerSec.toFixed(1)}
+            </Typography>
+            <Typography variant="body2">
+              Total Ops: {safeMetrics.overall.totalOperations.toLocaleString()}
+            </Typography>
           </Box>
-        </CardContent>
-      </Card>
-
-      {/* FHIR Operations - Full Width */}
-      <Card>
-        <CardContent sx={{ p: 2 }}>
-          <Typography variant="subtitle2" gutterBottom>
-            FHIR Operations
+        </Box> */}
+        </Box>
+        {/* System Resources - 60% width */}
+        <Box sx={{ width: "60%" }}>
+          <Typography variant="subtitle1" gutterBottom>
+            System Resources
           </Typography>
           <Box sx={{ display: "flex", gap: 2 }}>
-            {/* Read Operations - 33% */}
-            <Box sx={{ width: "33%" }}>
-              <Card variant="outlined">
-                <CardContent sx={{ p: 2, textAlign: "center" }}>
-                  <Chip
-                    label="READ"
-                    size="small"
-                    color="success"
-                    sx={{ mb: 1 }}
-                  />
-                  <Typography variant="h4" color="primary.main" gutterBottom>
-                    {safeMetrics.operations.read.count.toLocaleString()}
-                  </Typography>
-                  <Typography
-                    variant="body2"
-                    color="text.secondary"
-                    gutterBottom
-                  >
-                    operations
-                  </Typography>
-                  <Box
-                    sx={{ display: "flex", flexDirection: "column", gap: 0.5 }}
-                  >
-                    <Typography variant="body2">
-                      Ops/Sec:{" "}
-                      {(safeMetrics.operations.read.count / 3600).toFixed(1)}
-                    </Typography>
-                    <Typography variant="body2">
-                      Avg Latency: {safeMetrics.operations.read.avgLatency}ms
-                    </Typography>
-                    <Typography
-                      variant="body2"
-                      color={
-                        safeMetrics.operations.read.successRate > 98
-                          ? "success.main"
-                          : safeMetrics.operations.read.successRate > 95
-                          ? "warning.main"
-                          : "error.main"
-                      }
-                    >
-                      Success:{" "}
-                      {safeMetrics.operations.read.successRate.toFixed(1)}%
-                    </Typography>
-                  </Box>
-                </CardContent>
-              </Card>
+            {/* CPU Gauge - 33% */}
+            <Box
+              sx={{
+                width: "33%",
+                position: "relative",
+              }}
+            >
+              <GaugeChart name="CPU" value={safeMetrics.server.cpuUsage} />
             </Box>
 
-            {/* Create Operations - 33% */}
-            <Box sx={{ width: "33%" }}>
-              <Card variant="outlined">
-                <CardContent sx={{ p: 2, textAlign: "center" }}>
-                  <Chip
-                    label="CREATE"
-                    size="small"
-                    color="primary"
-                    sx={{ mb: 1 }}
-                  />
-                  <Typography variant="h4" color="primary.main" gutterBottom>
-                    {safeMetrics.operations.create.count.toLocaleString()}
-                  </Typography>
-                  <Typography
-                    variant="body2"
-                    color="text.secondary"
-                    gutterBottom
-                  >
-                    operations
-                  </Typography>
-                  <Box
-                    sx={{ display: "flex", flexDirection: "column", gap: 0.5 }}
-                  >
-                    <Typography variant="body2">
-                      Ops/Sec:{" "}
-                      {(safeMetrics.operations.create.count / 3600).toFixed(1)}
-                    </Typography>
-                    <Typography variant="body2">
-                      Avg Latency: {safeMetrics.operations.create.avgLatency}ms
-                    </Typography>
-                    <Typography
-                      variant="body2"
-                      color={
-                        safeMetrics.operations.create.successRate > 98
-                          ? "success.main"
-                          : safeMetrics.operations.create.successRate > 95
-                          ? "warning.main"
-                          : "error.main"
-                      }
-                    >
-                      Success:{" "}
-                      {safeMetrics.operations.create.successRate.toFixed(1)}%
-                    </Typography>
-                  </Box>
-                </CardContent>
-              </Card>
+            {/* Memory Gauge - 33% */}
+            <Box sx={{ width: "33%", position: "relative" }}>
+              <GaugeChart name="RAM" value={safeMetrics.server.memoryUsage} />
             </Box>
 
-            {/* Search Operations - 33% */}
-            <Box sx={{ width: "33%" }}>
-              <Card variant="outlined">
-                <CardContent sx={{ p: 2, textAlign: "center" }}>
-                  <Chip
-                    label="SEARCH"
-                    size="small"
-                    color="warning"
-                    sx={{ mb: 1 }}
-                  />
-                  <Typography variant="h4" color="primary.main" gutterBottom>
-                    {safeMetrics.operations.search.count.toLocaleString()}
-                  </Typography>
-                  <Typography
-                    variant="body2"
-                    color="text.secondary"
-                    gutterBottom
-                  >
-                    operations
-                  </Typography>
-                  <Box
-                    sx={{ display: "flex", flexDirection: "column", gap: 0.5 }}
-                  >
-                    <Typography variant="body2">
-                      Ops/Sec:{" "}
-                      {(safeMetrics.operations.search.count / 3600).toFixed(1)}
-                    </Typography>
-                    <Typography variant="body2">
-                      Avg Latency: {safeMetrics.operations.search.avgLatency}ms
-                    </Typography>
-                    <Typography
-                      variant="body2"
-                      color={
-                        safeMetrics.operations.search.successRate > 98
-                          ? "success.main"
-                          : safeMetrics.operations.search.successRate > 95
-                          ? "warning.main"
-                          : "error.main"
-                      }
-                    >
-                      Success:{" "}
-                      {safeMetrics.operations.search.successRate.toFixed(1)}%
-                    </Typography>
-                  </Box>
-                </CardContent>
-              </Card>
+            {/* Disk Gauge - 33% */}
+            <Box sx={{ width: "33%", position: "relative" }}>
+              <GaugeChart name="Disk" value={safeMetrics.server.diskUsage} />
             </Box>
           </Box>
-        </CardContent>
-      </Card>
+        </Box>
+      </Box>
+      {/* </CardContent>
+      </Card> */}
+
+      {/* FHIR Operations - Full Width */}
+      {/* <Card>
+        <CardContent sx={{ p: 2 }}> */}
+      <Typography variant="subtitle1" gutterBottom>
+        FHIR Operations
+      </Typography>
+      <Box sx={{ display: "flex", gap: 2 }}>
+        {/* Read Operations - 33% */}
+        <Box sx={{ width: "33%" }}>
+          <Card variant="outlined">
+            <CardContent sx={{ p: 2, textAlign: "center" }}>
+              <Chip label="READ" size="small" color="success" sx={{ mb: 1 }} />
+              <Typography variant="h4" color="primary.main" gutterBottom>
+                {safeMetrics.operations.read.count.toLocaleString()}
+              </Typography>
+              <Typography variant="body2" color="text.secondary" gutterBottom>
+                operations
+              </Typography>
+              <Box sx={{ display: "flex", flexDirection: "column", gap: 0.5 }}>
+                <Typography variant="body2">
+                  Ops/Sec:{" "}
+                  {(safeMetrics.operations.read.count / 3600).toFixed(1)}
+                </Typography>
+                <Typography variant="body2">
+                  Avg Latency: {safeMetrics.operations.read.avgLatency}ms
+                </Typography>
+                <Typography
+                  variant="body2"
+                  color={
+                    safeMetrics.operations.read.successRate > 98
+                      ? "success.main"
+                      : safeMetrics.operations.read.successRate > 95
+                      ? "warning.main"
+                      : "error.main"
+                  }
+                >
+                  Success: {safeMetrics.operations.read.successRate.toFixed(1)}%
+                </Typography>
+              </Box>
+            </CardContent>
+          </Card>
+        </Box>
+
+        {/* Create Operations - 33% */}
+        <Box sx={{ width: "33%", borderLeft: "1px solid" }}>
+          <Card variant="outlined">
+            <CardContent sx={{ p: 2, textAlign: "center" }}>
+              <Chip
+                label="CREATE"
+                size="small"
+                color="primary"
+                sx={{ mb: 1 }}
+              />
+              <Typography variant="h4" color="primary.main" gutterBottom>
+                {safeMetrics.operations.create.count.toLocaleString()}
+              </Typography>
+              <Typography variant="body2" color="text.secondary" gutterBottom>
+                operations
+              </Typography>
+              <Box sx={{ display: "flex", flexDirection: "column", gap: 0.5 }}>
+                <Typography variant="body2">
+                  Ops/Sec:{" "}
+                  {(safeMetrics.operations.create.count / 3600).toFixed(1)}
+                </Typography>
+                <Typography variant="body2">
+                  Avg Latency: {safeMetrics.operations.create.avgLatency}ms
+                </Typography>
+                <Typography
+                  variant="body2"
+                  color={
+                    safeMetrics.operations.create.successRate > 98
+                      ? "success.main"
+                      : safeMetrics.operations.create.successRate > 95
+                      ? "warning.main"
+                      : "error.main"
+                  }
+                >
+                  Success:{" "}
+                  {safeMetrics.operations.create.successRate.toFixed(1)}%
+                </Typography>
+              </Box>
+            </CardContent>
+          </Card>
+        </Box>
+
+        {/* Search Operations - 33% */}
+        <Box sx={{ width: "33%" }}>
+          <Card variant="outlined">
+            <CardContent sx={{ p: 2, textAlign: "center" }}>
+              <Chip
+                label="SEARCH"
+                size="small"
+                color="warning"
+                sx={{ mb: 1 }}
+              />
+              <Typography variant="h4" color="primary.main" gutterBottom>
+                {safeMetrics.operations.search.count.toLocaleString()}
+              </Typography>
+              <Typography variant="body2" color="text.secondary" gutterBottom>
+                operations
+              </Typography>
+              <Box sx={{ display: "flex", flexDirection: "column", gap: 0.5 }}>
+                <Typography variant="body2">
+                  Ops/Sec:{" "}
+                  {(safeMetrics.operations.search.count / 3600).toFixed(1)}
+                </Typography>
+                <Typography variant="body2">
+                  Avg Latency: {safeMetrics.operations.search.avgLatency}ms
+                </Typography>
+                <Typography
+                  variant="body2"
+                  color={
+                    safeMetrics.operations.search.successRate > 98
+                      ? "success.main"
+                      : safeMetrics.operations.search.successRate > 95
+                      ? "warning.main"
+                      : "error.main"
+                  }
+                >
+                  Success:{" "}
+                  {safeMetrics.operations.search.successRate.toFixed(1)}%
+                </Typography>
+              </Box>
+            </CardContent>
+          </Card>
+        </Box>
+      </Box>
+      {/* </CardContent>
+      </Card> */}
     </Box>
   );
 };

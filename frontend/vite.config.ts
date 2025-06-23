@@ -24,7 +24,10 @@ export default defineConfig({
     include: [
       "react",
       "react-dom",
+      "react-router-dom",
       "@mui/material",
+      "@mui/material/styles",
+      "@mui/material/CssBaseline",
       "@emotion/react",
       "@emotion/styled",
     ],

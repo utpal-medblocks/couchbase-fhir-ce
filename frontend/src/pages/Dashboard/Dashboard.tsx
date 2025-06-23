@@ -1,7 +1,7 @@
 import { Box, Typography, Card, CardContent } from "@mui/material";
 import DashboardCouchbaseServer from "./DashboardCouchbaseServer";
 import DashboardFhirServer from "./DashboardFhirServer";
-import ChipsArray from "../../utilities/ChipsArray";
+import ChipsArray from "../../components/ChipsArray";
 import { useConnectionInfo } from "../Layout/DisplayContext";
 
 export default function Dashboard() {
