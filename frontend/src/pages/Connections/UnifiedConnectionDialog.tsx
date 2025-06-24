@@ -33,7 +33,7 @@ interface UnifiedConnectionDialogProps {
     password: string;
     serverType: "Server" | "Capella";
     sslEnabled: boolean;
-  }) => void;
+  }) => Promise<{ success: boolean; error?: string }>;
 }
 
 interface ConnectionRequest {
@@ -165,14 +165,19 @@ const UnifiedConnectionDialog: React.FC<UnifiedConnectionDialogProps> = ({
       console.log(
         "[UnifiedConnectionDialog] Calling onSuccess with connection request"
       );
-      onSuccess(connectionRequest);
+      const result = await onSuccess(connectionRequest);
 
-      setInfo("Connection request sent!");
-      setTimeout(() => {
-        console.log("[UnifiedConnectionDialog] Closing dialog");
-        onClose();
-        resetForm();
-      }, 1000);
+      if (result.success) {
+        setInfo("Connection request sent!");
+        setTimeout(() => {
+          console.log("[UnifiedConnectionDialog] Closing dialog");
+          onClose();
+          resetForm();
+        }, 1000);
+      } else {
+        setError(result.error || "Failed to create connection");
+        setInfo(null);
+      }
     } catch (err: any) {
       console.error("Connection creation error:", err);
       setError("Failed to create connection");

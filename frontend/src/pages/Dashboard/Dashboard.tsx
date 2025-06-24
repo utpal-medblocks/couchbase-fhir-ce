@@ -1,13 +1,12 @@
 import { Box, Typography, Card, CardContent } from "@mui/material";
 import DashboardCouchbaseServer from "./DashboardCouchbaseServer";
 import DashboardFhirServer from "./DashboardFhirServer";
-import ChipsArray from "../../components/ChipsArray";
-import { useConnectionInfo } from "../Layout/DisplayContext";
+import { useConnectionStore } from "../../store/connectionStore";
 
 export default function Dashboard() {
   console.log("🏠 Dashboard: Component rendering");
   const version = "1.0.0";
-  const connection = useConnectionInfo();
+  const { connection } = useConnectionStore();
 
   console.log("🔗 Dashboard: Connection info loaded:", connection);
 
@@ -61,26 +60,6 @@ export default function Dashboard() {
                 }}
               >
                 Couchbase Server Details
-              </Typography>
-              <br />
-              <Typography variant="body2" px={1} component="div">
-                {connection.name} {connection.version}
-                <br />
-                {/* Quotas: Only show if available, with proper spacing and delimiter */}
-                {(() => {
-                  // For now, show basic info until we implement metrics
-                  return connection.isConnected ? "Connected" : "Not Connected";
-                })()}
-                <br />
-                <Box
-                  component="span"
-                  sx={{ display: "inline-flex", alignItems: "center" }}
-                >
-                  Services:&nbsp;
-                  <ChipsArray chipData={[]} />
-                </Box>
-                <br />
-                <br />
               </Typography>
               <DashboardCouchbaseServer />
             </CardContent>
