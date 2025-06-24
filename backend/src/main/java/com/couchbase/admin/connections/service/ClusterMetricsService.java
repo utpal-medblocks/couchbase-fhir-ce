@@ -25,12 +25,6 @@ public class ClusterMetricsService {
     @Autowired
     private ConnectionService connectionService;
     
-    // Color palette for buckets
-    private static final String[] BUCKET_COLORS = {
-        "#ff6b6b", "#4ecdc4", "#45b7d1", "#96ceb4", "#ffeaa7", 
-        "#dda0dd", "#98d8c8", "#f7dc6f", "#bb8fce", "#85c1e9"
-    };
-    
     public ClusterMetricsService() {
         this.objectMapper = new ObjectMapper();
     }
@@ -70,7 +64,9 @@ public class ClusterMetricsService {
                 List<ClusterMetrics.ClusterAlert> alerts = extractAlerts(poolsData);
                 ClusterMetrics.ServiceQuotas serviceQuotas = extractServiceQuotas(poolsData);
                 
-                return new ClusterMetrics(nodes, buckets, clusterName, storageTotals, alerts, serviceQuotas);
+                ClusterMetrics result = new ClusterMetrics(nodes, buckets, clusterName, storageTotals, alerts, serviceQuotas);
+                
+                return result;
             } else {
                 logger.warn("Failed to get cluster data, status code: {}", response.statusCode());
                 return getDefaultMetrics();
@@ -130,35 +126,33 @@ public class ClusterMetricsService {
         
         try {
             // Use enhanced buckets API with essential stats
-            logger.info("Attempting to fetch enhanced bucket metrics from /pools/default/buckets?skipMap=true&basic_stats=true");
+            // logger.info("Attempting to fetch enhanced bucket metrics from /pools/default/buckets?skipMap=true&basic_stats=true");
             HttpResponse bucketsResponse = httpClient.get(
                 HttpTarget.manager(),
                 HttpPath.of("/pools/default/buckets?skipMap=true&basic_stats=true")
             );
             
-            logger.info("Enhanced buckets API response status: {}", bucketsResponse.statusCode());
+            // logger.info("Enhanced buckets API response status: {}", bucketsResponse.statusCode());
             
             if (bucketsResponse.statusCode() == 200) {
                 String bucketsResponseBody = bucketsResponse.contentAsString();
-                logger.info("Enhanced buckets API response body length: {}", bucketsResponseBody.length());
-                logger.debug("Enhanced buckets API response: {}", bucketsResponseBody);
+                // logger.info("Enhanced buckets API response body length: {}", bucketsResponseBody.length());
+                // logger.debug("Enhanced buckets API response: {}", bucketsResponseBody);
                 
                 JsonNode bucketsArray = objectMapper.readTree(bucketsResponseBody);
                 
                 if (bucketsArray.isArray()) {
-                    logger.info("Found {} buckets in enhanced response", bucketsArray.size());
-                    int colorIndex = 0;
+                    // logger.info("Found {} buckets in enhanced response", bucketsArray.size());
                     for (JsonNode bucketData : bucketsArray) {
-                        ClusterMetrics.BucketMetrics bucketMetrics = parseEnhancedBucketMetrics(bucketData, colorIndex);
+                        ClusterMetrics.BucketMetrics bucketMetrics = parseEnhancedBucketMetrics(bucketData);
                         if (bucketMetrics != null) {
-                            logger.info("Parsed enhanced bucket: {} with RAM {}/{} MB, Ops/sec: {}, Resident Ratio: {}%", 
-                                bucketMetrics.getName(), bucketMetrics.getRamUsed(), bucketMetrics.getRamQuota(),
-                                bucketMetrics.getOpsPerSec(), String.format("%.1f", bucketMetrics.getResidentRatio()));
+                            // logger.info("Parsed enhanced bucket: {} with RAM {}/{} MB, Ops/sec: {}, Resident Ratio: {}%", 
+                            //     bucketMetrics.getName(), bucketMetrics.getRamUsed(), bucketMetrics.getRamQuota(),
+                            //     bucketMetrics.getOpsPerSec(), String.format("%.1f", bucketMetrics.getResidentRatio()));
                             buckets.add(bucketMetrics);
-                            colorIndex = (colorIndex + 1) % BUCKET_COLORS.length;
                         }
                     }
-                    logger.info("Successfully extracted {} enhanced buckets", buckets.size());
+                    // logger.info("Successfully extracted {} enhanced buckets", buckets.size());
                     return buckets; // Return enhanced bucket data
                 } else {
                     logger.warn("Enhanced buckets response is not an array: {}", bucketsArray.getNodeType());
@@ -173,10 +167,8 @@ public class ClusterMetricsService {
             JsonNode bucketNames = poolsData.get("bucketNames");
             if (bucketNames != null && bucketNames.isArray()) {
                 logger.info("Found {} bucket names in fallback", bucketNames.size());
-                int colorIndex = 0;
                 for (JsonNode bucketInfo : bucketNames) {
                     String bucketName = bucketInfo.get("bucketName").asText();
-                    String color = BUCKET_COLORS[colorIndex % BUCKET_COLORS.length];
                     
                     // Create bucket metrics with placeholder values
                     ClusterMetrics.BucketMetrics bucketMetrics = new ClusterMetrics.BucketMetrics(
@@ -184,7 +176,6 @@ public class ClusterMetricsService {
                     );
                     logger.info("Created fallback bucket: {} with limited data", bucketName);
                     buckets.add(bucketMetrics);
-                    colorIndex++;
                 }
             }
             
@@ -238,11 +229,14 @@ public class ClusterMetricsService {
      */
     private ClusterMetrics.NodeMetrics parseNodeMetrics(JsonNode nodeData) {
         try {
-            logger.info("Raw node data: {}", nodeData.toString());
+            // logger.info("Raw node data: {}", nodeData.toString());
             // Use configuredHostname if available, fallback to hostname
-            String hostname = nodeData.has("configuredHostname") ? 
+            String rawHostname = nodeData.has("configuredHostname") ? 
                 nodeData.get("configuredHostname").asText() : 
                 nodeData.get("hostname").asText();
+            
+            // Clean up the hostname for display
+            String hostname = cleanHostnameForDisplay(rawHostname);
                 
             String status = nodeData.get("status").asText("healthy");
             String version = nodeData.has("version") ? nodeData.get("version").asText() : null;
@@ -290,12 +284,45 @@ public class ClusterMetricsService {
     }
 
     /**
+     * Clean up hostname for display purposes
+     * Examples:
+     * - svc-dqis-node-004.ubypte9g5yzpufiz.cloud.couchbase.com:8091 → svc-dqis-node-004
+     * - 127.0.0.1:8091 → 127.0.0.1
+     * - localhost:8091 → localhost
+     */
+    private String cleanHostnameForDisplay(String rawHostname) {
+        if (rawHostname == null || rawHostname.trim().isEmpty()) {
+            return rawHostname;
+        }
+        
+        try {
+            // Remove port number if present
+            String hostname = rawHostname.split(":")[0];
+            
+            // For Capella hostnames (*.cloud.couchbase.com), extract just the node identifier
+            if (hostname.contains(".cloud.couchbase.com")) {
+                String[] parts = hostname.split("\\.");
+                if (parts.length > 0) {
+                    return parts[0]; // Return just the node identifier (e.g., svc-dqis-node-004)
+                }
+            }
+            
+            // For other hostnames (local, self-managed), return as-is after port removal
+            return hostname;
+            
+        } catch (Exception e) {
+            logger.warn("Error cleaning hostname '{}': {}", rawHostname, e.getMessage());
+            return rawHostname; // Return original if cleaning fails
+        }
+    }
+    
+    /**
      * Parse enhanced bucket metrics from JSON with all statistics
      */
-    private ClusterMetrics.BucketMetrics parseEnhancedBucketMetrics(JsonNode bucketData, int colorIndex) {
+    private ClusterMetrics.BucketMetrics parseEnhancedBucketMetrics(JsonNode bucketData) {
         try {
             String name = bucketData.get("name").asText();
-            logger.debug("Parsing enhanced bucket: {}", name);
+            // logger.debug("Parsing enhanced bucket: {}", name);
             
             // Basic bucket info
             if (!bucketData.has("quota") || !bucketData.get("quota").has("ram")) {
@@ -303,8 +330,9 @@ public class ClusterMetricsService {
                 return null;
             }
             
-            int ramQuota = bucketData.get("quota").get("ram").asInt() / (1024 * 1024); // Convert to MB
-            String color = BUCKET_COLORS[colorIndex];
+            // Log raw values for debugging
+            long rawRamQuota = bucketData.get("quota").get("ram").asLong();
+            int ramQuota = (int)(rawRamQuota / (1024 * 1024)); // Convert to MB
             
             // Get basic stats
             JsonNode basicStats = bucketData.get("basicStats");
@@ -314,7 +342,8 @@ public class ClusterMetricsService {
             }
             
             // Essential metrics
-            int ramUsed = basicStats.has("memUsed") ? (int)(basicStats.get("memUsed").asLong() / (1024 * 1024)) : 0;
+            long rawMemUsed = basicStats.has("memUsed") ? basicStats.get("memUsed").asLong() : 0;
+            int ramUsed = (int)(rawMemUsed / (1024 * 1024)); // Convert to MB
             long itemCount = basicStats.has("itemCount") ? basicStats.get("itemCount").asLong() : 0;
             long diskUsed = basicStats.has("diskUsed") ? basicStats.get("diskUsed").asLong() : 0;
             
@@ -342,13 +371,14 @@ public class ClusterMetricsService {
                 }
             }
             
-            logger.info("Enhanced bucket {} stats - RAM: {}/{} MB, Items: {}, Ops/sec: {}, Disk Fetches: {}, Resident Ratio: {}%, Quota Used: {}%", 
-                name, ramUsed, ramQuota, itemCount, opsPerSec, diskFetches, String.format("%.1f", residentRatio), String.format("%.1f", quotaPercentUsed));
+            // logger.info("Enhanced bucket {} stats - RAM: {}/{} MB, Items: {}, Ops/sec: {}, Disk Fetches: {}, Resident Ratio: {}%, Quota Used: {}%", 
+            //     name, ramUsed, ramQuota, itemCount, opsPerSec, diskFetches, String.format("%.1f", residentRatio), String.format("%.1f", quotaPercentUsed));
             
             ClusterMetrics.BucketMetrics result = new ClusterMetrics.BucketMetrics(name, ramQuota, ramUsed, itemCount, diskUsed,
                                                                                    opsPerSec, diskFetches, residentRatio, quotaPercentUsed,
                                                                                    dataUsed, vbActiveNumNonResident, bucketStorageTotals);
-            logger.info("Successfully parsed enhanced bucket: {} with full statistics", name);
+            
+            // logger.info("Successfully parsed enhanced bucket: {} with full statistics", name);
             return result;
             
         } catch (Exception e) {
@@ -377,8 +407,8 @@ public class ClusterMetricsService {
             int cbasMemoryQuota = poolsData.has("cbasMemoryQuota") ? poolsData.get("cbasMemoryQuota").asInt() : 0;
             int eventingMemoryQuota = poolsData.has("eventingMemoryQuota") ? poolsData.get("eventingMemoryQuota").asInt() : 0;
             
-            logger.info("Extracted service quotas - Memory: {}MB, Query: {}MB, Index: {}MB, FTS: {}MB, CBAS: {}MB, Eventing: {}MB",
-                memoryQuota, queryMemoryQuota, indexMemoryQuota, ftsMemoryQuota, cbasMemoryQuota, eventingMemoryQuota);
+            // logger.info("Extracted service quotas - Memory: {}MB, Query: {}MB, Index: {}MB, FTS: {}MB, CBAS: {}MB, Eventing: {}MB",
+            //     memoryQuota, queryMemoryQuota, indexMemoryQuota, ftsMemoryQuota, cbasMemoryQuota, eventingMemoryQuota);
                 
             return new ClusterMetrics.ServiceQuotas(memoryQuota, queryMemoryQuota, indexMemoryQuota, 
                                                    ftsMemoryQuota, cbasMemoryQuota, eventingMemoryQuota);
@@ -387,4 +417,4 @@ public class ClusterMetricsService {
         }
         return null;
     }
-} 
+}

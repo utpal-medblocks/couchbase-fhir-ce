@@ -200,6 +200,7 @@ const DashboardCouchbaseServer: React.FC = () => {
             <TableRow>
               <TableCell sx={tableHeaderStyle}>Name</TableCell>
               <TableCell sx={tableHeaderStyle}>RAM Used</TableCell>
+              <TableCell sx={tableHeaderStyle}>Disk Used</TableCell>
               <TableCell sx={tableHeaderStyle}>Items</TableCell>
               <TableCell sx={tableHeaderStyle}>Ops/Sec</TableCell>
               <TableCell sx={tableHeaderStyle}>FHIR</TableCell>
@@ -214,6 +215,9 @@ const DashboardCouchbaseServer: React.FC = () => {
                     {bucket.ramUsed} MB / {bucket.ramQuota} MB
                   </TableCell>
                   <TableCell sx={tableCellStyle}>
+                    {(bucket.diskUsed / 1024 / 1024).toFixed(0)} MB
+                  </TableCell>
+                  <TableCell sx={tableCellStyle}>
                     {bucket.itemCount.toLocaleString()}
                   </TableCell>
                   <TableCell sx={tableCellStyle}>
@@ -221,13 +225,16 @@ const DashboardCouchbaseServer: React.FC = () => {
                   </TableCell>
                   <TableCell sx={tableCellStyle}>
                     <Button
+                      disabled={bucket.isFhirBucket ? true : false}
                       size="small"
-                      variant={
-                        fhirBuckets.has(bucket.name) ? "contained" : "outlined"
-                      }
+                      sx={{
+                        textTransform: "none !important",
+                        padding: "0px 10px !important",
+                        marginX: "2px !important",
+                      }}
                       onClick={() => handleToggleFhir(bucket.name)}
                     >
-                      {fhirBuckets.has(bucket.name) ? "FHIR" : "Set FHIR"}
+                      Add FHIR
                     </Button>
                   </TableCell>
                 </TableRow>

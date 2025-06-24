@@ -33,11 +33,32 @@ public class ConnectionService {
         try {
             ClusterOptions options = ClusterOptions.clusterOptions(request.getUsername(), request.getPassword())
                     .environment(env -> {
-                        env.timeoutConfig().connectTimeout(Duration.ofSeconds(30));
-                        env.timeoutConfig().queryTimeout(Duration.ofSeconds(75));
+                        // Set reasonable timeouts for good error detection
+                        env.timeoutConfig().connectTimeout(Duration.ofSeconds(10));
+                        env.timeoutConfig().queryTimeout(Duration.ofSeconds(30));
+                        env.timeoutConfig().managementTimeout(Duration.ofSeconds(15));
                     });
             
             Cluster cluster = Cluster.connect(request.getConnectionString(), options);
+            
+            // IMPORTANT: Test the connection immediately with a timeout
+            try {
+                // Try to get cluster info to validate the connection
+                cluster.buckets().getAllBuckets();
+                logger.info("Connection validation successful for: {}", request.getName());
+            } catch (Exception validationError) {
+                // Close the cluster immediately if validation fails
+                try {
+                    cluster.disconnect();
+                } catch (Exception disconnectError) {
+                    logger.warn("Error disconnecting failed cluster: {}", disconnectError.getMessage());
+                }
+                
+                // Provide user-friendly error messages based on the error type
+                String userFriendlyMessage = getUserFriendlyErrorMessage(validationError);
+                logger.error("Connection validation failed for {}: {}", request.getName(), validationError.getMessage());
+                return ConnectionResponse.failure("Connection failed", userFriendlyMessage);
+            }
             
             // Close existing connection if it exists
             closeConnection(request.getName());
@@ -53,7 +74,14 @@ public class ConnectionService {
             
         } catch (Exception e) {
             logger.error("Error creating connection {}: {}", request.getName(), e.getMessage(), e);
-            return ConnectionResponse.failure("Failed to create connection", e.getMessage());
+            
+            // Check if it's an UnknownHostException specifically
+            if (e.getCause() instanceof java.net.UnknownHostException || 
+                e.getMessage().contains("UnknownHostException")) {
+                return ConnectionResponse.failure("Connection failed", "Invalid hostname - please check the server address");
+            }
+            
+            return ConnectionResponse.failure("Failed to create connection", getUserFriendlyErrorMessage(e));
         }
     }
     
@@ -156,5 +184,43 @@ public class ConnectionService {
     public boolean testConnection(Connection connection) {
         // TODO: Implement actual connection testing logic
         return true;
+    }
+    
+    /**
+     * Convert technical error messages to user-friendly ones
+     */
+    private String getUserFriendlyErrorMessage(Exception error) {
+        String message = error.getMessage();
+        
+        // Check for authentication errors first (even if they appear in timeout messages)
+        if (message.contains("AuthenticationFailureException") || 
+            message.contains("authentication failed") || 
+            message.contains("AUTHENTICATION_ERROR") ||
+            message.contains("check username and password")) {
+            return "Authentication failed - please check username and password";
+        }
+        
+        if (message.contains("TIMEOUT") || message.contains("timeout")) {
+            // Check if the timeout was caused by authentication issues
+            if (message.contains("AUTHENTICATION_ERROR")) {
+                return "Authentication failed - please check username and password";
+            }
+            return "Connection failed - please check the hostname and ensure the Couchbase server is running";
+        }
+        
+        if (message.contains("UnknownHostException") || message.contains("nodename nor servname provided")) {
+            return "Invalid hostname - please check the server address";
+        }
+        
+        if (message.contains("SSL") || message.contains("TLS")) {
+            return "SSL/TLS connection error - please check SSL settings";
+        }
+        
+        if (message.contains("CONNECTION_REFUSED") || message.contains("refused")) {
+            return "Connection refused - please check if the server is running and accessible";
+        }
+        
+        // Default to a generic but helpful message
+        return "Unable to connect to Couchbase server - please check hostname, credentials, and server status";
     }
 } 

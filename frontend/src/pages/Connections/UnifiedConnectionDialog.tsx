@@ -162,15 +162,11 @@ const UnifiedConnectionDialog: React.FC<UnifiedConnectionDialogProps> = ({
       };
 
       // Pass the connection request to the parent component
-      console.log(
-        "[UnifiedConnectionDialog] Calling onSuccess with connection request"
-      );
       const result = await onSuccess(connectionRequest);
 
       if (result.success) {
         setInfo("Connection request sent!");
         setTimeout(() => {
-          console.log("[UnifiedConnectionDialog] Closing dialog");
           onClose();
           resetForm();
         }, 1000);
@@ -179,7 +175,7 @@ const UnifiedConnectionDialog: React.FC<UnifiedConnectionDialogProps> = ({
         setInfo(null);
       }
     } catch (err: any) {
-      console.error("Connection creation error:", err);
+      //      console.error("Connection creation error:", err);
       setError("Failed to create connection");
       setInfo(null);
     } finally {
@@ -392,13 +388,6 @@ const UnifiedConnectionDialog: React.FC<UnifiedConnectionDialogProps> = ({
             </>
           )}
         </Box>
-
-        {/* Info about name auto-detection */}
-        <Alert severity="info" sx={{ mb: 2 }}>
-          <Typography variant="body2">
-            Connection name will be automatically detected from the cluster.
-          </Typography>
-        </Alert>
       </DialogContent>
 
       <DialogActions>

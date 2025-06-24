@@ -4,11 +4,11 @@ import DashboardFhirServer from "./DashboardFhirServer";
 import { useConnectionStore } from "../../store/connectionStore";
 
 export default function Dashboard() {
-  console.log("🏠 Dashboard: Component rendering");
+  //  console.log("🏠 Dashboard: Component rendering");
   const version = "1.0.0";
   const { connection } = useConnectionStore();
 
-  console.log("🔗 Dashboard: Connection info loaded:", connection);
+  //  console.log("🔗 Dashboard: Connection info loaded:", connection);
 
   return (
     <Box

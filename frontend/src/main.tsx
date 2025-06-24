@@ -3,7 +3,7 @@ import { createRoot } from "react-dom/client";
 import "./index.css";
 import App from "./App.tsx";
 
-console.log("🚀 main.tsx: Starting application initialization");
+//console.log("🚀 main.tsx: Starting application initialization");
 const startTime = performance.now();
 
 createRoot(document.getElementById("root")!).render(
@@ -12,8 +12,8 @@ createRoot(document.getElementById("root")!).render(
   </StrictMode>
 );
 
-console.log(
-  `✅ main.tsx: Application initialization completed in ${(
-    performance.now() - startTime
-  ).toFixed(2)}ms`
-);
+// console.log(
+//   `✅ main.tsx: Application initialization completed in ${(
+//     performance.now() - startTime
+//   ).toFixed(2)}ms`
+// );

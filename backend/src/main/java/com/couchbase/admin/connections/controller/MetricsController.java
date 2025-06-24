@@ -31,7 +31,7 @@ public class MetricsController {
      */
     @GetMapping("/cluster/{connectionName}")
     public ResponseEntity<ClusterMetrics> getClusterMetrics(@PathVariable String connectionName) {
-        logger.info("Getting cluster metrics for connection: {}", connectionName);
+        // logger.info("Getting cluster metrics for connection: {}", connectionName);
         
         try {
             // Use the improved metrics service that leverages the SDK's HTTP client
@@ -52,7 +52,7 @@ public class MetricsController {
      */
     @GetMapping("/all")
     public ResponseEntity<Map<String, ClusterMetrics>> getAllMetrics() {
-        logger.info("Getting metrics for all active connections");
+        // logger.info("Getting metrics for all active connections");
         
         Map<String, ClusterMetrics> allMetrics = new HashMap<>();
         
@@ -87,7 +87,7 @@ public class MetricsController {
      */
     @PostMapping("/connection-details")
     public ResponseEntity<Map<String, String>> storeConnectionDetails(@RequestBody ConnectionDetailsRequest request) {
-        logger.info("Connection details storage request for: {} (deprecated - using SDK HTTP client)", request.name);
+        // logger.info("Connection details storage request for: {} (deprecated - using SDK HTTP client)", request.name);
         
         Map<String, String> response = new HashMap<>();
         response.put("status", "success");
@@ -103,7 +103,7 @@ public class MetricsController {
      */
     @DeleteMapping("/connection-details/{connectionName}")
     public ResponseEntity<Map<String, String>> removeConnectionDetails(@PathVariable String connectionName) {
-        logger.info("Connection details removal request for: {} (deprecated - using SDK HTTP client)", connectionName);
+        // logger.info("Connection details removal request for: {} (deprecated - using SDK HTTP client)", connectionName);
         
         Map<String, String> response = new HashMap<>();
         response.put("status", "success");

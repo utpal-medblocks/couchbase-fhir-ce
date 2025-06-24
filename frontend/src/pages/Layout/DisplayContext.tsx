@@ -27,21 +27,21 @@ export const DisplayProvider = ({ children }: { children: ReactNode }) => {
 
   // Initialize connection on mount
   useEffect(() => {
-    console.log("🔍 DisplayProvider: Initializing connection");
+    //    console.log("🔍 DisplayProvider: Initializing connection");
     fetchConnection();
   }, [fetchConnection]);
 
   // Show dialog if no connection exists
   useEffect(() => {
-    console.log("🔍 DisplayProvider: useEffect triggered", {
-      isConnected: connection.isConnected,
-      error,
-      showDialog,
-      connectionName: connection.name,
-    });
+    // console.log("🔍 DisplayProvider: useEffect triggered", {
+    //   isConnected: connection.isConnected,
+    //   error,
+    //   showDialog,
+    //   connectionName: connection.name,
+    // });
 
     if (!connection.isConnected && !error && !showDialog) {
-      console.log("🔍 DisplayProvider: Showing connection dialog");
+      //      console.log("🔍 DisplayProvider: Showing connection dialog");
       setShowDialog(true);
     }
   }, [connection.isConnected, error, showDialog, setShowDialog]);
@@ -83,12 +83,6 @@ export const useDisplayContext = () => {
     throw new Error("useDisplayContext must be used within a DisplayProvider");
   }
   return context;
-};
-
-// Export connection from the store for components that need it
-export const useConnectionInfo = () => {
-  const { connection } = useConnectionStore();
-  return connection;
 };
 
 const DisplayContextComponent = () => {

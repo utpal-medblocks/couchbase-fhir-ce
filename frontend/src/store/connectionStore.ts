@@ -145,17 +145,17 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
 
   // Synchronous actions
   setConnection: (connection) => {
-    console.log("🔍 connectionStore: Setting connection", connection);
+    //    console.log("🔍 connectionStore: Setting connection", connection);
     set({ connection });
   },
 
   setError: (error) => {
-    console.log("🔍 connectionStore: Setting error", error);
+    //    console.log("🔍 connectionStore: Setting error", error);
     set({ error });
   },
 
   setShowDialog: (showDialog) => {
-    console.log("🔍 connectionStore: Setting showDialog", showDialog);
+    //    console.log("🔍 connectionStore: Setting showDialog", showDialog);
     set({ showDialog });
   },
 
@@ -165,22 +165,22 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
 
   // Metrics actions
   setMetrics: (metrics) => {
-    console.log("🔍 connectionStore: Setting metrics", metrics);
+    //    console.log("connectionStore: Setting metrics", metrics);
     set({ metrics });
   },
 
   setMetricsError: (error) => {
-    console.log("🔍 connectionStore: Setting metricsError", error);
+    //    console.log("🔍 connectionStore: Setting metricsError", error);
     set({ metricsError: error });
   },
 
   setFhirBuckets: (buckets) => {
-    console.log("🔍 connectionStore: Setting fhirBuckets", buckets);
+    //    console.log("🔍 connectionStore: Setting fhirBuckets", buckets);
     set({ fhirBuckets: buckets });
   },
 
   toggleFhirBucket: (bucketName) => {
-    console.log("🔍 connectionStore: Toggling fhirBucket", bucketName);
+    //    console.log("🔍 connectionStore: Toggling fhirBucket", bucketName);
     const { fhirBuckets } = get();
     const newBuckets = new Set(fhirBuckets);
     if (fhirBuckets.has(bucketName)) {
@@ -193,7 +193,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
 
   // Async actions
   fetchConnection: async () => {
-    console.log("🔗 connectionStore: Starting fetchConnection");
+    //    console.log("🔗 connectionStore: Starting fetchConnection");
     set({ error: null });
 
     try {
@@ -201,14 +201,14 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
         timeout: 5000,
       });
 
-      console.log("🔍 connectionStore: API response", response.data);
+      //      console.log("🔍 connectionStore: API response", response.data);
 
       if (response.data && response.data.success && response.data.connections) {
         const connections = response.data.connections;
-        console.log(
-          "🔍 connectionStore: API returned connections",
-          connections
-        );
+        // console.log(
+        //   "🔍 connectionStore: API returned connections",
+        //   connections
+        // );
 
         if (connections.length > 0) {
           const activeConnection = connections[0];
@@ -219,13 +219,13 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
             isConnected: true,
           };
 
-          console.log(
-            "🔍 connectionStore: Setting connection info",
-            connectionInfo
-          );
+          // console.log(
+          //   "🔍 connectionStore: Setting connection info",
+          //   connectionInfo
+          // );
           set({ connection: connectionInfo });
         } else {
-          console.log("🔍 connectionStore: No connections available");
+          //          console.log("🔍 connectionStore: No connections available");
           set({
             connection: {
               id: "No Connection",
@@ -236,10 +236,10 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
           });
         }
       } else {
-        console.log(
-          "🔍 connectionStore: Invalid response format",
-          response.data
-        );
+        // console.log(
+        //   "🔍 connectionStore: Invalid response format",
+        //   response.data
+        // );
         set({
           connection: {
             id: "No Connection",
@@ -250,7 +250,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
         });
       }
     } catch (error: any) {
-      console.error("❌ connectionStore: fetchConnection failed", error);
+      //      console.error("❌ connectionStore: fetchConnection failed", error);
       let errorMessage = "Failed to fetch connection";
 
       if (error.name === "AbortError" || error.code === "ECONNABORTED") {
@@ -274,7 +274,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
   },
 
   createConnection: async (connectionRequest: ConnectionRequest) => {
-    console.log("🔗 connectionStore: Creating connection", connectionRequest);
+    //    console.log("🔗 connectionStore: Creating connection", connectionRequest);
     set({ error: null });
 
     try {
@@ -314,10 +314,10 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
           password: safeRequest.password,
         });
       } catch (metricsError) {
-        console.warn(
-          "[connectionStore] Failed to store connection details for metrics:",
-          metricsError
-        );
+        // console.warn(
+        //   "[connectionStore] Failed to store connection details for metrics:",
+        //   metricsError
+        // );
       }
 
       // Update connection state
@@ -328,10 +328,10 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
         isConnected: true,
       };
 
-      console.log(
-        "🔍 connectionStore: Setting connection after creation",
-        connectionInfo
-      );
+      // console.log(
+      //   "🔍 connectionStore: Setting connection after creation",
+      //   connectionInfo
+      // );
       set({
         connection: connectionInfo,
         showDialog: false,
@@ -358,7 +358,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
       return;
     }
 
-    console.log("🔗 connectionStore: Deleting connection", connection.name);
+    //    console.log("🔗 connectionStore: Deleting connection", connection.name);
 
     try {
       await axios.delete(`/api/connections/${connection.name}`);
@@ -384,13 +384,13 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
 
   fetchMetrics: async () => {
     const { connection } = get();
-    console.log(
-      "🔗 connectionStore: Starting fetchMetrics for connection:",
-      connection.name
-    );
+    // console.log(
+    //   "🔗 connectionStore: Starting fetchMetrics for connection:",
+    //   connection.name
+    // );
 
     if (!connection.isConnected || !connection.name) {
-      console.log("🔍 connectionStore: No connection, skipping metrics fetch");
+      //      console.log("🔍 connectionStore: No connection, skipping metrics fetch");
       set({ metrics: null, metricsError: null });
       return;
     }
@@ -402,17 +402,15 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
         connection.name
       );
 
-      console.log("🔍 connectionStore: Received metrics data:", metricsData);
+      //      console.log("🔍 connectionStore: Received metrics data:", metricsData);
 
-      // Always update with new data
-      set({
-        metrics: {
-          ...metricsData,
-          retrievedAt: Date.now(),
-        },
+      // Always update with new data using the setMetrics action
+      get().setMetrics({
+        ...metricsData,
+        retrievedAt: Date.now(),
       });
     } catch (error: any) {
-      console.error("❌ connectionStore: fetchMetrics failed", error);
+      //      console.error("❌ connectionStore: fetchMetrics failed", error);
       let errorMessage = "Failed to fetch metrics";
 
       if (error.name === "AbortError" || error.code === "ECONNABORTED") {
