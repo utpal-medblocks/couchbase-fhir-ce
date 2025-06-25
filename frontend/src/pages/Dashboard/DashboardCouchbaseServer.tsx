@@ -1,4 +1,4 @@
-import React, { useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import {
   Box,
   Table,
@@ -19,16 +19,15 @@ import { useTheme } from "@mui/material/styles";
 import { blueGrey } from "@mui/material/colors";
 import LinearProgressWithLabel from "../../components/LinearProgressWithLabel";
 import ChipsArray from "../../components/ChipsArray";
+import AddFhirBucketDialog from "./AddFhirBucketDialog";
 
 const DashboardCouchbaseServer: React.FC = () => {
-  const {
-    connection,
-    metrics,
-    metricsError,
-    fhirBuckets,
-    fetchMetrics,
-    toggleFhirBucket,
-  } = useConnectionStore();
+  const { connection, metrics, metricsError, fetchMetrics } =
+    useConnectionStore();
+
+  // Dialog state
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [selectedBucketName, setSelectedBucketName] = useState("");
 
   // Define borderStyle for use in Table sx prop
   const theme = useTheme();
@@ -62,13 +61,27 @@ const DashboardCouchbaseServer: React.FC = () => {
   const serviceQuotas = metrics?.serviceQuotas;
   const services = nodes.length > 0 ? nodes[0].services : [];
 
-  // Handle FHIR bucket toggle
+  // Handle FHIR bucket conversion
   const handleToggleFhir = (bucketName: string) => {
-    toggleFhirBucket(bucketName);
+    setSelectedBucketName(bucketName);
+    setDialogOpen(true);
+  };
+
+  // Handle successful conversion
+  const handleConversionSuccess = () => {
+    // Refresh metrics to show updated bucket status
+    fetchMetrics();
+    setDialogOpen(false);
+  };
+
+  // Handle dialog close
+  const handleDialogClose = () => {
+    setDialogOpen(false);
+    setSelectedBucketName("");
   };
 
   return (
-    <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
+    <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
       {/* Cluster Overview */}
       <Box
         sx={{
@@ -89,7 +102,7 @@ const DashboardCouchbaseServer: React.FC = () => {
       </Box>
 
       {/* Service Quotas and Services */}
-      <Box sx={{ mb: 2 }}>
+      <Box sx={{ mb: 1 }}>
         {/* Service Quotas */}
         {serviceQuotas && (
           <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
@@ -175,7 +188,7 @@ const DashboardCouchbaseServer: React.FC = () => {
                     <LinearProgressWithLabel value={node.ramUtilizationRate} />
                   </TableCell>
                   <TableCell sx={tableCellStyle}>
-                    {node.services.join(", ")}
+                    <ChipsArray chipData={node.services} iconsOnly />
                   </TableCell>
                 </TableRow>
               ))
@@ -224,18 +237,34 @@ const DashboardCouchbaseServer: React.FC = () => {
                     {bucket.opsPerSec.toFixed(1)}
                   </TableCell>
                   <TableCell sx={tableCellStyle}>
-                    <Button
-                      disabled={bucket.isFhirBucket ? true : false}
-                      size="small"
-                      sx={{
-                        textTransform: "none !important",
-                        padding: "0px 10px !important",
-                        marginX: "2px !important",
-                      }}
-                      onClick={() => handleToggleFhir(bucket.name)}
-                    >
-                      Add FHIR
-                    </Button>
+                    {bucket.isFhirBucket ? (
+                      <Typography
+                        variant="body2"
+                        sx={{
+                          padding: "4px 12px",
+                          backgroundColor: "success.main",
+                          color: "success.contrastText",
+                          borderRadius: 1,
+                          display: "inline-block",
+                          fontSize: "0.75rem",
+                          fontWeight: "medium",
+                        }}
+                      >
+                        FHIR
+                      </Typography>
+                    ) : (
+                      <Button
+                        size="small"
+                        sx={{
+                          textTransform: "none !important",
+                          padding: "0px 10px !important",
+                          marginX: "2px !important",
+                        }}
+                        onClick={() => handleToggleFhir(bucket.name)}
+                      >
+                        Add FHIR
+                      </Button>
+                    )}
                   </TableCell>
                 </TableRow>
               ))
@@ -258,6 +287,15 @@ const DashboardCouchbaseServer: React.FC = () => {
           </Typography>
         </Box>
       )}
+
+      {/* FHIR Conversion Dialog */}
+      <AddFhirBucketDialog
+        open={dialogOpen}
+        onClose={handleDialogClose}
+        bucketName={selectedBucketName}
+        connectionName={connection.name || "default"}
+        onSuccess={handleConversionSuccess}
+      />
     </Box>
   );
 };

@@ -47,21 +47,44 @@ export default function Dashboard() {
           <Card
             sx={{ height: "100%", display: "flex", flexDirection: "column" }}
           >
-            <CardContent sx={{ p: 1, flex: 1, overflow: "hidden" }}>
-              {/* <Box display="flex" alignItems="center" mb=1}> */}
-              <Typography
-                variant="subtitle1"
-                align="center"
+            <CardContent
+              sx={{
+                p: 0,
+                display: "flex",
+                flexDirection: "column",
+                flex: 1,
+                overflow: "hidden",
+              }}
+            >
+              {/* Fixed header */}
+              <Box
                 sx={{
-                  pb: 1,
-                  lineHeight: 1,
+                  px: 1,
+                  py: 1,
                   borderBottom: 1,
                   borderBottomColor: "divider",
+                  flexShrink: 0,
                 }}
               >
-                Couchbase Server Details
-              </Typography>
-              <DashboardCouchbaseServer />
+                <Typography
+                  variant="subtitle1"
+                  align="center"
+                  sx={{ lineHeight: 1 }}
+                >
+                  Couchbase Server Details
+                </Typography>
+              </Box>
+              {/* Scrollable content */}
+              <Box
+                sx={{
+                  flex: 1,
+                  overflowY: "auto",
+                  px: 1,
+                  py: 1,
+                }}
+              >
+                <DashboardCouchbaseServer />
+              </Box>
             </CardContent>
           </Card>
         </Box>

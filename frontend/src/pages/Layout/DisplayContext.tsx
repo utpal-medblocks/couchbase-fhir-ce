@@ -18,6 +18,7 @@ const DisplayContext = createContext<DisplayContextType | undefined>(undefined);
 export const DisplayProvider = ({ children }: { children: ReactNode }) => {
   const {
     connection,
+    metrics,
     error,
     showDialog,
     fetchConnection,
@@ -86,7 +87,10 @@ export const useDisplayContext = () => {
 };
 
 const DisplayContextComponent = () => {
-  const { connection } = useConnectionStore();
+  const { connection, metrics } = useConnectionStore();
+  const nodes = metrics?.nodes || [];
+  const clusterName = metrics?.clusterName || "No Connection";
+  const clusterVersion = nodes.length > 0 ? nodes[0].version : "No Connection";
 
   return (
     <Box sx={{ marginLeft: 4, display: "flex", flexDirection: "column" }}>
@@ -101,24 +105,9 @@ const DisplayContextComponent = () => {
       >
         <AiOutlineCluster style={{ fontSize: "20px" }} />
         <Typography variant="body2">
-          <b>Server</b> {connection.name} {connection.version}
+          <b>Server</b> {clusterName} {clusterVersion}
         </Typography>
         <BsUnlock style={{ fontSize: "14px" }} />
-        <BsBucket style={{ fontSize: "16px" }} />
-        <Typography variant="body2">
-          <b>Bucket</b>
-        </Typography>
-        <Typography
-          variant="body2"
-          sx={{
-            marginRight: 2,
-            fontWeight: "normal",
-            color: "text.secondary",
-            fontStyle: "italic",
-          }}
-        >
-          Not Set
-        </Typography>
       </Box>
 
       {/* Second line - Bucket/Scope info */}

@@ -1,0 +1,228 @@
+# FHIR Bucket Configuration
+# This file defines the structure for converting a Couchbase bucket to FHIR-enabled
+# Including scopes, collections, and indexes for each collection
+
+fhir:
+  scopes:
+    admin:
+      name: "Admin"
+      description: "Administrative and metadata collections for FHIR server"
+      collections:
+        - name: "config"
+          description: "Tenant configuration, feature flags"
+          indexes:
+            - name: "PRIMARY"
+              type: "primary"
+              sql: "CREATE PRIMARY INDEX ON `{bucket}`.`Admin`.`config`"
+
+        - name: "users"
+          description: "User management, authentication"
+          indexes:
+            - name: "PRIMARY"
+              type: "primary"
+              sql: "CREATE PRIMARY INDEX ON `{bucket}`.`Admin`.`users`"
+
+        - name: "favorites"
+          description: "Admin UI query favorites"
+          indexes:
+            - name: "PRIMARY"
+              type: "primary"
+              sql: "CREATE PRIMARY INDEX ON `{bucket}`.`Admin`.`favorites`"
+
+        - name: "schemas"
+          description: "FHIR schemas for frontend forms"
+          indexes:
+            - name: "PRIMARY"
+              type: "primary"
+              sql: "CREATE PRIMARY INDEX ON `{bucket}`.`Admin`.`schemas`"
+
+        - name: "profiles"
+          description: "US Core, custom implementation guides"
+          indexes:
+            - name: "PRIMARY"
+              type: "primary"
+              sql: "CREATE PRIMARY INDEX ON `{bucket}`.`Admin`.`profiles`"
+
+        - name: "audit-logs"
+          description: "Compliance audit trail"
+          indexes:
+            - name: "PRIMARY"
+              type: "primary"
+              sql: "CREATE PRIMARY INDEX ON `{bucket}`.`Admin`.`audit-logs`"
+
+        - name: "system-logs"
+          description: "Operational logs (debug, error)"
+          indexes:
+            - name: "PRIMARY"
+              type: "primary"
+              sql: "CREATE PRIMARY INDEX ON `{bucket}`.`Admin`.`system-logs`"
+
+        - name: "terminology"
+          description: "External terminology server configs"
+          indexes:
+            - name: "PRIMARY"
+              type: "primary"
+              sql: "CREATE PRIMARY INDEX ON `{bucket}`.`Admin`.`terminology`"
+
+        - name: "capability-statements"
+          description: "FHIR server capabilities"
+          indexes:
+            - name: "PRIMARY"
+              type: "primary"
+              sql: "CREATE PRIMARY INDEX ON `{bucket}`.`Admin`.`capability-statements`"
+
+    resources:
+      name: "Resources"
+      description: "FHIR clinical and administrative resource collections"
+      collections:
+        - name: "Patient"
+          description: "FHIR Patient demographic and administrative information"
+          indexes:
+            - name: "PRIMARY"
+              type: "primary"
+              sql: "CREATE PRIMARY INDEX ON `{bucket}`.`Resources`.`Patient`"
+            # Future example: Patient search covering index
+            # - name: "idx_patient_search"
+            #   type: "secondary"
+            #   sql: "CREATE INDEX idx_patient_search ON `{bucket}`.`Resources`.`Patient` (name[0].family[0], birthDate, gender, identifier[0].value)"
+
+        - name: "Encounter"
+          description: "FHIR Encounter resources for healthcare interactions"
+          indexes:
+            - name: "PRIMARY"
+              type: "primary"
+              sql: "CREATE PRIMARY INDEX ON `{bucket}`.`Resources`.`Encounter`"
+
+        - name: "Observation"
+          description: "FHIR Observation resources for clinical measurements and findings"
+          indexes:
+            - name: "PRIMARY"
+              type: "primary"
+              sql: "CREATE PRIMARY INDEX ON `{bucket}`.`Resources`.`Observation`"
+
+        - name: "AllergyIntolerance"
+          description: "FHIR AllergyIntolerance resources for adverse reactions"
+          indexes:
+            - name: "PRIMARY"
+              type: "primary"
+              sql: "CREATE PRIMARY INDEX ON `{bucket}`.`Resources`.`AllergyIntolerance`"
+
+        - name: "CarePlan"
+          description: "FHIR CarePlan resources for treatment and care coordination"
+          indexes:
+            - name: "PRIMARY"
+              type: "primary"
+              sql: "CREATE PRIMARY INDEX ON `{bucket}`.`Resources`.`CarePlan`"
+
+        - name: "CareTeam"
+          description: "FHIR CareTeam resources for care team members"
+          indexes:
+            - name: "PRIMARY"
+              type: "primary"
+              sql: "CREATE PRIMARY INDEX ON `{bucket}`.`Resources`.`CareTeam`"
+
+        - name: "Claim"
+          description: "FHIR Claim resources for insurance claims"
+          indexes:
+            - name: "PRIMARY"
+              type: "primary"
+              sql: "CREATE PRIMARY INDEX ON `{bucket}`.`Resources`.`Claim`"
+
+        - name: "Condition"
+          description: "FHIR Condition resources for diagnoses and problems"
+          indexes:
+            - name: "PRIMARY"
+              type: "primary"
+              sql: "CREATE PRIMARY INDEX ON `{bucket}`.`Resources`.`Condition`"
+
+        - name: "Device"
+          description: "FHIR Device resources for medical devices and equipment"
+          indexes:
+            - name: "PRIMARY"
+              type: "primary"
+              sql: "CREATE PRIMARY INDEX ON `{bucket}`.`Resources`.`Device`"
+
+        - name: "DiagnosticReport"
+          description: "FHIR DiagnosticReport resources for test results"
+          indexes:
+            - name: "PRIMARY"
+              type: "primary"
+              sql: "CREATE PRIMARY INDEX ON `{bucket}`.`Resources`.`DiagnosticReport`"
+
+        - name: "DocumentReference"
+          description: "FHIR DocumentReference resources for clinical documents"
+          indexes:
+            - name: "PRIMARY"
+              type: "primary"
+              sql: "CREATE PRIMARY INDEX ON `{bucket}`.`Resources`.`DocumentReference`"
+
+        - name: "ExplanationOfBenefit"
+          description: "FHIR ExplanationOfBenefit resources for claim adjudication"
+          indexes:
+            - name: "PRIMARY"
+              type: "primary"
+              sql: "CREATE PRIMARY INDEX ON `{bucket}`.`Resources`.`ExplanationOfBenefit`"
+
+        - name: "ImagingStudy"
+          description: "FHIR ImagingStudy resources for medical imaging"
+          indexes:
+            - name: "PRIMARY"
+              type: "primary"
+              sql: "CREATE PRIMARY INDEX ON `{bucket}`.`Resources`.`ImagingStudy`"
+
+        - name: "Immunization"
+          description: "FHIR Immunization resources for vaccination records"
+          indexes:
+            - name: "PRIMARY"
+              type: "primary"
+              sql: "CREATE PRIMARY INDEX ON `{bucket}`.`Resources`.`Immunization`"
+
+        - name: "Medication"
+          description: "FHIR Medication resources for drug definitions"
+          indexes:
+            - name: "PRIMARY"
+              type: "primary"
+              sql: "CREATE PRIMARY INDEX ON `{bucket}`.`Resources`.`Medication`"
+
+        - name: "MedicationAdministration"
+          description: "FHIR MedicationAdministration resources for medication delivery"
+          indexes:
+            - name: "PRIMARY"
+              type: "primary"
+              sql: "CREATE PRIMARY INDEX ON `{bucket}`.`Resources`.`MedicationAdministration`"
+
+        - name: "MedicationRequest"
+          description: "FHIR MedicationRequest resources for prescriptions"
+          indexes:
+            - name: "PRIMARY"
+              type: "primary"
+              sql: "CREATE PRIMARY INDEX ON `{bucket}`.`Resources`.`MedicationRequest`"
+
+        - name: "Procedure"
+          description: "FHIR Procedure resources for medical procedures"
+          indexes:
+            - name: "PRIMARY"
+              type: "primary"
+              sql: "CREATE PRIMARY INDEX ON `{bucket}`.`Resources`.`Procedure`"
+
+        - name: "Provenance"
+          description: "FHIR Provenance resources for data origin and history"
+          indexes:
+            - name: "PRIMARY"
+              type: "primary"
+              sql: "CREATE PRIMARY INDEX ON `{bucket}`.`Resources`.`Provenance`"
+
+        - name: "SupplyDelivery"
+          description: "FHIR SupplyDelivery resources for supply chain management"
+          indexes:
+            - name: "PRIMARY"
+              type: "primary"
+              sql: "CREATE PRIMARY INDEX ON `{bucket}`.`Resources`.`SupplyDelivery`"
+# Future: Index templates for common FHIR search patterns
+# index_templates:
+#   patient_indexes:
+#     - name: "idx_patient_identifier"
+#       fields: ["identifier.value"]
+#     - name: "idx_patient_name"
+#       fields: ["name.family", "name.given"]
+#   # ... more templates as needed

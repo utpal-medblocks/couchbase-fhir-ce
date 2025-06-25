@@ -4,14 +4,15 @@ import Chip from "@mui/material/Chip";
 import { BsBarChart } from "react-icons/bs"; // Analytics
 import { BsArrowRepeat } from "react-icons/bs"; // Eventing
 import { BsSearch } from "react-icons/bs"; // Text Search
-import { BsInfoSquare } from "react-icons/bs"; // Index
-import { BsKey } from "react-icons/bs"; // Key-Value
+import { BsInfoCircle } from "react-icons/bs"; // Index
+import { BsFileText } from "react-icons/bs"; // Key-Value
 import { BsQuestionCircle } from "react-icons/bs"; // Query
 import FaceIcon from "@mui/icons-material/Face"; // Default icon for chips
 import { Box } from "@mui/material";
 
 interface ChipsArrayProps {
   chipData: string[];
+  iconsOnly?: boolean;
 }
 
 interface ServiceInfo {
@@ -24,12 +25,15 @@ const SERVICE_ICONS = {
   cbas: <BsBarChart />, // Analytics
   eventing: <BsArrowRepeat />, // Eventing
   fts: <BsSearch />, // Text Search
-  index: <BsInfoSquare />, // Index
-  kv: <BsKey />, // Key-Value
+  index: <BsInfoCircle />, // Index
+  kv: <BsFileText />, // Key-Value
   n1ql: <BsQuestionCircle />, // Query
 };
 
-const ChipsArray: React.FC<ChipsArrayProps> = ({ chipData }) => {
+const ChipsArray: React.FC<ChipsArrayProps> = ({
+  chipData,
+  iconsOnly = false,
+}) => {
   // Function to get both display name and icon for each service
   const getServiceInfo = (service: string): ServiceInfo => {
     let displayName: string;
@@ -58,6 +62,39 @@ const ChipsArray: React.FC<ChipsArrayProps> = ({ chipData }) => {
 
     return { displayName, icon };
   };
+
+  // If iconsOnly mode, return just the icons in a compact layout
+  if (iconsOnly) {
+    return (
+      <Box
+        component="span"
+        sx={{
+          display: "inline-flex",
+          flexDirection: "row",
+          gap: 0.5,
+          alignItems: "center",
+        }}
+      >
+        {chipData.map((data, index) => {
+          const { displayName, icon } = getServiceInfo(data);
+          return (
+            <Box
+              key={index}
+              sx={{
+                display: "inline-flex",
+                alignItems: "center",
+                fontSize: "0.875rem",
+                color: "primary.main",
+              }}
+              title={displayName} // Tooltip on hover
+            >
+              {icon}
+            </Box>
+          );
+        })}
+      </Box>
+    );
+  }
 
   return (
     <Box
