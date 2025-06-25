@@ -1,6 +1,7 @@
 package com.couchbase.admin.fhirBucket.service;
 
 import com.couchbase.admin.fhirBucket.model.*;
+import com.couchbase.admin.fhirBucket.config.FhirBucketProperties;
 import com.couchbase.admin.connections.service.ConnectionService;
 import com.couchbase.client.java.Cluster;
 import com.couchbase.client.java.manager.collection.CollectionManager;
@@ -16,6 +17,7 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CompletableFuture;
+import java.util.ArrayList;
 
 @Service
 public class FhirBucketService {
@@ -26,9 +28,7 @@ public class FhirBucketService {
     private ConnectionService connectionService;
     
     @Autowired
-    private FhirConfigurationLoader configurationLoader;
-    
-    private FhirConfiguration fhirConfig;
+    private FhirBucketProperties fhirProperties;
     
     // Store operation status
     private final Map<String, FhirConversionStatusDetail> operationStatus = new ConcurrentHashMap<>();
@@ -38,36 +38,9 @@ public class FhirBucketService {
     }
     
     /**
-     * Load FHIR configuration from YAML file
-     */
-    private void loadFhirConfiguration() {
-        if (fhirConfig == null) {
-            try {
-                this.fhirConfig = configurationLoader.loadConfiguration();
-                logger.info("FHIR configuration loaded successfully");
-                
-                // Debug: Log what collections will be created
-                for (Map.Entry<String, FhirConfiguration.ScopeConfiguration> scopeEntry : 
-                     fhirConfig.getFhir().getScopes().entrySet()) {
-                    logger.info("Scope: {} ({})", scopeEntry.getKey(), scopeEntry.getValue().getName());
-                    for (FhirConfiguration.CollectionConfiguration collection : scopeEntry.getValue().getCollections()) {
-                        logger.info("  Collection: {}", collection.getName());
-                    }
-                }
-            } catch (Exception e) {
-                logger.error("Failed to load FHIR configuration", e);
-                throw new RuntimeException("Failed to load FHIR configuration", e);
-            }
-        }
-    }
-    
-    /**
      * Start FHIR bucket conversion process
      */
     public FhirConversionResponse startConversion(String bucketName, String connectionName) {
-        // Ensure configuration is loaded
-        loadFhirConfiguration();
-        
         String operationId = UUID.randomUUID().toString();
         
         // Create status tracking
@@ -121,12 +94,12 @@ public class FhirBucketService {
             
             // Step 3: Create Admin collections
             updateStatus(status, "create_admin_collections", "Creating Admin collections");
-            createCollections(collectionManager, "Admin", fhirConfig.getFhir().getScopes().get("admin"));
+            createCollections(collectionManager, "Admin", fhirProperties.getScopes().get("admin"));
             status.setCompletedSteps(3);
             
             // Step 4: Create Resource collections
             updateStatus(status, "create_resource_collections", "Creating Resource collections");
-            createCollections(collectionManager, "Resources", fhirConfig.getFhir().getScopes().get("resources"));
+            createCollections(collectionManager, "Resources", fhirProperties.getScopes().get("resources"));
             status.setCompletedSteps(4);
             
             // Step 5: Create indexes
@@ -141,7 +114,7 @@ public class FhirBucketService {
             
             // Step 7: Mark as FHIR bucket
             updateStatus(status, "mark_as_fhir", "Marking bucket as FHIR-enabled");
-            markAsFhirBucket(bucketName);
+            markAsFhirBucket(bucketName, connectionName);
             status.setCompletedSteps(7);
             
             // Completion
@@ -177,9 +150,9 @@ public class FhirBucketService {
     }
     
     private void createCollections(CollectionManager manager, String scopeName, 
-                                 FhirConfiguration.ScopeConfiguration scopeConfig) throws Exception {
+                                 FhirBucketProperties.ScopeConfiguration scopeConfig) throws Exception {
         logger.info("Creating collections for scope: {}", scopeName);
-        for (FhirConfiguration.CollectionConfiguration collection : scopeConfig.getCollections()) {
+        for (FhirBucketProperties.CollectionConfiguration collection : scopeConfig.getCollections()) {
             try {
                 logger.info("Creating collection: {}.{}", scopeName, collection.getName());
                 CollectionSpec spec = CollectionSpec.create(collection.getName(), scopeName);
@@ -198,13 +171,13 @@ public class FhirBucketService {
     
     private void createIndexes(Cluster cluster, String bucketName) throws Exception {
         // Create indexes for both scopes
-        for (Map.Entry<String, FhirConfiguration.ScopeConfiguration> scopeEntry : 
-             fhirConfig.getFhir().getScopes().entrySet()) {
+        for (Map.Entry<String, FhirBucketProperties.ScopeConfiguration> scopeEntry : 
+             fhirProperties.getScopes().entrySet()) {
             
-            FhirConfiguration.ScopeConfiguration scopeConfig = scopeEntry.getValue();
+            FhirBucketProperties.ScopeConfiguration scopeConfig = scopeEntry.getValue();
             
-            for (FhirConfiguration.CollectionConfiguration collection : scopeConfig.getCollections()) {
-                for (FhirConfiguration.IndexConfiguration index : collection.getIndexes()) {
+            for (FhirBucketProperties.CollectionConfiguration collection : scopeConfig.getCollections()) {
+                for (FhirBucketProperties.IndexConfiguration index : collection.getIndexes()) {
                     try {
                         // Add null check and debug logging
                         if (index.getSql() == null) {
@@ -231,10 +204,10 @@ public class FhirBucketService {
     
     private void buildDeferredIndexes(Cluster cluster, String bucketName) throws Exception {
         // Get the build commands from configuration
-        List<FhirConfiguration.BuildCommand> buildCommands = fhirConfig.getFhir().getBuildCommands();
+        List<FhirBucketProperties.BuildCommand> buildCommands = fhirProperties.getBuildCommands();
         
         if (buildCommands != null && !buildCommands.isEmpty()) {
-            for (FhirConfiguration.BuildCommand buildCommand : buildCommands) {
+            for (FhirBucketProperties.BuildCommand buildCommand : buildCommands) {
                 logger.info("Executing build command: {}", buildCommand.getName());
                 
                 // Execute the query to get the BUILD INDEX statements
@@ -243,9 +216,10 @@ public class FhirBucketService {
                 try {
                     var result = cluster.query(query);
                     
-                    // Process each BUILD INDEX statement
-                    for (var row : result.rowsAsObject()) {
-                        String buildIndexSql = row.toString().replaceAll("^\"|\"$", ""); // Remove quotes
+                    // Process each BUILD INDEX statement - use rowsAs() for raw string results
+                    for (String buildIndexSql : result.rowsAs(String.class)) {
+                        // Remove quotes if present
+                        buildIndexSql = buildIndexSql.replaceAll("^\"|\"$", "");
                         logger.info("Executing BUILD INDEX: {}", buildIndexSql);
                         
                         try {
@@ -266,12 +240,98 @@ public class FhirBucketService {
         }
     }
     
-    private void markAsFhirBucket(String bucketName) {
-        // This could be implemented as:
-        // 1. Update a configuration collection
-        // 2. Set a bucket metadata
-        // 3. Update application state
-        // For now, we'll just log it
-        logger.info("Marked bucket {} as FHIR-enabled", bucketName);
+    private void markAsFhirBucket(String bucketName, String connectionName) throws Exception {
+        // Get connection to insert the FHIR configuration document
+        Cluster cluster = connectionService.getConnection(connectionName);
+        if (cluster == null) {
+            throw new IllegalStateException("No active Couchbase connection found for: " + connectionName);
+        }
+        
+        // Create the FHIR configuration document using Couchbase's JsonObject
+        var fhirConfig = com.couchbase.client.java.json.JsonObject.create()
+            .put("isFHIR", true)
+            .put("createdAt", java.time.Instant.now().toString())
+            .put("version", "1.0")
+            .put("description", "FHIR-enabled bucket configuration");
+        
+        // Insert the document into Admin/config collection
+        String documentId = "fhir-config";
+        String sql = String.format(
+            "INSERT INTO `%s`.`Admin`.`config` (KEY, VALUE) VALUES ('%s', %s)",
+            bucketName, documentId, fhirConfig.toString()
+        );
+        
+        try {
+            cluster.query(sql);
+            logger.info("Successfully marked bucket {} as FHIR-enabled", bucketName);
+        } catch (Exception e) {
+            if (e.getMessage() != null && e.getMessage().contains("already exists")) {
+                logger.warn("FHIR config document already exists in bucket: {}", bucketName);
+            } else {
+                logger.error("Failed to mark bucket {} as FHIR-enabled: {}", bucketName, e.getMessage());
+                throw e;
+            }
+        }
+    }
+    
+    /**
+     * Check if a bucket is FHIR-enabled by looking for the configuration document
+     */
+    public boolean isFhirBucket(String bucketName, String connectionName) {
+        try {
+            Cluster cluster = connectionService.getConnection(connectionName);
+            if (cluster == null) {
+                return false;
+            }
+            
+            // Query for the FHIR configuration document
+            String sql = String.format(
+                "SELECT VALUE FROM `%s`.`Admin`.`config` WHERE META().id = 'fhir-config'",
+                bucketName
+            );
+            
+            var result = cluster.query(sql);
+            var rows = result.rowsAsObject();
+            
+            if (!rows.isEmpty()) {
+                var row = rows.get(0);
+                var config = row.getObject("VALUE");
+                return config != null && config.getBoolean("isFHIR");
+            }
+            
+            return false;
+        } catch (Exception e) {
+            logger.warn("Failed to check if bucket {} is FHIR-enabled: {}", bucketName, e.getMessage());
+            return false;
+        }
+    }
+    
+    /**
+     * Get all FHIR-enabled buckets
+     */
+    public List<String> getFhirBuckets(String connectionName) {
+        try {
+            Cluster cluster = connectionService.getConnection(connectionName);
+            if (cluster == null) {
+                return new ArrayList<>();
+            }
+            
+            // Query all buckets and check which ones are FHIR-enabled
+            String sql = "SELECT name FROM system:buckets WHERE namespace_id = 'default'";
+            var result = cluster.query(sql);
+            var buckets = new ArrayList<String>();
+            
+            for (var row : result.rowsAsObject()) {
+                String bucketName = row.getString("name");
+                if (isFhirBucket(bucketName, connectionName)) {
+                    buckets.add(bucketName);
+                }
+            }
+            
+            return buckets;
+        } catch (Exception e) {
+            logger.error("Failed to get FHIR buckets: {}", e.getMessage());
+            return new ArrayList<>();
+        }
     }
 }

@@ -10,6 +10,9 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
+import java.util.Map;
+
 /**
  * REST Controller for FHIR bucket conversion operations
  */
@@ -83,5 +86,51 @@ public class FhirBucketController {
     @GetMapping("/health")
     public ResponseEntity<String> health() {
         return ResponseEntity.ok("FHIR Bucket service is running");
+    }
+    
+    /**
+     * Check if a bucket is FHIR-enabled
+     */
+    @GetMapping("/{bucketName}/is-fhir")
+    public ResponseEntity<Map<String, Object>> isFhirBucket(
+            @PathVariable String bucketName,
+            @RequestParam String connectionName) {
+        try {
+            boolean isFhir = fhirBucketService.isFhirBucket(bucketName, connectionName);
+            Map<String, Object> response = Map.of(
+                "bucketName", bucketName,
+                "isFhir", isFhir
+            );
+            return ResponseEntity.ok(response);
+        } catch (Exception e) {
+            logger.error("Failed to check if bucket {} is FHIR-enabled: {}", bucketName, e.getMessage());
+            Map<String, Object> errorResponse = Map.of(
+                "error", "Failed to check FHIR status",
+                "message", e.getMessage()
+            );
+            return ResponseEntity.internalServerError().body(errorResponse);
+        }
+    }
+    
+    /**
+     * Get all FHIR-enabled buckets
+     */
+    @GetMapping("/fhir-buckets")
+    public ResponseEntity<Map<String, Object>> getFhirBuckets(@RequestParam String connectionName) {
+        try {
+            List<String> fhirBuckets = fhirBucketService.getFhirBuckets(connectionName);
+            Map<String, Object> response = Map.of(
+                "fhirBuckets", fhirBuckets,
+                "count", fhirBuckets.size()
+            );
+            return ResponseEntity.ok(response);
+        } catch (Exception e) {
+            logger.error("Failed to get FHIR buckets: {}", e.getMessage());
+            Map<String, Object> errorResponse = Map.of(
+                "error", "Failed to get FHIR buckets",
+                "message", e.getMessage()
+            );
+            return ResponseEntity.internalServerError().body(errorResponse);
+        }
     }
 }
