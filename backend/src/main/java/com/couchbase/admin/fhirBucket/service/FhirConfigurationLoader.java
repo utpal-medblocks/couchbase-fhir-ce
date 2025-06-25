@@ -52,9 +52,17 @@ public class FhirConfigurationLoader {
             if (trimmed.equals("build_commands:")) {
                 inBuildCommands = true;
                 inIndexes = false;
+                inQuery = false;
                 currentScope = null;
                 currentCollection = null;
                 currentIndex = null;
+                currentBuildCommand = null;
+                continue;
+            }
+            
+            // Skip processing if we're in build commands section but not parsing a specific build command
+            if (inBuildCommands && !trimmed.startsWith("- name:") && !trimmed.startsWith("description:") && 
+                !trimmed.startsWith("query:") && currentBuildCommand == null && !inQuery) {
                 continue;
             }
             
@@ -149,10 +157,12 @@ public class FhirConfigurationLoader {
             }
             
             // Parse index (only if in indexes section)
-            if (currentCollection != null && trimmed.startsWith("- name:") && inIndexes) {
+            if (currentCollection != null && trimmed.startsWith("- name:") && inIndexes && !inBuildCommands) {
                 currentIndex = new FhirConfiguration.IndexConfiguration();
-                currentIndex.setName(extractValue(trimmed));
+                String indexName = extractValue(trimmed);
+                currentIndex.setName(indexName);
                 currentCollection.getIndexes().add(currentIndex);
+                System.out.println("DEBUG: Created index: " + indexName + " for collection: " + currentCollection.getName());
                 continue;
             }
             
@@ -163,8 +173,10 @@ public class FhirConfigurationLoader {
             }
             
             // Parse index SQL
-            if (currentIndex != null && trimmed.startsWith("sql:") && inIndexes) {
-                currentIndex.setSql(extractValue(trimmed));
+            if (currentIndex != null && trimmed.startsWith("sql:") && inIndexes && !inBuildCommands) {
+                String sqlValue = extractValue(trimmed);
+                currentIndex.setSql(sqlValue);
+                System.out.println("DEBUG: Setting SQL for index " + currentIndex.getName() + ": " + sqlValue);
                 continue;
             }
         }

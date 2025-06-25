@@ -206,6 +206,13 @@ public class FhirBucketService {
             for (FhirConfiguration.CollectionConfiguration collection : scopeConfig.getCollections()) {
                 for (FhirConfiguration.IndexConfiguration index : collection.getIndexes()) {
                     try {
+                        // Add null check and debug logging
+                        if (index.getSql() == null) {
+                            logger.error("SQL is null for index: {} in collection: {}.{}", 
+                                       index.getName(), scopeConfig.getName(), collection.getName());
+                            continue; // Skip this index
+                        }
+                        
                         String sql = index.getSql().replace("{bucket}", bucketName);
                         cluster.query(sql, QueryOptions.queryOptions().timeout(java.time.Duration.ofMinutes(5)));
                         logger.info("Created index: {} for collection: {}.{}", 
