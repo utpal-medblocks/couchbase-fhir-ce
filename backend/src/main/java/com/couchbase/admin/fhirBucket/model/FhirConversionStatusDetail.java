@@ -31,7 +31,7 @@ public class FhirConversionStatusDetail {
         this.bucketName = bucketName;
         this.status = FhirConversionStatus.INITIATED;
         this.startedAt = LocalDateTime.now();
-        this.totalSteps = 6; // Based on our YAML conversion steps
+        this.totalSteps = 7; // Based on our YAML conversion steps (including deferred index building)
         this.completedSteps = 0;
         this.progressPercentage = 0;
     }

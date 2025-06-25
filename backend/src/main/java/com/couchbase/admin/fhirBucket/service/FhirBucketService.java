@@ -11,7 +11,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
-import java.io.IOException;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -134,10 +134,15 @@ public class FhirBucketService {
             createIndexes(cluster, bucketName);
             status.setCompletedSteps(5);
             
-            // Step 6: Mark as FHIR bucket
+            // Step 6: Build deferred indexes
+            updateStatus(status, "build_deferred_indexes", "Building deferred indexes");
+            buildDeferredIndexes(cluster, bucketName);
+            status.setCompletedSteps(6);
+            
+            // Step 7: Mark as FHIR bucket
             updateStatus(status, "mark_as_fhir", "Marking bucket as FHIR-enabled");
             markAsFhirBucket(bucketName);
-            status.setCompletedSteps(6);
+            status.setCompletedSteps(7);
             
             // Completion
             status.setStatus(FhirConversionStatus.COMPLETED);
@@ -214,6 +219,43 @@ public class FhirBucketService {
                     }
                 }
             }
+        }
+    }
+    
+    private void buildDeferredIndexes(Cluster cluster, String bucketName) throws Exception {
+        // Get the build commands from configuration
+        List<FhirConfiguration.BuildCommand> buildCommands = fhirConfig.getFhir().getBuildCommands();
+        
+        if (buildCommands != null && !buildCommands.isEmpty()) {
+            for (FhirConfiguration.BuildCommand buildCommand : buildCommands) {
+                logger.info("Executing build command: {}", buildCommand.getName());
+                
+                // Execute the query to get the BUILD INDEX statements
+                String query = buildCommand.getQuery().replace("{bucket}", bucketName);
+                
+                try {
+                    var result = cluster.query(query);
+                    
+                    // Process each BUILD INDEX statement
+                    for (var row : result.rowsAsObject()) {
+                        String buildIndexSql = row.toString().replaceAll("^\"|\"$", ""); // Remove quotes
+                        logger.info("Executing BUILD INDEX: {}", buildIndexSql);
+                        
+                        try {
+                            cluster.query(buildIndexSql);
+                            logger.info("Successfully built index");
+                        } catch (Exception e) {
+                            logger.warn("Failed to build index: {} - {}", buildIndexSql, e.getMessage());
+                            // Continue with other indexes even if one fails
+                        }
+                    }
+                } catch (Exception e) {
+                    logger.error("Failed to execute build command query: {}", query, e);
+                    throw e;
+                }
+            }
+        } else {
+            logger.info("No build commands found in configuration");
         }
     }
     

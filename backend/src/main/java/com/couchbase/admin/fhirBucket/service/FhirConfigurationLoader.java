@@ -28,12 +28,17 @@ public class FhirConfigurationLoader {
         FhirConfiguration config = new FhirConfiguration();
         FhirConfiguration.FhirSettings fhirSettings = new FhirConfiguration.FhirSettings();
         Map<String, FhirConfiguration.ScopeConfiguration> scopes = new HashMap<>();
+        List<FhirConfiguration.BuildCommand> buildCommands = new ArrayList<>();
         
         String line;
         FhirConfiguration.ScopeConfiguration currentScope = null;
         FhirConfiguration.CollectionConfiguration currentCollection = null;
         FhirConfiguration.IndexConfiguration currentIndex = null;
+        FhirConfiguration.BuildCommand currentBuildCommand = null;
         boolean inIndexes = false;
+        boolean inBuildCommands = false;
+        boolean inQuery = false;
+        StringBuilder queryBuilder = new StringBuilder();
         
         while ((line = reader.readLine()) != null) {
             String trimmed = line.trim();
@@ -43,9 +48,56 @@ public class FhirConfigurationLoader {
                 continue;
             }
             
-            // Stop parsing when we reach build_commands section
+            // Check for build_commands section
             if (trimmed.equals("build_commands:")) {
-                break;
+                inBuildCommands = true;
+                inIndexes = false;
+                currentScope = null;
+                currentCollection = null;
+                currentIndex = null;
+                continue;
+            }
+            
+            // Parse build commands
+            if (inBuildCommands && trimmed.startsWith("- name:")) {
+                currentBuildCommand = new FhirConfiguration.BuildCommand();
+                currentBuildCommand.setName(extractValue(trimmed));
+                buildCommands.add(currentBuildCommand);
+                inQuery = false;
+                continue;
+            }
+            
+            if (currentBuildCommand != null && trimmed.startsWith("description:") && inBuildCommands) {
+                currentBuildCommand.setDescription(extractValue(trimmed));
+                continue;
+            }
+            
+            if (currentBuildCommand != null && trimmed.startsWith("query:") && inBuildCommands) {
+                inQuery = true;
+                queryBuilder = new StringBuilder();
+                // Handle single line query or start of multi-line
+                String queryValue = extractValue(trimmed);
+                if (!queryValue.equals("|")) {
+                    queryBuilder.append(queryValue);
+                }
+                continue;
+            }
+            
+            // Handle multi-line query content
+            if (inQuery && inBuildCommands) {
+                if (trimmed.startsWith("- ") || trimmed.startsWith("#")) {
+                    // End of query, save it
+                    currentBuildCommand.setQuery(queryBuilder.toString().trim());
+                    inQuery = false;
+                    // Don't continue here, let it process the next section
+                } else {
+                    // Add line to query
+                    if (queryBuilder.length() > 0) {
+                        queryBuilder.append("\n");
+                    }
+                    queryBuilder.append(line); // Use original line to preserve indentation
+                    continue;
+                }
             }
             
             // Parse scope level (admin: or resources:)
@@ -117,7 +169,13 @@ public class FhirConfigurationLoader {
             }
         }
         
+        // Handle case where query is at the end of file
+        if (inQuery && currentBuildCommand != null) {
+            currentBuildCommand.setQuery(queryBuilder.toString().trim());
+        }
+        
         fhirSettings.setScopes(scopes);
+        fhirSettings.setBuildCommands(buildCommands);
         config.setFhir(fhirSettings);
         
         return config;

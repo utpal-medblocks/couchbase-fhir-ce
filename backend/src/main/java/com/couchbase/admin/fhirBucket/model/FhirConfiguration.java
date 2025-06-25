@@ -28,6 +28,7 @@ public class FhirConfiguration {
 
     public static class FhirSettings {
         private Map<String, ScopeConfiguration> scopes;
+        private List<BuildCommand> buildCommands;
 
         public Map<String, ScopeConfiguration> getScopes() {
             return scopes;
@@ -35,6 +36,14 @@ public class FhirConfiguration {
 
         public void setScopes(Map<String, ScopeConfiguration> scopes) {
             this.scopes = scopes;
+        }
+
+        public List<BuildCommand> getBuildCommands() {
+            return buildCommands;
+        }
+
+        public void setBuildCommands(List<BuildCommand> buildCommands) {
+            this.buildCommands = buildCommands;
         }
     }
 
@@ -158,6 +167,36 @@ public class FhirConfiguration {
 
         public void setDescription(String description) {
             this.description = description;
+        }
+    }
+
+    public static class BuildCommand {
+        private String name;
+        private String description;
+        private String query;
+
+        public String getName() {
+            return name;
+        }
+
+        public void setName(String name) {
+            this.name = name;
+        }
+
+        public String getDescription() {
+            return description;
+        }
+
+        public void setDescription(String description) {
+            this.description = description;
+        }
+
+        public String getQuery() {
+            return query;
+        }
+
+        public void setQuery(String query) {
+            this.query = query;
         }
     }
 }
