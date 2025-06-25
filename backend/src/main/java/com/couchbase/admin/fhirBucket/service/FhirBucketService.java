@@ -11,6 +11,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
+import java.io.IOException;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -25,7 +26,7 @@ public class FhirBucketService {
     private ConnectionService connectionService;
     
     @Autowired
-    private FhirConfigurationProvider configurationProvider;
+    private FhirConfigurationLoader configurationLoader;
     
     private FhirConfiguration fhirConfig;
     
@@ -37,12 +38,12 @@ public class FhirBucketService {
     }
     
     /**
-     * Load FHIR configuration from provider
+     * Load FHIR configuration from YAML file
      */
     private void loadFhirConfiguration() {
         if (fhirConfig == null) {
             try {
-                this.fhirConfig = configurationProvider.getConfiguration();
+                this.fhirConfig = configurationLoader.loadConfiguration();
                 logger.info("FHIR configuration loaded successfully");
                 
                 // Debug: Log what collections will be created

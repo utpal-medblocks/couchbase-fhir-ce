@@ -43,6 +43,11 @@ public class FhirConfigurationLoader {
                 continue;
             }
             
+            // Stop parsing when we reach build_commands section
+            if (trimmed.equals("build_commands:")) {
+                break;
+            }
+            
             // Parse scope level (admin: or resources:)
             if (trimmed.matches("^\\s*(admin|resources):\\s*$")) {
                 String scopeKey = trimmed.replace(":", "").trim();
