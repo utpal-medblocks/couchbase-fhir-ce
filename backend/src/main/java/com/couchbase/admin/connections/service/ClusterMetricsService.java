@@ -6,6 +6,7 @@ import com.couchbase.client.java.http.HttpResponse;
 import com.couchbase.client.java.http.HttpTarget;
 import com.couchbase.client.java.http.HttpPath;
 import com.couchbase.admin.connections.model.ClusterMetrics;
+import com.couchbase.admin.fhirBucket.service.FhirBucketService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
@@ -24,6 +25,9 @@ public class ClusterMetricsService {
     
     @Autowired
     private ConnectionService connectionService;
+    
+    @Autowired
+    private FhirBucketService fhirBucketService;
     
     public ClusterMetricsService() {
         this.objectMapper = new ObjectMapper();
@@ -59,7 +63,7 @@ public class ClusterMetricsService {
                 // Extract all data from single response
                 String clusterName = extractClusterName(poolsData);
                 List<ClusterMetrics.NodeMetrics> nodes = extractNodeMetrics(poolsData);
-                List<ClusterMetrics.BucketMetrics> buckets = extractBucketMetrics(poolsData, httpClient);
+                List<ClusterMetrics.BucketMetrics> buckets = extractBucketMetrics(poolsData, httpClient, connectionName);
                 ClusterMetrics.StorageTotals storageTotals = extractStorageTotals(poolsData);
                 List<ClusterMetrics.ClusterAlert> alerts = extractAlerts(poolsData);
                 ClusterMetrics.ServiceQuotas serviceQuotas = extractServiceQuotas(poolsData);
@@ -121,7 +125,7 @@ public class ClusterMetricsService {
     /**
      * Extract bucket metrics - try detailed buckets first, fallback to bucket names
      */
-    private List<ClusterMetrics.BucketMetrics> extractBucketMetrics(JsonNode poolsData, CouchbaseHttpClient httpClient) {
+    private List<ClusterMetrics.BucketMetrics> extractBucketMetrics(JsonNode poolsData, CouchbaseHttpClient httpClient, String connectionName) {
         List<ClusterMetrics.BucketMetrics> buckets = new ArrayList<>();
         
         try {
@@ -144,7 +148,7 @@ public class ClusterMetricsService {
                 if (bucketsArray.isArray()) {
                     // logger.info("Found {} buckets in enhanced response", bucketsArray.size());
                     for (JsonNode bucketData : bucketsArray) {
-                        ClusterMetrics.BucketMetrics bucketMetrics = parseEnhancedBucketMetrics(bucketData);
+                        ClusterMetrics.BucketMetrics bucketMetrics = parseEnhancedBucketMetrics(bucketData, connectionName);
                         if (bucketMetrics != null) {
                             // logger.info("Parsed enhanced bucket: {} with RAM {}/{} MB, Ops/sec: {}, Resident Ratio: {}%", 
                             //     bucketMetrics.getName(), bucketMetrics.getRamUsed(), bucketMetrics.getRamQuota(),
@@ -170,9 +174,17 @@ public class ClusterMetricsService {
                 for (JsonNode bucketInfo : bucketNames) {
                     String bucketName = bucketInfo.get("bucketName").asText();
                     
+                    // Check FHIR status for this bucket
+                    Boolean isFhirBucket = null;
+                    try {
+                        isFhirBucket = fhirBucketService.isFhirBucket(bucketName, connectionName);
+                    } catch (Exception e) {
+                        logger.warn("Failed to check FHIR status for bucket {}: {}", bucketName, e.getMessage());
+                    }
+                    
                     // Create bucket metrics with placeholder values
                     ClusterMetrics.BucketMetrics bucketMetrics = new ClusterMetrics.BucketMetrics(
-                        bucketName, 0, 0, 0, 0 // Note: 0 values will be handled
+                        bucketName, 0, 0, 0, 0, 0.0, 0, 100.0, 0.0, 0, 0, null, isFhirBucket
                     );
                     logger.info("Created fallback bucket: {} with limited data", bucketName);
                     buckets.add(bucketMetrics);
@@ -319,7 +331,7 @@ public class ClusterMetricsService {
     /**
      * Parse enhanced bucket metrics from JSON with all statistics
      */
-    private ClusterMetrics.BucketMetrics parseEnhancedBucketMetrics(JsonNode bucketData) {
+    private ClusterMetrics.BucketMetrics parseEnhancedBucketMetrics(JsonNode bucketData, String connectionName) {
         try {
             String name = bucketData.get("name").asText();
             // logger.debug("Parsing enhanced bucket: {}", name);
@@ -371,12 +383,20 @@ public class ClusterMetricsService {
                 }
             }
             
+            // Check FHIR status for this bucket
+            Boolean isFhirBucket = null;
+            try {
+                isFhirBucket = fhirBucketService.isFhirBucket(name, connectionName);
+            } catch (Exception e) {
+                logger.warn("Failed to check FHIR status for bucket {}: {}", name, e.getMessage());
+            }
+            
             // logger.info("Enhanced bucket {} stats - RAM: {}/{} MB, Items: {}, Ops/sec: {}, Disk Fetches: {}, Resident Ratio: {}%, Quota Used: {}%", 
             //     name, ramUsed, ramQuota, itemCount, opsPerSec, diskFetches, String.format("%.1f", residentRatio), String.format("%.1f", quotaPercentUsed));
             
             ClusterMetrics.BucketMetrics result = new ClusterMetrics.BucketMetrics(name, ramQuota, ramUsed, itemCount, diskUsed,
                                                                                    opsPerSec, diskFetches, residentRatio, quotaPercentUsed,
-                                                                                   dataUsed, vbActiveNumNonResident, bucketStorageTotals);
+                                                                                   dataUsed, vbActiveNumNonResident, bucketStorageTotals, isFhirBucket);
             
             // logger.info("Successfully parsed enhanced bucket: {} with full statistics", name);
             return result;

@@ -45,7 +45,9 @@ const DashboardCouchbaseServer: React.FC = () => {
     fetchMetrics();
 
     // Set up polling interval
-    const interval = setInterval(fetchMetrics, 30000); // 30 seconds
+    const interval = setInterval(() => {
+      fetchMetrics();
+    }, 30000); // 30 seconds
 
     // Cleanup on unmount or connection change
     return () => {
@@ -71,6 +73,7 @@ const DashboardCouchbaseServer: React.FC = () => {
   const handleConversionSuccess = () => {
     // Refresh metrics to show updated bucket status
     fetchMetrics();
+    // Refresh FHIR buckets to show updated status
     setDialogOpen(false);
   };
 

@@ -10,6 +10,7 @@ import {
   LinearProgress,
   Box,
 } from "@mui/material";
+import { useConnectionStore } from "../../store/connectionStore";
 
 interface AddFhirBucketDialogProps {
   open: boolean;
@@ -47,6 +48,7 @@ const AddFhirBucketDialog: React.FC<AddFhirBucketDialogProps> = ({
   const [conversionStatus, setConversionStatus] =
     useState<ConversionStatus | null>(null);
   const [operationId, setOperationId] = useState<string | null>(null);
+  const { setBucketFhirStatus } = useConnectionStore();
 
   // Cleanup when dialog closes
   useEffect(() => {
@@ -76,6 +78,10 @@ const AddFhirBucketDialog: React.FC<AddFhirBucketDialogProps> = ({
               setIsConverting(false);
               setInfo("FHIR bucket conversion completed successfully!");
               window.clearInterval(interval);
+
+              // Update the store to mark this bucket as FHIR-enabled
+              setBucketFhirStatus(bucketName, true);
+
               if (onSuccess) {
                 setTimeout(() => onSuccess(), 1000);
               }

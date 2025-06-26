@@ -284,23 +284,31 @@ public class FhirBucketService {
                 return false;
             }
             
-            // Query for the FHIR configuration document
-            String sql = String.format(
-                "SELECT VALUE FROM `%s`.`Admin`.`config` WHERE META().id = 'fhir-config'",
-                bucketName
-            );
+            // Use KV operation to check if the fhir-config document exists
+            var bucket = cluster.bucket(bucketName);
+            var collection = bucket.scope("Admin").collection("config");
             
-            var result = cluster.query(sql);
-            var rows = result.rowsAsObject();
+            // Try to get the document - if it exists, bucket is FHIR-enabled
+            var result = collection.get("fhir-config");
+            return result != null;
             
-            if (!rows.isEmpty()) {
-                var row = rows.get(0);
-                var config = row.getObject("VALUE");
-                return config != null && config.getBoolean("isFHIR");
-            }
-            
-            return false;
         } catch (Exception e) {
+            // If scope doesn't exist, bucket is not FHIR-enabled
+            if (e.getMessage() != null && e.getMessage().contains("Scope not found")) {
+                logger.debug("Scope Admin not found in bucket {}, not FHIR-enabled", bucketName);
+                return false;
+            }
+            // If collection doesn't exist, bucket is not FHIR-enabled
+            if (e.getMessage() != null && e.getMessage().contains("Collection not found")) {
+                logger.debug("Collection Admin.config not found in bucket {}, not FHIR-enabled", bucketName);
+                return false;
+            }
+            // If document doesn't exist, bucket is not FHIR-enabled
+            if (e.getMessage() != null && e.getMessage().contains("Document not found")) {
+                logger.debug("Document fhir-config not found in bucket {}, not FHIR-enabled", bucketName);
+                return false;
+            }
+            // For other errors, log warning but don't fail
             logger.warn("Failed to check if bucket {} is FHIR-enabled: {}", bucketName, e.getMessage());
             return false;
         }

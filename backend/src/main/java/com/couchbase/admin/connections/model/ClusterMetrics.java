@@ -274,6 +274,10 @@ public class ClusterMetrics {
         @JsonProperty("bucketStorageTotals")
         private StorageTotals bucketStorageTotals;
         
+        // FHIR bucket status
+        @JsonProperty("isFhirBucket")
+        private Boolean isFhirBucket;
+        
         public BucketMetrics() {}
         
         public BucketMetrics(String name, int ramQuota, int ramUsed, long itemCount, long diskUsed) {
@@ -299,6 +303,25 @@ public class ClusterMetrics {
             this.dataUsed = dataUsed;
             this.vbActiveNumNonResident = vbActiveNumNonResident;
             this.bucketStorageTotals = bucketStorageTotals;
+        }
+        
+        public BucketMetrics(String name, int ramQuota, int ramUsed, long itemCount, long diskUsed,
+                            double opsPerSec, long diskFetches, double residentRatio, double quotaPercentUsed,
+                            long dataUsed, long vbActiveNumNonResident, StorageTotals bucketStorageTotals,
+                            Boolean isFhirBucket) {
+            this.name = name;
+            this.ramQuota = ramQuota;
+            this.ramUsed = ramUsed;
+            this.itemCount = itemCount;
+            this.diskUsed = diskUsed;
+            this.opsPerSec = opsPerSec;
+            this.diskFetches = diskFetches;
+            this.residentRatio = residentRatio;
+            this.quotaPercentUsed = quotaPercentUsed;
+            this.dataUsed = dataUsed;
+            this.vbActiveNumNonResident = vbActiveNumNonResident;
+            this.bucketStorageTotals = bucketStorageTotals;
+            this.isFhirBucket = isFhirBucket;
         }
         
         // Getters and Setters
@@ -363,6 +386,9 @@ public class ClusterMetrics {
         
         public StorageTotals getBucketStorageTotals() { return bucketStorageTotals; }
         public void setBucketStorageTotals(StorageTotals bucketStorageTotals) { this.bucketStorageTotals = bucketStorageTotals; }
+        
+        public Boolean getIsFhirBucket() { return isFhirBucket; }
+        public void setIsFhirBucket(Boolean isFhirBucket) { this.isFhirBucket = isFhirBucket; }
     }
     
     // Inner class for Storage Totals
