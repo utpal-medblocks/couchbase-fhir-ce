@@ -8,6 +8,7 @@ interface ConnectionInfo {
   name: string;
   version: string;
   isConnected: boolean;
+  isSSL?: boolean; // SSL connection status
 }
 
 interface ConnectionRequest {
@@ -44,6 +45,7 @@ interface BucketMetrics {
   dataUsed: number;
   vbActiveNumNonResident: number;
   isFhirBucket?: boolean;
+  status?: string; // "Ready" or "Building"
 }
 
 interface ClusterAlert {
@@ -176,6 +178,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
         metrics.buckets.map((bucket) => ({
           name: bucket.name,
           isFhirBucket: bucket.isFhirBucket,
+          status: bucket.status,
         }))
       );
     }
@@ -243,11 +246,32 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
 
         if (connections.length > 0) {
           const activeConnection = connections[0];
+
+          // Fetch SSL status for this connection
+          let isSSL = false;
+          try {
+            const sslResponse = await axios.get(
+              `/api/connections/${activeConnection}/details`,
+              {
+                timeout: 5000,
+              }
+            );
+            if (sslResponse.data && sslResponse.data.success) {
+              isSSL = sslResponse.data.isSSL;
+            }
+          } catch (sslError) {
+            console.warn(
+              "Failed to fetch SSL status for connection:",
+              sslError
+            );
+          }
+
           const connectionInfo: ConnectionInfo = {
             id: `conn-${activeConnection}`,
             name: activeConnection,
             version: "7.6.0",
             isConnected: true,
+            isSSL: isSSL,
           };
 
           // console.log(
@@ -443,6 +467,8 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
           name: bucket.name,
           isFhirBucket: bucket.isFhirBucket,
           hasIsFhirBucket: "isFhirBucket" in bucket,
+          status: bucket.status,
+          hasStatus: "status" in bucket,
         }))
       );
 

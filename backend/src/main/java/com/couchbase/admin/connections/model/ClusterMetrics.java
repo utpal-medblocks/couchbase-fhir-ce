@@ -278,6 +278,10 @@ public class ClusterMetrics {
         @JsonProperty("isFhirBucket")
         private Boolean isFhirBucket;
         
+        // Bucket status (Ready or Building)
+        @JsonProperty("status")
+        private String status;
+        
         public BucketMetrics() {}
         
         public BucketMetrics(String name, int ramQuota, int ramUsed, long itemCount, long diskUsed) {
@@ -322,6 +326,26 @@ public class ClusterMetrics {
             this.vbActiveNumNonResident = vbActiveNumNonResident;
             this.bucketStorageTotals = bucketStorageTotals;
             this.isFhirBucket = isFhirBucket;
+        }
+        
+        public BucketMetrics(String name, int ramQuota, int ramUsed, long itemCount, long diskUsed,
+                            double opsPerSec, long diskFetches, double residentRatio, double quotaPercentUsed,
+                            long dataUsed, long vbActiveNumNonResident, StorageTotals bucketStorageTotals,
+                            Boolean isFhirBucket, String status) {
+            this.name = name;
+            this.ramQuota = ramQuota;
+            this.ramUsed = ramUsed;
+            this.itemCount = itemCount;
+            this.diskUsed = diskUsed;
+            this.opsPerSec = opsPerSec;
+            this.diskFetches = diskFetches;
+            this.residentRatio = residentRatio;
+            this.quotaPercentUsed = quotaPercentUsed;
+            this.dataUsed = dataUsed;
+            this.vbActiveNumNonResident = vbActiveNumNonResident;
+            this.bucketStorageTotals = bucketStorageTotals;
+            this.isFhirBucket = isFhirBucket;
+            this.status = status;
         }
         
         // Getters and Setters
@@ -389,6 +413,14 @@ public class ClusterMetrics {
         
         public Boolean getIsFhirBucket() { return isFhirBucket; }
         public void setIsFhirBucket(Boolean isFhirBucket) { this.isFhirBucket = isFhirBucket; }
+        
+        public String getStatus() {
+            return status;
+        }
+        
+        public void setStatus(String status) {
+            this.status = status;
+        }
     }
     
     // Inner class for Storage Totals

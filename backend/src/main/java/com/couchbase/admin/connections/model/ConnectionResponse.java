@@ -105,12 +105,22 @@ public class ConnectionResponse {
         @JsonProperty("connectedAt")
         private long connectedAt;
         
+        @JsonProperty("isSSL")
+        private boolean isSSL;
+        
         public ConnectionInfo() {}
         
         public ConnectionInfo(String clusterVersion, java.util.List<String> buckets) {
             this.clusterVersion = clusterVersion;
             this.buckets = buckets;
             this.connectedAt = System.currentTimeMillis();
+        }
+        
+        public ConnectionInfo(String clusterVersion, java.util.List<String> buckets, boolean isSSL) {
+            this.clusterVersion = clusterVersion;
+            this.buckets = buckets;
+            this.connectedAt = System.currentTimeMillis();
+            this.isSSL = isSSL;
         }
         
         // Getters and Setters
@@ -136,6 +146,14 @@ public class ConnectionResponse {
         
         public void setConnectedAt(long connectedAt) {
             this.connectedAt = connectedAt;
+        }
+        
+        public boolean isSSL() {
+            return isSSL;
+        }
+        
+        public void setSSL(boolean ssl) {
+            isSSL = ssl;
         }
     }
 } 

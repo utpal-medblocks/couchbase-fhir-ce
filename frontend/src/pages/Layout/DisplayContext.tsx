@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect } from "react";
 import type { ReactNode } from "react";
 import { Box, Typography } from "@mui/material";
-import { BsBucket, BsUnlock } from "react-icons/bs";
+import { BsBucket, BsUnlock, BsLock } from "react-icons/bs";
 import { AiOutlineCluster } from "react-icons/ai";
 import flame from "../../assets/icons/flame.png";
 import { useConnectionStore } from "../../store/connectionStore";
@@ -107,7 +107,18 @@ const DisplayContextComponent = () => {
         <Typography variant="body2">
           <b>Server</b> {clusterName} {clusterVersion}
         </Typography>
-        <BsUnlock style={{ fontSize: "14px" }} />
+        {connection.isConnected &&
+          (connection.isSSL ? (
+            <BsLock
+              style={{ fontSize: "14px", color: "#4caf50" }}
+              title="SSL/TLS Enabled"
+            />
+          ) : (
+            <BsUnlock
+              style={{ fontSize: "14px", color: "#ff9800" }}
+              title="SSL/TLS Disabled"
+            />
+          ))}
       </Box>
 
       {/* Second line - Bucket/Scope info */}

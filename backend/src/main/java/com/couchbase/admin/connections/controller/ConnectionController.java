@@ -167,4 +167,29 @@ public class ConnectionController {
             return ResponseEntity.internalServerError().body(errorResponse);
         }
     }
+
+    /**
+     * Get connection details including SSL status
+     */
+    @GetMapping("/{connectionName}/details")
+    public ResponseEntity<Map<String, Object>> getConnectionDetails(@PathVariable String connectionName) {
+        try {
+            boolean isSSL = connectionService.isSSLEnabled(connectionName);
+            
+            Map<String, Object> response = Map.of(
+                "success", true,
+                "connectionName", connectionName,
+                "isSSL", isSSL
+            );
+            
+            return ResponseEntity.ok(response);
+        } catch (Exception e) {
+            logger.error("Error getting connection details for {}: {}", connectionName, e.getMessage(), e);
+            Map<String, Object> errorResponse = Map.of(
+                "success", false,
+                "error", e.getMessage()
+            );
+            return ResponseEntity.internalServerError().body(errorResponse);
+        }
+    }
 } 

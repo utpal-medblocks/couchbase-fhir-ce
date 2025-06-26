@@ -24,6 +24,29 @@ public class ConnectionService {
     // Store active connections
     private final Map<String, Cluster> activeConnections = new ConcurrentHashMap<>();
     
+    // Store connection details including SSL status
+    private final Map<String, ConnectionDetails> connectionDetails = new ConcurrentHashMap<>();
+    
+    // Inner class to store connection details
+    public static class ConnectionDetails {
+        private final boolean sslEnabled;
+        private final String connectionString;
+        private final String username;
+        private final String password;
+        
+        public ConnectionDetails(boolean sslEnabled, String connectionString, String username, String password) {
+            this.sslEnabled = sslEnabled;
+            this.connectionString = connectionString;
+            this.username = username;
+            this.password = password;
+        }
+        
+        public boolean isSslEnabled() { return sslEnabled; }
+        public String getConnectionString() { return connectionString; }
+        public String getUsername() { return username; }
+        public String getPassword() { return password; }
+    }
+    
     /**
      * Create and store a connection for later use
      */
@@ -65,6 +88,10 @@ public class ConnectionService {
             
             // Store the new connection
             activeConnections.put(request.getName(), cluster);
+            
+            // Store connection details including SSL status
+            connectionDetails.put(request.getName(), new ConnectionDetails(request.isSslEnabled(), request.getConnectionString(), request.getUsername(), request.getPassword()));
+            
             logger.info("Successfully created and stored connection: {}", request.getName());
             
             // Extract cluster name from connection string for response
@@ -93,10 +120,74 @@ public class ConnectionService {
     }
     
     /**
+     * Get SSL status for a connection
+     */
+    public boolean isSSLEnabled(String connectionName) {
+        ConnectionDetails details = connectionDetails.get(connectionName);
+        return details != null && details.isSslEnabled();
+    }
+    
+    /**
+     * Get connection details for REST API calls
+     */
+    public ConnectionDetails getConnectionDetails(String connectionName) {
+        return connectionDetails.get(connectionName);
+    }
+    
+    /**
+     * Extract hostname from connection string
+     */
+    public String getHostname(String connectionName) {
+        ConnectionDetails details = connectionDetails.get(connectionName);
+        if (details == null) {
+            return null;
+        }
+        
+        try {
+            String connectionString = details.getConnectionString();
+            // Remove protocol prefix
+            String cleanString = connectionString.replaceAll("^couchbases?://", "");
+            // Extract hostname (before any port or path)
+            String[] parts = cleanString.split("[:/]");
+            return parts[0];
+        } catch (Exception e) {
+            logger.warn("Could not extract hostname from connection string: {}", details.getConnectionString());
+            return "localhost";
+        }
+    }
+    
+    /**
+     * Extract port from connection string
+     */
+    public int getPort(String connectionName) {
+        ConnectionDetails details = connectionDetails.get(connectionName);
+        if (details == null) {
+            return 8091; // default Couchbase REST port
+        }
+        
+        try {
+            String connectionString = details.getConnectionString();
+            // Remove protocol prefix
+            String cleanString = connectionString.replaceAll("^couchbases?://", "");
+            // Extract port if present
+            String[] parts = cleanString.split("[:/]");
+            if (parts.length > 1 && parts[1].matches("\\d+")) {
+                return Integer.parseInt(parts[1]);
+            }
+            return 8091; // default Couchbase REST port
+        } catch (Exception e) {
+            logger.warn("Could not extract port from connection string: {}", details.getConnectionString());
+            return 8091;
+        }
+    }
+    
+    /**
      * Close a specific connection
      */
     public boolean closeConnection(String connectionName) {
         Cluster cluster = activeConnections.remove(connectionName);
+        connectionDetails.remove(connectionName); // Clean up connection details
+        
         if (cluster != null) {
             try {
                 cluster.disconnect();
@@ -132,6 +223,7 @@ public class ConnectionService {
             }
         });
         activeConnections.clear();
+        connectionDetails.clear(); // Clean up all connection details
     }
     
     /**

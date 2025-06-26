@@ -264,6 +264,7 @@ public class FhirBucketService {
         try {
             cluster.query(sql);
             logger.info("Successfully marked bucket {} as FHIR-enabled", bucketName);
+            
         } catch (Exception e) {
             if (e.getMessage() != null && e.getMessage().contains("already exists")) {
                 logger.warn("FHIR config document already exists in bucket: {}", bucketName);
@@ -271,46 +272,6 @@ public class FhirBucketService {
                 logger.error("Failed to mark bucket {} as FHIR-enabled: {}", bucketName, e.getMessage());
                 throw e;
             }
-        }
-    }
-    
-    /**
-     * Check if a bucket is FHIR-enabled by looking for the configuration document
-     */
-    public boolean isFhirBucket(String bucketName, String connectionName) {
-        try {
-            Cluster cluster = connectionService.getConnection(connectionName);
-            if (cluster == null) {
-                return false;
-            }
-            
-            // Use KV operation to check if the fhir-config document exists
-            var bucket = cluster.bucket(bucketName);
-            var collection = bucket.scope("Admin").collection("config");
-            
-            // Try to get the document - if it exists, bucket is FHIR-enabled
-            var result = collection.get("fhir-config");
-            return result != null;
-            
-        } catch (Exception e) {
-            // If scope doesn't exist, bucket is not FHIR-enabled
-            if (e.getMessage() != null && e.getMessage().contains("Scope not found")) {
-                logger.debug("Scope Admin not found in bucket {}, not FHIR-enabled", bucketName);
-                return false;
-            }
-            // If collection doesn't exist, bucket is not FHIR-enabled
-            if (e.getMessage() != null && e.getMessage().contains("Collection not found")) {
-                logger.debug("Collection Admin.config not found in bucket {}, not FHIR-enabled", bucketName);
-                return false;
-            }
-            // If document doesn't exist, bucket is not FHIR-enabled
-            if (e.getMessage() != null && e.getMessage().contains("Document not found")) {
-                logger.debug("Document fhir-config not found in bucket {}, not FHIR-enabled", bucketName);
-                return false;
-            }
-            // For other errors, log warning but don't fail
-            logger.warn("Failed to check if bucket {} is FHIR-enabled: {}", bucketName, e.getMessage());
-            return false;
         }
     }
     
@@ -340,6 +301,81 @@ public class FhirBucketService {
         } catch (Exception e) {
             logger.error("Failed to get FHIR buckets: {}", e.getMessage());
             return new ArrayList<>();
+        }
+    }
+    
+    /**
+     * Check if a bucket is FHIR-enabled by looking for the configuration document
+     * Uses REST API to avoid SDK retry issues
+     */
+    public boolean isFhirBucket(String bucketName, String connectionName) {
+        try {
+            // Get connection details from connection service
+            String hostname = connectionService.getHostname(connectionName);
+            int port = connectionService.getPort(connectionName);
+            var connectionDetails = connectionService.getConnectionDetails(connectionName);
+            
+            if (hostname == null || connectionDetails == null) {
+                logger.warn("Could not get connection details for REST call");
+                return false;
+            }
+            
+            // Use REST API to check if fhir-config document exists
+            return checkFhirConfigViaRest(hostname, port, bucketName, connectionName,
+                                        connectionDetails.getUsername(), 
+                                        connectionDetails.getPassword());
+            
+        } catch (Exception e) {
+            logger.warn("Failed to check if bucket {} is FHIR-enabled: {}", bucketName, e.getMessage());
+            return false;
+        }
+    }
+    
+    /**
+     * Check FHIR config document via REST API using SDK's HTTP client
+     */
+    private boolean checkFhirConfigViaRest(String hostname, int port, String bucketName, String connectionName,
+                                         String username, String password) {
+        try {
+            // Get the cluster connection to access the HTTP client
+            Cluster cluster = connectionService.getConnection(connectionName);
+            if (cluster == null) {
+                logger.warn("No cluster connection available for REST call");
+                return false;
+            }
+            
+            // Use SDK's HTTP client
+            com.couchbase.client.java.http.CouchbaseHttpClient httpClient = cluster.httpClient();
+            
+            // Construct the REST path for the fhir-config document
+            com.couchbase.client.java.http.HttpResponse httpResponse = httpClient.get(
+                com.couchbase.client.java.http.HttpTarget.manager(),
+                com.couchbase.client.java.http.HttpPath.of(
+                    "/pools/default/buckets/{}/scopes/Admin/collections/config/docs/fhir-config",
+                    bucketName
+                )
+            );
+            
+            int statusCode = httpResponse.statusCode();
+            
+            // If we get a 200, the document exists (FHIR-enabled)
+            if (statusCode == 200) {
+                return true;
+            }
+            
+            // 404 means document doesn't exist (not FHIR-enabled)
+            if (statusCode == 404) {
+                return false;
+            }
+            
+            // Other status codes are unexpected
+            logger.warn("Unexpected status code {} when checking FHIR config for bucket {}", statusCode, bucketName);
+            return false;
+            
+        } catch (Exception e) {
+            // Log the error but don't fail the check
+            logger.debug("REST check for FHIR config failed: {}", e.getMessage());
+            return false;
         }
     }
 }

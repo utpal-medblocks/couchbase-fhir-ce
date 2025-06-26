@@ -219,6 +219,7 @@ const DashboardCouchbaseServer: React.FC = () => {
               <TableCell sx={tableHeaderStyle}>Disk Used</TableCell>
               <TableCell sx={tableHeaderStyle}>Items</TableCell>
               <TableCell sx={tableHeaderStyle}>Ops/Sec</TableCell>
+              <TableCell sx={tableHeaderStyle}>Status</TableCell>
               <TableCell sx={tableHeaderStyle}>FHIR</TableCell>
             </TableRow>
           </TableHead>
@@ -238,6 +239,22 @@ const DashboardCouchbaseServer: React.FC = () => {
                   </TableCell>
                   <TableCell sx={tableCellStyle}>
                     {bucket.opsPerSec.toFixed(1)}
+                  </TableCell>
+                  <TableCell sx={tableCellStyle}>
+                    <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                      <Box
+                        sx={{
+                          width: 8,
+                          height: 8,
+                          borderRadius: "50%",
+                          backgroundColor:
+                            bucket.status === "Ready"
+                              ? "success.main"
+                              : "warning.main",
+                        }}
+                      />
+                      {bucket.status || "Ready"}
+                    </Box>
                   </TableCell>
                   <TableCell sx={tableCellStyle}>
                     {bucket.isFhirBucket ? (
@@ -273,7 +290,7 @@ const DashboardCouchbaseServer: React.FC = () => {
               ))
             ) : (
               <TableRow>
-                <TableCell colSpan={5} sx={tableCellStyle} align="center">
+                <TableCell colSpan={7} sx={tableCellStyle} align="center">
                   No buckets available
                 </TableCell>
               </TableRow>
