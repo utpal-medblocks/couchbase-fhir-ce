@@ -173,14 +173,14 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
   setMetrics: (metrics) => {
     //    console.log("connectionStore: Setting metrics", metrics);
     if (metrics && metrics.buckets) {
-      console.log(
-        "🔍 connectionStore: Bucket metrics with FHIR status:",
-        metrics.buckets.map((bucket) => ({
-          name: bucket.name,
-          isFhirBucket: bucket.isFhirBucket,
-          status: bucket.status,
-        }))
-      );
+      // console.log(
+      //   "🔍 connectionStore: Bucket metrics with FHIR status:",
+      //   metrics.buckets.map((bucket) => ({
+      //     name: bucket.name,
+      //     isFhirBucket: bucket.isFhirBucket,
+      //     status: bucket.status,
+      //   }))
+      // );
     }
     set({ metrics });
   },
@@ -207,23 +207,6 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
       });
     }
   },
-
-  // setFhirBuckets: (buckets) => {
-  //   //    console.log("🔍 connectionStore: Setting fhirBuckets", buckets);
-  //   set({ fhirBuckets: buckets });
-  // },
-
-  // toggleFhirBucket: (bucketName) => {
-  //   //    console.log("🔍 connectionStore: Toggling fhirBucket", bucketName);
-  //   const { fhirBuckets } = get();
-  //   const newBuckets = new Set(fhirBuckets);
-  //   if (fhirBuckets.has(bucketName)) {
-  //     newBuckets.delete(bucketName);
-  //   } else {
-  //     newBuckets.add(bucketName);
-  //   }
-  //   set({ fhirBuckets: newBuckets });
-  // },
 
   // Async actions
   fetchConnection: async () => {
@@ -457,20 +440,20 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
         connection.name
       );
 
-      console.log(
-        "🔍 connectionStore: Raw metrics data from API:",
-        metricsData
-      );
-      console.log(
-        "🔍 connectionStore: Buckets in raw data:",
-        metricsData.buckets?.map((bucket: any) => ({
-          name: bucket.name,
-          isFhirBucket: bucket.isFhirBucket,
-          hasIsFhirBucket: "isFhirBucket" in bucket,
-          status: bucket.status,
-          hasStatus: "status" in bucket,
-        }))
-      );
+      // console.log(
+      //   "🔍 connectionStore: Raw metrics data from API:",
+      //   metricsData
+      // );
+      // console.log(
+      //   "🔍 connectionStore: Buckets in raw data:",
+      //   metricsData.buckets?.map((bucket: any) => ({
+      //     name: bucket.name,
+      //     isFhirBucket: bucket.isFhirBucket,
+      //     hasIsFhirBucket: "isFhirBucket" in bucket,
+      //     status: bucket.status,
+      //     hasStatus: "status" in bucket,
+      //   }))
+      // );
 
       //      console.log("🔍 connectionStore: Received metrics data:", metricsData);
 
@@ -497,30 +480,4 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
       });
     }
   },
-
-  // fetchFhirBuckets: async () => {
-  //   const { connection } = get();
-
-  //   if (!connection.isConnected || !connection.name) {
-  //     set({ fhirBuckets: new Set<string>() });
-  //     return;
-  //   }
-
-  //   try {
-  //     const response = await axios.get(
-  //       `/api/admin/fhir-buckets/fhir-buckets?connectionName=${connection.name}`
-  //     );
-
-  //     if (response.data && response.data.fhirBuckets) {
-  //       const fhirBucketsSet = new Set<string>(response.data.fhirBuckets);
-  //       set({ fhirBuckets: fhirBucketsSet });
-  //     } else {
-  //       set({ fhirBuckets: new Set<string>() });
-  //     }
-  //   } catch (error: any) {
-  //     console.warn("Failed to fetch FHIR buckets:", error);
-  //     // Don't set error state for this, just use empty set
-  //     set({ fhirBuckets: new Set<string>() });
-  //   }
-  // },
 }));
