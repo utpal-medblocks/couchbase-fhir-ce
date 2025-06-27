@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import {
   Box,
   Button,
@@ -8,17 +8,15 @@ import {
   TableContainer,
   TableHead,
   TableRow,
-  Paper,
   Typography,
   FormControl,
-  InputLabel,
   Select,
   MenuItem,
-  Stack,
   Card,
   CardContent,
   Alert,
   AlertTitle,
+  Toolbar,
 } from "@mui/material";
 import { useConnectionStore } from "../../store/connectionStore";
 import { useBucketStore } from "../../store/bucketStore";
@@ -41,12 +39,18 @@ const BucketsMain = () => {
   console.log(`🎯 FHIR Buckets: ${fhirBuckets.length}`, fhirBuckets);
   console.log(`🎯 Active Bucket:`, activeBucket);
   console.log(`🎯 Active Scope:`, activeScope);
+  console.log(`🎯 Collections: ${collections.length}`, collections);
 
   // Filter collections for active bucket and scope
   const filteredCollections = collections.filter(
     (col) =>
       col.bucketName === activeBucket?.bucketName &&
       col.scopeName === activeScope
+  );
+
+  console.log(
+    `🎯 Filtered Collections: ${filteredCollections.length}`,
+    filteredCollections
   );
 
   // Handle bucket selection
@@ -117,13 +121,33 @@ const BucketsMain = () => {
 
   return (
     <Box sx={{ p: 2 }}>
-      {/* Header Controls */}
-      <Stack direction={{ xs: "column", md: "row" }} spacing={2} sx={{ mb: 3 }}>
-        <FormControl sx={{ minWidth: 200 }}>
-          <InputLabel>FHIR Bucket</InputLabel>
+      <Toolbar disableGutters>
+        <Typography
+          variant="h6"
+          component="div"
+          sx={{ paddingLeft: 0, flexGrow: 1 }}
+        >
+          Collections
+        </Typography>
+        <Typography variant="body2" sx={{ color: "#bdbdbd" }}>
+          FHIR Bucket
+        </Typography>
+        <FormControl
+          variant="standard"
+          sx={{
+            minWidth: 150,
+            margin: 1,
+            padding: 0,
+            color: "GrayText",
+            "& .MuiSelect-select": {
+              paddingBottom: 0,
+            },
+            marginBottom: 0,
+          }}
+          size="small"
+        >
           <Select
             value={activeBucket?.bucketName || ""}
-            label="FHIR Bucket"
             onChange={(e) => handleBucketChange(e.target.value)}
           >
             {fhirBuckets.map((bucket) => (
@@ -131,14 +155,27 @@ const BucketsMain = () => {
                 {bucket.bucketName}
               </MenuItem>
             ))}
+            <Typography variant="body2" sx={{ color: "#bdbdbd" }}>
+              Scope
+            </Typography>
           </Select>
         </FormControl>
-
-        <FormControl sx={{ minWidth: 200 }}>
-          <InputLabel>Scope</InputLabel>
+        <FormControl
+          variant="standard"
+          sx={{
+            minWidth: 150,
+            margin: 1,
+            padding: 0,
+            color: "GrayText",
+            "& .MuiSelect-select": {
+              paddingBottom: 0,
+            },
+            marginBottom: 0,
+          }}
+          size="small"
+        >
           <Select
             value={activeScope || ""}
-            label="Scope"
             onChange={(e) => handleScopeChange(e.target.value)}
             disabled={!activeBucket}
           >
@@ -146,25 +183,15 @@ const BucketsMain = () => {
             <MenuItem value="Resources">Resources</MenuItem>
           </Select>
         </FormControl>
+      </Toolbar>
 
-        <Button
-          variant="outlined"
-          onClick={handleRefresh}
-          sx={{ minWidth: 120 }}
-        >
-          Refresh
-        </Button>
-      </Stack>
+      {/* Header Controls */}
 
       {/* Collections Table */}
       {activeBucket && activeScope && (
         <>
-          <Typography variant="h6" gutterBottom>
-            Collections in {activeBucket.bucketName} - {activeScope}
-          </Typography>
-
-          <TableContainer component={Paper}>
-            <Table>
+          <TableContainer sx={{ marginTop: "2px" }}>
+            <Table size="small" aria-label="collections table">
               <TableHead>
                 <TableRow>
                   <TableCell>Collection Name</TableCell>

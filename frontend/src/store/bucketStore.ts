@@ -42,6 +42,8 @@ export interface BucketDetails {
   quotaPercentUsed: number;
   residentRatio: number;
   cacheHit: number;
+  // Collection metrics from backend
+  collectionMetrics?: { [key: string]: { [key: string]: any } };
   // Note: No need for isFhirBucket flag since ALL buckets in store are FHIR-enabled
 }
 export interface IndexDetails {
@@ -420,7 +422,65 @@ export const useBucketStore = create<BucketStore>()((set, get) => ({
       // Update store with fetched data (all FHIR buckets)
       get().setBuckets(connectionId, bucketData);
 
-      console.log(`✅ Bucket data fetch completed for ${connectionId}`);
+      // Extract and populate collections from bucket data
+      const allCollections: CollectionDetails[] = [];
+      bucketData.forEach((bucket) => {
+        if (bucket.collectionMetrics) {
+          console.log(
+            `🔍 Processing collectionMetrics for bucket: ${bucket.bucketName}`,
+            bucket.collectionMetrics
+          );
+
+          // Convert collection metrics to CollectionDetails format
+          Object.entries(bucket.collectionMetrics).forEach(
+            ([scopeName, scopeData]) => {
+              if (
+                scopeData &&
+                typeof scopeData === "object" &&
+                "collections" in scopeData
+              ) {
+                const collections = scopeData.collections as {
+                  [key: string]: any;
+                };
+                Object.entries(collections).forEach(
+                  ([collectionName, metrics]) => {
+                    if (metrics && typeof metrics === "object") {
+                      const collectionDetail: CollectionDetails = {
+                        collectionName,
+                        scopeName,
+                        bucketName: bucket.bucketName,
+                        items: Number(metrics["items"]) || 0,
+                        diskSize: Number(metrics["diskSize"]) || 0,
+                        memUsed: Number(metrics["memUsed"]) || 0,
+                        ops: Number(metrics["ops"]) || 0,
+                        indexes: Number(metrics["indexes"]) || 0, // This might not be in the data yet
+                        maxTTL: Number(metrics["maxTTL"]) || 0,
+                      };
+                      allCollections.push(collectionDetail);
+                      console.log(
+                        `📦 Added collection: ${scopeName}.${collectionName}`,
+                        collectionDetail
+                      );
+                    }
+                  }
+                );
+              }
+            }
+          );
+        }
+      });
+
+      console.log(
+        `📦 Extracted ${allCollections.length} collections:`,
+        allCollections
+      );
+
+      // Update collections in store
+      get().setCollections(connectionId, allCollections);
+
+      console.log(
+        `✅ Bucket data and collections fetch completed for ${connectionId}`
+      );
       return bucketData;
     } catch (error) {
       console.error("Failed to fetch FHIR bucket data:", error);
@@ -429,6 +489,7 @@ export const useBucketStore = create<BucketStore>()((set, get) => ({
       // In production, you might want to throw the error
       const bucketData: BucketDetails[] = [];
       get().setBuckets(connectionId, bucketData);
+      get().setCollections(connectionId, []);
 
       return bucketData;
     }
