@@ -1,5 +1,15 @@
-import React from "react";
-import { Tabs, Tab, Box, Alert, AlertTitle } from "@mui/material";
+import React, { useEffect } from "react";
+import {
+  Tabs,
+  Tab,
+  Box,
+  Alert,
+  AlertTitle,
+  Typography,
+  FormControl,
+  Select,
+  MenuItem,
+} from "@mui/material";
 import BucketsMain from "./BucketsMain";
 import { useConnectionStore } from "../../store/connectionStore";
 import { useBucketStore } from "../../store/bucketStore";
@@ -17,8 +27,46 @@ const Buckets = () => {
 
   // Get bucket store data
   const bucketStore = useBucketStore();
+  const fhirBuckets = bucketStore.getFhirBuckets(connectionId);
   const activeBucket = bucketStore.getActiveBucket(connectionId);
   const activeScope = bucketStore.getActiveScope(connectionId);
+
+  // Handle bucket selection
+  const handleBucketChange = (bucketName: string) => {
+    bucketStore.setActiveBucket(connectionId, bucketName);
+  };
+
+  // Handle scope selection
+  const handleScopeChange = (scopeName: string) => {
+    bucketStore.setActiveScope(connectionId, scopeName);
+  };
+
+  // Refresh data
+  const handleRefresh = async () => {
+    try {
+      await bucketStore.fetchBucketData(connectionId);
+    } catch (error) {
+      console.error("Failed to refresh bucket data:", error);
+    }
+  };
+
+  // Effect to load initial data and set up refresh interval
+  useEffect(() => {
+    if (!connection.isConnected) {
+      return;
+    }
+
+    // Load initial data
+    handleRefresh();
+
+    // Set up 30-second refresh interval
+    const interval = setInterval(() => {
+      handleRefresh();
+    }, 30000); // 30 seconds
+
+    // Cleanup interval on unmount or connection change
+    return () => clearInterval(interval);
+  }, [connection.isConnected, connectionId]);
 
   // Check if we have a valid connection
   if (!connection.isConnected) {
@@ -45,30 +93,96 @@ const Buckets = () => {
         p: 0,
       }}
     >
-      <Tabs value={selectedTab} onChange={handleChange}>
-        <Tab sx={{ textTransform: "none", margin: 0 }} label="Buckets" />
-        <Tab
-          disabled={!activeBucket || !activeScope}
-          sx={{ textTransform: "none", margin: 0 }}
-          label="GSI Indexes"
-        />
-        <Tab
-          disabled={!activeBucket || !activeScope}
-          sx={{ textTransform: "none", margin: 0 }}
-          label="Schema"
-        />
-        <Tab
-          disabled={!activeBucket || !activeScope}
-          sx={{ textTransform: "none", margin: 0 }}
-          label="FTS Indexes"
-        />
-      </Tabs>
+      {/* Tabs with Bucket/Scope Selectors */}
+      <Box
+        sx={{
+          display: "flex",
+          alignItems: "center",
+          borderBottom: 1,
+          borderColor: "divider",
+          minHeight: 48,
+        }}
+      >
+        <Tabs value={selectedTab} onChange={handleChange} sx={{ flexGrow: 1 }}>
+          <Tab sx={{ textTransform: "none", margin: 0 }} label="Collections" />
+          <Tab
+            disabled={!activeBucket || !activeScope}
+            sx={{ textTransform: "none", margin: 0 }}
+            label="GSI Indexes"
+          />
+          <Tab
+            disabled={!activeBucket || !activeScope}
+            sx={{ textTransform: "none", margin: 0 }}
+            label="Schema"
+          />
+          <Tab
+            disabled={!activeBucket || !activeScope}
+            sx={{ textTransform: "none", margin: 0 }}
+            label="FTS Indexes"
+          />
+        </Tabs>
+
+        {/* Bucket and Scope selectors on the right */}
+        <Box sx={{ display: "flex", alignItems: "center", gap: 2, pr: 2 }}>
+          <Typography variant="body2" sx={{ color: "primary.main" }}>
+            FHIR Bucket
+          </Typography>
+          <FormControl
+            variant="standard"
+            sx={{
+              minWidth: 150,
+              color: "GrayText",
+              "& .MuiSelect-select": {
+                paddingBottom: 0,
+              },
+            }}
+            size="small"
+          >
+            <Select
+              value={activeBucket?.bucketName || ""}
+              onChange={(e) => handleBucketChange(e.target.value)}
+            >
+              {fhirBuckets.map((bucket) => (
+                <MenuItem key={bucket.bucketName} value={bucket.bucketName}>
+                  {bucket.bucketName}
+                </MenuItem>
+              ))}
+            </Select>
+          </FormControl>
+
+          <Typography variant="body2" sx={{ color: "primary.main" }}>
+            Scope
+          </Typography>
+          <FormControl
+            variant="standard"
+            sx={{
+              minWidth: 150,
+              color: "GrayText",
+              "& .MuiSelect-select": {
+                paddingBottom: 0,
+              },
+            }}
+            size="small"
+          >
+            <Select
+              value={activeScope || ""}
+              onChange={(e) => handleScopeChange(e.target.value)}
+              disabled={!activeBucket}
+            >
+              <MenuItem value="Admin">Admin</MenuItem>
+              <MenuItem value="Resources">Resources</MenuItem>
+            </Select>
+          </FormControl>
+        </Box>
+      </Box>
 
       {/* Tab Content */}
-      {selectedTab === 0 && <BucketsMain />}
-      {selectedTab === 1 && <GSIIndexes />}
-      {selectedTab === 2 && <SchemaManager />}
-      {selectedTab === 3 && <FTSIndexes />}
+      <Box sx={{ flexGrow: 1, overflow: "hidden" }}>
+        {selectedTab === 0 && <BucketsMain />}
+        {selectedTab === 1 && <GSIIndexes />}
+        {selectedTab === 2 && <SchemaManager />}
+        {selectedTab === 3 && <FTSIndexes />}
+      </Box>
     </Box>
   );
 };

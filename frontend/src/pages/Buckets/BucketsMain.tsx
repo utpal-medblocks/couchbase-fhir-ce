@@ -1,7 +1,5 @@
-import { useEffect } from "react";
 import {
   Box,
-  Button,
   Table,
   TableBody,
   TableCell,
@@ -9,17 +7,10 @@ import {
   TableHead,
   TableRow,
   Typography,
-  FormControl,
-  Select,
-  MenuItem,
-  Card,
-  CardContent,
-  Alert,
-  AlertTitle,
-  Toolbar,
 } from "@mui/material";
 import { useConnectionStore } from "../../store/connectionStore";
 import { useBucketStore } from "../../store/bucketStore";
+import { tableCellStyle, tableHeaderStyle } from "../../styles/styles";
 
 const BucketsMain = () => {
   // Get stores
@@ -29,14 +20,12 @@ const BucketsMain = () => {
   const connectionId = connection.name;
 
   // Get bucket data
-  const fhirBuckets = bucketStore.getFhirBuckets(connectionId);
   const activeBucket = bucketStore.getActiveBucket(connectionId);
   const activeScope = bucketStore.getActiveScope(connectionId);
   const collections = bucketStore.collections[connectionId] || [];
 
   // Log current state for debugging
   console.log(`🎯 BucketsMain render - Connection: ${connectionId}`);
-  console.log(`🎯 FHIR Buckets: ${fhirBuckets.length}`, fhirBuckets);
   console.log(`🎯 Active Bucket:`, activeBucket);
   console.log(`🎯 Active Scope:`, activeScope);
   console.log(`🎯 Collections: ${collections.length}`, collections);
@@ -53,153 +42,54 @@ const BucketsMain = () => {
     filteredCollections
   );
 
-  // Handle bucket selection
-  const handleBucketChange = (bucketName: string) => {
-    bucketStore.setActiveBucket(connectionId, bucketName);
-  };
-
-  // Handle scope selection
-  const handleScopeChange = (scopeName: string) => {
-    bucketStore.setActiveScope(connectionId, scopeName);
-  };
-
-  // Refresh data
-  const handleRefresh = async () => {
-    try {
-      // Fetch bucket data from backend - this will include isFhirBucket flags
-      await bucketStore.fetchBucketData(connectionId);
-    } catch (error) {
-      console.error("Failed to refresh bucket data:", error);
-    }
-  };
-
-  // Effect to load initial data and set up refresh interval
-  useEffect(() => {
-    if (!connection.isConnected) {
-      return;
-    }
-
-    // Load initial data
-    handleRefresh();
-
-    // Set up 30-second refresh interval
-    const interval = setInterval(() => {
-      handleRefresh();
-    }, 30000); // 30 seconds
-
-    // Cleanup interval on unmount or connection change
-    return () => clearInterval(interval);
-  }, [connection.isConnected, connectionId]);
-
-  if (!connection.isConnected) {
-    return (
-      <Alert severity="warning">
-        <AlertTitle>No Connection</AlertTitle>
-        Please establish a connection first.
-      </Alert>
-    );
-  }
-
-  // Show empty state if no FHIR buckets found
-  if (fhirBuckets.length === 0) {
-    return (
-      <Alert severity="info" sx={{ m: 2 }}>
-        <AlertTitle>No FHIR Buckets Available</AlertTitle>
-        No FHIR-enabled buckets found. Please ensure you have FHIR buckets
-        configured.
-        <Button
-          variant="outlined"
-          size="small"
-          onClick={handleRefresh}
-          sx={{ mt: 1, ml: 1 }}
-        >
-          Retry
-        </Button>
-      </Alert>
-    );
-  }
-
   return (
-    <Box sx={{ p: 2 }}>
-      <Toolbar disableGutters>
-        <Typography
-          variant="h6"
-          component="div"
-          sx={{ paddingLeft: 0, flexGrow: 1 }}
-        >
-          Collections
-        </Typography>
-        <Typography variant="body2" sx={{ color: "#bdbdbd" }}>
-          FHIR Bucket
-        </Typography>
-        <FormControl
-          variant="standard"
-          sx={{
-            minWidth: 150,
-            margin: 1,
-            padding: 0,
-            color: "GrayText",
-            "& .MuiSelect-select": {
-              paddingBottom: 0,
-            },
-            marginBottom: 0,
-          }}
-          size="small"
-        >
-          <Select
-            value={activeBucket?.bucketName || ""}
-            onChange={(e) => handleBucketChange(e.target.value)}
-          >
-            {fhirBuckets.map((bucket) => (
-              <MenuItem key={bucket.bucketName} value={bucket.bucketName}>
-                {bucket.bucketName}
-              </MenuItem>
-            ))}
-            <Typography variant="body2" sx={{ color: "#bdbdbd" }}>
-              Scope
-            </Typography>
-          </Select>
-        </FormControl>
-        <FormControl
-          variant="standard"
-          sx={{
-            minWidth: 150,
-            margin: 1,
-            padding: 0,
-            color: "GrayText",
-            "& .MuiSelect-select": {
-              paddingBottom: 0,
-            },
-            marginBottom: 0,
-          }}
-          size="small"
-        >
-          <Select
-            value={activeScope || ""}
-            onChange={(e) => handleScopeChange(e.target.value)}
-            disabled={!activeBucket}
-          >
-            <MenuItem value="Admin">Admin</MenuItem>
-            <MenuItem value="Resources">Resources</MenuItem>
-          </Select>
-        </FormControl>
-      </Toolbar>
+    <Box sx={{ height: "100%", display: "flex", flexDirection: "column" }}>
+      {/* Top Box - 65% height with Collections Table */}
+      <Box
+        sx={{
+          height: "70%",
+          border: 0.5,
+          borderBottom: 0,
+          borderColor: "divider",
+          display: "flex",
+          flexDirection: "column",
+          overflow: "hidden", // Prevent the box itself from scrolling
+        }}
+      >
+        {/* Collections Table Title */}
+        <Box sx={{ px: 1, borderBottom: 0.5, borderColor: "divider" }}>
+          <Typography variant="h6" component="div">
+            Collections
+          </Typography>
+        </Box>
 
-      {/* Header Controls */}
-
-      {/* Collections Table */}
-      {activeBucket && activeScope && (
-        <>
-          <TableContainer sx={{ marginTop: "2px" }}>
-            <Table size="small" aria-label="collections table">
+        {/* Scrollable Table Container */}
+        {activeBucket && activeScope && (
+          <TableContainer
+            sx={{
+              flexGrow: 1,
+              overflow: "auto",
+            }}
+          >
+            <Table size="small" aria-label="collections table" stickyHeader>
               <TableHead>
                 <TableRow>
-                  <TableCell>Collection Name</TableCell>
-                  <TableCell align="right">Items</TableCell>
-                  <TableCell align="right">Disk Size (MB)</TableCell>
-                  <TableCell align="right">Memory Used (MB)</TableCell>
-                  <TableCell align="right">Operations/sec</TableCell>
-                  <TableCell align="right">Indexes</TableCell>
+                  <TableCell sx={tableHeaderStyle}>Collection Name</TableCell>
+                  <TableCell align="right" sx={tableHeaderStyle}>
+                    Items
+                  </TableCell>
+                  <TableCell align="right" sx={tableHeaderStyle}>
+                    Disk Size (MB)
+                  </TableCell>
+                  <TableCell align="right" sx={tableHeaderStyle}>
+                    Memory Used (MB)
+                  </TableCell>
+                  <TableCell align="right" sx={tableHeaderStyle}>
+                    Operations/sec
+                  </TableCell>
+                  <TableCell align="right" sx={tableHeaderStyle}>
+                    Indexes
+                  </TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
@@ -216,117 +106,175 @@ const BucketsMain = () => {
                     <TableRow
                       key={`${collection.bucketName}-${collection.scopeName}-${collection.collectionName}`}
                     >
-                      <TableCell component="th" scope="row">
+                      <TableCell sx={tableCellStyle}>
                         {collection.collectionName}
                       </TableCell>
-                      <TableCell align="right">
+                      <TableCell sx={tableCellStyle} align="right">
                         {collection.items.toLocaleString()}
                       </TableCell>
-                      <TableCell align="right">
+                      <TableCell sx={tableCellStyle} align="right">
                         {(collection.diskSize / 1024 / 1024).toFixed(2)}
                       </TableCell>
-                      <TableCell align="right">
+                      <TableCell sx={tableCellStyle} align="right">
                         {(collection.memUsed / 1024 / 1024).toFixed(2)}
                       </TableCell>
-                      <TableCell align="right">
+                      <TableCell sx={tableCellStyle} align="right">
                         {collection.ops.toLocaleString()}
                       </TableCell>
-                      <TableCell align="right">{collection.indexes}</TableCell>
+                      <TableCell sx={tableCellStyle} align="right">
+                        {collection.indexes}
+                      </TableCell>
                     </TableRow>
                   ))
                 )}
               </TableBody>
             </Table>
           </TableContainer>
-        </>
-      )}
+        )}
+      </Box>
+      <Box
+        sx={{
+          height: "2%",
+          //   border: 0.5,
+          //   borderColor: "divider",
+          //   borderTop: 0, // Remove top border to avoid double border
+          display: "flex",
+          overflow: "hidden", // Prevent the container from scrolling
+        }}
+      ></Box>
+      {/* Bottom Box - 35% height with 3 Tables Side by Side */}
+      <Box
+        sx={{
+          height: "28%",
+          border: 0.5,
+          borderColor: "divider",
+          borderTop: 0, // Remove top border to avoid double border
+          display: "flex",
+          overflow: "hidden", // Prevent the container from scrolling
+        }}
+      >
+        {/* Table 1 - Left */}
+        <Box sx={{ flex: 1, borderRight: 1, borderColor: "divider" }}>
+          <TableContainer sx={{ height: "100%", overflow: "auto" }}>
+            <Table size="small" stickyHeader>
+              <TableHead>
+                <TableRow>
+                  <TableCell sx={tableHeaderStyle}>Configuration</TableCell>
+                  <TableCell sx={tableHeaderStyle}></TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                <TableRow>
+                  <TableCell sx={tableCellStyle}>Type</TableCell>
+                  <TableCell sx={tableCellStyle}>
+                    {activeBucket?.bucketType || "-"}
+                  </TableCell>
+                </TableRow>
+                <TableRow>
+                  <TableCell sx={tableCellStyle}>Storage</TableCell>
+                  <TableCell sx={tableCellStyle}>
+                    {activeBucket?.storageBackend}
+                  </TableCell>
+                </TableRow>
+                <TableRow>
+                  <TableCell sx={tableCellStyle}>Replicas</TableCell>
+                  <TableCell sx={tableCellStyle}>
+                    {activeBucket?.replicaNumber || "-"}
+                  </TableCell>
+                </TableRow>
+                <TableRow>
+                  <TableCell sx={tableCellStyle}>Quota Used</TableCell>
+                  <TableCell sx={tableCellStyle}>
+                    {activeBucket?.quotaPercentUsed.toFixed(1) + "%" || "-"}
+                  </TableCell>
+                </TableRow>
+              </TableBody>
+            </Table>
+          </TableContainer>
+        </Box>
 
-      {/* Bucket Details Footer */}
-      {activeBucket && (
-        <Card sx={{ mt: 3 }}>
-          <CardContent>
-            <Typography variant="h6" gutterBottom>
-              Bucket Details: {activeBucket.bucketName}
-            </Typography>
-            <Box
-              sx={{
-                display: "grid",
-                gridTemplateColumns: {
-                  xs: "1fr",
-                  sm: "repeat(2, 1fr)",
-                  md: "repeat(4, 1fr)",
-                },
-                gap: 2,
-              }}
-            >
-              <Box>
-                <Typography variant="body2" color="textSecondary">
-                  Type
-                </Typography>
-                <Typography variant="body1">
-                  {activeBucket.bucketType}
-                </Typography>
-              </Box>
-              <Box>
-                <Typography variant="body2" color="textSecondary">
-                  Items
-                </Typography>
-                <Typography variant="body1">
-                  {activeBucket.itemCount.toLocaleString()}
-                </Typography>
-              </Box>
-              <Box>
-                <Typography variant="body2" color="textSecondary">
-                  Operations/sec
-                </Typography>
-                <Typography variant="body1">
-                  {activeBucket.opsPerSec.toLocaleString()}
-                </Typography>
-              </Box>
-              <Box>
-                <Typography variant="body2" color="textSecondary">
-                  Quota Used
-                </Typography>
-                <Typography variant="body1">
-                  {activeBucket.quotaPercentUsed.toFixed(1)}%
-                </Typography>
-              </Box>
-              <Box>
-                <Typography variant="body2" color="textSecondary">
-                  RAM (MB)
-                </Typography>
-                <Typography variant="body1">
-                  {(activeBucket.ram / 1024 / 1024).toFixed(2)}
-                </Typography>
-              </Box>
-              <Box>
-                <Typography variant="body2" color="textSecondary">
-                  Disk Used (MB)
-                </Typography>
-                <Typography variant="body1">
-                  {(activeBucket.diskUsed / 1024 / 1024).toFixed(2)}
-                </Typography>
-              </Box>
-              <Box>
-                <Typography variant="body2" color="textSecondary">
-                  Resident Ratio
-                </Typography>
-                <Typography variant="body1">
-                  {activeBucket.residentRatio.toFixed(1)}%
-                </Typography>
-              </Box>
-              <Box>
-                <Typography variant="body2" color="textSecondary">
-                  Replicas
-                </Typography>
-                <Typography variant="body1">
-                  {activeBucket.replicaNumber}
-                </Typography>
-              </Box>
-            </Box>
-          </CardContent>
-        </Card>
-      )}
+        {/* Table 2 - Middle */}
+        <Box sx={{ flex: 1, borderRight: 1, borderColor: "divider" }}>
+          <TableContainer sx={{ height: "100%", overflow: "auto" }}>
+            <Table size="small" stickyHeader>
+              <TableHead>
+                <TableRow>
+                  <TableCell sx={tableHeaderStyle}>Setting</TableCell>
+                  <TableCell sx={tableHeaderStyle}></TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                <TableRow>
+                  <TableCell sx={tableCellStyle}>Eviction Policy</TableCell>
+                  <TableCell sx={tableCellStyle}>
+                    {activeBucket?.evictionPolicy || "-"}
+                  </TableCell>
+                </TableRow>
+                <TableRow>
+                  <TableCell sx={tableCellStyle}>Durability</TableCell>
+                  <TableCell sx={tableCellStyle}>
+                    {activeBucket?.durabilityMinLevel || "-"}
+                  </TableCell>
+                </TableRow>
+                <TableRow>
+                  <TableCell sx={tableCellStyle}>Conflict Resolution</TableCell>
+                  <TableCell sx={tableCellStyle}>
+                    {activeBucket?.conflictResolutionType || "-"}
+                  </TableCell>
+                </TableRow>
+                <TableRow>
+                  <TableCell sx={tableCellStyle}>TTL</TableCell>
+                  <TableCell sx={tableCellStyle}>
+                    {activeBucket?.maxTTL || "0"}
+                  </TableCell>
+                </TableRow>
+              </TableBody>
+            </Table>
+          </TableContainer>
+        </Box>
+
+        {/* Table 3 - Right */}
+        <Box sx={{ flex: 1 }}>
+          <TableContainer sx={{ height: "100%", overflow: "auto" }}>
+            <Table size="small" stickyHeader>
+              <TableHead>
+                <TableRow>
+                  <TableCell sx={tableHeaderStyle}>Performance</TableCell>
+                  <TableCell sx={tableHeaderStyle}></TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                <TableRow>
+                  <TableCell sx={tableCellStyle}>Ops/sec</TableCell>
+                  <TableCell sx={tableCellStyle}>
+                    {activeBucket?.opsPerSec || "-"}
+                  </TableCell>
+                </TableRow>
+                <TableRow>
+                  <TableCell sx={tableCellStyle}>Disk Used</TableCell>
+                  <TableCell sx={tableCellStyle}>
+                    {activeBucket?.diskUsed
+                      ? (activeBucket.diskUsed / 1024 / 1024).toFixed(2) + " MB"
+                      : "-"}
+                  </TableCell>
+                </TableRow>
+                <TableRow>
+                  <TableCell sx={tableCellStyle}>Resident %</TableCell>
+                  <TableCell sx={tableCellStyle}>
+                    {activeBucket?.residentRatio || "-"}
+                  </TableCell>
+                </TableRow>
+                <TableRow>
+                  <TableCell sx={tableCellStyle}>Cache Hit %</TableCell>
+                  <TableCell sx={tableCellStyle}>
+                    {activeBucket?.cacheHit || "-"}
+                  </TableCell>
+                </TableRow>
+              </TableBody>
+            </Table>
+          </TableContainer>
+        </Box>
+      </Box>
     </Box>
   );
 };
