@@ -4,13 +4,16 @@ import {
   createTheme,
 } from "@mui/material/styles";
 import CssBaseline from "@mui/material/CssBaseline";
-import { DisplayProvider } from "./pages/Layout/DisplayContext";
+import { ConnectionProvider } from "./pages/Layout/ConnectionProvider";
 import MainLayout from "./pages/Layout/MainLayout";
 import AppRoutes from "./routes/AppRoutes";
 import { ThemeProvider, useThemeContext } from "./contexts/ThemeContext";
+import "@fontsource/roboto/300.css";
+import "@fontsource/roboto/400.css";
+import "@fontsource/roboto/500.css";
+import "@fontsource/roboto/700.css";
 
 function AppContent() {
-  //  console.log("AppContent: Starting to render");
   const { themeMode } = useThemeContext();
 
   // Create theme based on current mode
@@ -23,19 +26,18 @@ function AppContent() {
   return (
     <MuiThemeProvider theme={theme}>
       <CssBaseline />
-      <DisplayProvider>
+      <ConnectionProvider>
         <Router>
           <MainLayout>
             <AppRoutes />
           </MainLayout>
         </Router>
-      </DisplayProvider>
+      </ConnectionProvider>
     </MuiThemeProvider>
   );
 }
 
 function App() {
-  //  console.log("App: Component starting to render");
   return (
     <ThemeProvider>
       <AppContent />
