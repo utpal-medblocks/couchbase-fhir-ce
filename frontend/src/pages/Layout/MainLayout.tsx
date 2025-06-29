@@ -37,7 +37,7 @@ import {
 import { VscFlame } from "react-icons/vsc";
 
 import CouchbaseLogo from "../../assets/icons/couchbase.png"; // Uncomment when you add the icon
-import DisplayContext from "./DisplayContext";
+import ConnectionStatus from "./ConnectionStatus";
 import { useThemeContext } from "../../contexts/ThemeContext";
 
 const drawerWidth = 200;
@@ -218,7 +218,7 @@ export default function MainLayout({ children }: MainLayoutProps) {
               FHIR CE
             </Typography>
           </Box>
-          <DisplayContext />
+          <ConnectionStatus />
           <Box sx={{ flexGrow: 1 }} />
           <Box sx={{ display: "flex" }}>
             <Tooltip title="Notifications" placement="bottom">
