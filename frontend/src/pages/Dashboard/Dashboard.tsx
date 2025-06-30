@@ -43,7 +43,15 @@ export default function Dashboard() {
         minHeight={0}
         width="100%"
       >
-        <Box flex={1} sx={{ height: "100%", overflow: "hidden" }}>
+        <Box
+          flex={1}
+          sx={{
+            height: "100%",
+            overflow: "hidden",
+            border: 1.0,
+            borderColor: "divider",
+          }}
+        >
           <Card
             sx={{ height: "100%", display: "flex", flexDirection: "column" }}
           >
@@ -88,7 +96,15 @@ export default function Dashboard() {
             </CardContent>
           </Card>
         </Box>
-        <Box flex={1} sx={{ height: "100%", overflow: "hidden" }}>
+        <Box
+          flex={1}
+          sx={{
+            height: "100%",
+            overflow: "hidden",
+            border: 1.0,
+            borderColor: "divider",
+          }}
+        >
           <Card
             sx={{ height: "100%", display: "flex", flexDirection: "column" }}
           >
