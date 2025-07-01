@@ -11,6 +11,7 @@ import {
   MenuItem,
 } from "@mui/material";
 import BucketsMain from "./BucketsMain";
+import Samples from "./Samples";
 import { useConnectionStore } from "../../store/connectionStore";
 import { useBucketStore } from "../../store/bucketStore";
 
@@ -104,20 +105,58 @@ const Buckets = () => {
         }}
       >
         <Tabs value={selectedTab} onChange={handleChange} sx={{ flexGrow: 1 }}>
-          <Tab sx={{ textTransform: "none", margin: 0 }} label="Collections" />
+          <Tab
+            sx={{
+              textTransform: "none",
+              margin: 0,
+              "&:focus": {
+                outline: "none",
+              },
+            }}
+            label="Collections"
+          />
           <Tab
             disabled={!activeBucket || !activeScope}
-            sx={{ textTransform: "none", margin: 0 }}
+            sx={{
+              textTransform: "none",
+              margin: 0,
+              "&:focus": {
+                outline: "none",
+              },
+            }}
+            label="Samples"
+          />
+          <Tab
+            disabled={!activeBucket || !activeScope}
+            sx={{
+              textTransform: "none",
+              margin: 0,
+              "&:focus": {
+                outline: "none",
+              },
+            }}
             label="GSI Indexes"
           />
           <Tab
             disabled={!activeBucket || !activeScope}
-            sx={{ textTransform: "none", margin: 0 }}
+            sx={{
+              textTransform: "none",
+              margin: 0,
+              "&:focus": {
+                outline: "none",
+              },
+            }}
             label="Schema"
           />
           <Tab
             disabled={!activeBucket || !activeScope}
-            sx={{ textTransform: "none", margin: 0 }}
+            sx={{
+              textTransform: "none",
+              margin: 0,
+              "&:focus": {
+                outline: "none",
+              },
+            }}
             label="FTS Indexes"
           />
         </Tabs>
@@ -179,9 +218,10 @@ const Buckets = () => {
       {/* Tab Content */}
       <Box sx={{ flexGrow: 1, overflow: "hidden" }}>
         {selectedTab === 0 && <BucketsMain />}
-        {selectedTab === 1 && <GSIIndexes />}
-        {selectedTab === 2 && <SchemaManager />}
-        {selectedTab === 3 && <FTSIndexes />}
+        {selectedTab === 1 && <Samples />}
+        {selectedTab === 2 && <GSIIndexes />}
+        {selectedTab === 3 && <SchemaManager />}
+        {selectedTab === 4 && <FTSIndexes />}
       </Box>
     </Box>
   );
