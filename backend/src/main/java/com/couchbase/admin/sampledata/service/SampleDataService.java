@@ -324,7 +324,7 @@ public class SampleDataService {
             // Notify start
             if (callback != null) {
                 SampleDataProgress progress = new SampleDataProgress(totalFiles, 0, "Starting...");
-                progress.setStatus("STARTING");
+                progress.setStatus("INITIATED");
                 progress.setMessage("Initializing sample data loading...");
                 callback.onProgress(progress);
             }
@@ -339,11 +339,11 @@ public class SampleDataService {
                     if (shouldProcessEntry(entry)) {
                         String fileName = entry.getName();
                         
-                        // Update progress
+                        // Update progress - BEFORE processing file
                         if (callback != null) {
                             SampleDataProgress progress = new SampleDataProgress(totalFiles, processedFiles, fileName);
-                            progress.setStatus("PROCESSING");
-                            progress.setMessage("Processing " + fileName);
+                            progress.setStatus("IN_PROGRESS");
+                            progress.setMessage("Processing " + fileName + "...");
                             progress.setResourcesLoaded(resourcesLoaded);
                             progress.setPatientsLoaded(patientsLoaded);
                             callback.onProgress(progress);
@@ -367,15 +367,28 @@ public class SampleDataService {
                         }
                         
                         processedFiles++;
+                        
+                        // Update progress - AFTER processing file
+                        if (callback != null) {
+                            SampleDataProgress progress = new SampleDataProgress(totalFiles, processedFiles, fileName);
+                            progress.setStatus("IN_PROGRESS");
+                            progress.setMessage("Completed " + fileName + " - " + resourcesLoaded + " resources loaded");
+                            progress.setResourcesLoaded(resourcesLoaded);
+                            progress.setPatientsLoaded(patientsLoaded);
+                            callback.onProgress(progress);
+                        }
+                        
+                        log.info("Processed file {}/{}: {} - {} resources, {} patients loaded so far", 
+                                processedFiles, totalFiles, fileName, resourcesLoaded, patientsLoaded);
                     }
                 }
             }
             
             // Final progress update
             if (callback != null) {
-                SampleDataProgress progress = new SampleDataProgress(totalFiles, processedFiles, "Completed");
+                SampleDataProgress progress = new SampleDataProgress(totalFiles, processedFiles, "All files completed");
                 progress.setStatus("COMPLETED");
-                progress.setMessage("Sample data loading completed successfully");
+                progress.setMessage("Sample data loading completed successfully - " + resourcesLoaded + " resources (" + patientsLoaded + " patients) loaded");
                 progress.setResourcesLoaded(resourcesLoaded);
                 progress.setPatientsLoaded(patientsLoaded);
                 callback.onProgress(progress);
