@@ -168,15 +168,15 @@ export const useBucketStore = create<BucketStore>()((set, get) => ({
 
   // Setter method for buckets
   setBuckets: (connectionId, buckets) => {
-    console.log(`🪣 setBuckets called for connection: ${connectionId}`);
-    console.log(`🪣 Setting ${buckets.length} buckets:`, buckets);
+    // console.log(`🪣 setBuckets called for connection: ${connectionId}`);
+    // console.log(`🪣 Setting ${buckets.length} buckets:`, buckets);
 
     set((state) => {
-      console.log(`🪣 Previous state for ${connectionId}:`, {
-        buckets: state.buckets[connectionId],
-        activeBucket: state.activeBucket[connectionId],
-        activeScope: state.activeScope[connectionId],
-      });
+      // console.log(`🪣 Previous state for ${connectionId}:`, {
+      //   buckets: state.buckets[connectionId],
+      //   activeBucket: state.activeBucket[connectionId],
+      //   activeScope: state.activeScope[connectionId],
+      // });
 
       const newState = {
         ...state,
@@ -195,31 +195,31 @@ export const useBucketStore = create<BucketStore>()((set, get) => ({
 
       // Get FHIR buckets from the buckets we just set (all buckets are FHIR)
       const fhirBuckets = buckets; // Since backend only returns FHIR buckets
-      console.log(`🪣 FHIR buckets count: ${fhirBuckets.length}`);
+      // console.log(`🪣 FHIR buckets count: ${fhirBuckets.length}`);
 
       // Auto-set active bucket if only one FHIR bucket exists and no active bucket is set
       if (fhirBuckets.length === 1 && !state.activeBucket[connectionId]) {
-        console.log(
-          `🪣 Auto-setting active bucket: ${fhirBuckets[0].bucketName}`
-        );
+        // console.log(
+        //   `🪣 Auto-setting active bucket: ${fhirBuckets[0].bucketName}`
+        // );
         newState.activeBucket = {
           ...state.activeBucket,
           [connectionId]: fhirBuckets[0],
         };
         // Auto-set first scope as active
-        console.log(
-          `🪣 Auto-setting active scope: ${FIXED_SCOPES[0].scopeName}`
-        );
+        // console.log(
+        //   `🪣 Auto-setting active scope: ${FIXED_SCOPES[0].scopeName}`
+        // );
         newState.activeScope = {
           ...state.activeScope,
           [connectionId]: FIXED_SCOPES[0].scopeName,
         };
       } else {
-        console.log(
-          `🪣 Not auto-setting bucket (count: ${
-            fhirBuckets.length
-          }, existing active: ${!!state.activeBucket[connectionId]})`
-        );
+        // console.log(
+        //   `🪣 Not auto-setting bucket (count: ${
+        //     fhirBuckets.length
+        //   }, existing active: ${!!state.activeBucket[connectionId]})`
+        // );
         // Try to restore from session storage
         const stored = get()._loadActiveState(connectionId);
         if (stored) {
@@ -244,11 +244,11 @@ export const useBucketStore = create<BucketStore>()((set, get) => ({
         }
       }
 
-      console.log(`🪣 Final new state for ${connectionId}:`, {
-        buckets: newState.buckets[connectionId],
-        activeBucket: newState.activeBucket[connectionId],
-        activeScope: newState.activeScope[connectionId],
-      });
+      // console.log(`🪣 Final new state for ${connectionId}:`, {
+      //   buckets: newState.buckets[connectionId],
+      //   activeBucket: newState.activeBucket[connectionId],
+      //   activeScope: newState.activeScope[connectionId],
+      // });
 
       return newState;
     });
@@ -256,10 +256,10 @@ export const useBucketStore = create<BucketStore>()((set, get) => ({
   getFhirBuckets: (connectionId) => {
     // Simply return all buckets since backend only sends FHIR buckets
     const buckets = get().buckets[connectionId] || [];
-    console.log(
-      `🔍 getFhirBuckets for ${connectionId}: returning ${buckets.length} buckets`,
-      buckets
-    );
+    // console.log(
+    //   `🔍 getFhirBuckets for ${connectionId}: returning ${buckets.length} buckets`,
+    //   buckets
+    // );
     return buckets;
   },
 
@@ -397,7 +397,7 @@ export const useBucketStore = create<BucketStore>()((set, get) => ({
   // Fetch FHIR bucket data from backend
   fetchBucketData: async (connectionId: string) => {
     try {
-      console.log(`Fetching FHIR bucket data for connection: ${connectionId}`);
+      // console.log(`Fetching FHIR bucket data for connection: ${connectionId}`);
 
       // Call the backend API to get FHIR bucket details
       const response = await fetch(
@@ -417,7 +417,7 @@ export const useBucketStore = create<BucketStore>()((set, get) => ({
       }
 
       const bucketData: BucketDetails[] = await response.json();
-      console.log(`📥 Received ${bucketData.length} FHIR buckets:`, bucketData);
+      // console.log(`📥 Received ${bucketData.length} FHIR buckets:`, bucketData);
 
       // Update store with fetched data (all FHIR buckets)
       get().setBuckets(connectionId, bucketData);
@@ -426,10 +426,10 @@ export const useBucketStore = create<BucketStore>()((set, get) => ({
       const allCollections: CollectionDetails[] = [];
       bucketData.forEach((bucket) => {
         if (bucket.collectionMetrics) {
-          console.log(
-            `🔍 Processing collectionMetrics for bucket: ${bucket.bucketName}`,
-            bucket.collectionMetrics
-          );
+          // console.log(
+          //   `🔍 Processing collectionMetrics for bucket: ${bucket.bucketName}`,
+          //   bucket.collectionMetrics
+          // );
 
           // Convert collection metrics to CollectionDetails format
           Object.entries(bucket.collectionMetrics).forEach(
@@ -457,10 +457,10 @@ export const useBucketStore = create<BucketStore>()((set, get) => ({
                         maxTTL: Number(metrics["maxTTL"]) || 0,
                       };
                       allCollections.push(collectionDetail);
-                      console.log(
-                        `📦 Added collection: ${scopeName}.${collectionName}`,
-                        collectionDetail
-                      );
+                      // console.log(
+                      //   `📦 Added collection: ${scopeName}.${collectionName}`,
+                      //   collectionDetail
+                      // );
                     }
                   }
                 );
@@ -470,17 +470,17 @@ export const useBucketStore = create<BucketStore>()((set, get) => ({
         }
       });
 
-      console.log(
-        `📦 Extracted ${allCollections.length} collections:`,
-        allCollections
-      );
+      // console.log(
+      //   `📦 Extracted ${allCollections.length} collections:`,
+      //   allCollections
+      // );
 
       // Update collections in store
       get().setCollections(connectionId, allCollections);
 
-      console.log(
-        `✅ Bucket data and collections fetch completed for ${connectionId}`
-      );
+      // console.log(
+      //   `✅ Bucket data and collections fetch completed for ${connectionId}`
+      // );
       return bucketData;
     } catch (error) {
       console.error("Failed to fetch FHIR bucket data:", error);

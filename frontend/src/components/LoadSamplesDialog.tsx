@@ -49,9 +49,6 @@ const LoadSamplesDialog: React.FC<LoadSamplesDialogProps> = ({
     }
   }, [open]);
 
-  // For now, we'll use the simple load endpoint rather than SSE
-  // This can be enhanced later to use real-time updates
-
   const resetState = () => {
     setError(null);
     setInfo(null);
@@ -65,8 +62,8 @@ const LoadSamplesDialog: React.FC<LoadSamplesDialogProps> = ({
     setInfo("Initiating Synthea sample data loading...");
 
     try {
-      // First, initiate the loading process with POST
-      const response = await fetch("/api/sample-data/load-with-progress", {
+      // First, make a POST request to start the loading process
+      const startResponse = await fetch("/api/sample-data/load-with-progress", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -78,70 +75,133 @@ const LoadSamplesDialog: React.FC<LoadSamplesDialogProps> = ({
         }),
       });
 
-      if (!response.ok) {
-        throw new Error(`Failed to start loading: ${response.status}`);
+      if (!startResponse.ok) {
+        throw new Error(`Failed to start loading: ${startResponse.status}`);
       }
 
-      // The response should be an SSE stream
-      const reader = response.body?.getReader();
-      const decoder = new TextDecoder();
-
+      // Parse the SSE stream using EventSource-like parsing
+      const reader = startResponse.body?.getReader();
       if (!reader) {
         throw new Error("No response body available");
       }
 
-      // Read the SSE stream
-      const readStream = async () => {
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      let currentLoadStatus: SampleLoadStatus | null = null;
+
+      const processSSEData = async () => {
         try {
           while (true) {
             const { done, value } = await reader.read();
 
             if (done) {
+              // console.log("SSE stream completed");
+              // If we reach here without COMPLETED status, show success
+              if (
+                currentLoadStatus?.status !== "COMPLETED" &&
+                currentLoadStatus?.status !== "ERROR"
+              ) {
+                setIsLoading(false);
+                setInfo("Synthea sample data loaded successfully!");
+                if (onSuccess) {
+                  setTimeout(() => {
+                    onSuccess();
+                    setTimeout(() => handleClose(), 1500);
+                  }, 1000);
+                } else {
+                  setTimeout(() => handleClose(), 2000);
+                }
+              }
               break;
             }
 
-            const chunk = decoder.decode(value);
-            const lines = chunk.split("\n");
+            // Decode chunk and add to buffer
+            const chunk = decoder.decode(value, { stream: true });
+            buffer += chunk;
+            // console.log("Received chunk:", JSON.stringify(chunk));
 
-            for (const line of lines) {
-              if (line.startsWith("data: ")) {
+            // Process complete SSE messages (split by double newlines)
+            const messages = buffer.split("\n\n");
+            buffer = messages.pop() || ""; // Keep incomplete message in buffer
+
+            for (const message of messages) {
+              if (message.trim() === "") continue;
+
+              // console.log("Processing SSE message:", JSON.stringify(message));
+
+              // Parse SSE message format
+              const lines = message.split("\n");
+              let eventType = "";
+              let data = "";
+
+              for (const line of lines) {
+                if (line.startsWith("event:")) {
+                  eventType = line.substring(6).trim();
+                } else if (line.startsWith("data:")) {
+                  data = line.substring(5).trim();
+                }
+              }
+
+              // console.log("Parsed event:", eventType, "data:", data);
+
+              // Handle progress events
+              if (eventType === "progress" && data) {
                 try {
-                  const progressData = line.substring(6);
-                  if (progressData.trim()) {
-                    const progress = JSON.parse(progressData);
-                    console.log("Progress update:", progress);
+                  const progress = JSON.parse(data) as SampleLoadStatus;
+                  // console.log("Progress update:", progress);
 
-                    // Update progress state
-                    setLoadStatus(progress);
+                  // Update both state and local variable
+                  currentLoadStatus = progress;
+                  setLoadStatus(progress);
 
-                    if (progress.message) {
-                      setInfo(progress.message);
+                  if (progress.message) {
+                    setInfo(progress.message);
+                  }
+
+                  // Handle completion
+                  if (progress.status === "COMPLETED") {
+                    setIsLoading(false);
+                    setInfo(
+                      progress.message ||
+                        "Synthea sample data loaded successfully!"
+                    );
+
+                    if (onSuccess) {
+                      setTimeout(() => {
+                        onSuccess();
+                        setTimeout(() => handleClose(), 1500);
+                      }, 1000);
+                    } else {
+                      setTimeout(() => handleClose(), 2000);
                     }
-
-                    // Handle completion
-                    if (progress.status === "COMPLETED") {
-                      setIsLoading(false);
-                      setInfo(
-                        progress.message ||
-                          "Synthea sample data loaded successfully!"
-                      );
-
-                      if (onSuccess) {
-                        setTimeout(() => onSuccess(), 1000);
-                      }
-                      return; // Exit the loop
-                    } else if (progress.status === "ERROR") {
-                      setIsLoading(false);
-                      setError(
-                        progress.message || "Failed to load sample data"
-                      );
-                      setInfo(null);
-                      return; // Exit the loop
-                    }
+                    return;
+                  } else if (progress.status === "ERROR") {
+                    setIsLoading(false);
+                    setError(progress.message || "Failed to load sample data");
+                    setInfo(null);
+                    return;
                   }
                 } catch (parseError) {
-                  console.error("Failed to parse progress data:", parseError);
+                  console.error(
+                    "Failed to parse progress data:",
+                    parseError,
+                    "Raw data:",
+                    data
+                  );
                 }
+              } else if (eventType === "error" && data) {
+                try {
+                  const errorData = JSON.parse(data);
+                  setIsLoading(false);
+                  setError(errorData.message || "Failed to load sample data");
+                  setInfo(null);
+                  return;
+                } catch (parseError) {
+                  console.error("Failed to parse error data:", parseError);
+                }
+              } else {
+                // console.log("Unknown or empty event:", eventType, data);
               }
             }
           }
@@ -150,11 +210,12 @@ const LoadSamplesDialog: React.FC<LoadSamplesDialogProps> = ({
           setError("Connection error during sample data loading");
           setInfo(null);
           setIsLoading(false);
+        } finally {
+          reader.releaseLock();
         }
       };
 
-      // Start reading the stream
-      readStream();
+      await processSSEData();
     } catch (err: any) {
       console.error("Failed to start sample data loading:", err);
       setError(err.message || "Failed to start sample data loading");
@@ -205,7 +266,7 @@ const LoadSamplesDialog: React.FC<LoadSamplesDialogProps> = ({
           This will load Synthea-generated sample FHIR data into{" "}
           <strong>{bucketName}</strong> bucket.
           <br />
-          <strong>Sample includes:</strong> 15 patients with 22 different FHIR
+          <strong>Sample includes:</strong> 15 patients with 20 different FHIR
           resource types.
         </Typography>
 

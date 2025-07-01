@@ -56,7 +56,7 @@ const SyntheaSamplesCard: React.FC<SyntheaSamplesCardProps> = ({
             data into your bucket.
             <br />
             <br />
-            <strong>Sample includes:</strong> 15 patients with 22 different FHIR
+            <strong>Sample includes:</strong> 15 patients with 20 different FHIR
             resource types.
           </Typography>
 
@@ -74,7 +74,7 @@ const SyntheaSamplesCard: React.FC<SyntheaSamplesCardProps> = ({
                 Resource Types:
               </Typography>
               <Typography variant="body2" fontWeight="medium">
-                22
+                20
               </Typography>
             </Box>
           </Box>
