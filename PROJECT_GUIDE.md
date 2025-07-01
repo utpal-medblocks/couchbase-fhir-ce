@@ -85,6 +85,7 @@ backend/
 │   │   │   │   ├── connections/                 # Connection management
 │   │   │   │   ├── dashboard/                   # Dashboard metrics
 │   │   │   │   ├── fhirBucket/                  # FHIR bucket config
+│   │   │   │   ├── sampledata/                  # Sample FHIR data management
 │   │   │   │   └── users/                       # User management
 │   │   │   ├── fhir/                            # FHIR domain
 │   │   │   │   ├── resources/                   # FHIR resource CRUD
@@ -316,6 +317,7 @@ app:
 - `GET /api/connections/*` - Connection management
 - `GET /api/audit/*` - Audit logging
 - `GET /api/users/*` - User management
+- `GET /api/sample-data/*` - Sample FHIR data management
 
 #### FHIR APIs
 

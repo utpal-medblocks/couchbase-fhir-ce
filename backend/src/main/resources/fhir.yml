@@ -81,7 +81,12 @@ fhir:
             - name: "PRIMARY"
               type: "primary"
               sql: "CREATE PRIMARY INDEX ON `{bucket}`.`Resources`.`SupplyDelivery` WITH {'defer_build': true}"
-
+        - name: "ServiceRequest"
+          description: "FHIR ServiceRequest resources for supply chain management"
+          indexes:
+            - name: "PRIMARY"
+              type: "primary"
+              sql: "CREATE PRIMARY INDEX ON `{bucket}`.`Resources`.`ServiceRequest` WITH {'defer_build': true}"
         - name: "Provenance"
           description: "FHIR Provenance resources for data origin and history"
           indexes:
@@ -166,6 +171,12 @@ fhir:
               type: "primary"
               sql: "CREATE PRIMARY INDEX ON `{bucket}`.`Resources`.`Condition` WITH {'defer_build': true}"
 
+        - name: "Coverage"
+          description: "FHIR Coverage resources for insurance coverage"
+          indexes:
+            - name: "PRIMARY"
+              type: "primary"
+              sql: "CREATE PRIMARY INDEX ON `{bucket}`.`Resources`.`Coverage` WITH {'defer_build': true}"
         - name: "Claim"
           description: "FHIR Claim resources for insurance claims"
           indexes:
