@@ -25,10 +25,10 @@ const BucketsMain = () => {
   const collections = bucketStore.collections[connectionId] || [];
 
   // Log current state for debugging
-  console.log(`🎯 BucketsMain render - Connection: ${connectionId}`);
-  console.log(`🎯 Active Bucket:`, activeBucket);
-  console.log(`🎯 Active Scope:`, activeScope);
-  console.log(`🎯 Collections: ${collections.length}`, collections);
+  // console.log(`🎯 BucketsMain render - Connection: ${connectionId}`);
+  // console.log(`🎯 Active Bucket:`, activeBucket);
+  // console.log(`🎯 Active Scope:`, activeScope);
+  // console.log(`🎯 Collections: ${collections.length}`, collections);
 
   // Filter collections for active bucket and scope
   const filteredCollections = collections.filter(
@@ -37,10 +37,10 @@ const BucketsMain = () => {
       col.scopeName === activeScope
   );
 
-  console.log(
-    `🎯 Filtered Collections: ${filteredCollections.length}`,
-    filteredCollections
-  );
+  // console.log(
+  //   `🎯 Filtered Collections: ${filteredCollections.length}`,
+  //   filteredCollections
+  // );
 
   return (
     <Box sx={{ height: "100%", display: "flex", flexDirection: "column" }}>
