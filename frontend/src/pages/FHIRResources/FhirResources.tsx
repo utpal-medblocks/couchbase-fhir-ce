@@ -25,6 +25,7 @@ import { useBucketStore } from "../../store/bucketStore";
 import fhirResourceService from "../../services/fhirResourceService";
 import type { DocumentKeyResponse } from "../../services/fhirResourceService";
 import EditorComponent from "../../components/EditorComponent";
+import FhirTreeView from "../../components/FhirTreeView";
 import { useThemeContext } from "../../contexts/ThemeContext";
 
 export default function FhirResources() {
@@ -513,17 +514,34 @@ export default function FhirResources() {
               </Box>
             )}
             {selectedTab === 1 && (
-              <Box
-                sx={{
-                  display: "flex",
-                  justifyContent: "center",
-                  alignItems: "center",
-                  height: "100%",
-                }}
-              >
-                <Typography variant="body2" color="text.secondary">
-                  FHIR view will go here
-                </Typography>
+              <Box sx={{ flex: 1, overflow: "hidden" }}>
+                {documentLoading ? (
+                  <Box
+                    sx={{
+                      display: "flex",
+                      justifyContent: "center",
+                      alignItems: "center",
+                      height: "100%",
+                    }}
+                  >
+                    <CircularProgress />
+                  </Box>
+                ) : documentContent ? (
+                  <FhirTreeView data={documentContent} />
+                ) : (
+                  <Box
+                    sx={{
+                      display: "flex",
+                      justifyContent: "center",
+                      alignItems: "center",
+                      height: "100%",
+                    }}
+                  >
+                    <Typography variant="body2" color="text.secondary">
+                      Select a document key to view FHIR structure
+                    </Typography>
+                  </Box>
+                )}
               </Box>
             )}
             {selectedTab === 2 && (
