@@ -12,20 +12,25 @@ import {
   cyan,
   lime,
   lightGreen,
+  indigo,
 } from "@mui/material/colors";
 
 interface FhirTreeViewProps {
   data: any;
+  theme?: "light" | "dark";
 }
 
-const FhirTreeView: React.FC<FhirTreeViewProps> = ({ data }) => {
+const FhirTreeView: React.FC<FhirTreeViewProps> = ({
+  data,
+  theme = "dark",
+}) => {
   const typeColors: Record<string, string> = {
-    string: lightGreen.A200,
-    number: amber.A200,
-    boolean: red.A200,
-    object: lime.A200,
-    array: cyan.A200,
-    null: grey.A200,
+    string: theme == "dark" ? lightGreen.A200 : green[900],
+    number: theme == "dark" ? amber.A200 : amber[900],
+    boolean: theme == "dark" ? red.A200 : red[900],
+    object: theme == "dark" ? lime.A200 : indigo[900],
+    array: theme == "dark" ? cyan.A200 : blue[900],
+    null: theme == "dark" ? grey.A200 : grey[900],
   };
 
   const defaultColor = "#616161";

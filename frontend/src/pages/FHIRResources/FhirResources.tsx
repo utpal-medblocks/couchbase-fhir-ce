@@ -91,6 +91,15 @@ export default function FhirResources() {
     }
   }, [availableBuckets, selectedBucket]);
 
+  // Fetch bucket data on component mount if not already loaded
+  useEffect(() => {
+    const buckets = bucketStore.buckets[connectionId] || [];
+    if (connectionId && buckets.length === 0) {
+      // Only fetch if we don't have bucket data already
+      bucketStore.fetchBucketData(connectionId);
+    }
+  }, [connectionId, bucketStore]);
+
   const handleChangePage = (
     _: React.MouseEvent<HTMLButtonElement> | null,
     newPage: number
@@ -527,7 +536,7 @@ export default function FhirResources() {
                     <CircularProgress />
                   </Box>
                 ) : documentContent ? (
-                  <FhirTreeView data={documentContent} />
+                  <FhirTreeView data={documentContent} theme={themeMode} />
                 ) : (
                   <Box
                     sx={{
