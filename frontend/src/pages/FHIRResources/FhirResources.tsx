@@ -227,9 +227,6 @@ export default function FhirResources() {
             sx={{
               minWidth: 150,
               color: "GrayText",
-              "& .MuiSelect-select": {
-                paddingBottom: 0,
-              },
             }}
             size="small"
           >
@@ -256,9 +253,6 @@ export default function FhirResources() {
         <TextField
           sx={{
             width: "100%",
-            "& .MuiInputBase-root-MuiOutlinedInput-root": {
-              fontSize: "0.875rem",
-            },
           }}
           variant="outlined"
           size="small"
@@ -448,31 +442,19 @@ export default function FhirResources() {
             >
               <Tab
                 sx={{
-                  textTransform: "none",
                   margin: 0,
-                  "&:focus": {
-                    outline: "none",
-                  },
                 }}
                 label="JSON"
               />
               <Tab
                 sx={{
-                  textTransform: "none",
                   margin: 0,
-                  "&:focus": {
-                    outline: "none",
-                  },
                 }}
                 label="FHIR"
               />
               <Tab
                 sx={{
-                  textTransform: "none",
                   margin: 0,
-                  "&:focus": {
-                    outline: "none",
-                  },
                 }}
                 label="History"
               />
