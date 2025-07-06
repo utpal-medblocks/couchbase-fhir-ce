@@ -34,6 +34,7 @@ import {
   BsJournalMedical,
   BsBucket,
 } from "react-icons/bs";
+import { TbApiApp } from "react-icons/tb";
 import { VscFlame } from "react-icons/vsc";
 
 import CouchbaseLogo from "../../assets/icons/couchbase.png"; // Uncomment when you add the icon
@@ -109,7 +110,12 @@ const menuItems = [
     icon: VscFlame,
     path: "/fhir-resources",
   },
-  { id: "workbench", label: "Workbench", icon: BsTools, path: "/workbench" },
+  {
+    id: "workbench",
+    label: "API Workbench",
+    icon: TbApiApp,
+    path: "/workbench",
+  },
 ];
 
 const bottomMenuItems = [

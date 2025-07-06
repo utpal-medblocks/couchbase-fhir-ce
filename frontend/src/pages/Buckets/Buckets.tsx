@@ -105,60 +105,11 @@ const Buckets = () => {
         }}
       >
         <Tabs value={selectedTab} onChange={handleChange} sx={{ flexGrow: 1 }}>
-          <Tab
-            sx={{
-              textTransform: "none",
-              margin: 0,
-              "&:focus": {
-                outline: "none",
-              },
-            }}
-            label="Collections"
-          />
-          <Tab
-            disabled={!activeBucket || !activeScope}
-            sx={{
-              textTransform: "none",
-              margin: 0,
-              "&:focus": {
-                outline: "none",
-              },
-            }}
-            label="Samples"
-          />
-          <Tab
-            disabled={!activeBucket || !activeScope}
-            sx={{
-              textTransform: "none",
-              margin: 0,
-              "&:focus": {
-                outline: "none",
-              },
-            }}
-            label="GSI Indexes"
-          />
-          <Tab
-            disabled={!activeBucket || !activeScope}
-            sx={{
-              textTransform: "none",
-              margin: 0,
-              "&:focus": {
-                outline: "none",
-              },
-            }}
-            label="Schema"
-          />
-          <Tab
-            disabled={!activeBucket || !activeScope}
-            sx={{
-              textTransform: "none",
-              margin: 0,
-              "&:focus": {
-                outline: "none",
-              },
-            }}
-            label="FTS Indexes"
-          />
+          <Tab label="Collections" />
+          <Tab disabled={!activeBucket || !activeScope} label="Samples" />
+          <Tab disabled={!activeBucket || !activeScope} label="GSI Indexes" />
+          <Tab disabled={!activeBucket || !activeScope} label="Schema" />
+          <Tab disabled={!activeBucket || !activeScope} label="FTS Indexes" />
         </Tabs>
 
         {/* Bucket and Scope selectors on the right */}
@@ -171,9 +122,6 @@ const Buckets = () => {
             sx={{
               minWidth: 150,
               color: "GrayText",
-              "& .MuiSelect-select": {
-                paddingBottom: 0,
-              },
             }}
             size="small"
           >
@@ -197,9 +145,6 @@ const Buckets = () => {
             sx={{
               minWidth: 150,
               color: "GrayText",
-              "& .MuiSelect-select": {
-                paddingBottom: 0,
-              },
             }}
             size="small"
           >
