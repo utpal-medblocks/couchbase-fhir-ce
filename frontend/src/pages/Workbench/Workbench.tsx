@@ -25,6 +25,7 @@ import {
   Settings as SettingsIcon,
 } from "@mui/icons-material";
 import { useState, useEffect, useRef } from "react";
+import axios from "axios";
 import { useConnectionStore } from "../../store/connectionStore";
 import { useBucketStore } from "../../store/bucketStore";
 import EditorComponent from "../../components/EditorComponent";
@@ -115,7 +116,7 @@ const Workbench = () => {
   // API request state
   const [request, setRequest] = useState<ApiRequest>({
     method: "GET",
-    url: "/fhir/Patient", // Keep for initial value and selectFhirEndpoint updates
+    url: "/Patient", // Will be converted to /api/fhir-test/Patient
     params: [],
     headers: [
       {
@@ -187,28 +188,8 @@ const Workbench = () => {
 
   // Update URL when bucket changes
   useEffect(() => {
-    if (selectedBucket) {
-      const currentUrl = urlInputRef.current?.value || request.url;
-      const currentPath = currentUrl
-        .replace(/^\/fhir\/[^\/]*\//, "/fhir/")
-        .replace(/^\/fhir\//, "/fhir/");
-
-      const newUrl = `/fhir/${selectedBucket}${
-        currentPath.startsWith("/fhir/")
-          ? currentPath.replace("/fhir", "")
-          : currentPath
-      }`;
-
-      setRequest((prev) => ({
-        ...prev,
-        url: newUrl,
-      }));
-
-      // Update the input field value
-      if (urlInputRef.current) {
-        urlInputRef.current.value = newUrl;
-      }
-    }
+    // No need to update URL when bucket changes since we're using test endpoints
+    // that don't include bucket in the path
   }, [selectedBucket]);
 
   const handleConfigSave = (newConfig: WorkbenchConfig) => {
@@ -230,18 +211,43 @@ const Workbench = () => {
       // Get URL from ref (for better performance than controlled input)
       const currentUrl = urlInputRef.current?.value || request.url;
 
-      // Build the full URL with query params
-      let fullUrl = `http://${config.hostname}${currentUrl}`;
+      // Build the full URL with bucket in path
+      let apiUrl = currentUrl;
+
+      // Remove /fhir prefix if present and construct new path with bucket
+      if (apiUrl.startsWith("/fhir/")) {
+        apiUrl = apiUrl.replace("/fhir/", "/");
+      }
+
+      // Ensure it starts with /
+      if (!apiUrl.startsWith("/")) {
+        apiUrl = "/" + apiUrl;
+      }
+
+      // Construct URL with bucket in path: /api/fhir-test/{bucket}{resource}
+      const fullApiUrl = `/api/fhir-test/${
+        selectedBucket || "default"
+      }${apiUrl}`;
+      let fullUrl = `http://${config.hostname}${fullApiUrl}`;
+
+      // Add query parameters (no longer need bucketName as it's in path)
+      const urlParams = new URLSearchParams();
+
+      // Add connection name from the connection store if needed
+      if (connectionId) {
+        urlParams.append("connectionName", connectionId);
+      }
+
+      // Add user-provided query parameters
       const enabledParams = request.params.filter(
         (p) => p.enabled && p.key && p.value
       );
-      if (enabledParams.length > 0) {
-        const queryString = enabledParams
-          .map(
-            (p) => `${encodeURIComponent(p.key)}=${encodeURIComponent(p.value)}`
-          )
-          .join("&");
-        fullUrl += `?${queryString}`;
+      enabledParams.forEach((p) => {
+        urlParams.append(p.key, p.value);
+      });
+
+      if (urlParams.toString()) {
+        fullUrl += `?${urlParams.toString()}`;
       }
 
       // Build headers object
@@ -265,7 +271,7 @@ const Workbench = () => {
         headers["Authorization"] = `Bearer ${request.auth.token}`;
       }
 
-      // Make the request (this is a placeholder - you'll need to implement the actual API call)
+      // Make the actual HTTP request using Axios
       console.log("Making request:", {
         method: request.method,
         url: fullUrl,
@@ -273,57 +279,118 @@ const Workbench = () => {
         body: request.body,
       });
 
-      // Simulate API response for now
-      setTimeout(() => {
-        const responseTime = Date.now() - startTime;
-        const sampleData = {
-          resourceType: "Bundle",
-          id: "example-search-result",
-          type: "searchset",
-          total: 1,
-          entry: [
-            {
-              fullUrl: `http://${config.hostname}/fhir/${selectedBucket}/Patient/example`,
-              resource: {
-                resourceType: "Patient",
-                id: "example",
-                name: [
-                  {
-                    use: "official",
-                    family: "Doe",
-                    given: ["John"],
-                  },
-                ],
-              },
-            },
-          ],
-        };
-        const responseString = JSON.stringify(sampleData, null, 2);
-        setResponse({
-          status: 200,
-          statusText: "OK",
-          headers: {
-            "Content-Type": "application/fhir+json",
-            Date: new Date().toISOString(),
-            "Content-Length": responseString.length.toString(),
-          },
-          data: sampleData,
-          responseTime,
-          responseSize: new Blob([responseString]).size,
+      const axiosConfig: any = {
+        method: request.method.toLowerCase(),
+        url: fullUrl,
+        headers,
+        timeout: config.defaultTimeout,
+        validateStatus: () => true, // Don't throw on any status code
+      };
+
+      // Add request body for methods that support it
+      if (
+        ["post", "put", "patch"].includes(request.method.toLowerCase()) &&
+        request.body
+      ) {
+        try {
+          // Try to parse as JSON, if it fails, send as string
+          axiosConfig.data = JSON.parse(request.body);
+        } catch {
+          axiosConfig.data = request.body;
+        }
+      }
+
+      const axiosResponse = await axios(axiosConfig);
+      const responseTime = Date.now() - startTime;
+
+      // Calculate response size
+      const responseString =
+        typeof axiosResponse.data === "string"
+          ? axiosResponse.data
+          : JSON.stringify(axiosResponse.data);
+      const responseSize = new Blob([responseString]).size;
+
+      // Convert headers to Record<string, string> format
+      const responseHeaders: Record<string, string> = {};
+      if (axiosResponse.headers && typeof axiosResponse.headers === "object") {
+        Object.keys(axiosResponse.headers).forEach((key) => {
+          const value = (axiosResponse.headers as any)[key];
+          if (value !== undefined) {
+            responseHeaders[key] = String(value);
+          }
         });
-        setLoading(false);
-      }, 1000);
-    } catch (error) {
+      }
+
+      setResponse({
+        status: axiosResponse.status,
+        statusText: axiosResponse.statusText,
+        headers: responseHeaders,
+        data: axiosResponse.data,
+        responseTime,
+        responseSize,
+      });
+      setLoading(false);
+    } catch (error: any) {
       console.error("Request failed:", error);
       const responseTime = Date.now() - startTime;
-      setResponse({
-        status: 500,
-        statusText: "Internal Server Error",
-        headers: {},
-        data: { error: "Request failed" },
-        responseTime,
-        responseSize: 0,
-      });
+
+      // Handle different types of errors
+      if (error.code === "ECONNABORTED") {
+        // Timeout error
+        setResponse({
+          status: 408,
+          statusText: "Request Timeout",
+          headers: {},
+          data: { error: `Request timed out after ${config.defaultTimeout}ms` },
+          responseTime,
+          responseSize: 0,
+        });
+      } else if (error.code === "ECONNREFUSED") {
+        // Connection refused (server not available)
+        setResponse({
+          status: 503,
+          statusText: "Service Unavailable",
+          headers: {},
+          data: { error: `Cannot connect to ${config.hostname}` },
+          responseTime,
+          responseSize: 0,
+        });
+      } else if (error.response) {
+        // Server responded with error status
+        const responseHeaders: Record<string, string> = {};
+        if (
+          error.response.headers &&
+          typeof error.response.headers === "object"
+        ) {
+          Object.keys(error.response.headers).forEach((key) => {
+            const value = error.response.headers[key];
+            if (value !== undefined) {
+              responseHeaders[key] = String(value);
+            }
+          });
+        }
+
+        setResponse({
+          status: error.response.status,
+          statusText: error.response.statusText,
+          headers: responseHeaders,
+          data: error.response.data,
+          responseTime,
+          responseSize: error.response.data
+            ? new Blob([JSON.stringify(error.response.data)]).size
+            : 0,
+        });
+      } else {
+        // Generic error
+        setResponse({
+          status: 500,
+          statusText: "Internal Server Error",
+          headers: {},
+          data: { error: error.message || "Request failed" },
+          responseTime,
+          responseSize: 0,
+        });
+      }
       setLoading(false);
     }
   };
@@ -362,8 +429,7 @@ const Workbench = () => {
   };
 
   const selectFhirEndpoint = (endpoint: string) => {
-    const basePath = selectedBucket ? `/fhir/${selectedBucket}` : "/fhir";
-    const newUrl = `${basePath}/${endpoint}`;
+    const newUrl = `/${endpoint}`;
 
     // Update both state and ref for consistency
     setRequest((prev) => ({
@@ -485,7 +551,8 @@ const Workbench = () => {
                 fullWidth
                 inputRef={urlInputRef}
                 defaultValue={request.url}
-                placeholder="/fhir/Patient"
+                placeholder="/Patient"
+                // helperText={`Examples: /Patient, /Observation, /Patient/123 (using real Couchbase data)`}
               />
               <Button
                 variant="contained"

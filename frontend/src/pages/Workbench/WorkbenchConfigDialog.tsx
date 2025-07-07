@@ -131,7 +131,7 @@ const WorkbenchConfigDialog: React.FC<WorkbenchConfigDialogProps> = ({
             label="Follow Redirects"
           />
           <Typography variant="body2" color="text.secondary">
-            Base URL: http://{hostname}/fhir/{selectedBucket || "{bucket}"}
+            Base URL: http://{hostname}/api/fhir-test/ (Real Couchbase data)
           </Typography>
         </Box>
       </DialogContent>
