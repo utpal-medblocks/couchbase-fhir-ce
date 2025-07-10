@@ -76,68 +76,6 @@ public class FHIRTestService {
     }
 
     /**
-     * Search resources using N1QL query
-     */
-    public Map<String, Object> searchResources(String resourceType, String connectionName, 
-                                             String bucketName, Map<String, String> searchParams) {
-        try {
-            // Use provided connection or default
-            connectionName = connectionName != null ? connectionName : getDefaultConnection();
-            bucketName = bucketName != null ? bucketName : DEFAULT_BUCKET;
-            
-            Cluster cluster = connectionService.getConnection(connectionName);
-            if (cluster == null) {
-                throw new RuntimeException("No active connection found: " + connectionName);
-            }
-
-            // Build N1QL query
-            String sql = String.format(
-                "SELECT META().id as documentId, c.* " +
-                "FROM `%s`.`%s`.`%s` c " +
-                "WHERE c.resourceType = '%s' " +
-                "LIMIT 20",
-                bucketName, DEFAULT_SCOPE, resourceType, resourceType
-            );
-
-            logger.info("Executing N1QL query: {}", sql);
-            
-            QueryResult result = cluster.query(sql);
-            List<JsonObject> rows = result.rowsAs(JsonObject.class);
-            
-            // Create FHIR Bundle response
-            Map<String, Object> bundle = new HashMap<>();
-            bundle.put("resourceType", "Bundle");
-            bundle.put("id", resourceType.toLowerCase() + "-search-" + System.currentTimeMillis());
-            bundle.put("type", "searchset");
-            bundle.put("total", rows.size());
-            bundle.put("timestamp", getCurrentFhirTimestamp());
-
-            List<Map<String, Object>> entries = new ArrayList<>();
-            for (JsonObject row : rows) {
-                String documentKey = row.getString("documentId"); // This will be ResourceType::id
-                JsonObject resource = row.removeKey("documentId"); // Remove our added field
-                
-                // Extract just the ID part from ResourceType::id
-                String resourceId = documentKey.contains("::") ? 
-                    documentKey.split("::", 2)[1] : documentKey;
-                
-                Map<String, Object> entry = new HashMap<>();
-                entry.put("fullUrl", String.format("http://localhost:8080/api/fhir-test/%s/%s/%s", bucketName, resourceType, resourceId));
-                entry.put("resource", resource.toMap());
-                entries.add(entry);
-            }
-            bundle.put("entry", entries);
-
-            logger.info("Successfully retrieved {} {} resources from Couchbase", rows.size(), resourceType);
-            return bundle;
-
-        } catch (Exception e) {
-            logger.error("Failed to search {} resources: {}", resourceType, e.getMessage());
-            throw e;
-        }
-    }
-
-    /**
      * Get resource by ID using N1QL query
      */
     public Map<String, Object> getResourceById(String resourceType, String id, 
