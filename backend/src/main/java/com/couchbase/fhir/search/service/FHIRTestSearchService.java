@@ -55,44 +55,144 @@ public class FHIRTestSearchService {
     private static final Set<String> MODIFIERS = Set.of(
         "missing", "exact", "contains", "text", "not", "above", "below", "in", "not-in", "of-type"
     );
-
-    // FHIR search parameter to field mapping dictionary
-    private static final Map<String, SearchParameterMapping> SEARCH_PARAMETER_MAPPINGS = Map.ofEntries(
-        Map.entry("telecom", new SearchParameterMapping("telecom.value", true, "telecom.system")),
-        Map.entry("phone", new SearchParameterMapping("telecom.value", true, "telecom.system", "phone")),
-        Map.entry("email", new SearchParameterMapping("telecom.value", true, "telecom.system", "email")),
-        Map.entry("name", new SearchParameterMapping("name.family,name.given", false, null)),
-        Map.entry("family", new SearchParameterMapping("name.family", false, null)),
-        Map.entry("given", new SearchParameterMapping("name.given", false, null)),
-        Map.entry("identifier", new SearchParameterMapping("identifier.value", true, "identifier.system")),
-        Map.entry("gender", new SearchParameterMapping("gender", false, null)),
-        Map.entry("birthdate", new SearchParameterMapping("birthDate", false, null)),
-        Map.entry("active", new SearchParameterMapping("active", false, null)),
-        Map.entry("address", new SearchParameterMapping("address.text,address.line,address.city", false, null)),
-        Map.entry("organization", new SearchParameterMapping("managingOrganization.reference", false, null)),
-        Map.entry("_text", new SearchParameterMapping("", false, null)) // Special case for full-text search
+    
+    // Fields that are CodeableConcept and need .coding.system/.coding.code instead of .system/.value
+    private static final Set<String> CODEABLE_CONCEPT_FIELDS = Set.of(
+        // Status fields
+        "clinicalStatus", "verificationStatus", "status",
+        // Classification  
+        "category", "type", "class", "code",
+        // Severity/Priority
+        "criticality", "severity", "priority", "intent",
+        // Administrative
+        "maritalStatus", "use"
     );
 
-    private static class SearchParameterMapping {
+    // FHIR search parameter field path resolution result
+    private static class FieldPathMapping {
         final String fieldPath;
-        final boolean hasSystem;
         final String systemField;
         final String systemValue;
+        final boolean hasSystem;
         
-        SearchParameterMapping(String fieldPath, boolean hasSystem, String systemField) {
-            this(fieldPath, hasSystem, systemField, null);
-        }
-        
-        SearchParameterMapping(String fieldPath, boolean hasSystem, String systemField, String systemValue) {
+        FieldPathMapping(String fieldPath, String systemField, String systemValue, boolean hasSystem) {
             this.fieldPath = fieldPath;
-            this.hasSystem = hasSystem;
             this.systemField = systemField;
             this.systemValue = systemValue;
+            this.hasSystem = hasSystem;
         }
     }
     
     public FHIRTestSearchService() {
         this.fhirContext = FhirContext.forR4();
+        addUSCoreSearchParameters();
+    }
+    
+    private void addUSCoreSearchParameters() {
+        // US Core parameters are handled manually in handleUSCoreParameters()
+        logger.info("US Core search parameters handled manually");
+    }
+    
+    /**
+     * Handle common US Core search parameters that are not in base FHIR R4
+     */
+    private FieldPathMapping handleUSCoreParameters(String paramName, String resourceType) {
+        if ("Patient".equals(resourceType)) {
+            switch (paramName) {
+                case "language":
+                    // Patient communication language (CodeableConcept)
+                    return new FieldPathMapping("communication.language.coding.code", 
+                                               "communication.language.coding.system", null, true);
+                case "marital-status":
+                    // Patient marital status (CodeableConcept) 
+                    return new FieldPathMapping("maritalStatus.coding.code", 
+                                               "maritalStatus.coding.system", null, true);
+                // Add more US Core Patient parameters as needed
+                default:
+                    return null;
+            }
+        }
+        // Add support for other resource types as needed
+        return null;
+    }
+    
+    /**
+     * Resolve field path from HAPI search parameter using the patterns we discovered:
+     * - TOKEN type: add ".value" to base path, handle system field
+     * - STRING type: use path directly
+     * - Special filtered cases: handle "where(system='phone')" patterns
+     */
+    private FieldPathMapping resolveFieldPathFromHapi(RuntimeSearchParam searchParam) {
+        String hapiPath = searchParam.getPath();
+        RestSearchParameterTypeEnum paramType = searchParam.getParamType();
+        
+        logger.info("🔧 Resolving field path from HAPI:");
+        logger.info("   HAPI Path: {}", hapiPath);
+        logger.info("   Param Type: {}", paramType);
+        
+        // Handle special case for full-text search
+        if ("_text".equals(searchParam.getName())) {
+            return new FieldPathMapping("", null, null, false);
+        }
+        
+        // Convert Patient.xxx to xxx (remove resource type prefix)
+        String basePath = convertToFieldPath(hapiPath);
+        
+        if (paramType == RestSearchParameterTypeEnum.TOKEN) {
+            return handleTokenFieldPath(basePath, hapiPath, searchParam.getName());
+        } else {
+            // STRING, REFERENCE, DATE, NUMBER, etc. - use path directly
+            return new FieldPathMapping(basePath, null, null, false);
+        }
+    }
+    
+    private String convertToFieldPath(String hapiPath) {
+        // "Patient.name.given" → "name.given"
+        // "Patient.telecom.where(system='phone')" → "telecom.where(system='phone')"
+        return hapiPath.replaceFirst("^[^.]+\\.", "");
+    }
+    
+    private FieldPathMapping handleTokenFieldPath(String basePath, String hapiPath, String paramName) {
+        // Handle special filtered cases like "Patient.telecom.where(system='phone')"
+        if (hapiPath.contains(".where(system=")) {
+            return handleFilteredTokenPath(basePath, hapiPath);
+        } else {
+            // Check if this is a CodeableConcept field
+            if (CODEABLE_CONCEPT_FIELDS.contains(basePath)) {
+                // CodeableConcept TOKEN: "clinicalStatus" → "clinicalStatus.coding.code" with coding system field
+                logger.info("   🎯 Detected CodeableConcept field: {}", basePath);
+                String fieldPath = basePath + ".coding.code";
+                String systemField = basePath + ".coding.system";
+                return new FieldPathMapping(fieldPath, systemField, null, true);
+            } else {
+                // Simple TOKEN: "Patient.telecom" → "telecom.value" with system field
+                logger.info("   🔗 Detected simple TOKEN field: {}", basePath);
+                String fieldPath = basePath + ".value";
+                String systemField = basePath + ".system";
+                return new FieldPathMapping(fieldPath, systemField, null, true);
+            }
+        }
+    }
+    
+    private FieldPathMapping handleFilteredTokenPath(String basePath, String hapiPath) {
+        // Extract system value from "Patient.telecom.where(system='phone')"
+        // Pattern: "Patient.telecom.where(system='phone')" → system="phone"
+        String systemValue = null;
+        int whereIndex = hapiPath.indexOf(".where(system=");
+        if (whereIndex != -1) {
+            int startQuote = hapiPath.indexOf("'", whereIndex);
+            int endQuote = hapiPath.indexOf("'", startQuote + 1);
+            if (startQuote != -1 && endQuote != -1) {
+                systemValue = hapiPath.substring(startQuote + 1, endQuote);
+            }
+        }
+        
+        // Remove the .where() part to get base path
+        String cleanBasePath = basePath.replaceFirst("\\.where\\(.*\\)", "");
+        String fieldPath = cleanBasePath + ".value";
+        String systemField = cleanBasePath + ".system";
+        
+        return new FieldPathMapping(fieldPath, systemField, systemValue, true);
     }
     
     public List<Map<String, Object>> searchResources(String resourceType, Map<String, String> queryParams, 
@@ -140,7 +240,9 @@ public class FHIRTestSearchService {
                 // Add FTS conditions using JSON-based conjuncts approach
                 if (!ftsConditions.isEmpty()) {
                     JsonObject ftsQuery = buildFtsJsonQuery(ftsConditions);
-                    allConditions.add("SEARCH(t, " + ftsQuery.toString() + ")");
+                    String indexName = bucketName + ".Resources.fts" + resourceType;
+                    JsonObject indexSpec = JsonObject.create().put("index", indexName);
+                    allConditions.add("SEARCH(t, " + ftsQuery.toString() + ", " + indexSpec.toString() + ")");
                 }
                 
                 // Add N1QL conditions
@@ -149,8 +251,7 @@ public class FHIRTestSearchService {
                 queryBuilder.append(String.join(" AND ", allConditions));
             }
             
-            // Add limit
-            queryBuilder.append(" LIMIT 50");
+            // Note: Size/limit is now handled inside FTS query, not in SQL LIMIT clause
             
             String finalQuery = queryBuilder.toString();
             logger.info("Executing search query: {}", finalQuery);
@@ -195,23 +296,43 @@ public class FHIRTestSearchService {
         // Parse parameter name and modifiers
         ParsedParameter parsed = parseParameterName(paramName);
         
-        // Get our mapping instead of relying on HAPI's generic path
-        SearchParameterMapping mapping = SEARCH_PARAMETER_MAPPINGS.get(parsed.baseName);
-        if (mapping == null) {
-            logger.warn("Unknown search parameter: {} for resource type: {}", parsed.baseName, resourceDef.getName());
-            return;
-        }
-        
-        // Get HAPI parameter for type information
+        // Get HAPI parameter for dynamic field path resolution
         RuntimeSearchParam searchParam = resourceDef.getSearchParam(parsed.baseName);
-        RestSearchParameterTypeEnum paramType = searchParam != null ? searchParam.getParamType() : RestSearchParameterTypeEnum.STRING;
+        
+        FieldPathMapping mapping;
+        RestSearchParameterTypeEnum paramType;
+        
+        if (searchParam == null) {
+            // Handle common US Core parameters manually
+            mapping = handleUSCoreParameters(parsed.baseName, resourceDef.getName());
+            if (mapping == null) {
+                logger.warn("Unknown search parameter: {} for resource type: {}", parsed.baseName, resourceDef.getName());
+                return;
+            }
+            paramType = RestSearchParameterTypeEnum.TOKEN; // Most US Core params are TOKEN
+        } else {
+            paramType = searchParam.getParamType();
+            
+            // Check if we need to override HAPI's path for specific US Core parameters
+            FieldPathMapping usCoreOverride = handleUSCoreParameters(parsed.baseName, resourceDef.getName());
+            if (usCoreOverride != null) {
+                logger.info("   🇺🇸 Using US Core override for parameter: {}", parsed.baseName);
+                mapping = usCoreOverride;
+            } else {
+                // Resolve field path dynamically from HAPI
+                mapping = resolveFieldPathFromHapi(searchParam);
+            }
+        }
         
         logger.info("🔍 FHIR Search Parameter Details:");
         logger.info("   Parameter: {}", parsed.baseName);
         logger.info("   Value: {}", value);
         logger.info("   Type: {}", paramType);
-        logger.info("   Mapped Field Path: {}", mapping.fieldPath);
+        logger.info("   🏷️  HAPI Path: {}", searchParam != null ? searchParam.getPath() : "US Core - manual");
+        logger.info("   📋 Resolved Field Path: {}", mapping.fieldPath);
         logger.info("   Has System: {}", mapping.hasSystem);
+        logger.info("   System Field: {}", mapping.systemField);
+        logger.info("   System Value: {}", mapping.systemValue);
         logger.info("   Modifiers: {}", parsed.modifiers);
         
         // Parse value and prefixes
@@ -220,7 +341,7 @@ public class FHIRTestSearchService {
         logger.info("   Parsed Value: {}", parsedValue.value);
         logger.info("   Prefix: {}", parsedValue.prefix);
         
-        // Generate query condition based on mapping
+        // Generate query condition based on dynamic mapping
         generateQueryConditionFromMapping(mapping, parsedValue, parsed, paramType, ftsConditions, n1qlConditions, parameters);
     }
     
@@ -254,7 +375,7 @@ public class FHIRTestSearchService {
         return new ParsedValue(prefix, actualValue, paramType);
     }
     
-    private void generateQueryConditionFromMapping(SearchParameterMapping mapping,
+    private void generateQueryConditionFromMapping(FieldPathMapping mapping,
                                                  ParsedValue parsedValue, 
                                                  ParsedParameter parsed,
                                                  RestSearchParameterTypeEnum paramType,
@@ -299,7 +420,7 @@ public class FHIRTestSearchService {
         }
     }
     
-    private void handleSystemValueParameter(SearchParameterMapping mapping, String value, String prefix, List<String> ftsConditions) {
+    private void handleSystemValueParameter(FieldPathMapping mapping, String value, String prefix, List<String> ftsConditions) {
         String[] parts = value.split("\\|", 2);
         String system = parts[0];
         String code = parts[1];
@@ -319,7 +440,7 @@ public class FHIRTestSearchService {
         }
     }
     
-    private void handleImpliedSystemParameter(SearchParameterMapping mapping, String value, String prefix, List<String> ftsConditions) {
+    private void handleImpliedSystemParameter(FieldPathMapping mapping, String value, String prefix, List<String> ftsConditions) {
         // Create field:type:value conditions for JSON processing
         ftsConditions.add(mapping.systemField + ":match:" + mapping.systemValue);
         ftsConditions.add(mapping.fieldPath + ":match:" + value);  // Use exact match for implied system parameters
@@ -327,7 +448,7 @@ public class FHIRTestSearchService {
         logger.info("   Added FTS value condition: {}:match:{}", mapping.fieldPath, value);
     }
     
-    private void handleRegularParameter(SearchParameterMapping mapping, String value, String prefix, 
+    private void handleRegularParameter(FieldPathMapping mapping, String value, String prefix, 
                                       Set<String> modifiers, RestSearchParameterTypeEnum paramType,
                                       List<String> ftsConditions, List<String> n1qlConditions, JsonObject parameters) {
         
@@ -341,22 +462,11 @@ public class FHIRTestSearchService {
             ftsConditions.add(condition);
             logger.info("   Added FTS condition: {}", condition);
         } else {
-            // Single field
+            // Single field - always use FTS for all parameter types
             String fieldPath = mapping.fieldPath;
-            
-            // Use N1QL for numeric and date comparisons
-            if (paramType == RestSearchParameterTypeEnum.NUMBER || paramType == RestSearchParameterTypeEnum.DATE) {
-                if (paramType == RestSearchParameterTypeEnum.NUMBER) {
-                    handleNumberParameter(fieldPath, value, prefix, n1qlConditions, parameters);
-                } else {
-                    handleDateParameter(fieldPath, value, prefix, n1qlConditions, parameters);
-                }
-            } else {
-                // Use FTS for text searches
-                String condition = createSingleFieldCondition(fieldPath, value, prefix, modifiers, paramType);
-                ftsConditions.add(condition);
-                logger.info("   Added FTS condition: {}", condition);
-            }
+            String condition = createSingleFieldCondition(fieldPath, value, prefix, modifiers, paramType);
+            ftsConditions.add(condition);
+            logger.info("   Added FTS condition: {}", condition);
         }
     }
     
@@ -368,8 +478,12 @@ public class FHIRTestSearchService {
         } else if (modifiers.contains("contains")) {
             // Contains search - use wildcard with *value*
             return fieldPath + ":wildcard:*" + value.toLowerCase() + "*";
+        } else if (paramType == RestSearchParameterTypeEnum.DATE || paramType == RestSearchParameterTypeEnum.NUMBER) {
+            // For dates and numbers, use FTS range queries with prefix operators
+            // Include parameter type for proper range query generation
+            return fieldPath + ":range:" + paramType.name() + ":" + prefix + ":" + value;
         } else {
-            // Default FHIR prefix search - use wildcard with value*
+            // Default FHIR prefix search for strings - use wildcard with value*
             return fieldPath + ":wildcard:" + value.toLowerCase() + "*";
         }
     }
@@ -440,6 +554,102 @@ public class FHIRTestSearchService {
         return value.replace("\"", "\\\"");
     }
     
+    private void handleRangeQuery(JsonObject matchQuery, String field, String value) {
+        // Parse paramType:prefix:value format (e.g., "DATE:lt:2020-04-18" or "NUMBER:ge:150")
+        String[] parts = value.split(":", 3);
+        if (parts.length != 3) {
+            // Fallback to exact match if format is incorrect
+            matchQuery.put("match", value);
+            matchQuery.put("field", field);
+            return;
+        }
+        
+        String paramType = parts[0];
+        String prefix = parts[1];
+        String actualValue = parts[2];
+        
+        matchQuery.put("field", field);
+        
+        if ("DATE".equals(paramType)) {
+            // Use dateRange queries for DATE parameters
+            handleDateRangeQuery(matchQuery, prefix, actualValue);
+        } else {
+            // Use numeric range queries for NUMBER parameters
+            handleNumberRangeQuery(matchQuery, prefix, actualValue);
+        }
+    }
+    
+    private void handleDateRangeQuery(JsonObject matchQuery, String prefix, String dateValue) {
+        // Create FTS dateRange query based on prefix following the pattern:
+        // dateRangeQuery(start, end, inclusive_start, inclusive_end)
+        switch (prefix) {
+            case "eq":
+                // Same start/end with both inclusive: dateRangeQuery(date, date, true, true)
+                matchQuery.put("start", dateValue);
+                matchQuery.put("end", dateValue);
+                matchQuery.put("inclusive_start", true);
+                matchQuery.put("inclusive_end", true);
+                break;
+            case "ge": 
+                // Greater than or equal: dateRangeQuery(date, null, true, false)
+                matchQuery.put("start", dateValue);
+                matchQuery.put("inclusive_start", true);
+                // No end date, so no inclusive_end
+                break;
+            case "gt":
+            case "sa": // starts after (dates)
+                // Greater than: dateRangeQuery(date, null, false, false)
+                matchQuery.put("start", dateValue);
+                matchQuery.put("inclusive_start", false);
+                // No end date, so no inclusive_end
+                break;
+            case "le":
+                // Less than or equal: dateRangeQuery(null, date, false, true)
+                matchQuery.put("end", dateValue);
+                matchQuery.put("inclusive_end", true);
+                // No start date, so no inclusive_start
+                break;
+            case "lt":
+            case "eb": // ends before (dates)
+                // Less than: dateRangeQuery(null, date, false, false)
+                matchQuery.put("end", dateValue);
+                matchQuery.put("inclusive_end", false);
+                // No start date, so no inclusive_start
+                break;
+            default:
+                // Unknown prefix - fallback to exact match
+                matchQuery.put("match", dateValue);
+                break;
+        }
+    }
+    
+    private void handleNumberRangeQuery(JsonObject matchQuery, String prefix, String numberValue) {
+        // Create FTS numeric range query based on prefix
+        switch (prefix) {
+            case "lt":
+                matchQuery.put("max", numberValue);
+                matchQuery.put("inclusive_max", false);
+                break;
+            case "le":
+                matchQuery.put("max", numberValue);
+                matchQuery.put("inclusive_max", true);
+                break;
+            case "gt":
+                matchQuery.put("min", numberValue);
+                matchQuery.put("inclusive_min", false);
+                break;
+            case "ge":
+                matchQuery.put("min", numberValue);
+                matchQuery.put("inclusive_min", true);
+                break;
+            case "eq":
+            default:
+                // Equal or unknown prefix - use exact match
+                matchQuery.put("match", numberValue);
+                break;
+        }
+    }
+    
     private String getDefaultConnection() {
         List<String> connections = connectionService.getActiveConnections();
         return connections.isEmpty() ? DEFAULT_CONNECTION : connections.get(0);
@@ -491,6 +701,9 @@ public class FHIRTestSearchService {
             query.put("query", queryRoot);
         }
         
+        // Add size parameter to FTS query (replaces SQL LIMIT clause)
+        query.put("size", 50);
+        
         return query;
     }
     
@@ -526,6 +739,11 @@ public class FHIRTestSearchService {
                 // Wildcard search - use wildcard query
                 matchQuery.put("wildcard", value);
                 matchQuery.put("field", condition.field);
+                break;
+                
+            case "range":
+                // Range query for dates and numbers with prefix operators
+                handleRangeQuery(matchQuery, condition.field, value);
                 break;
                 
             default:
