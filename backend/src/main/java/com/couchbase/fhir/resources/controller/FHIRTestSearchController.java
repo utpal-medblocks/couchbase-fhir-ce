@@ -1,6 +1,6 @@
-package com.couchbase.fhir.search.controller;
+package com.couchbase.fhir.resources.controller;
 
-import com.couchbase.fhir.search.service.FHIRTestSearchService;
+import com.couchbase.fhir.resources.service.FHIRTestSearchService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;

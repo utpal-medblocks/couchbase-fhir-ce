@@ -1,4 +1,4 @@
-package com.couchbase.fhir.search.service;
+package com.couchbase.fhir.resources.service;
 
 import ca.uhn.fhir.context.FhirContext;
 import ca.uhn.fhir.context.RuntimeResourceDefinition;
