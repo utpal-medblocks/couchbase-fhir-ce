@@ -16,8 +16,6 @@ import java.util.stream.Collectors;
 
 @Component
 public class ResourceProviderAutoConfig {
-    @Autowired
-    private FhirContext fhirContext;
 
     @Autowired
     private FHIRResourceService serviceFactory;

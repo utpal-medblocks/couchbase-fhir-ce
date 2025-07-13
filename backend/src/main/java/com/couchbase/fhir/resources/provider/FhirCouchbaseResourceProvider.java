@@ -5,7 +5,10 @@ import ca.uhn.fhir.model.api.IResource;
 import ca.uhn.fhir.rest.annotation.Create;
 import ca.uhn.fhir.rest.annotation.IdParam;
 import ca.uhn.fhir.rest.annotation.Read;
+import ca.uhn.fhir.rest.annotation.ResourceParam;
+import ca.uhn.fhir.rest.api.MethodOutcome;
 import ca.uhn.fhir.rest.server.IResourceProvider;
+import ca.uhn.fhir.rest.server.exceptions.InternalErrorException;
 import ca.uhn.fhir.rest.server.exceptions.ResourceNotFoundException;
 import ca.uhn.fhir.rest.server.exceptions.UnprocessableEntityException;
 import ca.uhn.fhir.validation.FhirValidator;
@@ -41,8 +44,8 @@ public class FhirCouchbaseResourceProvider <T extends IBaseResource> implements 
                 new ResourceNotFoundException(theId));
     }
 
-    /*@Create
-    public Optional<T> create(T resource) {
+    @Create
+    public MethodOutcome create(@ResourceParam T resource) {
         if (resource.getIdElement().isEmpty()) {
             resource.setId(UUID.randomUUID().toString());
         }
@@ -68,10 +71,14 @@ public class FhirCouchbaseResourceProvider <T extends IBaseResource> implements 
             throw new UnprocessableEntityException("FHIR Validation failed:\n" + issues.toString());
         }
 
-        System.out.println("Name : -" + resource.getIdElement().getResourceType());
-
-        return dao.create(resource.getIdElement().getResourceType() , resource);
-    }*/
+        T created =  dao.create(resourceClass.getSimpleName() , resource).orElseThrow(() ->
+                new InternalErrorException("Failed to create resource"));
+        MethodOutcome outcome = new MethodOutcome();
+        outcome.setCreated(true);
+        outcome.setResource(created);
+        outcome.setId(new IdType(resourceClass.getSimpleName(), created.getIdElement().getIdPart()));
+        return outcome;
+    }
 
     @Override
     public Class<T> getResourceType() {
