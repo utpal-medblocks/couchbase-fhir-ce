@@ -13,6 +13,7 @@ import ca.uhn.fhir.rest.server.exceptions.UnprocessableEntityException;
 import ca.uhn.fhir.validation.FhirValidator;
 import ca.uhn.fhir.validation.ValidationResult;
 import com.couchbase.fhir.resources.repository.FhirResourceDaoImpl;
+import com.couchbase.fhir.resources.service.FHIRTestSearchService;
 import org.hl7.fhir.instance.model.api.IBaseResource;
 import org.hl7.fhir.r4.model.Bundle;
 import org.hl7.fhir.r4.model.DomainResource;
@@ -21,6 +22,7 @@ import org.hl7.fhir.r4.model.Resource;
 import org.springframework.beans.factory.annotation.Autowired;
 
 import java.util.*;
+import java.util.stream.Collectors;
 
 
 public class FhirCouchbaseResourceProvider <T extends Resource> implements IResourceProvider {
@@ -78,18 +80,20 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
         return outcome;
     }
 
-    @Search
-    public Bundle search(@OptionalParam(name = "_id") StringParam id,
-                         @OptionalParam(name = "name") StringParam name,
-                         RequestDetails requestDetails) {
+    @Search(allowUnknownParams = true)
+    public Bundle search(RequestDetails requestDetails) {
 
-        // Convert params to a key-value map
-        Map<String, String> searchParams = new HashMap<>();
-        if (id != null) searchParams.put("id", id.getValue());
-        if (name != null) searchParams.put("name", name.getValue());
+        Map<String, String[]> rawParams = requestDetails.getParameters();
+        // Flatten and convert to Map<String, String>
+        Map<String, String> searchParams = rawParams.entrySet().stream()
+                .filter(e -> e.getValue() != null && e.getValue().length > 0)
+                .collect(Collectors.toMap(
+                        Map.Entry::getKey,
+                        e -> e.getValue()[0]
+                ));
+
 
         String resourceType = resourceClass.getSimpleName();
-
         // Call DAO's search method
         List<T> results = dao.search(resourceType, searchParams);
 
