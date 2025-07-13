@@ -2,11 +2,10 @@ package com.couchbase.fhir.resources.provider;
 
 import ca.uhn.fhir.context.FhirContext;
 import ca.uhn.fhir.model.api.IResource;
-import ca.uhn.fhir.rest.annotation.Create;
-import ca.uhn.fhir.rest.annotation.IdParam;
-import ca.uhn.fhir.rest.annotation.Read;
-import ca.uhn.fhir.rest.annotation.ResourceParam;
+import ca.uhn.fhir.rest.annotation.*;
 import ca.uhn.fhir.rest.api.MethodOutcome;
+import ca.uhn.fhir.rest.api.server.RequestDetails;
+import ca.uhn.fhir.rest.param.StringParam;
 import ca.uhn.fhir.rest.server.IResourceProvider;
 import ca.uhn.fhir.rest.server.exceptions.InternalErrorException;
 import ca.uhn.fhir.rest.server.exceptions.ResourceNotFoundException;
@@ -15,17 +14,16 @@ import ca.uhn.fhir.validation.FhirValidator;
 import ca.uhn.fhir.validation.ValidationResult;
 import com.couchbase.fhir.resources.repository.FhirResourceDaoImpl;
 import org.hl7.fhir.instance.model.api.IBaseResource;
+import org.hl7.fhir.r4.model.Bundle;
 import org.hl7.fhir.r4.model.DomainResource;
 import org.hl7.fhir.r4.model.IdType;
 import org.hl7.fhir.r4.model.Resource;
 import org.springframework.beans.factory.annotation.Autowired;
 
-import java.util.Date;
-import java.util.Optional;
-import java.util.UUID;
+import java.util.*;
 
 
-public class FhirCouchbaseResourceProvider <T extends IBaseResource> implements IResourceProvider {
+public class FhirCouchbaseResourceProvider <T extends Resource> implements IResourceProvider {
 
     private final Class<T> resourceClass;
     private final FhirResourceDaoImpl<T> dao;
@@ -78,6 +76,35 @@ public class FhirCouchbaseResourceProvider <T extends IBaseResource> implements 
         outcome.setResource(created);
         outcome.setId(new IdType(resourceClass.getSimpleName(), created.getIdElement().getIdPart()));
         return outcome;
+    }
+
+    @Search
+    public Bundle search(@OptionalParam(name = "_id") StringParam id,
+                         @OptionalParam(name = "name") StringParam name,
+                         RequestDetails requestDetails) {
+
+        // Convert params to a key-value map
+        Map<String, String> searchParams = new HashMap<>();
+        if (id != null) searchParams.put("id", id.getValue());
+        if (name != null) searchParams.put("name", name.getValue());
+
+        String resourceType = resourceClass.getSimpleName();
+
+        // Call DAO's search method
+        List<T> results = dao.search(resourceType, searchParams);
+
+        // Construct a FHIR Bundle response
+        Bundle bundle = new Bundle();
+        bundle.setType(Bundle.BundleType.SEARCHSET);
+        bundle.setTotal(results.size());
+
+        for (T resource : results) {
+            bundle.addEntry()
+                    .setResource(resource)
+                    .setFullUrl(resourceType + "/" + resource.getIdElement().getIdPart());
+        }
+
+        return bundle;
     }
 
     @Override
