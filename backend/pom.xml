@@ -68,22 +68,50 @@
 			<scope>test</scope>
 		</dependency>
 				<!-- HAPI FHIR Dependencies -->
+		<!-- HAPI FHIR Dependencies -->
+		<dependency>
+			<groupId>ca.uhn.hapi.fhir</groupId>
+			<artifactId>hapi-fhir-server</artifactId>
+			<version>${hapi.fhir.version}</version>
+		</dependency>
+
 		<dependency>
 			<groupId>ca.uhn.hapi.fhir</groupId>
 			<artifactId>hapi-fhir-spring-boot-starter</artifactId>
 			<version>${hapi.fhir.version}</version>
 		</dependency>
+
 		<dependency>
 			<groupId>ca.uhn.hapi.fhir</groupId>
 			<artifactId>hapi-fhir-structures-r4</artifactId>
 			<version>${hapi.fhir.version}</version>
 		</dependency>
+
 		<dependency>
 			<groupId>ca.uhn.hapi.fhir</groupId>
 			<artifactId>hapi-fhir-validation-resources-r4</artifactId>
 			<version>${hapi.fhir.version}</version>
 		</dependency>
-				<!-- JSON Processing -->
+
+
+		<dependency>
+			<groupId>com.helger.schematron</groupId>
+			<artifactId>ph-schematron-xslt</artifactId>
+			<version>8.0.6</version>
+		</dependency>
+		<dependency>
+			<groupId>jakarta.xml.bind</groupId>
+			<artifactId>jakarta.xml.bind-api</artifactId>
+			<version>4.0.2</version>
+		</dependency>
+
+		<dependency>
+			<groupId>org.glassfish.jaxb</groupId>
+			<artifactId>jaxb-runtime</artifactId>
+			<version>4.0.5</version>
+		</dependency>
+
+		<!-- JSON Processing -->
 		<dependency>
 			<groupId>com.fasterxml.jackson.core</groupId>
 			<artifactId>jackson-databind</artifactId>
