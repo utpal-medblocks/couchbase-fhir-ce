@@ -5,6 +5,7 @@ import ca.uhn.fhir.rest.server.IResourceProvider;
 import com.couchbase.fhir.resources.provider.FhirCouchbaseResourceProvider;
 import com.couchbase.fhir.resources.service.FHIRResourceService;
 import org.hl7.fhir.instance.model.api.IBaseResource;
+import org.hl7.fhir.r4.model.Resource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -26,7 +27,7 @@ public class ResourceProviderAutoConfig {
         FhirContext fhirContext = FhirContext.forR4();
         return fhirContext.getResourceTypes().stream()
                 .map(fhirContext::getResourceDefinition)
-                .map(rd -> (Class<? extends IBaseResource>) rd.getImplementingClass())
+                .map(rd -> (Class<? extends Resource>) rd.getImplementingClass())
                 .distinct()
                 .map(clazz -> new FhirCouchbaseResourceProvider<>(clazz, serviceFactory.getService(clazz) , fhirContext))
                 .collect(Collectors.toList());
