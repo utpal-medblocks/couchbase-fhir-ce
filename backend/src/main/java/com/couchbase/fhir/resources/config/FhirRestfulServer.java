@@ -3,6 +3,7 @@ package com.couchbase.fhir.resources.config;
 import ca.uhn.fhir.context.FhirContext;
 import ca.uhn.fhir.rest.server.IResourceProvider;
 import ca.uhn.fhir.rest.server.RestfulServer;
+import com.couchbase.fhir.resources.server.USCoreCapabilityProvider;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
@@ -29,24 +30,14 @@ import java.util.List;
 @Component
 public class FhirRestfulServer extends RestfulServer {
 
-   // private final PatientResourceProvider patientProvider;
-
-   /* @Override
-    protected void initialize() {
-        setFhirContext(FhirContext.forR4());
-        USCoreCapabilityProvider capabilityProvider = new USCoreCapabilityProvider(this);
-        setServerConformanceProvider(capabilityProvider);
-        setResourceProviders(List.of(patientProvider));
-        setDefaultResponseEncoding(EncodingEnum.JSON);
-        setDefaultPrettyPrint(true);
-    }*/
-
     @Autowired
     private List<IResourceProvider> providers;
 
     @Override
     protected void initialize() {
         setFhirContext(FhirContext.forR4());
+        USCoreCapabilityProvider capabilityProvider = new USCoreCapabilityProvider(this);
+        setServerConformanceProvider(capabilityProvider);
         registerProviders(providers);
     }
 }

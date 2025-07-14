@@ -32,11 +32,6 @@ public class ResourceProviderAutoConfig {
                 .map(clazz -> new FhirCouchbaseResourceProvider<>(clazz, serviceFactory.getService(clazz) , fhirContext))
                 .collect(Collectors.toList());
 
-      /*  for (String name : fhirContext.getResourceTypes()) {
-            Class<? extends IBaseResource> clazz = fhirContext.getResourceDefinition(name).getImplementingClass();
-            providers.add(new FhirCouchbaseResourceProvider<>(clazz, serviceFactory.getService(clazz)));
-        }
-        return providers;*/
     }
 
 }

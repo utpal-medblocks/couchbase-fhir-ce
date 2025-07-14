@@ -21,8 +21,6 @@ public class  FHIRResourceService{
 
     @SuppressWarnings("unchecked")
     public <T extends IBaseResource> FhirResourceDaoImpl getService(Class<T> resourceClass) {
-        // If you want a different instance per resource, customize here
-      //  return applicationContext.getBean(FhirResourceDaoImpl.class);
         return new FhirResourceDaoImpl<>(resourceClass, connectionService, fhirContext);
     }
 }

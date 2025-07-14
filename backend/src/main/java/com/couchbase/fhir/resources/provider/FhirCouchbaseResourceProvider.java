@@ -92,7 +92,6 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
                         e -> e.getValue()[0]
                 ));
 
-
         String resourceType = resourceClass.getSimpleName();
         // Call DAO's search method
         List<T> results = dao.search(resourceType, searchParams);
