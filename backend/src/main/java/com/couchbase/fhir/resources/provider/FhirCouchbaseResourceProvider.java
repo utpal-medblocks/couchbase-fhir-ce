@@ -1,6 +1,7 @@
 package com.couchbase.fhir.resources.provider;
 
 import ca.uhn.fhir.context.FhirContext;
+import ca.uhn.fhir.context.RuntimeResourceDefinition;
 import ca.uhn.fhir.model.api.IResource;
 import ca.uhn.fhir.rest.annotation.*;
 import ca.uhn.fhir.rest.api.MethodOutcome;
@@ -12,14 +13,14 @@ import ca.uhn.fhir.rest.server.exceptions.ResourceNotFoundException;
 import ca.uhn.fhir.rest.server.exceptions.UnprocessableEntityException;
 import ca.uhn.fhir.validation.FhirValidator;
 import ca.uhn.fhir.validation.ValidationResult;
+import com.couchbase.client.java.json.JsonObject;
 import com.couchbase.fhir.resources.repository.FhirResourceDaoImpl;
 import com.couchbase.fhir.resources.service.FHIRTestSearchService;
-import org.hl7.fhir.instance.model.api.IBaseResource;
 import org.hl7.fhir.r4.model.Bundle;
 import org.hl7.fhir.r4.model.DomainResource;
 import org.hl7.fhir.r4.model.IdType;
 import org.hl7.fhir.r4.model.Resource;
-import org.springframework.beans.factory.annotation.Autowired;
+
 
 import java.util.*;
 import java.util.stream.Collectors;
