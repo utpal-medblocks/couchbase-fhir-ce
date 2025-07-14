@@ -13,20 +13,7 @@ import java.util.Map;
  * @author Utpal Sarmah
  */
 public class USCoreProfiles {
-    public static final Map<String, String> SUPPORTED_PROFILES = Map.ofEntries(
-            Map.entry("Patient", "http://hl7.org/fhir/us/core/StructureDefinition/us-core-patient"),
-            Map.entry("Observation", "http://hl7.org/fhir/us/core/StructureDefinition/us-core-observation"),
-            Map.entry("Condition", "http://hl7.org/fhir/us/core/StructureDefinition/us-core-condition"),
-            Map.entry("Encounter", "http://hl7.org/fhir/us/core/StructureDefinition/us-core-encounter"),
-            Map.entry("Organization", "http://hl7.org/fhir/us/core/StructureDefinition/us-core-organization"),
-            Map.entry("Practitioner", "http://hl7.org/fhir/us/core/StructureDefinition/us-core-practitioner"),
-            Map.entry("AllergyIntolerance", "http://hl7.org/fhir/us/core/StructureDefinition/us-core-allergyintolerance"),
-            Map.entry("MedicationRequest", "http://hl7.org/fhir/us/core/StructureDefinition/us-core-medicationrequest"),
-            Map.entry("Procedure", "http://hl7.org/fhir/us/core/StructureDefinition/us-core-procedure"),
-            Map.entry("Immunization", "http://hl7.org/fhir/us/core/StructureDefinition/us-core-immunization")
-    );
 
     public static final String US_CORE_SERVER = "http://hl7.org/fhir/us/core/CapabilityStatement/us-core-server";
-    public static final String US_CORE_PATIENT_PROFILE = "http://hl7.org/fhir/us/core/StructureDefinition/us-core-patient";
-
+    public static final String US_CORE_BASE_URL= "http://hl7.org/fhir/us/core/StructureDefinition/us-core-";
 }

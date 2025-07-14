@@ -8,6 +8,8 @@ import jakarta.servlet.http.HttpServletRequest;
 import org.hl7.fhir.r4.model.CapabilityStatement;
 import java.util.List;
 
+import static com.couchbase.fhir.resources.config.USCoreProfiles.US_CORE_BASE_URL;
+
 
 /**
  * Custom CapabilityStatementProvider that overrides the default HAPI FHIR CapabilityStatement
@@ -37,23 +39,15 @@ public class USCoreCapabilityProvider extends ServerCapabilityStatementProvider 
 
         List<CapabilityStatement.CapabilityStatementRestResourceComponent> resources = statement.getRestFirstRep().getResource();
 
-        // Remove any existing resources we're going to override
-        resources.removeIf(r -> USCoreProfiles.SUPPORTED_PROFILES.containsKey(r.getType()));
+        for (CapabilityStatement.CapabilityStatementRestResourceComponent resource : resources) {
+            String resourceType = resource.getType();
+            String supportedProfileUrl = US_CORE_BASE_URL + resourceType.toLowerCase();
 
-        // Add  US Core resource declarations from constant
-        USCoreProfiles.SUPPORTED_PROFILES.forEach((resourceType, profileUrl) -> {
-            CapabilityStatement.CapabilityStatementRestResourceComponent resource = new CapabilityStatement.CapabilityStatementRestResourceComponent();
-            resource.setType(resourceType);
-            resource.setProfile(profileUrl);
-            resource.addSupportedProfile(profileUrl);
-
-            // Add standard interactions
-            resource.addInteraction().setCode(CapabilityStatement.TypeRestfulInteraction.READ);
-            resource.addInteraction().setCode(CapabilityStatement.TypeRestfulInteraction.SEARCHTYPE);
-            resource.addInteraction().setCode(CapabilityStatement.TypeRestfulInteraction.CREATE);
-
-            resources.add(resource);
-        });
+            // Add the supportedProfile if not already present
+            if (resource.getSupportedProfile().stream().noneMatch(profile -> profile.getValue().equals(supportedProfileUrl))) {
+                resource.addSupportedProfile(supportedProfileUrl);
+            }
+        }
 
         return statement;
     }
