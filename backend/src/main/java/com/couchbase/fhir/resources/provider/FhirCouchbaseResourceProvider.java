@@ -15,12 +15,21 @@ import com.couchbase.fhir.resources.repository.FhirResourceDaoImpl;
 import com.couchbase.fhir.validation.ValidationUtil;
 import org.hl7.fhir.r4.model.*;
 
-
-
 import java.io.IOException;
 import java.util.*;
 import java.util.stream.Collectors;
 
+/**
+ * Generic FHIR resource provider for HAPI FHIR that enables CRUD operations and search capabilities
+ * for any FHIR resource type backed by a Couchbase data store.
+ *
+ * <p>This class dynamically handles requests for FHIR resources using the generic type {@code T}
+ * and delegates persistence logic to the associated {@link FhirResourceDaoImpl}. It integrates
+ * validation using the HAPI FHIR validation API and ensures the resource conforms to US Core profiles
+ * when applicable.</p>
+ *
+ * @param <T> A FHIR resource type extending {@link Resource}
+ */
 
 public class FhirCouchbaseResourceProvider <T extends Resource> implements IResourceProvider {
 
