@@ -1,6 +1,8 @@
 package com.couchbase.fhir.resources.provider;
 
 import ca.uhn.fhir.context.FhirContext;
+import ca.uhn.fhir.context.RuntimeResourceDefinition;
+import ca.uhn.fhir.context.RuntimeSearchParam;
 import ca.uhn.fhir.rest.annotation.*;
 import ca.uhn.fhir.rest.api.MethodOutcome;
 import ca.uhn.fhir.rest.api.server.RequestDetails;
@@ -8,15 +10,14 @@ import ca.uhn.fhir.rest.server.IResourceProvider;
 import ca.uhn.fhir.rest.server.exceptions.InternalErrorException;
 import ca.uhn.fhir.rest.server.exceptions.ResourceNotFoundException;
 import ca.uhn.fhir.rest.server.exceptions.UnprocessableEntityException;
-import ca.uhn.fhir.validation.FhirValidator;
 import ca.uhn.fhir.validation.ValidationResult;
 import com.couchbase.fhir.resources.repository.FhirResourceDaoImpl;
-import org.hl7.fhir.r4.model.Bundle;
-import org.hl7.fhir.r4.model.DomainResource;
-import org.hl7.fhir.r4.model.IdType;
-import org.hl7.fhir.r4.model.Resource;
+import com.couchbase.fhir.validation.ValidationUtil;
+import org.hl7.fhir.r4.model.*;
 
 
+
+import java.io.IOException;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -41,7 +42,7 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
     }
 
     @Create
-    public MethodOutcome create(@ResourceParam T resource) {
+    public MethodOutcome create(@ResourceParam T resource) throws IOException {
         if (resource.getIdElement().isEmpty()) {
             resource.setId(UUID.randomUUID().toString());
         }
@@ -50,11 +51,8 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
             ((DomainResource) resource).getMeta().setLastUpdated(new Date());
         }
 
-        FhirValidator validator = fhirContext.newValidator();
-        validator.setValidateAgainstStandardSchema(true);
-        validator.setValidateAgainstStandardSchematron(true);
-
-        ValidationResult result = validator.validateWithResult(resource);
+        ValidationUtil validationUtil = new ValidationUtil();
+        ValidationResult result = validationUtil.validate(resource , resourceClass.getSimpleName() , fhirContext);
         if (!result.isSuccessful()) {
             StringBuilder issues = new StringBuilder();
             result.getMessages().forEach(msg -> issues.append(msg.getSeverity())
@@ -66,6 +64,7 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
 
             throw new UnprocessableEntityException("FHIR Validation failed:\n" + issues.toString());
         }
+
 
         T created =  dao.create(resourceClass.getSimpleName() , resource).orElseThrow(() ->
                 new InternalErrorException("Failed to create resource"));
@@ -89,6 +88,16 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
                 ));
 
         String resourceType = resourceClass.getSimpleName();
+
+
+
+        RuntimeResourceDefinition resourceDef = fhirContext.getResourceDefinition(resourceType);
+
+        for (RuntimeSearchParam param : resourceDef.getSearchParams()) {
+            System.out.println("SearchParam: " + param.getName() + ", Type : "+param.getParamType()+" ,  path=" + param.getPath());
+        }
+
+
         // Call DAO's search method
         List<T> results = dao.search(resourceType, searchParams);
 
