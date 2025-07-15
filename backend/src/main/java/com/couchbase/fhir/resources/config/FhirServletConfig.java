@@ -8,7 +8,7 @@ import org.springframework.context.annotation.Configuration;
 
 /**
  * Configuration class that sets up the FHIR RESTful server servlet.
- * @author Utpal Sarmah
+ *
  */
 
 @Configuration

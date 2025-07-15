@@ -23,7 +23,6 @@ import java.util.List;
  * It also sets the base path for FHIR endpoints and can be used to control
  * server behavior such as default encoding, error handling, paging, and more.
  *
- * @author Utpal Sarmah
  */
 
 @RequiredArgsConstructor
