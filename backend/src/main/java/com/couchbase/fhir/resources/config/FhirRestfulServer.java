@@ -3,7 +3,7 @@ package com.couchbase.fhir.resources.config;
 import ca.uhn.fhir.context.FhirContext;
 import ca.uhn.fhir.rest.server.IResourceProvider;
 import ca.uhn.fhir.rest.server.RestfulServer;
-import com.couchbase.fhir.resources.server.USCoreCapabilityProvider;
+import com.couchbase.fhir.resources.provider.USCoreCapabilityProvider;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
