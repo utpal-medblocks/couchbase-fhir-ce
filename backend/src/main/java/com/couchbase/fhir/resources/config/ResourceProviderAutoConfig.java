@@ -21,6 +21,7 @@ public class ResourceProviderAutoConfig {
     @Autowired
     private FHIRResourceService serviceFactory;
 
+    @SuppressWarnings("unchecked")
     @Bean
     public List<IResourceProvider> dynamicProviders() {
         List<IResourceProvider> providers = new ArrayList<>();
