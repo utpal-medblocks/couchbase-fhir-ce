@@ -3,12 +3,12 @@ package com.couchbase.fhir.resources.server;
 import ca.uhn.fhir.rest.api.server.RequestDetails;
 import ca.uhn.fhir.rest.server.RestfulServer;
 import ca.uhn.fhir.rest.server.provider.ServerCapabilityStatementProvider;
-import com.couchbase.fhir.resources.config.USCoreProfiles;
+import com.couchbase.fhir.resources.constants.USCoreProfiles;
 import jakarta.servlet.http.HttpServletRequest;
 import org.hl7.fhir.r4.model.CapabilityStatement;
 import java.util.List;
 
-import static com.couchbase.fhir.resources.config.USCoreProfiles.US_CORE_BASE_URL;
+import static com.couchbase.fhir.resources.constants.USCoreProfiles.US_CORE_BASE_URL;
 
 
 /**

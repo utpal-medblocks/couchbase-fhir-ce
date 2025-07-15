@@ -1,6 +1,4 @@
-package com.couchbase.fhir.resources.config;
-
-import java.util.Map;
+package com.couchbase.fhir.resources.constants;
 
 /**
  * Defines a centralized mapping of FHIR resource types to their corresponding
