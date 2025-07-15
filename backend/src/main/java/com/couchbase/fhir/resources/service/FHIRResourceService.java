@@ -19,8 +19,7 @@ public class  FHIRResourceService{
     @Autowired
     private FhirContext fhirContext;
 
-    @SuppressWarnings("unchecked")
-    public <T extends IBaseResource> FhirResourceDaoImpl getService(Class<T> resourceClass) {
+    public <T extends IBaseResource> FhirResourceDaoImpl<T> getService(Class<T> resourceClass) {
         return new FhirResourceDaoImpl<>(resourceClass, connectionService, fhirContext);
     }
 }
