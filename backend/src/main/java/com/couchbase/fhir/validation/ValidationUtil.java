@@ -13,6 +13,17 @@ import org.hl7.fhir.r4.model.StructureDefinition;
 
 import java.io.InputStream;
 
+/**
+ * Utility class for validating FHIR resources against US Core StructureDefinitions.
+ *
+ * <p>This class provides a method to perform schema and schematron validation
+ * on any FHIR {@link Resource}, using a corresponding custom StructureDefinition
+ * loaded from the application's classpath (typically under {@code /us_core/}).</p>
+ *
+ * <p>The validation is performed using HAPI FHIR's {@link FhirValidator} and
+ * {@link FhirInstanceValidator}, with a {@link ValidationSupportChain} combining
+ * preloaded profiles and default validation support.</p>
+ */
 
 public class ValidationUtil {
 
