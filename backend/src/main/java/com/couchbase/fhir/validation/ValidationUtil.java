@@ -5,6 +5,8 @@ import ca.uhn.fhir.context.support.DefaultProfileValidationSupport;
 import ca.uhn.fhir.parser.IParser;
 import ca.uhn.fhir.validation.FhirValidator;
 import ca.uhn.fhir.validation.ValidationResult;
+import org.hl7.fhir.common.hapi.validation.support.CommonCodeSystemsTerminologyService;
+import org.hl7.fhir.common.hapi.validation.support.InMemoryTerminologyServerValidationSupport;
 import org.hl7.fhir.common.hapi.validation.support.PrePopulatedValidationSupport;
 import org.hl7.fhir.common.hapi.validation.support.ValidationSupportChain;
 import org.hl7.fhir.common.hapi.validation.validator.FhirInstanceValidator;
@@ -49,7 +51,9 @@ public class ValidationUtil {
         usCoreSupport.addStructureDefinition(sd);
         ValidationSupportChain chain = new ValidationSupportChain(
                 usCoreSupport,
-                new DefaultProfileValidationSupport(fhirContext)
+                new DefaultProfileValidationSupport(fhirContext),
+                new InMemoryTerminologyServerValidationSupport(fhirContext), // Enables CodeSystem/ValueSet resolution
+                new CommonCodeSystemsTerminologyService(fhirContext)
 
         );
 
