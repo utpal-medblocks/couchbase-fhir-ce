@@ -97,12 +97,28 @@
 			<artifactId>hapi-fhir-validation-resources-r4</artifactId>
 			<version>${hapi.fhir.version}</version>
 		</dependency>
+<<<<<<< HEAD
 
+=======
+		<!-- Add these for full US Core support -->
+		<dependency>
+			<groupId>ca.uhn.hapi.fhir</groupId>
+			<artifactId>hapi-fhir-validation</artifactId>
+			<version>${hapi.fhir.version}</version>
+		</dependency>
+		<dependency>
+			<groupId>ca.uhn.hapi.fhir</groupId>
+			<artifactId>hapi-fhir-caching-api</artifactId>
+			<version>${hapi.fhir.version}</version>
+		</dependency>
+		<!-- Add the required cache provider -->
+>>>>>>> 9a193b9 (🚀 Major FHIR Bundle & UUID Processing Improvements)
 		<dependency>
 			<groupId>ca.uhn.hapi.fhir</groupId>
 			<artifactId>hapi-fhir-caching-caffeine</artifactId>
 			<version>${hapi.fhir.version}</version>
 		</dependency>
+<<<<<<< HEAD
 
 
 		<dependency>
@@ -123,6 +139,9 @@
 		</dependency>
 
 		<!-- JSON Processing -->
+=======
+				<!-- JSON Processing -->
+>>>>>>> 9a193b9 (🚀 Major FHIR Bundle & UUID Processing Improvements)
 		<dependency>
 			<groupId>com.fasterxml.jackson.core</groupId>
 			<artifactId>jackson-databind</artifactId>

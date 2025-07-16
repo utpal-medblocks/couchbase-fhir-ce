@@ -10,14 +10,20 @@ import com.couchbase.fhir.resources.service.FHIRTestReadService;
 import com.couchbase.fhir.resources.service.FHIRTestUpdateService;
 import com.couchbase.fhir.resources.service.FHIRTestDeleteService;
 import com.couchbase.fhir.resources.service.FHIRTestSearchService;
+import com.couchbase.fhir.resources.service.FHIRBundleProcessingService;
 
 import java.util.*;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import org.hl7.fhir.r4.model.Bundle;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 @RestController
 @RequestMapping("/api/fhir-test")
 public class FHIRTestController {
+
+    private static final Logger logger = LoggerFactory.getLogger(FHIRTestController.class);
 
     @Autowired
     private FHIRTestGeneralService generalService;
@@ -36,6 +42,9 @@ public class FHIRTestController {
     
     @Autowired
     private FHIRTestSearchService searchService;
+    
+    @Autowired
+    private FHIRBundleProcessingService bundleService;
 
     @GetMapping("/info")
     public Map<String, Object> info() {
@@ -83,9 +92,15 @@ public class FHIRTestController {
             List<Map<String, Object>> resources = searchService.searchResources(
                 resourceType, cleanParams, connectionName, bucketName);
             
-            // Create FHIR Bundle response
-            Map<String, Object> bundle = createSearchBundle(resourceType, bucketName, resources);
-            return ResponseEntity.ok(bundle);
+            // Create proper FHIR Bundle using HAPI FHIR utilities
+            String baseUrl = "http://localhost:8080/api/fhir-test/" + bucketName;
+            Bundle bundle = searchService.createSearchBundle(resourceType, resources, baseUrl, cleanParams);
+            
+            // Convert Bundle to JSON string for response
+            String bundleJson = searchService.getBundleAsJson(bundle);
+            return ResponseEntity.ok()
+                .header("Content-Type", "application/fhir+json")
+                .body(bundleJson);
             
         } catch (Exception e) {
             return ResponseEntity.internalServerError().body(
@@ -181,26 +196,45 @@ public class FHIRTestController {
         }
     }
 
-    // Create consistent FHIR Bundle response
-    private Map<String, Object> createSearchBundle(String resourceType, String bucketName, List<Map<String, Object>> resources) {
-        Map<String, Object> bundle = new HashMap<>();
-        bundle.put("resourceType", "Bundle");
-        bundle.put("id", resourceType.toLowerCase() + "-search-" + System.currentTimeMillis());
-        bundle.put("type", "searchset");
-        bundle.put("total", resources.size());
-        bundle.put("timestamp", LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'")));
+    // FHIR Bundle Transaction Processing - handles multiple resource types
+    @PostMapping("/{bucketName}/Bundle")
+    public ResponseEntity<?> processBundleTransaction(
+            @PathVariable String bucketName,
+            @RequestParam(required = false) String connectionName,
+            @RequestBody String bundleJson) {
         
-        List<Map<String, Object>> entries = new ArrayList<>();
-        for (Map<String, Object> resource : resources) {
-            String resourceId = (String) resource.get("id");
-            Map<String, Object> entry = new HashMap<>();
-            entry.put("fullUrl", String.format("http://localhost:8080/api/fhir-test/%s/%s/%s", 
-                bucketName, resourceType, resourceId));
-            entry.put("resource", resource);
-            entries.add(entry);
+        try {
+            logger.info("🔄 Processing FHIR Bundle transaction for bucket: {}", bucketName);
+            
+            Map<String, Object> result = bundleService.processBundleTransaction(
+                bundleJson, connectionName, bucketName
+            );
+            
+            return ResponseEntity.status(HttpStatus.CREATED).body(result);
+            
+        } catch (RuntimeException e) {
+            // If it's a validation error, return 400 Bad Request
+            if (e.getMessage().contains("validation failed") || e.getMessage().contains("Bundle processing failed")) {
+                Map<String, Object> errorResponse = new HashMap<>();
+                errorResponse.put("error", "FHIR Bundle Processing Failed");
+                errorResponse.put("message", e.getMessage());
+                errorResponse.put("resourceType", "Bundle");
+                errorResponse.put("timestamp", LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'")));
+                return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(errorResponse);
+            }
+            
+            // Other runtime errors
+            return ResponseEntity.internalServerError().body(
+                Map.of("error", "Failed to process Bundle: " + e.getMessage())
+            );
+        } catch (Exception e) {
+            return ResponseEntity.internalServerError().body(
+                Map.of("error", "Failed to process Bundle: " + e.getMessage())
+            );
         }
-        bundle.put("entry", entries);
-        
-        return bundle;
     }
+    
+
+
+    // Note: Now using proper HAPI FHIR Bundle creation via searchService.createSearchBundle()
 }
