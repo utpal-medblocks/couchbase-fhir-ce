@@ -83,6 +83,23 @@
 			<artifactId>hapi-fhir-validation-resources-r4</artifactId>
 			<version>${hapi.fhir.version}</version>
 		</dependency>
+		<!-- Add these for full US Core support -->
+		<dependency>
+			<groupId>ca.uhn.hapi.fhir</groupId>
+			<artifactId>hapi-fhir-validation</artifactId>
+			<version>${hapi.fhir.version}</version>
+		</dependency>
+		<dependency>
+			<groupId>ca.uhn.hapi.fhir</groupId>
+			<artifactId>hapi-fhir-caching-api</artifactId>
+			<version>${hapi.fhir.version}</version>
+		</dependency>
+		<!-- Add the required cache provider -->
+		<dependency>
+			<groupId>ca.uhn.hapi.fhir</groupId>
+			<artifactId>hapi-fhir-caching-caffeine</artifactId>
+			<version>${hapi.fhir.version}</version>
+		</dependency>
 				<!-- JSON Processing -->
 		<dependency>
 			<groupId>com.fasterxml.jackson.core</groupId>

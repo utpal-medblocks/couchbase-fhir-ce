@@ -4,6 +4,9 @@ import ca.uhn.fhir.context.FhirContext;
 import ca.uhn.fhir.context.RuntimeResourceDefinition;
 import ca.uhn.fhir.context.RuntimeSearchParam;
 import ca.uhn.fhir.rest.api.RestSearchParameterTypeEnum;
+import ca.uhn.fhir.parser.IParser;
+import org.hl7.fhir.r4.model.*;
+import org.hl7.fhir.instance.model.api.IBaseResource;
 import com.couchbase.admin.connections.service.ConnectionService;
 import com.couchbase.client.java.Cluster;
 import com.couchbase.client.java.json.JsonArray;
@@ -12,6 +15,7 @@ import com.couchbase.client.java.query.QueryOptions;
 import com.couchbase.client.java.query.QueryResult;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -22,6 +26,7 @@ import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
+import java.util.UUID;
 
 @Service
 public class FHIRTestSearchService {
@@ -31,7 +36,11 @@ public class FHIRTestSearchService {
     @Autowired
     private ConnectionService connectionService;
     
-    private final FhirContext fhirContext;
+    @Autowired
+    private FhirContext fhirContext;  // ✅ Inject the configured context
+    
+    @Autowired
+    private IParser jsonParser;       // ✅ Inject the configured parser
     
     // Default connection and bucket names
     private static final String DEFAULT_CONNECTION = "default";
@@ -84,8 +93,25 @@ public class FHIRTestSearchService {
     }
     
     public FHIRTestSearchService() {
-        this.fhirContext = FhirContext.forR4();
+        // Empty - Spring will inject dependencies
+    }
+    
+    @PostConstruct
+    private void init() {
+        logger.info("🚀 FHIRTestSearchService initializing with injected FHIR R4 context");
+        logger.info("📋 FhirContext version: {}", fhirContext.getVersion().getVersion());
+        logger.info("🔧 Parser configured: {}", jsonParser.getClass().getSimpleName());
+        
+        // Configure parser for better output
+        jsonParser.setPrettyPrint(false);
+        jsonParser.setStripVersionsFromReferences(false);
+        jsonParser.setOmitResourceId(false);
+        jsonParser.setSummaryMode(false);
+        
         addUSCoreSearchParameters();
+        
+        logger.info("✅ FHIRTestSearchService initialization completed successfully");
+        logger.info("🔍 Ready to process FHIR search queries and create bundles");
     }
     
     private void addUSCoreSearchParameters() {
@@ -210,9 +236,9 @@ public class FHIRTestSearchService {
             RuntimeResourceDefinition resourceDef = fhirContext.getResourceDefinition(resourceType);
             
             StringBuilder queryBuilder = new StringBuilder();
-            queryBuilder.append("SELECT * FROM `")
+            queryBuilder.append("SELECT resource.*, META(resource).id as documentKey FROM `")
                        .append(bucketName).append("`.`").append(DEFAULT_SCOPE).append("`.`")
-                       .append(resourceType).append("` t");
+                       .append(resourceType).append("` resource");
             
             List<String> ftsConditions = new ArrayList<>();
             List<String> n1qlConditions = new ArrayList<>();
@@ -242,7 +268,7 @@ public class FHIRTestSearchService {
                     JsonObject ftsQuery = buildFtsJsonQuery(ftsConditions);
                     String indexName = bucketName + ".Resources.fts" + resourceType;
                     JsonObject indexSpec = JsonObject.create().put("index", indexName);
-                    allConditions.add("SEARCH(t, " + ftsQuery.toString() + ", " + indexSpec.toString() + ")");
+                    allConditions.add("SEARCH(resource, " + ftsQuery.toString() + ", " + indexSpec.toString() + ")");
                 }
                 
                 // Add N1QL conditions
@@ -260,24 +286,34 @@ public class FHIRTestSearchService {
             
             List<Map<String, Object>> resources = new ArrayList<>();
             for (JsonObject row : result.rowsAs(JsonObject.class)) {
-                Map<String, Object> resource = row.toMap();
+                Map<String, Object> rowMap = row.toMap();
                 
-                // Extract ID from document key if it exists in the format ResourceType::id
-                if (resource.containsKey("META") && resource.get("META") instanceof Map) {
-                    Map<String, Object> meta = (Map<String, Object>) resource.get("META");
-                    if (meta.containsKey("id")) {
-                        String documentKey = (String) meta.get("id");
-                        if (documentKey.contains("::")) {
-                            String resourceId = documentKey.split("::", 2)[1];
-                            resource.put("id", resourceId);
-                        }
+                // Extract resource ID from document key (format: ResourceType::id)
+                String resourceId = null;
+                if (rowMap.containsKey("documentKey")) {
+                    String documentKey = (String) rowMap.get("documentKey");
+                    if (documentKey != null && documentKey.contains("::")) {
+                        resourceId = documentKey.split("::", 2)[1];
                     }
                 }
                 
-                resources.add(resource);
+                // Remove the documentKey field as it's not part of the FHIR resource
+                rowMap.remove("documentKey");
+                
+                // Set the proper resource ID
+                if (resourceId != null) {
+                    rowMap.put("id", resourceId);
+                }
+                
+                resources.add(rowMap);
             }
             
             logger.info("Successfully retrieved {} {} resources from search", resources.size(), resourceType);
+            
+            // Debug: Log before returning
+            logger.info("🔄 Service: About to return {} resources to controller", resources.size());
+            logger.info("🔄 Service: Method searchResources is completing normally");
+            
             return resources;
                 
         } catch (Exception e) {
@@ -495,7 +531,7 @@ public class FHIRTestSearchService {
             String paramName = fieldPath.replace(".", "_") + "_num_" + System.currentTimeMillis();
             String operator = PREFIX_OPERATORS.getOrDefault(prefix, "=");
             
-            n1qlConditions.add("t." + fieldPath + " " + operator + " $" + paramName);
+            n1qlConditions.add("r." + fieldPath + " " + operator + " $" + paramName);
             parameters.put(paramName, numValue);
         } catch (NumberFormatException e) {
             logger.warn("Invalid number format: {}", value);
@@ -510,7 +546,7 @@ public class FHIRTestSearchService {
             String paramName = fieldPath.replace(".", "_") + "_date_" + System.currentTimeMillis();
             String operator = PREFIX_OPERATORS.getOrDefault(prefix, "=");
             
-            n1qlConditions.add("t." + fieldPath + " " + operator + " $" + paramName);
+            n1qlConditions.add("resource." + fieldPath + " " + operator + " $" + paramName);
             parameters.put(paramName, value);
         } catch (DateTimeParseException e) {
             logger.warn("Invalid date format: {}", value);
@@ -543,9 +579,9 @@ public class FHIRTestSearchService {
         boolean missing = "true".equalsIgnoreCase(value);
         
         if (missing) {
-            n1qlConditions.add("t." + fieldPath + " IS MISSING");
+            n1qlConditions.add("resource." + fieldPath + " IS MISSING");
         } else {
-            n1qlConditions.add("t." + fieldPath + " IS NOT MISSING");
+            n1qlConditions.add("resource." + fieldPath + " IS NOT MISSING");
         }
     }
     
@@ -653,6 +689,122 @@ public class FHIRTestSearchService {
     private String getDefaultConnection() {
         List<String> connections = connectionService.getActiveConnections();
         return connections.isEmpty() ? DEFAULT_CONNECTION : connections.get(0);
+    }
+
+    /**
+     * Create a proper FHIR Bundle response using HAPI FHIR utilities
+     */
+    public Bundle createSearchBundle(String resourceType, List<Map<String, Object>> rawResources, 
+                                   String baseUrl, Map<String, String> searchParams) {
+        try {
+            logger.info("🚀 createSearchBundle called with {} resources", rawResources.size());
+            
+            // Create Bundle
+            Bundle bundle = new Bundle();
+            bundle.setType(Bundle.BundleType.SEARCHSET);
+            bundle.setId(UUID.randomUUID().toString());
+            bundle.setTotal(rawResources.size());
+            bundle.setTimestamp(new Date());
+            
+            logger.info("📦 Bundle created with basic properties");
+            
+            // Add Bundle meta
+            Meta bundleMeta = new Meta();
+            bundleMeta.setLastUpdated(new Date());
+            bundle.setMeta(bundleMeta);
+            
+            logger.info("📋 Bundle meta added");
+            
+            // Add self link
+            Bundle.BundleLinkComponent selfLink = new Bundle.BundleLinkComponent();
+            selfLink.setRelation("self");
+            selfLink.setUrl(buildSearchUrl(baseUrl, resourceType, searchParams));
+            bundle.addLink(selfLink);
+            
+            logger.info("🔗 Self link added: {}", selfLink.getUrl());
+            
+            // Convert raw resources to FHIR resources and add to bundle
+            for (int i = 0; i < rawResources.size(); i++) {
+                Map<String, Object> rawResource = rawResources.get(i);
+                logger.info("Processing resource {}/{}: {}", i + 1, rawResources.size(), rawResource.get("id"));
+                
+                Bundle.BundleEntryComponent entry = new Bundle.BundleEntryComponent();
+                
+                try {
+                    // Convert raw Map to FHIR resource
+                    String resourceJson = JsonObject.from(rawResource).toString();
+                    logger.info("📄 Resource JSON created: {} characters", resourceJson.length());
+                    
+                    // Check if the FHIR context and parser are properly initialized
+                    if (jsonParser == null) {
+                        logger.error("❌ jsonParser is null - FHIR dependency injection failed!");
+                        throw new RuntimeException("FHIR JSON parser not properly injected");
+                    }
+                    
+                    logger.info("✅ About to parse resource with HAPI FHIR parser");
+                    IBaseResource fhirResource = jsonParser.parseResource(resourceJson);
+                    logger.info("✅ Resource parsed successfully: {}", fhirResource.getClass().getSimpleName());
+                    
+                    entry.setResource((Resource) fhirResource);
+                    
+                    // Set fullUrl
+                    String resourceId = rawResource.get("id").toString();
+                    entry.setFullUrl(baseUrl + "/" + resourceType + "/" + resourceId);
+                    logger.info("🔗 Set fullUrl: {}", entry.getFullUrl());
+                    
+                    // Add search metadata
+                    Bundle.BundleEntrySearchComponent search = new Bundle.BundleEntrySearchComponent();
+                    search.setMode(Bundle.SearchEntryMode.MATCH);
+                    entry.setSearch(search);
+                    
+                    logger.info("🔍 Added search metadata to entry: mode={}", search.getMode());
+                    
+                    bundle.addEntry(entry);
+                    logger.info("📦 Entry added to bundle successfully");
+                    
+                } catch (Exception e) {
+                    logger.error("❌ Error processing resource {}: {}", i + 1, e.getMessage(), e);
+                    throw e;
+                }
+            }
+            
+            // Debug: Log bundle structure
+            logger.info("📊 Created Bundle with {} entries", bundle.getEntry().size());
+            for (int i = 0; i < bundle.getEntry().size(); i++) {
+                Bundle.BundleEntryComponent entry = bundle.getEntry().get(i);
+                logger.info("Entry {}: search={}, fullUrl={}", 
+                    i, entry.hasSearch() ? entry.getSearch().getMode() : "No search component", 
+                    entry.getFullUrl());
+            }
+            
+            logger.info("✅ createSearchBundle completed successfully, returning Bundle");
+            return bundle;
+            
+        } catch (Exception e) {
+            logger.error("❌ Failed to create FHIR Bundle: {}", e.getMessage(), e);
+            throw new RuntimeException("Failed to create FHIR Bundle", e);
+        }
+    }
+    
+    /**
+     * Build search URL for self link
+     */
+    private String buildSearchUrl(String baseUrl, String resourceType, Map<String, String> searchParams) {
+        StringBuilder url = new StringBuilder(baseUrl).append("/").append(resourceType);
+        
+        if (searchParams != null && !searchParams.isEmpty()) {
+            url.append("?");
+            searchParams.entrySet().stream()
+                .filter(entry -> !entry.getKey().equals("connectionName") && !entry.getKey().equals("bucketName"))
+                .forEach(entry -> url.append(entry.getKey()).append("=").append(entry.getValue()).append("&"));
+            
+            // Remove trailing &
+            if (url.charAt(url.length() - 1) == '&') {
+                url.deleteCharAt(url.length() - 1);
+            }
+        }
+        
+        return url.toString();
     }
     
     // Helper classes
@@ -786,5 +938,16 @@ public class FHIRTestSearchService {
             this.field = field;
             this.value = value;
         }
+    }
+
+    
+    /**
+     * Convert a Bundle to JSON string
+     */
+    public String getBundleAsJson(Bundle bundle) {
+        logger.info("🔄 Service: Serializing Bundle to JSON...");
+        String json = jsonParser.encodeResourceToString(bundle);
+        logger.info("✅ Service: Bundle serialized successfully");
+        return json;
     }
 } 
