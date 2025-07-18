@@ -29,26 +29,54 @@ fhir:
               type: "primary"
               sql: "CREATE PRIMARY INDEX ON `{bucket}`.`Admin`.`profiles` WITH {'defer_build': true}"
 
-        - name: "audit-logs"
-          description: "Compliance audit trail"
-          indexes:
-            - name: "PRIMARY"
-              type: "primary"
-              sql: "CREATE PRIMARY INDEX ON `{bucket}`.`Admin`.`audit-logs` WITH {'defer_build': true}"
-
-        - name: "system-logs"
-          description: "Operational logs (debug, error)"
-          indexes:
-            - name: "PRIMARY"
-              type: "primary"
-              sql: "CREATE PRIMARY INDEX ON `{bucket}`.`Admin`.`system-logs` WITH {'defer_build': true}"
-
     resources:
       name: "Resources"
       description: "FHIR clinical and administrative resource collections"
       collections:
         - name: "AllergyIntolerance"
           description: "FHIR AllergyIntolerance resources"
+          indexes:
+            - name: "PRIMARY"
+              type: "primary"
+              sql: "CREATE PRIMARY INDEX ON `{bucket}`.`Resources`.`AllergyIntolerance` WITH {'defer_build': true}"
+
+        - name: "Claim"
+          description: "FHIR Claim resources"
+          indexes:
+            - name: "PRIMARY"
+              type: "primary"
+              sql: "CREATE PRIMARY INDEX ON `{bucket}`.`Resources`.`AllergyIntolerance` WITH {'defer_build': true}"
+
+        - name: "ExplanationOfBenefit"
+          description: "FHIR ExplanationOfBenefit resources"
+          indexes:
+            - name: "PRIMARY"
+              type: "primary"
+              sql: "CREATE PRIMARY INDEX ON `{bucket}`.`Resources`.`AllergyIntolerance` WITH {'defer_build': true}"
+
+        - name: "SupplyDelivery"
+          description: "FHIR SupplyDelivery resources"
+          indexes:
+            - name: "PRIMARY"
+              type: "primary"
+              sql: "CREATE PRIMARY INDEX ON `{bucket}`.`Resources`.`AllergyIntolerance` WITH {'defer_build': true}"
+
+        - name: "Provenance"
+          description: "FHIR Provenance resources"
+          indexes:
+            - name: "PRIMARY"
+              type: "primary"
+              sql: "CREATE PRIMARY INDEX ON `{bucket}`.`Resources`.`AllergyIntolerance` WITH {'defer_build': true}"
+
+        - name: "MedicationAdministration"
+          description: "FHIR MedicationAdministration resources"
+          indexes:
+            - name: "PRIMARY"
+              type: "primary"
+              sql: "CREATE PRIMARY INDEX ON `{bucket}`.`Resources`.`AllergyIntolerance` WITH {'defer_build': true}"
+
+        - name: "ImagingStudy"
+          description: "FHIR ImagingStudy resources"
           indexes:
             - name: "PRIMARY"
               type: "primary"

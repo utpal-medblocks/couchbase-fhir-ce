@@ -16,6 +16,8 @@ import java.util.*;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import org.hl7.fhir.r4.model.Bundle;
+import org.hl7.fhir.r4.model.OperationOutcome;
+import ca.uhn.fhir.parser.IParser;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -45,6 +47,9 @@ public class FHIRTestController {
     
     @Autowired
     private FHIRBundleProcessingService bundleService;
+    
+    @Autowired
+    private IParser jsonParser;
 
     @GetMapping("/info")
     public Map<String, Object> info() {
@@ -198,7 +203,7 @@ public class FHIRTestController {
 
     // FHIR Bundle Transaction Processing - handles multiple resource types
     @PostMapping("/{bucketName}/Bundle")
-    public ResponseEntity<?> processBundleTransaction(
+    public ResponseEntity<String> processBundleTransaction(
             @PathVariable String bucketName,
             @RequestParam(required = false) String connectionName,
             @RequestBody String bundleJson) {
@@ -206,31 +211,50 @@ public class FHIRTestController {
         try {
             logger.info("🔄 Processing FHIR Bundle transaction for bucket: {}", bucketName);
             
-            Map<String, Object> result = bundleService.processBundleTransaction(
-                bundleJson, connectionName, bucketName
-            );
+            // Process the bundle and get proper FHIR Bundle response
+            Bundle responseBundle = bundleService.processBundleTransaction(bundleJson, connectionName, bucketName);
             
-            return ResponseEntity.status(HttpStatus.CREATED).body(result);
+            // Convert to JSON and return with proper FHIR content type
+            String responseJson = jsonParser.encodeResourceToString(responseBundle);
+            
+            return ResponseEntity.status(HttpStatus.CREATED)
+                .header("Content-Type", "application/fhir+json")
+                .body(responseJson);
             
         } catch (RuntimeException e) {
-            // If it's a validation error, return 400 Bad Request
-            if (e.getMessage().contains("validation failed") || e.getMessage().contains("Bundle processing failed")) {
-                Map<String, Object> errorResponse = new HashMap<>();
-                errorResponse.put("error", "FHIR Bundle Processing Failed");
-                errorResponse.put("message", e.getMessage());
-                errorResponse.put("resourceType", "Bundle");
-                errorResponse.put("timestamp", LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'")));
-                return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(errorResponse);
-            }
-            
-            // Other runtime errors
-            return ResponseEntity.internalServerError().body(
-                Map.of("error", "Failed to process Bundle: " + e.getMessage())
-            );
+            logger.error("❌ Bundle transaction processing failed: {}", e.getMessage(), e);
+            return createErrorResponse(e.getMessage());
         } catch (Exception e) {
-            return ResponseEntity.internalServerError().body(
-                Map.of("error", "Failed to process Bundle: " + e.getMessage())
-            );
+            logger.error("❌ Bundle transaction processing failed: {}", e.getMessage(), e);
+            return createErrorResponse(e.getMessage());
+        }
+    }
+    
+    /**
+     * Create FHIR OperationOutcome error response
+     */
+    private ResponseEntity<String> createErrorResponse(String errorMessage) {
+        try {
+            OperationOutcome outcome = new OperationOutcome();
+            
+            OperationOutcome.OperationOutcomeIssueComponent issue = new OperationOutcome.OperationOutcomeIssueComponent();
+            issue.setSeverity(OperationOutcome.IssueSeverity.ERROR);
+            issue.setCode(OperationOutcome.IssueType.PROCESSING);
+            issue.setDiagnostics(errorMessage);
+            
+            outcome.addIssue(issue);
+            
+            String outcomeJson = jsonParser.encodeResourceToString(outcome);
+            
+            return ResponseEntity.badRequest()
+                .header("Content-Type", "application/fhir+json")
+                .body(outcomeJson);
+                
+        } catch (Exception e) {
+            // Fallback to simple JSON if FHIR encoding fails
+            return ResponseEntity.internalServerError()
+                .header("Content-Type", "application/json")
+                .body("{\"error\": \"" + errorMessage + "\"}");
         }
     }
     
