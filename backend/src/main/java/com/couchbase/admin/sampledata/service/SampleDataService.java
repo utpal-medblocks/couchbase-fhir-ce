@@ -4,11 +4,11 @@ import com.couchbase.admin.connections.service.ConnectionService;
 import com.couchbase.admin.sampledata.model.SampleDataRequest;
 import com.couchbase.admin.sampledata.model.SampleDataResponse;
 import com.couchbase.admin.sampledata.model.SampleDataProgress;
-import com.couchbase.client.java.Bucket;
+import com.couchbase.fhir.resources.service.FHIRBundleProcessingService;
 import com.couchbase.client.java.Cluster;
-import com.couchbase.client.java.Collection;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.hl7.fhir.r4.model.Bundle;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -34,6 +34,9 @@ public class SampleDataService {
     
     @Autowired
     private ConnectionService connectionService;
+    
+    @Autowired
+    private FHIRBundleProcessingService bundleProcessor;
     
     private final ObjectMapper objectMapper = new ObjectMapper();
     
@@ -77,9 +80,6 @@ public class SampleDataService {
                 return new SampleDataResponse(false, "Connection not found: " + request.getConnectionName());
             }
             
-            // Get bucket
-            Bucket bucket = cluster.bucket(request.getBucketName());
-            
             // Load and process sample data
             int resourcesLoaded = 0;
             int patientsLoaded = 0;
@@ -117,13 +117,11 @@ public class SampleDataService {
                         }
                         byte[] jsonBytes = baos.toByteArray();
                         
-                        // Parse the bundle
-                        JsonNode bundle = objectMapper.readTree(new ByteArrayInputStream(jsonBytes));
-                        if (bundle.has("entry")) {
-                            Map<String, Integer> resourceCounts = processFhirBundle(bundle, bucket, request.isOverwriteExisting());
-                            resourcesLoaded += resourceCounts.getOrDefault("resources", 0);
-                            patientsLoaded += resourceCounts.getOrDefault("patients", 0);
-                        }
+                        // Process the bundle using our sophisticated Bundle processor
+                        String bundleJson = new String(jsonBytes, java.nio.charset.StandardCharsets.UTF_8);
+                        Map<String, Integer> resourceCounts = processBundle(bundleJson, request.getConnectionName(), request.getBucketName());
+                        resourcesLoaded += resourceCounts.getOrDefault("resources", 0);
+                        patientsLoaded += resourceCounts.getOrDefault("patients", 0);
                         
                         processedFiles++;
                         double progress = (double) processedFiles / totalFiles * 100;
@@ -171,55 +169,45 @@ public class SampleDataService {
     }
     
     /**
-     * Process a FHIR bundle and store resources in Couchbase
+     * Process a FHIR bundle using our sophisticated Bundle processor
      */
-    private Map<String, Integer> processFhirBundle(JsonNode bundle, Bucket bucket, boolean overwriteExisting) {
+    private Map<String, Integer> processBundle(String bundleJson, String connectionName, String bucketName) {
         Map<String, Integer> counts = new HashMap<>();
         int resourceCount = 0;
         int patientCount = 0;
         
         try {
-            JsonNode entries = bundle.get("entry");
-            if (entries != null && entries.isArray()) {
-                for (JsonNode entry : entries) {
-                    JsonNode resource = entry.get("resource");
-                    if (resource != null) {
-                        String resourceType = resource.get("resourceType").asText();
-                        String resourceId = resource.get("id").asText();
-                        
-                        // Create document key with resourceType prefix
-                        String documentKey = resourceType + "::" + resourceId;
-                        
-                        try {
-                            // Get the appropriate collection: {bucket}.Resources.{ResourceType}
-                            Collection resourceCollection = bucket.scope("Resources").collection(resourceType);
-                            
-                            // Check if document exists if not overwriting
-                            if (!overwriteExisting && resourceCollection.exists(documentKey).exists()) {
-                                log.debug("Skipping existing document: {}", documentKey);
-                                continue;
-                            }
-                            
-                            // Store the resource
-                            resourceCollection.upsert(documentKey, resource);
+            // Use our sophisticated Bundle processor that handles:
+            // - UUID reference resolution
+            // - FHIR validation
+            // - Sequential processing
+            // - Proper document keys (resourceType/id)
+            // - Audit trails
+            Bundle responseBundle = bundleProcessor.processBundleTransaction(bundleJson, connectionName, bucketName);
+            
+            // Count successful entries from the response
+            if (responseBundle != null && responseBundle.getEntry() != null) {
+                for (Bundle.BundleEntryComponent entry : responseBundle.getEntry()) {
+                    if (entry.getResponse() != null && entry.getResponse().getStatus() != null) {
+                        String status = entry.getResponse().getStatus();
+                        if (status.startsWith("201") || status.startsWith("200")) { // Created or OK
                             resourceCount++;
                             
                             // Count patients specifically
-                            if ("Patient".equals(resourceType)) {
+                            if (entry.getResource() != null && "Patient".equals(entry.getResource().getResourceType().name())) {
                                 patientCount++;
                             }
-                            
-                            log.debug("Stored resource: {} in collection: Resources.{}", documentKey, resourceType);
-                            
-                        } catch (Exception e) {
-                            log.warn("Failed to store resource {} in collection Resources.{}: {}", 
-                                    documentKey, resourceType, e.getMessage());
                         }
                     }
                 }
             }
+            
+            log.debug("Processed bundle with {} resources ({} patients) using Bundle processor", 
+                    resourceCount, patientCount);
+            
         } catch (Exception e) {
-            log.error("Error processing FHIR bundle: {}", e.getMessage());
+            log.error("Error processing FHIR bundle with Bundle processor: {}", e.getMessage());
+            // Continue processing other bundles even if one fails
         }
         
         counts.put("resources", resourceCount);
@@ -301,9 +289,6 @@ public class SampleDataService {
                 return new SampleDataResponse(false, "Connection not found: " + request.getConnectionName());
             }
             
-            // Get bucket
-            Bucket bucket = cluster.bucket(request.getBucketName());
-            
             // Load and process sample data with progress callbacks
             int resourcesLoaded = 0;
             int patientsLoaded = 0;
@@ -358,13 +343,11 @@ public class SampleDataService {
                         }
                         byte[] jsonBytes = baos.toByteArray();
                         
-                        // Parse the bundle
-                        JsonNode bundle = objectMapper.readTree(new ByteArrayInputStream(jsonBytes));
-                        if (bundle.has("entry")) {
-                            Map<String, Integer> resourceCounts = processFhirBundle(bundle, bucket, request.isOverwriteExisting());
-                            resourcesLoaded += resourceCounts.getOrDefault("resources", 0);
-                            patientsLoaded += resourceCounts.getOrDefault("patients", 0);
-                        }
+                        // Process the bundle using our sophisticated Bundle processor
+                        String bundleJson = new String(jsonBytes, java.nio.charset.StandardCharsets.UTF_8);
+                        Map<String, Integer> resourceCounts = processBundle(bundleJson, request.getConnectionName(), request.getBucketName());
+                        resourcesLoaded += resourceCounts.getOrDefault("resources", 0);
+                        patientsLoaded += resourceCounts.getOrDefault("patients", 0);
                         
                         processedFiles++;
                         

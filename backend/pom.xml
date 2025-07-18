@@ -13,18 +13,23 @@
 	<version>0.0.1-SNAPSHOT</version>
 	<name>backend</name>
 	<description>Couchbase FHIR Server Community Edition</description>
-	<url/>
+	<url>https://github.com/couchbaselabs/couchbase-fhir-ce</url>
 	<licenses>
-		<license/>
+		<license>
+			<name>Apache License, Version 2.0</name>
+			<url>https://www.apache.org/licenses/LICENSE-2.0.txt</url>
+		</license>
 	</licenses>
 	<developers>
-		<developer/>
+		<developer>
+			<name>Couchbase FHIR Team</name>
+			<organization>Couchbase</organization>
+		</developer>
 	</developers>
 	<scm>
-		<connection/>
-		<developerConnection/>
-		<tag/>
-		<url/>
+		<connection>scm:git:git://github.com/couchbaselabs/couchbase-fhir-ce.git</connection>
+		<developerConnection>scm:git:ssh://github.com/couchbaselabs/couchbase-fhir-ce.git</developerConnection>
+		<url>https://github.com/couchbaselabs/couchbase-fhir-ce</url>
 	</scm>
 	<properties>
 		<java.version>17</java.version>

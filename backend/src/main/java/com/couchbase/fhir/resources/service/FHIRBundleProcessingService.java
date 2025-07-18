@@ -55,7 +55,7 @@ public class FHIRBundleProcessingService {
     /**
      * Process a FHIR Bundle transaction - extract, validate, resolve references, and prepare for insertion
      */
-    public Map<String, Object> processBundleTransaction(String bundleJson, String connectionName, String bucketName) {
+    public Bundle processBundleTransaction(String bundleJson, String connectionName, String bucketName) {
         try {
             logger.info("🔄 Processing FHIR Bundle transaction");
             
@@ -77,8 +77,8 @@ public class FHIRBundleProcessingService {
             // Step 4: Process entries sequentially with proper UUID resolution
             List<ProcessedEntry> processedEntries = processEntriesSequentially(bundle, connectionName, bucketName);
 
-            // Step 5: Create response from processed entries
-            return createBundleProcessingResponse(processedEntries);
+            // Step 5: Create proper FHIR transaction-response Bundle
+            return createTransactionResponseBundle(processedEntries, bundle.getType());
 
         } catch (Exception e) {
             logger.error("❌ Failed to process Bundle transaction: {}", e.getMessage(), e);
@@ -137,7 +137,7 @@ public class FHIRBundleProcessingService {
                 Bundle.BundleEntryComponent responseEntry = createResponseEntry(resource, resourceType);
                 
                 processedEntries.add(ProcessedEntry.success(resourceType, resourceId, documentKey, responseEntry));
-                logger.info("✅ Successfully processed {}/{}", resourceType, resourceId);
+                logger.debug("✅ Successfully processed {}/{}", resourceType, resourceId);
                 
             } catch (Exception e) {
                 logger.error("❌ Failed to process {} entry: {}", resourceType, e.getMessage());
@@ -154,44 +154,78 @@ public class FHIRBundleProcessingService {
     private Map<String, String> buildUuidMapping(Bundle bundle) {
         Map<String, String> uuidToIdMapping = new HashMap<>();
         
-        logger.info("🔄 Building UUID mapping for Bundle with {} entries", bundle.getEntry().size());
+        logger.debug("🔄 Building UUID mapping for Bundle with {} entries", bundle.getEntry().size());
         
         for (Bundle.BundleEntryComponent entry : bundle.getEntry()) {
             Resource resource = entry.getResource();
             String resourceType = resource.getResourceType().name();
             
-            logger.info("📝 Processing entry - ResourceType: {}, FullUrl: {}, Initial ID: {}", 
+            logger.debug("📝 Processing entry - ResourceType: {}, FullUrl: {}, Initial ID: {}", 
                 resourceType, entry.getFullUrl(), resource.getId());
             
-            // Generate ID if not present OR extract meaningful part from urn:uuid
-            if (resource.getId() == null || resource.getId().isEmpty()) {
-                String generatedId = UUID.randomUUID().toString();
-                resource.setId(generatedId);
-                logger.info("🆔 Generated UUID ID for {}: {}", resourceType, generatedId);
-            } else if (resource.getId().startsWith("urn:uuid:")) {
-                // Extract the meaningful part after "urn:uuid:"
-                String oldId = resource.getId();
-                String extractedId = oldId.substring("urn:uuid:".length());
-                resource.setId(extractedId);
-                logger.info("🔄 Extracted ID from urn:uuid for {}: {} → {}", resourceType, oldId, extractedId);
+            String actualResourceId;
+            
+            // Extract meaningful ID from urn:uuid if present
+            if (entry.getFullUrl() != null && entry.getFullUrl().startsWith("urn:uuid:")) {
+                String uuidFullUrl = entry.getFullUrl(); // "urn:uuid:org1"
+                actualResourceId = extractIdFromUuid(uuidFullUrl); // "org1"
+                logger.debug("🆔 Extracted ID from UUID: {} → {}", uuidFullUrl, actualResourceId);
+                
+                // Map the full urn:uuid to the resource reference
+                String mappedReference = resourceType + "/" + actualResourceId; // "Organization/org1"
+                uuidToIdMapping.put(uuidFullUrl, mappedReference);
+                logger.debug("🔗 UUID mapping: {} → {}", uuidFullUrl, mappedReference);
+                
             } else {
-                logger.info("✅ Using existing ID for {}: {}", resourceType, resource.getId());
+                // Generate ID for resources without urn:uuid
+                actualResourceId = generateResourceId(resourceType);
+                logger.debug("🆔 Generated new ID for {}: {}", resourceType, actualResourceId);
             }
             
-            // Map urn:uuid to actual ID
-            if (entry.getFullUrl() != null && entry.getFullUrl().startsWith("urn:uuid:")) {
-                String uuid = entry.getFullUrl();
-                String actualId = resource.getIdElement().getIdPart();
-                String mappedReference = resourceType + "/" + actualId;
-                uuidToIdMapping.put(uuid, mappedReference);
-                logger.info("🔗 UUID mapping: {} → {}", uuid, mappedReference);
+            // Set the actual ID on the resource
+            resource.setId(actualResourceId);
+        }
+        
+        logger.debug("📊 Final UUID mapping: {}", uuidToIdMapping);
+        return uuidToIdMapping;
+    }
+
+    /**
+     * Extract meaningful ID from urn:uuid format
+     */
+    private String extractIdFromUuid(String uuidFullUrl) {
+        if (uuidFullUrl.startsWith("urn:uuid:")) {
+            String extracted = uuidFullUrl.substring("urn:uuid:".length());
+            
+            // Validate that it's a reasonable ID (optional)
+            if (isValidResourceId(extracted)) {
+                return extracted;
             } else {
-                logger.info("📝 No UUID mapping for {} (fullUrl: {})", resourceType, entry.getFullUrl());
+                // Fallback to generated ID if the UUID part isn't suitable
+                logger.warn("⚠️ UUID part '{}' not suitable as resource ID, generating new one", extracted);
+                return UUID.randomUUID().toString();
             }
         }
         
-        logger.info("📊 Final UUID mapping: {}", uuidToIdMapping);
-        return uuidToIdMapping;
+        return UUID.randomUUID().toString();
+    }
+
+    /**
+     * Check if extracted ID is valid for use as resource ID
+     */
+    private boolean isValidResourceId(String id) {
+        // FHIR ID rules: length 1-64, [A-Za-z0-9\-\.]{1,64}
+        return id != null && 
+               id.length() >= 1 && 
+               id.length() <= 64 && 
+               id.matches("[A-Za-z0-9\\-\\.]+");
+    }
+
+    /**
+     * Generate a new resource ID
+     */
+    private String generateResourceId(String resourceType) {
+        return UUID.randomUUID().toString();
     }
 
     /**
@@ -204,11 +238,11 @@ public class FHIRBundleProcessingService {
         // Find all Reference fields in the resource
         List<Reference> references = terser.getAllPopulatedChildElementsOfType(resource, Reference.class);
         
-        logger.info("🔍 Found {} references in {}", references.size(), resourceType);
+        logger.debug("🔍 Found {} references in {}", references.size(), resourceType);
         
         for (Reference reference : references) {
             String originalRef = reference.getReference();
-            logger.info("🔍 Processing reference: {}", originalRef);
+            logger.debug("🔍 Processing reference: {}", originalRef);
             
             if (originalRef != null && originalRef.contains("urn:uuid:")) {
                 // Handle both "urn:uuid:xxx" and "ResourceType/urn:uuid:xxx" formats
@@ -226,16 +260,16 @@ public class FHIRBundleProcessingService {
                     
                     if (actualReference != null) {
                         reference.setReference(actualReference);
-                        logger.info("🔗 Resolved reference in {}: {} → {}", resourceType, originalRef, actualReference);
+                        logger.debug("🔗 Resolved reference in {}: {} → {}", resourceType, originalRef, actualReference);
                     } else {
                         logger.warn("⚠️ Could not resolve UUID reference: {} (uuid: {})", originalRef, uuid);
-                        logger.warn("⚠️ Available mappings: {}", uuidToIdMapping.keySet());
+                        logger.debug("⚠️ Available mappings: {}", uuidToIdMapping.keySet());
                     }
                 } else {
                     logger.warn("⚠️ Could not extract UUID from reference: {}", originalRef);
                 }
             } else {
-                logger.info("📝 Non-UUID reference (skipping): {}", originalRef);
+                logger.debug("📝 Non-UUID reference (skipping): {}", originalRef);
             }
         }
     }
@@ -266,7 +300,7 @@ public class FHIRBundleProcessingService {
         );
         
         cluster.query(sql);
-        logger.info("✅ Upserted {}/{} into collection", resourceType, resource.getIdElement().getIdPart());
+        logger.debug("✅ Upserted {}/{} into collection", resourceType, resource.getIdElement().getIdPart());
     }
     
     /**
@@ -301,47 +335,77 @@ public class FHIRBundleProcessingService {
     /**
      * Create comprehensive response
      */
-    private Map<String, Object> createBundleProcessingResponse(List<ProcessedEntry> processedEntries) {
-        Map<String, Object> response = new HashMap<>();
+    /**
+     * Create proper FHIR transaction-response Bundle
+     */
+    private Bundle createTransactionResponseBundle(List<ProcessedEntry> processedEntries, 
+                                                  Bundle.BundleType originalType) {
+        Bundle responseBundle = new Bundle();
         
-        // Overall summary
-        long successCount = processedEntries.stream().mapToLong(entry -> entry.isSuccess() ? 1 : 0).sum();
-        response.put("status", successCount == processedEntries.size() ? "success" : "partial");
-        response.put("timestamp", getCurrentFhirTimestamp());
-        response.put("bundleProcessed", true);
+        // Set response type based on original bundle type
+        if (originalType == Bundle.BundleType.TRANSACTION) {
+            responseBundle.setType(Bundle.BundleType.TRANSACTIONRESPONSE);
+        } else if (originalType == Bundle.BundleType.BATCH) {
+            responseBundle.setType(Bundle.BundleType.BATCHRESPONSE);
+        } else {
+            responseBundle.setType(Bundle.BundleType.TRANSACTIONRESPONSE); // Default
+        }
         
-        // Resource type summary
-        Map<String, Integer> resourceCounts = processedEntries.stream()
-            .filter(ProcessedEntry::isSuccess)
-            .collect(Collectors.groupingBy(ProcessedEntry::getResourceType, 
-                Collectors.collectingAndThen(Collectors.counting(), Math::toIntExact)));
-        response.put("resourcesByType", resourceCounts);
+        responseBundle.setId(UUID.randomUUID().toString());
+        responseBundle.setTimestamp(new Date());
         
-        // Processing summary
-        response.put("processingSummary", Map.of(
-            "total", processedEntries.size(),
-            "successful", successCount,
-            "failed", processedEntries.size() - successCount
-        ));
+        // Add meta information
+        Meta bundleMeta = new Meta();
+        bundleMeta.setLastUpdated(new Date());
+        responseBundle.setMeta(bundleMeta);
         
-        // Detailed results
-        List<Map<String, Object>> detailedResults = processedEntries.stream()
-            .map(entry -> {
-                Map<String, Object> result = new HashMap<>();
-                result.put("success", entry.isSuccess());
-                if (entry.isSuccess()) {
-                    result.put("resourceType", entry.getResourceType());
-                    result.put("resourceId", entry.getResourceId());
-                    result.put("documentKey", entry.getDocumentKey());
-                } else {
-                    result.put("errorMessage", entry.getErrorMessage());
-                }
-                return result;
-            })
-            .toList();
-        response.put("detailedResults", detailedResults);
+        logger.debug("📦 Creating {} response with {} entries", 
+            responseBundle.getType().name(), processedEntries.size());
         
-        return response;
+        // Add all response entries
+        for (ProcessedEntry entry : processedEntries) {
+            if (entry.isSuccess()) {
+                responseBundle.addEntry(entry.getResponseEntry());
+                logger.debug("✅ Added successful entry: {}/{}", entry.getResourceType(), entry.getResourceId());
+            } else {
+                // Create error entry
+                Bundle.BundleEntryComponent errorEntry = createErrorEntry(entry.getErrorMessage());
+                responseBundle.addEntry(errorEntry);
+                logger.warn("❌ Added error entry: {}", entry.getErrorMessage());
+            }
+        }
+        
+        logger.info("📋 Created {} Bundle response with {} entries", 
+            responseBundle.getType().name(), responseBundle.getEntry().size());
+        
+        return responseBundle;
+    }
+    
+    /**
+     * Create error entry for Bundle response
+     */
+    private Bundle.BundleEntryComponent createErrorEntry(String errorMessage) {
+        Bundle.BundleEntryComponent errorEntry = new Bundle.BundleEntryComponent();
+        Bundle.BundleEntryResponseComponent errorResponse = new Bundle.BundleEntryResponseComponent();
+        errorResponse.setStatus("400 Bad Request");
+        errorResponse.setOutcome(createOperationOutcome(errorMessage));
+        errorEntry.setResponse(errorResponse);
+        return errorEntry;
+    }
+    
+    /**
+     * Create OperationOutcome for error responses
+     */
+    private OperationOutcome createOperationOutcome(String errorMessage) {
+        OperationOutcome outcome = new OperationOutcome();
+        
+        OperationOutcome.OperationOutcomeIssueComponent issue = new OperationOutcome.OperationOutcomeIssueComponent();
+        issue.setSeverity(OperationOutcome.IssueSeverity.ERROR);
+        issue.setCode(OperationOutcome.IssueType.PROCESSING);
+        issue.setDiagnostics(errorMessage);
+        
+        outcome.addIssue(issue);
+        return outcome;
     }
 
     private String getCurrentFhirTimestamp() {
