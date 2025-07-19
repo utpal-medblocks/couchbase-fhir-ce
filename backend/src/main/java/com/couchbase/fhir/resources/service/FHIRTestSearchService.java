@@ -209,8 +209,8 @@ public class FHIRTestSearchService {
     /**
      * Main search method - always uses FTS with SEARCH function
      */
-    public List<Map<String, Object>> searchResources(String resourceType, Map<String, String> queryParams, 
-                                                    String connectionName, String bucketName) {
+    public SearchResult searchResources(String resourceType, Map<String, String> queryParams, 
+                                       String connectionName, String bucketName) {
         logger.info("🔍 FHIR Search request - Resource: {}, Parameters: {}", resourceType, queryParams);
         
         try {
@@ -223,15 +223,24 @@ public class FHIRTestSearchService {
                 throw new RuntimeException("No active connection found: " + connectionName);
             }
             
-            // Build FTS query - always use SEARCH function
-            String ftsQuery = buildFtsSearchQuery(resourceType, queryParams, bucketName, connectionName);
-            logger.info("📡 Executing FTS query: {}", ftsQuery);
+            // Check for _revinclude parameters
+            List<String> revIncludeParams = extractRevIncludeParams(queryParams);
+            boolean hasRevInclude = !revIncludeParams.isEmpty();
             
-            QueryResult result = cluster.query(ftsQuery);
-            List<Map<String, Object>> resources = processQueryResults(result);
-            
-            logger.info("📋 Search completed - Found {} {} resources", resources.size(), resourceType);
-            return resources;
+            if (hasRevInclude) {
+                logger.info("🔗 _revinclude detected: {}", revIncludeParams);
+                return executeRevIncludeSearch(resourceType, queryParams, cluster, connectionName, bucketName, revIncludeParams);
+            } else {
+                // Standard search
+                String ftsQuery = buildFtsSearchQuery(resourceType, queryParams, bucketName, connectionName);
+                logger.info("📡 Executing FTS query: {}", ftsQuery);
+                
+                QueryResult result = cluster.query(ftsQuery);
+                List<Map<String, Object>> resources = processQueryResults(result);
+                
+                logger.info("📋 Search completed - Found {} {} resources", resources.size(), resourceType);
+                return SearchResult.primaryOnly(resourceType, resources);
+            }
                 
         } catch (Exception e) {
             // Log clean error message without full stack trace
@@ -281,8 +290,9 @@ public class FHIRTestSearchService {
             String paramName = entry.getKey();
             String value = entry.getValue();
             
-            // Skip control parameters (including pagination), but allow _id, _text, and _lastUpdated
-            if (paramName.startsWith("_") && !paramName.equals("_text") && !paramName.equals("_id") && !paramName.equals("_lastUpdated")) {
+            // Skip control parameters (including pagination), but allow _id, _text, _lastUpdated, and _revinclude
+            if (paramName.startsWith("_") && !paramName.equals("_text") && !paramName.equals("_id") && 
+                !paramName.equals("_lastUpdated") && !paramName.equals("_revinclude")) {
                 continue;
             }
             
@@ -791,17 +801,27 @@ public class FHIRTestSearchService {
     }
 
     /**
-     * Create a proper FHIR Bundle response using HAPI FHIR utilities - optimized for performance
+     * Create a proper FHIR Bundle response using HAPI FHIR utilities - supports _revinclude
      */
-    public Bundle createSearchBundle(String resourceType, List<Map<String, Object>> rawResources, 
-                                   String baseUrl, Map<String, String> searchParams) {
-        logger.info("📦 Creating FHIR Bundle for {} {} resources", rawResources.size(), resourceType);
+    public Bundle createSearchBundle(SearchResult searchResult, String baseUrl, Map<String, String> searchParams) {
+        String resourceType = searchResult.getPrimaryResourceType();
+        List<Map<String, Object>> primaryResources = searchResult.getPrimaryResources();
+        Map<String, List<Map<String, Object>>> includedResources = searchResult.getIncludedResources();
+        
+        logger.info("📦 Creating FHIR Bundle - Primary: {} {}, Included: {} resource types", 
+                   primaryResources.size(), resourceType, includedResources.size());
         
         try {
             Bundle bundle = new Bundle();
             bundle.setType(Bundle.BundleType.SEARCHSET);
             bundle.setId(UUID.randomUUID().toString());
-            bundle.setTotal(rawResources.size());
+            
+            // Total includes both primary and included resources
+            int totalResources = primaryResources.size();
+            for (List<Map<String, Object>> included : includedResources.values()) {
+                totalResources += included.size();
+            }
+            bundle.setTotal(totalResources);
             bundle.setTimestamp(new Date());
             
             // Minimal Bundle meta for performance
@@ -816,44 +836,49 @@ public class FHIRTestSearchService {
             bundle.addLink(selfLink);
             
             // Pre-allocate entry list for better performance
-            List<Bundle.BundleEntryComponent> entries = new ArrayList<>(rawResources.size());
+            List<Bundle.BundleEntryComponent> entries = new ArrayList<>(totalResources);
             
             // Reuse ObjectMapper for better performance
             ObjectMapper objectMapper = new ObjectMapper();
             
-            // Convert raw resources to FHIR resources
-            for (Map<String, Object> rawResource : rawResources) {
+            // Add primary resources first (search mode: match)
+            for (Map<String, Object> rawResource : primaryResources) {
                 try {
-                    // Fast JSON conversion without intermediate string
-                    String resourceJson = objectMapper.writeValueAsString(rawResource);
-                    IBaseResource fhirResource = jsonParser.parseResource(resourceJson);
-                    
-                    // Create entry with minimal metadata
-                    Bundle.BundleEntryComponent entry = new Bundle.BundleEntryComponent();
-                    entry.setResource((Resource) fhirResource);
-                    
-                    // Set fullUrl (required for search bundles)
-                    String resourceId = rawResource.get("id").toString();
-                    entry.setFullUrl(baseUrl + "/" + resourceType + "/" + resourceId);
-                    
-                    // Minimal search metadata
-                    Bundle.BundleEntrySearchComponent search = new Bundle.BundleEntrySearchComponent();
-                    search.setMode(Bundle.SearchEntryMode.MATCH);
-                    entry.setSearch(search);
-                    
+                    Bundle.BundleEntryComponent entry = createBundleEntry(rawResource, resourceType, baseUrl, 
+                                                                         objectMapper, Bundle.SearchEntryMode.MATCH);
                     entries.add(entry);
-                    
                 } catch (Exception e) {
-                    logger.error("Failed to process resource {}: {}", rawResource.get("id"), e.getMessage());
-                    logger.debug("Resource processing error details:", e);
-                    throw new RuntimeException("Resource processing failed: " + e.getMessage());
+                    logger.error("Failed to process primary resource {}: {}", rawResource.get("id"), e.getMessage());
+                    logger.debug("Primary resource processing error details:", e);
+                    throw new RuntimeException("Primary resource processing failed: " + e.getMessage());
                 }
+            }
+            
+            // Add included resources (search mode: include)
+            for (Map.Entry<String, List<Map<String, Object>>> includeEntry : includedResources.entrySet()) {
+                String includeResourceType = includeEntry.getKey();
+                List<Map<String, Object>> includeList = includeEntry.getValue();
+                
+                for (Map<String, Object> rawResource : includeList) {
+                    try {
+                        Bundle.BundleEntryComponent entry = createBundleEntry(rawResource, includeResourceType, baseUrl,
+                                                                             objectMapper, Bundle.SearchEntryMode.INCLUDE);
+                        entries.add(entry);
+                    } catch (Exception e) {
+                        logger.error("Failed to process included resource {}: {}", rawResource.get("id"), e.getMessage());
+                        logger.debug("Included resource processing error details:", e);
+                        // Continue processing other resources instead of failing completely
+                    }
+                }
+                
+                logger.info("✅ Added {} {} resources as included", includeList.size(), includeResourceType);
             }
             
             // Set all entries at once for better performance
             bundle.setEntry(entries);
             
-            logger.info("✅ Created Bundle with {} entries", entries.size());
+            logger.info("✅ Created Bundle with {} total entries ({} primary, {} included)", 
+                       entries.size(), primaryResources.size(), entries.size() - primaryResources.size());
             return bundle;
             
         } catch (Exception e) {
@@ -861,6 +886,32 @@ public class FHIRTestSearchService {
             logger.debug("Bundle creation error details:", e);
             throw new RuntimeException("Failed to create FHIR Bundle: " + e.getMessage());
         }
+    }
+    
+    /**
+     * Create a single bundle entry from a raw resource map
+     */
+    private Bundle.BundleEntryComponent createBundleEntry(Map<String, Object> rawResource, String resourceType, 
+                                                         String baseUrl, ObjectMapper objectMapper, 
+                                                         Bundle.SearchEntryMode searchMode) throws Exception {
+        // Fast JSON conversion
+        String resourceJson = objectMapper.writeValueAsString(rawResource);
+        IBaseResource fhirResource = jsonParser.parseResource(resourceJson);
+        
+        // Create entry with minimal metadata
+        Bundle.BundleEntryComponent entry = new Bundle.BundleEntryComponent();
+        entry.setResource((Resource) fhirResource);
+        
+        // Set fullUrl (required for search bundles)
+        String resourceId = rawResource.get("id").toString();
+        entry.setFullUrl(baseUrl + "/" + resourceType + "/" + resourceId);
+        
+        // Set search metadata
+        Bundle.BundleEntrySearchComponent search = new Bundle.BundleEntrySearchComponent();
+        search.setMode(searchMode);
+        entry.setSearch(search);
+        
+        return entry;
     }
     
     /**
@@ -1128,7 +1179,8 @@ public class FHIRTestSearchService {
         }
         
         query.put("query", mainQuery);
-        query.put("size", 1000); // Limit for chained queries
+        query.put("size", 1000); // Always use large size for chained queries to get all referenced IDs
+        query.put("from", 0);    // Always start from beginning for chained queries
         
         return query;
     }
@@ -1205,6 +1257,216 @@ public class FHIRTestSearchService {
         PaginationParams(int offset, int size) {
             this.offset = offset;
             this.size = size;
+        }
+    }
+    
+    // Helper class for search results that may include primary and included resources
+    public static class SearchResult {
+        private final String primaryResourceType;
+        private final List<Map<String, Object>> primaryResources;
+        private final Map<String, List<Map<String, Object>>> includedResources;
+        private final boolean hasIncludes;
+        
+        private SearchResult(String primaryResourceType, List<Map<String, Object>> primaryResources, 
+                           Map<String, List<Map<String, Object>>> includedResources, boolean hasIncludes) {
+            this.primaryResourceType = primaryResourceType;
+            this.primaryResources = primaryResources;
+            this.includedResources = includedResources;
+            this.hasIncludes = hasIncludes;
+        }
+        
+        public static SearchResult primaryOnly(String resourceType, List<Map<String, Object>> resources) {
+            return new SearchResult(resourceType, resources, new HashMap<>(), false);
+        }
+        
+        public static SearchResult withIncludes(String primaryResourceType, List<Map<String, Object>> primaryResources,
+                                              Map<String, List<Map<String, Object>>> includedResources) {
+            return new SearchResult(primaryResourceType, primaryResources, includedResources, true);
+        }
+        
+        public String getPrimaryResourceType() { return primaryResourceType; }
+        public List<Map<String, Object>> getPrimaryResources() { return primaryResources; }
+        public Map<String, List<Map<String, Object>>> getIncludedResources() { return includedResources; }
+        public boolean hasIncludes() { return hasIncludes; }
+        
+        public List<Map<String, Object>> getAllResources() {
+            List<Map<String, Object>> allResources = new ArrayList<>(primaryResources);
+            includedResources.values().forEach(allResources::addAll);
+            return allResources;
+        }
+    }
+    
+    /**
+     * Extract _revinclude parameters from query params
+     */
+    private List<String> extractRevIncludeParams(Map<String, String> queryParams) {
+        List<String> revIncludes = new ArrayList<>();
+        for (Map.Entry<String, String> entry : queryParams.entrySet()) {
+            if ("_revinclude".equals(entry.getKey())) {
+                revIncludes.add(entry.getValue());
+            }
+        }
+        return revIncludes;
+    }
+    
+    /**
+     * Execute search with _revinclude support
+     */
+    private SearchResult executeRevIncludeSearch(String resourceType, Map<String, String> queryParams,
+                                               Cluster cluster, String connectionName, String bucketName,
+                                               List<String> revIncludeParams) {
+        try {
+            logger.info("🔗 Executing _revinclude search for {}", resourceType);
+            
+            // Step 1: Get primary resources with both ID and full document
+            SearchResultWithIds primaryResult = getPrimaryResourcesWithIds(resourceType, queryParams, cluster, connectionName, bucketName);
+            List<Map<String, Object>> primaryResources = primaryResult.resources;
+            List<String> primaryResourceIds = primaryResult.resourceIds;
+            
+            logger.info("📋 Found {} primary {} resources", primaryResources.size(), resourceType);
+            
+            if (primaryResourceIds.isEmpty()) {
+                // No primary resources found, return empty result
+                return SearchResult.primaryOnly(resourceType, primaryResources);
+            }
+            
+            // Step 2: Process each _revinclude parameter
+            Map<String, List<Map<String, Object>>> includedResources = new HashMap<>();
+            
+            for (String revIncludeParam : revIncludeParams) {
+                processRevIncludeParameter(revIncludeParam, primaryResourceIds, cluster, connectionName, bucketName, includedResources);
+            }
+            
+            logger.info("📋 _revinclude search completed - Primary: {} {}, Included: {} resource types", 
+                       primaryResources.size(), resourceType, includedResources.size());
+            
+            return SearchResult.withIncludes(resourceType, primaryResources, includedResources);
+            
+        } catch (Exception e) {
+            logger.error("❌ _revinclude search failed: {}", e.getMessage());
+            throw e;
+        }
+    }
+    
+    /**
+     * Get primary resources with both full documents and resource IDs
+     */
+    private SearchResultWithIds getPrimaryResourcesWithIds(String resourceType, Map<String, String> queryParams,
+                                                          Cluster cluster, String connectionName, String bucketName) {
+        // Remove _revinclude and pagination params for primary search (need all primary resources for _revinclude)
+        Map<String, String> primaryQueryParams = new HashMap<>(queryParams);
+        primaryQueryParams.remove("_revinclude");
+        primaryQueryParams.remove("_count");  // Remove pagination for _revinclude
+        primaryQueryParams.remove("_offset"); // Remove pagination for _revinclude
+        
+        // Build query that gets both ID and full document - with forced size/from for _revinclude
+        String ftsIndexName = bucketName + ".Resources.fts" + resourceType;
+        JsonObject ftsQueryJson = buildFtsQueryJson(resourceType, primaryQueryParams, connectionName, bucketName);
+        
+        // Override pagination settings for _revinclude - we need all primary resources
+        ftsQueryJson.put("size", 1000); // Always use large size for _revinclude primary query
+        ftsQueryJson.put("from", 0);    // Always start from beginning for _revinclude primary query
+        
+        String primaryQuery = String.format(
+            "SELECT META(resource).id as documentKey, resource.* FROM `%s`.`%s`.`%s` resource " +
+            "WHERE SEARCH(resource, %s, {\"index\": \"%s\"}) " +
+            "AND resource.deletedDate IS MISSING",
+            bucketName, DEFAULT_SCOPE, resourceType, 
+            ftsQueryJson.toString(), ftsIndexName
+        );
+        
+        logger.info("📡 Primary query with IDs: {}", primaryQuery);
+        
+        QueryResult result = cluster.query(primaryQuery);
+        List<Map<String, Object>> resources = new ArrayList<>();
+        List<String> resourceIds = new ArrayList<>();
+        
+        for (JsonObject row : result.rowsAs(JsonObject.class)) {
+            Map<String, Object> rowMap = row.toMap();
+            
+            // Extract document key (resource ID)
+            String documentKey = (String) rowMap.get("documentKey");
+            if (documentKey != null) {
+                resourceIds.add(documentKey);
+            }
+            
+            // Remove documentKey from resource data
+            rowMap.remove("documentKey");
+            
+            resources.add(rowMap);
+        }
+        
+        return new SearchResultWithIds(resources, resourceIds);
+    }
+    
+    /**
+     * Process a single _revinclude parameter
+     */
+    private void processRevIncludeParameter(String revIncludeParam, List<String> primaryResourceIds,
+                                          Cluster cluster, String connectionName, String bucketName,
+                                          Map<String, List<Map<String, Object>>> includedResources) {
+        try {
+            // Parse _revinclude parameter: "Observation:subject"
+            String[] parts = revIncludeParam.split(":", 2);
+            if (parts.length != 2) {
+                logger.warn("Invalid _revinclude parameter format: {}", revIncludeParam);
+                return;
+            }
+            
+            String includedResourceType = parts[0];
+            String referenceField = parts[1];
+            
+            logger.info("🔗 Processing _revinclude: {} -> {} via {}", includedResourceType, referenceField, primaryResourceIds.size() + " primary resources");
+            
+            // Create disjunct query for all primary resource IDs
+            JsonArray disjuncts = JsonArray.create();
+            for (String resourceId : primaryResourceIds) {
+                JsonObject referenceMatch = JsonObject.create();
+                referenceMatch.put("match", resourceId);
+                referenceMatch.put("field", referenceField + ".reference");
+                disjuncts.add(referenceMatch);
+            }
+            
+            // Build FTS query for included resources
+            JsonObject includeQuery = JsonObject.create();
+            includeQuery.put("query", JsonObject.create().put("disjuncts", disjuncts));
+            includeQuery.put("size", 1000); // Always use large size for _revinclude to get all matching resources
+            includeQuery.put("from", 0);    // Always start from beginning for _revinclude queries
+            
+            String ftsIndexName = bucketName + ".Resources.fts" + includedResourceType;
+            String includeQuerySql = String.format(
+                "SELECT resource.* FROM `%s`.`%s`.`%s` resource " +
+                "WHERE SEARCH(resource, %s, {\"index\": \"%s\"}) " +
+                "AND resource.deletedDate IS MISSING",
+                bucketName, DEFAULT_SCOPE, includedResourceType,
+                includeQuery.toString(), ftsIndexName
+            );
+            
+            logger.info("📡 Include query: {}", includeQuerySql);
+            
+            QueryResult includeResult = cluster.query(includeQuerySql);
+            List<Map<String, Object>> includeResources = new ArrayList<>();
+            
+            for (JsonObject row : includeResult.rowsAs(JsonObject.class)) {
+                includeResources.add(row.toMap());
+            }
+            
+            logger.info("📋 Found {} {} resources for _revinclude", includeResources.size(), includedResourceType);
+            includedResources.put(includedResourceType, includeResources);
+            
+        } catch (Exception e) {
+            logger.error("Failed to process _revinclude parameter {}: {}", revIncludeParam, e.getMessage());
+        }
+    }
+    
+    // Helper class for primary search results with IDs
+    private static class SearchResultWithIds {
+        final List<Map<String, Object>> resources;
+        final List<String> resourceIds;
+        
+        SearchResultWithIds(List<Map<String, Object>> resources, List<String> resourceIds) {
+            this.resources = resources;
+            this.resourceIds = resourceIds;
         }
     }
 } 

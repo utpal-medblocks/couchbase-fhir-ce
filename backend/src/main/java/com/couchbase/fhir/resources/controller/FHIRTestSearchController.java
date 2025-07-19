@@ -47,22 +47,23 @@ public class FHIRTestSearchController {
             
             logger.info("🔍 Controller: About to call searchService.searchResources()");
             
-            List<Map<String, Object>> resources;
+            FHIRTestSearchService.SearchResult searchResult;
             try {
-                resources = searchService.searchResources(resourceType, searchParams, connectionName, bucketName);
+                searchResult = searchService.searchResources(resourceType, searchParams, connectionName, bucketName);
                 logger.info("✅ Controller: Search service call completed successfully!");
-                logger.info("✅ Controller: Retrieved {} resources from search service", resources.size());
+                logger.info("✅ Controller: Retrieved {} resources from search service", searchResult.getPrimaryResources().size());
             } catch (Exception searchException) {
                 logger.error("❌ Controller: Search service call failed: {}", searchException.getMessage(), searchException);
                 throw searchException;
             }
             
-            // Debug: Check if resources is null
-            if (resources == null) {
-                logger.error("❌ Controller: Resources is null! This should not happen.");
-                throw new RuntimeException("Search service returned null resources");
+            // Debug: Check if searchResult is null
+            if (searchResult == null) {
+                logger.error("❌ Controller: SearchResult is null! This should not happen.");
+                throw new RuntimeException("Search service returned null searchResult");
             }
             
+            List<Map<String, Object>> resources = searchResult.getPrimaryResources();
             logger.info("🔍 Controller: About to process {} resources", resources.size());
             
             // Debug: Check first resource structure
@@ -77,13 +78,13 @@ public class FHIRTestSearchController {
                 logger.info("📭 No resources found, will create empty bundle");
             }
             
-            // Create proper FHIR Bundle using HAPI FHIR
+            // Create proper FHIR Bundle using HAPI FHIR (now supports _revinclude)
             String baseUrl = "http://localhost:8080/api/fhir-test/" + (bucketName != null ? bucketName : "fhir");
             logger.info("📦 Controller: Creating Bundle with baseUrl: {}", baseUrl);
             
             Bundle bundle;
             try {
-                bundle = searchService.createSearchBundle(resourceType, resources, baseUrl, searchParams);
+                bundle = searchService.createSearchBundle(searchResult, baseUrl, searchParams);
                 logger.info("✅ Controller: Bundle created successfully with {} entries", bundle.getEntry().size());
             } catch (Exception bundleException) {
                 logger.error("❌ Controller: Bundle creation failed: {}", bundleException.getMessage(), bundleException);
