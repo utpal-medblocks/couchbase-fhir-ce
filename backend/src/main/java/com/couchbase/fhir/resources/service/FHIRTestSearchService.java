@@ -27,6 +27,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.UUID;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 @Service
 public class FHIRTestSearchService {
@@ -37,15 +38,19 @@ public class FHIRTestSearchService {
     private ConnectionService connectionService;
     
     @Autowired
-    private FhirContext fhirContext;  // ✅ Inject the configured context
+    private FhirContext fhirContext;
     
     @Autowired
-    private IParser jsonParser;       // ✅ Inject the configured parser
+    private IParser jsonParser;
     
     // Default connection and bucket names
     private static final String DEFAULT_CONNECTION = "default";
     private static final String DEFAULT_BUCKET = "fhir";
     private static final String DEFAULT_SCOPE = "Resources";
+    
+    // Pagination constants
+    private static final int DEFAULT_PAGE_SIZE = 50;
+    private static final int MAX_PAGE_SIZE = 100;
     
     // FHIR prefix operators
     private static final Map<String, String> PREFIX_OPERATORS = Map.of(
@@ -67,14 +72,8 @@ public class FHIRTestSearchService {
     
     // Fields that are CodeableConcept and need .coding.system/.coding.code instead of .system/.value
     private static final Set<String> CODEABLE_CONCEPT_FIELDS = Set.of(
-        // Status fields
-        "clinicalStatus", "verificationStatus", "status",
-        // Classification  
-        "category", "type", "class", "code",
-        // Severity/Priority
-        "criticality", "severity", "priority", "intent",
-        // Administrative
-        "maritalStatus", "use"
+        "clinicalStatus", "verificationStatus", "status", "category", "type", "class", "code",
+        "criticality", "severity", "priority", "intent", "maritalStatus", "use"
     );
 
     // FHIR search parameter field path resolution result
@@ -92,31 +91,22 @@ public class FHIRTestSearchService {
         }
     }
     
-    public FHIRTestSearchService() {
-        // Empty - Spring will inject dependencies
-    }
-    
     @PostConstruct
     private void init() {
-        logger.info("🚀 FHIRTestSearchService initializing with injected FHIR R4 context");
-        logger.info("📋 FhirContext version: {}", fhirContext.getVersion().getVersion());
-        logger.info("🔧 Parser configured: {}", jsonParser.getClass().getSimpleName());
+        logger.info("🚀 FHIRTestSearchService initialized with FHIR R4 context");
         
-        // Configure parser for better output
-        jsonParser.setPrettyPrint(false);
-        jsonParser.setStripVersionsFromReferences(false);
-        jsonParser.setOmitResourceId(false);
-        jsonParser.setSummaryMode(false);
+        // Configure parser for optimal performance
+        jsonParser.setPrettyPrint(false);                    // ✅ No formatting
+        jsonParser.setStripVersionsFromReferences(false);    // Keep references as-is
+        jsonParser.setOmitResourceId(false);                 // Keep IDs
+        jsonParser.setSummaryMode(false);                    // Full resources
+        jsonParser.setOverrideResourceIdWithBundleEntryFullUrl(false); // Performance optimization
         
-        addUSCoreSearchParameters();
+        // Disable validation during parsing for performance
+        fhirContext.getParserOptions().setStripVersionsFromReferences(false);
+        fhirContext.getParserOptions().setOverrideResourceIdWithBundleEntryFullUrl(false);
         
-        logger.info("✅ FHIRTestSearchService initialization completed successfully");
-        logger.info("🔍 Ready to process FHIR search queries and create bundles");
-    }
-    
-    private void addUSCoreSearchParameters() {
-        // US Core parameters are handled manually in handleUSCoreParameters()
-        logger.info("US Core search parameters handled manually");
+        logger.info("✅ FHIR Search Service ready for FTS-based queries");
     }
     
     /**
@@ -126,35 +116,26 @@ public class FHIRTestSearchService {
         if ("Patient".equals(resourceType)) {
             switch (paramName) {
                 case "language":
-                    // Patient communication language (CodeableConcept)
                     return new FieldPathMapping("communication.language.coding.code", 
                                                "communication.language.coding.system", null, true);
                 case "marital-status":
-                    // Patient marital status (CodeableConcept) 
                     return new FieldPathMapping("maritalStatus.coding.code", 
                                                "maritalStatus.coding.system", null, true);
-                // Add more US Core Patient parameters as needed
                 default:
                     return null;
             }
         }
-        // Add support for other resource types as needed
         return null;
     }
     
     /**
-     * Resolve field path from HAPI search parameter using the patterns we discovered:
-     * - TOKEN type: add ".value" to base path, handle system field
-     * - STRING type: use path directly
-     * - Special filtered cases: handle "where(system='phone')" patterns
+     * Resolve field path from HAPI search parameter
      */
     private FieldPathMapping resolveFieldPathFromHapi(RuntimeSearchParam searchParam) {
         String hapiPath = searchParam.getPath();
         RestSearchParameterTypeEnum paramType = searchParam.getParamType();
         
-        logger.info("🔧 Resolving field path from HAPI:");
-        logger.info("   HAPI Path: {}", hapiPath);
-        logger.info("   Param Type: {}", paramType);
+        logger.debug("Resolving field path - HAPI Path: {}, Type: {}", hapiPath, paramType);
         
         // Handle special case for full-text search
         if ("_text".equals(searchParam.getName())) {
@@ -167,14 +148,11 @@ public class FHIRTestSearchService {
         if (paramType == RestSearchParameterTypeEnum.TOKEN) {
             return handleTokenFieldPath(basePath, hapiPath, searchParam.getName());
         } else {
-            // STRING, REFERENCE, DATE, NUMBER, etc. - use path directly
             return new FieldPathMapping(basePath, null, null, false);
         }
     }
     
     private String convertToFieldPath(String hapiPath) {
-        // "Patient.name.given" → "name.given"
-        // "Patient.telecom.where(system='phone')" → "telecom.where(system='phone')"
         return hapiPath.replaceFirst("^[^.]+\\.", "");
     }
     
@@ -185,14 +163,12 @@ public class FHIRTestSearchService {
         } else {
             // Check if this is a CodeableConcept field
             if (CODEABLE_CONCEPT_FIELDS.contains(basePath)) {
-                // CodeableConcept TOKEN: "clinicalStatus" → "clinicalStatus.coding.code" with coding system field
-                logger.info("   🎯 Detected CodeableConcept field: {}", basePath);
+                logger.debug("Detected CodeableConcept field: {}", basePath);
                 String fieldPath = basePath + ".coding.code";
                 String systemField = basePath + ".coding.system";
                 return new FieldPathMapping(fieldPath, systemField, null, true);
             } else {
-                // Simple TOKEN: "Patient.telecom" → "telecom.value" with system field
-                logger.info("   🔗 Detected simple TOKEN field: {}", basePath);
+                logger.debug("Detected simple TOKEN field: {}", basePath);
                 String fieldPath = basePath + ".value";
                 String systemField = basePath + ".system";
                 return new FieldPathMapping(fieldPath, systemField, null, true);
@@ -202,7 +178,6 @@ public class FHIRTestSearchService {
     
     private FieldPathMapping handleFilteredTokenPath(String basePath, String hapiPath) {
         // Extract system value from "Patient.telecom.where(system='phone')"
-        // Pattern: "Patient.telecom.where(system='phone')" → system="phone"
         String systemValue = null;
         int whereIndex = hapiPath.indexOf(".where(system=");
         if (whereIndex != -1) {
@@ -213,7 +188,6 @@ public class FHIRTestSearchService {
             }
         }
         
-        // Remove the .where() part to get base path
         String cleanBasePath = basePath.replaceFirst("\\.where\\(.*\\)", "");
         String fieldPath = cleanBasePath + ".value";
         String systemField = cleanBasePath + ".system";
@@ -221,8 +195,13 @@ public class FHIRTestSearchService {
         return new FieldPathMapping(fieldPath, systemField, systemValue, true);
     }
     
+    /**
+     * Main search method - always uses FTS with SEARCH function
+     */
     public List<Map<String, Object>> searchResources(String resourceType, Map<String, String> queryParams, 
                                                     String connectionName, String bucketName) {
+        logger.info("🔍 FHIR Search request - Resource: {}, Parameters: {}", resourceType, queryParams);
+        
         try {
             // Use provided connection or default
             connectionName = connectionName != null ? connectionName : getDefaultConnection();
@@ -233,104 +212,105 @@ public class FHIRTestSearchService {
                 throw new RuntimeException("No active connection found: " + connectionName);
             }
             
-            RuntimeResourceDefinition resourceDef = fhirContext.getResourceDefinition(resourceType);
+            // Build FTS query - always use SEARCH function
+            String ftsQuery = buildFtsSearchQuery(resourceType, queryParams, bucketName);
+            logger.info("📡 Executing FTS query: {}", ftsQuery);
             
-            StringBuilder queryBuilder = new StringBuilder();
-            queryBuilder.append("SELECT resource.*, META(resource).id as documentKey FROM `")
-                       .append(bucketName).append("`.`").append(DEFAULT_SCOPE).append("`.`")
-                       .append(resourceType).append("` resource");
+            QueryResult result = cluster.query(ftsQuery);
+            List<Map<String, Object>> resources = processQueryResults(result);
             
-            List<String> ftsConditions = new ArrayList<>();
-            List<String> n1qlConditions = new ArrayList<>();
-            JsonObject parameters = JsonObject.create();
-            
-            for (Map.Entry<String, String> entry : queryParams.entrySet()) {
-                String paramName = entry.getKey();
-                String value = entry.getValue();
-                
-                // Skip control parameters
-                if (paramName.startsWith("_") && !paramName.equals("_text")) {
-                    continue;
-                }
-                
-                processSearchParameter(resourceDef, paramName, value, ftsConditions, n1qlConditions, parameters);
-            }
-            
-            // Add WHERE clause only if we have conditions
-            boolean hasConditions = !ftsConditions.isEmpty() || !n1qlConditions.isEmpty();
-            if (hasConditions) {
-                queryBuilder.append(" WHERE ");
-                
-                List<String> allConditions = new ArrayList<>();
-                
-                // Add FTS conditions using JSON-based conjuncts approach
-                if (!ftsConditions.isEmpty()) {
-                    JsonObject ftsQuery = buildFtsJsonQuery(ftsConditions);
-                    String indexName = bucketName + ".Resources.fts" + resourceType;
-                    JsonObject indexSpec = JsonObject.create().put("index", indexName);
-                    allConditions.add("SEARCH(resource, " + ftsQuery.toString() + ", " + indexSpec.toString() + ")");
-                }
-                
-                // Add N1QL conditions
-                allConditions.addAll(n1qlConditions);
-                
-                queryBuilder.append(String.join(" AND ", allConditions));
-            }
-            
-            // Note: Size/limit is now handled inside FTS query, not in SQL LIMIT clause
-            
-            String finalQuery = queryBuilder.toString();
-            logger.info("Executing search query: {}", finalQuery);
-            
-            QueryResult result = cluster.query(finalQuery, QueryOptions.queryOptions().parameters(parameters));
-            
-            List<Map<String, Object>> resources = new ArrayList<>();
-            for (JsonObject row : result.rowsAs(JsonObject.class)) {
-                Map<String, Object> rowMap = row.toMap();
-                
-                // Extract resource ID from document key (format: ResourceType::id)
-                String resourceId = null;
-                if (rowMap.containsKey("documentKey")) {
-                    String documentKey = (String) rowMap.get("documentKey");
-                    if (documentKey != null && documentKey.contains("::")) {
-                        resourceId = documentKey.split("::", 2)[1];
-                    }
-                }
-                
-                // Remove the documentKey field as it's not part of the FHIR resource
-                rowMap.remove("documentKey");
-                
-                // Set the proper resource ID
-                if (resourceId != null) {
-                    rowMap.put("id", resourceId);
-                }
-                
-                resources.add(rowMap);
-            }
-            
-            logger.info("Successfully retrieved {} {} resources from search", resources.size(), resourceType);
-            
-            // Debug: Log before returning
-            logger.info("🔄 Service: About to return {} resources to controller", resources.size());
-            logger.info("🔄 Service: Method searchResources is completing normally");
-            
+            logger.info("📋 Search completed - Found {} {} resources", resources.size(), resourceType);
             return resources;
                 
         } catch (Exception e) {
-            logger.error("Failed to search {} resources: {}", resourceType, e.getMessage(), e);
-            throw new RuntimeException("Search failed", e);
+            // Log clean error message without full stack trace
+            logger.error("❌ Search failed for {} resources: {}", resourceType, e.getMessage());
+            logger.debug("Full error details:", e); // Stack trace only at debug level
+            throw new RuntimeException("Search failed: " + e.getMessage());
         }
     }
     
-    private void processSearchParameter(RuntimeResourceDefinition resourceDef, 
-                                      String paramName, 
-                                      String value,
-                                      List<String> ftsConditions,
-                                      List<String> n1qlConditions,
-                                      JsonObject parameters) {
+    /**
+     * Build FTS search query using SEARCH function - never use straight N1QL
+     */
+    private String buildFtsSearchQuery(String resourceType, Map<String, String> queryParams, String bucketName) {
+        // FTS index name: fully qualified <bucket>.Resources.<indexname>
+        String ftsIndexName = bucketName + ".Resources.fts" + resourceType;
         
-        // Parse parameter name and modifiers
+        // Build FTS query JSON
+        JsonObject ftsQueryJson = buildFtsQueryJson(resourceType, queryParams);
+        
+        // Build the N1QL query using SEARCH function
+        StringBuilder queryBuilder = new StringBuilder();
+        queryBuilder.append("SELECT resource.* FROM `")
+                   .append(bucketName).append("`.`").append(DEFAULT_SCOPE).append("`.`")
+                   .append(resourceType).append("` resource");
+        
+        queryBuilder.append(" WHERE SEARCH(resource, ")
+                   .append(ftsQueryJson.toString())
+                   .append(", {\"index\": \"").append(ftsIndexName).append("\"})");
+        
+        // Add simple N1QL condition to exclude deleted documents
+        queryBuilder.append(" AND resource.deletedDate IS MISSING");
+        
+        return queryBuilder.toString();
+    }
+    
+    /**
+     * Build FTS query JSON from search parameters - now with pagination
+     */
+    private JsonObject buildFtsQueryJson(String resourceType, Map<String, String> queryParams) {
+        RuntimeResourceDefinition resourceDef = fhirContext.getResourceDefinition(resourceType);
+        List<String> ftsConditions = new ArrayList<>();
+        
+        // Extract pagination parameters
+        PaginationParams pagination = extractPaginationParams(queryParams);
+        
+        for (Map.Entry<String, String> entry : queryParams.entrySet()) {
+            String paramName = entry.getKey();
+            String value = entry.getValue();
+            
+            // Skip control parameters (including pagination), but allow _id, _text, and _lastUpdated
+            if (paramName.startsWith("_") && !paramName.equals("_text") && !paramName.equals("_id") && !paramName.equals("_lastUpdated")) {
+                continue;
+            }
+            
+            processSearchParameter(resourceDef, paramName, value, ftsConditions);
+        }
+        
+        return buildFtsJsonQuery(ftsConditions, pagination);
+    }
+    
+    /**
+     * Process individual search parameter
+     */
+    private void processSearchParameter(RuntimeResourceDefinition resourceDef, String paramName, 
+                                      String value, List<String> ftsConditions) {
+        
         ParsedParameter parsed = parseParameterName(paramName);
+        
+        // Handle special FHIR _id parameter
+        if ("_id".equals(parsed.baseName)) {
+            FieldPathMapping mapping = new FieldPathMapping("id", null, null, false);
+            ParsedValue parsedValue = parseParameterValue(value, RestSearchParameterTypeEnum.TOKEN);
+            generateFtsCondition(mapping, parsedValue, parsed, RestSearchParameterTypeEnum.TOKEN, ftsConditions);
+            logger.debug("Processing _id parameter: {} -> id field", value);
+            return;
+        }
+        
+        // Handle special FHIR _lastUpdated parameter
+        if ("_lastUpdated".equals(parsed.baseName)) {
+            FieldPathMapping mapping = new FieldPathMapping("meta.lastUpdated", null, null, false);
+            ParsedValue parsedValue = parseParameterValue(value, RestSearchParameterTypeEnum.DATE);
+            generateFtsCondition(mapping, parsedValue, parsed, RestSearchParameterTypeEnum.DATE, ftsConditions);
+            logger.debug("Processing _lastUpdated parameter: {} -> meta.lastUpdated field", value);
+            return;
+        }
+        
+        // Handle special composite parameters that need OR logic
+        if (handleCompositeParameters(parsed.baseName, resourceDef.getName(), value, ftsConditions)) {
+            return;
+        }
         
         // Get HAPI parameter for dynamic field path resolution
         RuntimeSearchParam searchParam = resourceDef.getSearchParam(parsed.baseName);
@@ -339,48 +319,142 @@ public class FHIRTestSearchService {
         RestSearchParameterTypeEnum paramType;
         
         if (searchParam == null) {
-            // Handle common US Core parameters manually
+            logger.info("📋 HAPI returned NULL for parameter: {} in resource: {}", parsed.baseName, resourceDef.getName());
+            // Handle US Core parameters manually
             mapping = handleUSCoreParameters(parsed.baseName, resourceDef.getName());
             if (mapping == null) {
                 logger.warn("Unknown search parameter: {} for resource type: {}", parsed.baseName, resourceDef.getName());
                 return;
             }
-            paramType = RestSearchParameterTypeEnum.TOKEN; // Most US Core params are TOKEN
+            paramType = RestSearchParameterTypeEnum.TOKEN;
         } else {
             paramType = searchParam.getParamType();
+            logger.info("📋 HAPI parameter info - Name: {}, Path: {}, Type: {}, Description: {}", 
+                       searchParam.getName(), searchParam.getPath(), paramType, searchParam.getDescription());
             
-            // Check if we need to override HAPI's path for specific US Core parameters
+            // Check for US Core override
             FieldPathMapping usCoreOverride = handleUSCoreParameters(parsed.baseName, resourceDef.getName());
             if (usCoreOverride != null) {
-                logger.info("   🇺🇸 Using US Core override for parameter: {}", parsed.baseName);
+                logger.debug("Using US Core override for parameter: {}", parsed.baseName);
                 mapping = usCoreOverride;
             } else {
-                // Resolve field path dynamically from HAPI
                 mapping = resolveFieldPathFromHapi(searchParam);
             }
         }
         
-        logger.info("🔍 FHIR Search Parameter Details:");
-        logger.info("   Parameter: {}", parsed.baseName);
-        logger.info("   Value: {}", value);
-        logger.info("   Type: {}", paramType);
-        logger.info("   🏷️  HAPI Path: {}", searchParam != null ? searchParam.getPath() : "US Core - manual");
-        logger.info("   📋 Resolved Field Path: {}", mapping.fieldPath);
-        logger.info("   Has System: {}", mapping.hasSystem);
-        logger.info("   System Field: {}", mapping.systemField);
-        logger.info("   System Value: {}", mapping.systemValue);
-        logger.info("   Modifiers: {}", parsed.modifiers);
+        logger.debug("Processing parameter: {} -> {}", parsed.baseName, mapping.fieldPath);
         
         // Parse value and prefixes
         ParsedValue parsedValue = parseParameterValue(value, paramType);
         
-        logger.info("   Parsed Value: {}", parsedValue.value);
-        logger.info("   Prefix: {}", parsedValue.prefix);
-        
-        // Generate query condition based on dynamic mapping
-        generateQueryConditionFromMapping(mapping, parsedValue, parsed, paramType, ftsConditions, n1qlConditions, parameters);
+        // Generate FTS condition
+        generateFtsCondition(mapping, parsedValue, parsed, paramType, ftsConditions);
     }
     
+    /**
+     * Generate FTS condition from mapping and parsed value
+     */
+    private void generateFtsCondition(FieldPathMapping mapping, ParsedValue parsedValue, 
+                                    ParsedParameter parsed, RestSearchParameterTypeEnum paramType,
+                                    List<String> ftsConditions) {
+        
+        String value = parsedValue.value;
+        String prefix = parsedValue.prefix;
+        
+        // Handle special cases
+        if (parsed.baseName.equals("_text")) {
+            ftsConditions.add(value);
+            return;
+        }
+        
+        if (parsed.modifiers.contains("missing")) {
+            // Handle missing modifier with N1QL condition
+            logger.debug("Missing modifier not supported in FTS - parameter: {}", parsed.baseName);
+            return;
+        }
+        
+        if (parsed.modifiers.contains("not")) {
+            prefix = "ne";
+        }
+        
+        // Handle system|value format
+        if (mapping.hasSystem && value.contains("|")) {
+            handleSystemValueParameter(mapping, value, prefix, ftsConditions);
+        } else if (mapping.hasSystem && mapping.systemValue != null) {
+            handleImpliedSystemParameter(mapping, value, prefix, ftsConditions);
+        } else {
+            handleRegularParameter(mapping, value, prefix, parsed.modifiers, paramType, ftsConditions);
+        }
+    }
+    
+    private void handleSystemValueParameter(FieldPathMapping mapping, String value, String prefix, List<String> ftsConditions) {
+        String[] parts = value.split("\\|", 2);
+        String system = parts[0];
+        String code = parts[1];
+        
+        if (!system.isEmpty() && !code.isEmpty()) {
+            ftsConditions.add(mapping.systemField + ":match:" + system);
+            ftsConditions.add(mapping.fieldPath + ":match:" + code);
+        } else if (!code.isEmpty()) {
+            ftsConditions.add(mapping.fieldPath + ":match:" + code);
+        } else {
+            ftsConditions.add(mapping.systemField + ":match:" + system);
+        }
+    }
+    
+    private void handleImpliedSystemParameter(FieldPathMapping mapping, String value, String prefix, List<String> ftsConditions) {
+        ftsConditions.add(mapping.systemField + ":match:" + mapping.systemValue);
+        ftsConditions.add(mapping.fieldPath + ":match:" + value);
+    }
+    
+    private void handleRegularParameter(FieldPathMapping mapping, String value, String prefix, 
+                                      Set<String> modifiers, RestSearchParameterTypeEnum paramType,
+                                      List<String> ftsConditions) {
+        
+        String[] fieldPaths = mapping.fieldPath.split(",");
+        String fieldPath = fieldPaths[0].trim(); // Use first field for multiple paths
+        
+        String condition = createSingleFieldCondition(fieldPath, value, prefix, modifiers, paramType);
+        ftsConditions.add(condition);
+    }
+    
+    private String createSingleFieldCondition(String fieldPath, String value, String prefix, 
+                                            Set<String> modifiers, RestSearchParameterTypeEnum paramType) {
+        if (modifiers.contains("exact")) {
+            return fieldPath + ":match:" + value;
+        } else if (modifiers.contains("contains")) {
+            return fieldPath + ":wildcard:*" + value + "*";
+        } else if (paramType == RestSearchParameterTypeEnum.DATE || paramType == RestSearchParameterTypeEnum.NUMBER) {
+            return fieldPath + ":range:" + paramType.name() + ":" + prefix + ":" + value;
+        } else if ("id".equals(fieldPath)) {
+            // ID searches should be exact matches, not wildcard
+            return fieldPath + ":match:" + value;
+        } else {
+            // Preserve original case for FHIR compliance
+            return fieldPath + ":wildcard:" + value + "*";
+        }
+    }
+    
+    /**
+     * Process query results and extract resources
+     */
+    private List<Map<String, Object>> processQueryResults(QueryResult result) {
+        List<Map<String, Object>> resources = new ArrayList<>();
+        
+        for (JsonObject row : result.rowsAs(JsonObject.class)) {
+            Map<String, Object> rowMap = row.toMap();
+            
+            // Since we're using SELECT *, the resource data comes directly
+            // The 'id' field should already be present in the resource
+            resources.add(rowMap);
+        }
+        
+        return resources;
+    }
+    
+    /**
+     * Parse parameter name and extract modifiers
+     */
     private ParsedParameter parseParameterName(String paramName) {
         String[] parts = paramName.split(":");
         String baseName = parts[0];
@@ -395,8 +469,10 @@ public class FHIRTestSearchService {
         return new ParsedParameter(baseName, modifiers);
     }
     
+    /**
+     * Parse parameter value and extract prefix
+     */
     private ParsedValue parseParameterValue(String value, RestSearchParameterTypeEnum paramType) {
-        // Check for prefix operators (gt, lt, etc.)
         Pattern prefixPattern = Pattern.compile("^(eq|ne|gt|lt|ge|le|sa|eb|ap)(.+)");
         Matcher matcher = prefixPattern.matcher(value);
         
@@ -411,190 +487,105 @@ public class FHIRTestSearchService {
         return new ParsedValue(prefix, actualValue, paramType);
     }
     
-    private void generateQueryConditionFromMapping(FieldPathMapping mapping,
-                                                 ParsedValue parsedValue, 
-                                                 ParsedParameter parsed,
-                                                 RestSearchParameterTypeEnum paramType,
-                                                 List<String> ftsConditions,
-                                                 List<String> n1qlConditions,
-                                                 JsonObject parameters) {
+    /**
+     * Build FTS JSON query from conditions with pagination
+     */
+    private JsonObject buildFtsJsonQuery(List<String> ftsConditions, PaginationParams pagination) {
+        JsonObject query = JsonObject.create();
+        JsonObject mainQuery;
         
-        String value = parsedValue.value;
-        String prefix = parsedValue.prefix;
+        // Separate regular conditions from composite conditions
+        List<String> regularConditions = new ArrayList<>();
+        List<String> compositeConditions = new ArrayList<>();
         
-        logger.info("🔧 Generating Query Condition:");
-        logger.info("   Mapping Field Path: {}", mapping.fieldPath);
-        logger.info("   Parameter Type: {}", paramType);
-        logger.info("   Value: {}", value);
-        logger.info("   Prefix: {}", prefix);
-        
-        // Handle special cases first
-        if (parsed.baseName.equals("_text")) {
-            ftsConditions.add(value);
-            logger.info("   Added FTS condition: {}", value);
-            return;
+        for (String condition : ftsConditions) {
+            if (condition.startsWith("_composite_")) {
+                compositeConditions.add(condition);
+            } else {
+                regularConditions.add(condition);
+            }
         }
         
-        if (parsed.modifiers.contains("missing")) {
-            handleMissingModifier(mapping.fieldPath, value, n1qlConditions);
-            return;
-        }
-        
-        if (parsed.modifiers.contains("not")) {
-            prefix = "ne";
-        }
-        
-        // Handle system|value format for parameters that support it
-        if (mapping.hasSystem && value.contains("|")) {
-            handleSystemValueParameter(mapping, value, prefix, ftsConditions);
-        } else if (mapping.hasSystem && mapping.systemValue != null) {
-            // Parameter like "phone" that implies system=phone
-            handleImpliedSystemParameter(mapping, value, prefix, ftsConditions);
+        if (regularConditions.isEmpty() && compositeConditions.isEmpty()) {
+            // Match all documents
+            mainQuery = JsonObject.create().put("match_all", JsonObject.create());
+        } else if (regularConditions.size() == 1 && compositeConditions.isEmpty()) {
+            // Single regular condition
+            FtsCondition condition = parseFtsCondition(regularConditions.get(0));
+            mainQuery = createMatchQuery(condition);
+        } else if (regularConditions.isEmpty() && compositeConditions.size() == 1) {
+            // Single composite condition
+            mainQuery = handleCompositeCondition(compositeConditions.get(0));
         } else {
-            // Regular parameter handling
-            handleRegularParameter(mapping, value, prefix, parsed.modifiers, paramType, ftsConditions, n1qlConditions, parameters);
-        }
-    }
-    
-    private void handleSystemValueParameter(FieldPathMapping mapping, String value, String prefix, List<String> ftsConditions) {
-        String[] parts = value.split("\\|", 2);
-        String system = parts[0];
-        String code = parts[1];
-        
-        // Create field:type:value conditions for JSON processing
-        if (!system.isEmpty() && !code.isEmpty()) {
-            ftsConditions.add(mapping.systemField + ":match:" + system);
-            ftsConditions.add(mapping.fieldPath + ":match:" + code);  // Use exact match for system|value format
-            logger.info("   Added FTS system condition: {}:match:{}", mapping.systemField, system);
-            logger.info("   Added FTS value condition: {}:match:{}", mapping.fieldPath, code);
-        } else if (!code.isEmpty()) {
-            ftsConditions.add(mapping.fieldPath + ":match:" + code);
-            logger.info("   Added FTS condition: {}:match:{}", mapping.fieldPath, code);
-        } else {
-            ftsConditions.add(mapping.systemField + ":match:" + system);
-            logger.info("   Added FTS condition: {}:match:{}", mapping.systemField, system);
-        }
-    }
-    
-    private void handleImpliedSystemParameter(FieldPathMapping mapping, String value, String prefix, List<String> ftsConditions) {
-        // Create field:type:value conditions for JSON processing
-        ftsConditions.add(mapping.systemField + ":match:" + mapping.systemValue);
-        ftsConditions.add(mapping.fieldPath + ":match:" + value);  // Use exact match for implied system parameters
-        logger.info("   Added FTS system condition: {}:match:{}", mapping.systemField, mapping.systemValue);
-        logger.info("   Added FTS value condition: {}:match:{}", mapping.fieldPath, value);
-    }
-    
-    private void handleRegularParameter(FieldPathMapping mapping, String value, String prefix, 
-                                      Set<String> modifiers, RestSearchParameterTypeEnum paramType,
-                                      List<String> ftsConditions, List<String> n1qlConditions, JsonObject parameters) {
-        
-        // Handle multiple field paths (e.g., "name.family,name.given")
-        String[] fieldPaths = mapping.fieldPath.split(",");
-        
-        if (fieldPaths.length > 1) {
-            // Multiple fields - for now, just use the first field (we can enhance this later)
-            String fieldPath = fieldPaths[0].trim();
-            String condition = createSingleFieldCondition(fieldPath, value, prefix, modifiers, paramType);
-            ftsConditions.add(condition);
-            logger.info("   Added FTS condition: {}", condition);
-        } else {
-            // Single field - always use FTS for all parameter types
-            String fieldPath = mapping.fieldPath;
-            String condition = createSingleFieldCondition(fieldPath, value, prefix, modifiers, paramType);
-            ftsConditions.add(condition);
-            logger.info("   Added FTS condition: {}", condition);
-        }
-    }
-    
-    private String createSingleFieldCondition(String fieldPath, String value, String prefix, Set<String> modifiers, RestSearchParameterTypeEnum paramType) {
-        // Create field:type:value format for different search behaviors
-        if (modifiers.contains("exact")) {
-            // Exact match - use original value with match
-            return fieldPath + ":match:" + value;
-        } else if (modifiers.contains("contains")) {
-            // Contains search - use wildcard with *value*
-            return fieldPath + ":wildcard:*" + value.toLowerCase() + "*";
-        } else if (paramType == RestSearchParameterTypeEnum.DATE || paramType == RestSearchParameterTypeEnum.NUMBER) {
-            // For dates and numbers, use FTS range queries with prefix operators
-            // Include parameter type for proper range query generation
-            return fieldPath + ":range:" + paramType.name() + ":" + prefix + ":" + value;
-        } else {
-            // Default FHIR prefix search for strings - use wildcard with value*
-            return fieldPath + ":wildcard:" + value.toLowerCase() + "*";
-        }
-    }
-    
-    private void handleNumberParameter(String fieldPath, String value, String prefix, 
-                                     List<String> n1qlConditions, JsonObject parameters) {
-        try {
-            double numValue = Double.parseDouble(value);
-            String paramName = fieldPath.replace(".", "_") + "_num_" + System.currentTimeMillis();
-            String operator = PREFIX_OPERATORS.getOrDefault(prefix, "=");
+            // Multiple conditions - use conjuncts for AND logic
+            JsonArray conjuncts = JsonArray.create();
             
-            n1qlConditions.add("r." + fieldPath + " " + operator + " $" + paramName);
-            parameters.put(paramName, numValue);
-        } catch (NumberFormatException e) {
-            logger.warn("Invalid number format: {}", value);
-        }
-    }
-    
-    private void handleDateParameter(String fieldPath, String value, String prefix, 
-                                   List<String> n1qlConditions, JsonObject parameters) {
-        try {
-            // Try to parse as date
-            LocalDate.parse(value, DateTimeFormatter.ISO_LOCAL_DATE);
-            String paramName = fieldPath.replace(".", "_") + "_date_" + System.currentTimeMillis();
-            String operator = PREFIX_OPERATORS.getOrDefault(prefix, "=");
+            // Add regular conditions
+            for (String conditionStr : regularConditions) {
+                FtsCondition condition = parseFtsCondition(conditionStr);
+                conjuncts.add(createMatchQuery(condition));
+            }
             
-            n1qlConditions.add("resource." + fieldPath + " " + operator + " $" + paramName);
-            parameters.put(paramName, value);
-        } catch (DateTimeParseException e) {
-            logger.warn("Invalid date format: {}", value);
-        }
-    }
-    
-    private void handleReferenceParameter(String fieldPath, String value, List<String> ftsConditions) {
-        // Handle reference searches like "patient.id" or "Patient/123"
-        if (value.startsWith("http://") || value.startsWith("https://")) {
-            ftsConditions.add(fieldPath + ":\"" + escapeValue(value) + "\"");
-        } else if (value.contains("/")) {
-            ftsConditions.add(fieldPath + ":\"" + escapeValue(value) + "\"");
-        } else {
-            // Assume it's just an ID
-            ftsConditions.add(fieldPath + ":*" + escapeValue(value) + "*");
-        }
-    }
-    
-    private void handleDefaultParameter(String fieldPath, String value, String prefix, List<String> ftsConditions) {
-        String condition = fieldPath + ":\"" + escapeValue(value) + "\"";
-        
-        if ("ne".equals(prefix)) {
-            condition = "-(" + condition + ")";
+            // Add composite conditions
+            for (String compositeCondition : compositeConditions) {
+                conjuncts.add(handleCompositeCondition(compositeCondition));
+            }
+            
+            mainQuery = JsonObject.create().put("conjuncts", conjuncts);
         }
         
-        ftsConditions.add(condition);
-    }
-    
-    private void handleMissingModifier(String fieldPath, String value, List<String> n1qlConditions) {
-        boolean missing = "true".equalsIgnoreCase(value);
+        query.put("query", mainQuery);
         
-        if (missing) {
-            n1qlConditions.add("resource." + fieldPath + " IS MISSING");
-        } else {
-            n1qlConditions.add("resource." + fieldPath + " IS NOT MISSING");
-        }
+        // Add pagination parameters
+        query.put("from", pagination.offset);
+        query.put("size", pagination.size);
+        
+        logger.debug("FTS pagination: offset={}, size={}", pagination.offset, pagination.size);
+        
+        return query;
     }
     
-    private String escapeValue(String value) {
-        // Escape special characters for FTS
-        return value.replace("\"", "\\\"");
+    private JsonObject createMatchQuery(FtsCondition condition) {
+        JsonObject matchQuery = JsonObject.create();
+        
+        if (condition.field.isEmpty()) {
+            matchQuery.put("match", condition.value);
+            return matchQuery;
+        }
+        
+        String[] parts = condition.value.split(":", 2);
+        if (parts.length != 2) {
+            matchQuery.put("match", condition.value);
+            matchQuery.put("field", condition.field);
+            return matchQuery;
+        }
+        
+        String type = parts[0];
+        String value = parts[1];
+        
+        switch (type) {
+            case "match":
+                matchQuery.put("match", value);
+                matchQuery.put("field", condition.field);
+                break;
+            case "wildcard":
+                matchQuery.put("wildcard", value);
+                matchQuery.put("field", condition.field);
+                break;
+            case "range":
+                handleRangeQuery(matchQuery, condition.field, value);
+                break;
+            default:
+                matchQuery.put("match", value);
+                matchQuery.put("field", condition.field);
+        }
+        
+        return matchQuery;
     }
     
     private void handleRangeQuery(JsonObject matchQuery, String field, String value) {
-        // Parse paramType:prefix:value format (e.g., "DATE:lt:2020-04-18" or "NUMBER:ge:150")
         String[] parts = value.split(":", 3);
         if (parts.length != 3) {
-            // Fallback to exact match if format is incorrect
             matchQuery.put("match", value);
             matchQuery.put("field", field);
             return;
@@ -607,60 +598,44 @@ public class FHIRTestSearchService {
         matchQuery.put("field", field);
         
         if ("DATE".equals(paramType)) {
-            // Use dateRange queries for DATE parameters
             handleDateRangeQuery(matchQuery, prefix, actualValue);
         } else {
-            // Use numeric range queries for NUMBER parameters
             handleNumberRangeQuery(matchQuery, prefix, actualValue);
         }
     }
     
     private void handleDateRangeQuery(JsonObject matchQuery, String prefix, String dateValue) {
-        // Create FTS dateRange query based on prefix following the pattern:
-        // dateRangeQuery(start, end, inclusive_start, inclusive_end)
         switch (prefix) {
             case "eq":
-                // Same start/end with both inclusive: dateRangeQuery(date, date, true, true)
                 matchQuery.put("start", dateValue);
                 matchQuery.put("end", dateValue);
                 matchQuery.put("inclusive_start", true);
                 matchQuery.put("inclusive_end", true);
                 break;
             case "ge": 
-                // Greater than or equal: dateRangeQuery(date, null, true, false)
                 matchQuery.put("start", dateValue);
                 matchQuery.put("inclusive_start", true);
-                // No end date, so no inclusive_end
                 break;
             case "gt":
-            case "sa": // starts after (dates)
-                // Greater than: dateRangeQuery(date, null, false, false)
+            case "sa":
                 matchQuery.put("start", dateValue);
                 matchQuery.put("inclusive_start", false);
-                // No end date, so no inclusive_end
                 break;
             case "le":
-                // Less than or equal: dateRangeQuery(null, date, false, true)
                 matchQuery.put("end", dateValue);
                 matchQuery.put("inclusive_end", true);
-                // No start date, so no inclusive_start
                 break;
             case "lt":
-            case "eb": // ends before (dates)
-                // Less than: dateRangeQuery(null, date, false, false)
+            case "eb":
                 matchQuery.put("end", dateValue);
                 matchQuery.put("inclusive_end", false);
-                // No start date, so no inclusive_start
                 break;
             default:
-                // Unknown prefix - fallback to exact match
                 matchQuery.put("match", dateValue);
-                break;
         }
     }
     
     private void handleNumberRangeQuery(JsonObject matchQuery, String prefix, String numberValue) {
-        // Create FTS numeric range query based on prefix
         switch (prefix) {
             case "lt":
                 matchQuery.put("max", numberValue);
@@ -680,10 +655,68 @@ public class FHIRTestSearchService {
                 break;
             case "eq":
             default:
-                // Equal or unknown prefix - use exact match
                 matchQuery.put("match", numberValue);
-                break;
         }
+    }
+    
+    /**
+     * Handle composite conditions that require OR logic
+     */
+    private JsonObject handleCompositeCondition(String compositeCondition) {
+        if (compositeCondition.startsWith("_composite_name_or:")) {
+            String value = compositeCondition.substring("_composite_name_or:".length());
+            logger.info("🔍 Creating OR query for name fields with value: {}", value);
+            
+            // Create disjuncts (OR) for Patient name fields
+            JsonArray disjuncts = JsonArray.create();
+            
+            // Search in name.family
+            JsonObject familyMatch = JsonObject.create();
+            familyMatch.put("wildcard", value + "*");
+            familyMatch.put("field", "name.family");
+            disjuncts.add(familyMatch);
+            
+            // Search in name.given
+            JsonObject givenMatch = JsonObject.create();
+            givenMatch.put("wildcard", value + "*");
+            givenMatch.put("field", "name.given");
+            disjuncts.add(givenMatch);
+            
+            // Search in name.prefix
+            JsonObject prefixMatch = JsonObject.create();
+            prefixMatch.put("wildcard", value + "*");
+            prefixMatch.put("field", "name.prefix");
+            disjuncts.add(prefixMatch);
+            
+            // Search in name.suffix
+            JsonObject suffixMatch = JsonObject.create();
+            suffixMatch.put("wildcard", value + "*");
+            suffixMatch.put("field", "name.suffix");
+            disjuncts.add(suffixMatch);
+            
+            return JsonObject.create().put("disjuncts", disjuncts);
+        }
+        
+        // Handle other composite conditions as needed
+        logger.warn("Unknown composite condition: {}", compositeCondition);
+        return JsonObject.create().put("match_all", JsonObject.create());
+    }
+    
+    private FtsCondition parseFtsCondition(String condition) {
+        if (!condition.contains(":")) {
+            return new FtsCondition("", condition);
+        }
+        
+        String[] parts = condition.split(":", 3);
+        if (parts.length != 3) {
+            return new FtsCondition("", condition);
+        }
+        
+        String field = parts[0];
+        String type = parts[1];
+        String value = parts[2];
+        
+        return new FtsCondition(field, type + ":" + value);
     }
     
     private String getDefaultConnection() {
@@ -692,28 +725,23 @@ public class FHIRTestSearchService {
     }
 
     /**
-     * Create a proper FHIR Bundle response using HAPI FHIR utilities
+     * Create a proper FHIR Bundle response using HAPI FHIR utilities - optimized for performance
      */
     public Bundle createSearchBundle(String resourceType, List<Map<String, Object>> rawResources, 
                                    String baseUrl, Map<String, String> searchParams) {
+        logger.info("📦 Creating FHIR Bundle for {} {} resources", rawResources.size(), resourceType);
+        
         try {
-            logger.info("🚀 createSearchBundle called with {} resources", rawResources.size());
-            
-            // Create Bundle
             Bundle bundle = new Bundle();
             bundle.setType(Bundle.BundleType.SEARCHSET);
             bundle.setId(UUID.randomUUID().toString());
             bundle.setTotal(rawResources.size());
             bundle.setTimestamp(new Date());
             
-            logger.info("📦 Bundle created with basic properties");
-            
-            // Add Bundle meta
+            // Minimal Bundle meta for performance
             Meta bundleMeta = new Meta();
             bundleMeta.setLastUpdated(new Date());
             bundle.setMeta(bundleMeta);
-            
-            logger.info("📋 Bundle meta added");
             
             // Add self link
             Bundle.BundleLinkComponent selfLink = new Bundle.BundleLinkComponent();
@@ -721,68 +749,51 @@ public class FHIRTestSearchService {
             selfLink.setUrl(buildSearchUrl(baseUrl, resourceType, searchParams));
             bundle.addLink(selfLink);
             
-            logger.info("🔗 Self link added: {}", selfLink.getUrl());
+            // Pre-allocate entry list for better performance
+            List<Bundle.BundleEntryComponent> entries = new ArrayList<>(rawResources.size());
             
-            // Convert raw resources to FHIR resources and add to bundle
-            for (int i = 0; i < rawResources.size(); i++) {
-                Map<String, Object> rawResource = rawResources.get(i);
-                logger.info("Processing resource {}/{}: {}", i + 1, rawResources.size(), rawResource.get("id"));
-                
-                Bundle.BundleEntryComponent entry = new Bundle.BundleEntryComponent();
-                
+            // Reuse ObjectMapper for better performance
+            ObjectMapper objectMapper = new ObjectMapper();
+            
+            // Convert raw resources to FHIR resources
+            for (Map<String, Object> rawResource : rawResources) {
                 try {
-                    // Convert raw Map to FHIR resource
-                    String resourceJson = JsonObject.from(rawResource).toString();
-                    logger.info("📄 Resource JSON created: {} characters", resourceJson.length());
-                    
-                    // Check if the FHIR context and parser are properly initialized
-                    if (jsonParser == null) {
-                        logger.error("❌ jsonParser is null - FHIR dependency injection failed!");
-                        throw new RuntimeException("FHIR JSON parser not properly injected");
-                    }
-                    
-                    logger.info("✅ About to parse resource with HAPI FHIR parser");
+                    // Fast JSON conversion without intermediate string
+                    String resourceJson = objectMapper.writeValueAsString(rawResource);
                     IBaseResource fhirResource = jsonParser.parseResource(resourceJson);
-                    logger.info("✅ Resource parsed successfully: {}", fhirResource.getClass().getSimpleName());
                     
+                    // Create entry with minimal metadata
+                    Bundle.BundleEntryComponent entry = new Bundle.BundleEntryComponent();
                     entry.setResource((Resource) fhirResource);
                     
-                    // Set fullUrl
+                    // Set fullUrl (required for search bundles)
                     String resourceId = rawResource.get("id").toString();
                     entry.setFullUrl(baseUrl + "/" + resourceType + "/" + resourceId);
-                    logger.info("🔗 Set fullUrl: {}", entry.getFullUrl());
                     
-                    // Add search metadata
+                    // Minimal search metadata
                     Bundle.BundleEntrySearchComponent search = new Bundle.BundleEntrySearchComponent();
                     search.setMode(Bundle.SearchEntryMode.MATCH);
                     entry.setSearch(search);
                     
-                    logger.info("🔍 Added search metadata to entry: mode={}", search.getMode());
-                    
-                    bundle.addEntry(entry);
-                    logger.info("📦 Entry added to bundle successfully");
+                    entries.add(entry);
                     
                 } catch (Exception e) {
-                    logger.error("❌ Error processing resource {}: {}", i + 1, e.getMessage(), e);
-                    throw e;
+                    logger.error("Failed to process resource {}: {}", rawResource.get("id"), e.getMessage());
+                    logger.debug("Resource processing error details:", e);
+                    throw new RuntimeException("Resource processing failed: " + e.getMessage());
                 }
             }
             
-            // Debug: Log bundle structure
-            logger.info("📊 Created Bundle with {} entries", bundle.getEntry().size());
-            for (int i = 0; i < bundle.getEntry().size(); i++) {
-                Bundle.BundleEntryComponent entry = bundle.getEntry().get(i);
-                logger.info("Entry {}: search={}, fullUrl={}", 
-                    i, entry.hasSearch() ? entry.getSearch().getMode() : "No search component", 
-                    entry.getFullUrl());
-            }
+            // Set all entries at once for better performance
+            bundle.setEntry(entries);
             
-            logger.info("✅ createSearchBundle completed successfully, returning Bundle");
+            logger.info("✅ Created Bundle with {} entries", entries.size());
             return bundle;
             
         } catch (Exception e) {
-            logger.error("❌ Failed to create FHIR Bundle: {}", e.getMessage(), e);
-            throw new RuntimeException("Failed to create FHIR Bundle", e);
+            logger.error("❌ Failed to create FHIR Bundle: {}", e.getMessage());
+            logger.debug("Bundle creation error details:", e);
+            throw new RuntimeException("Failed to create FHIR Bundle: " + e.getMessage());
         }
     }
     
@@ -798,7 +809,6 @@ public class FHIRTestSearchService {
                 .filter(entry -> !entry.getKey().equals("connectionName") && !entry.getKey().equals("bucketName"))
                 .forEach(entry -> url.append(entry.getKey()).append("=").append(entry.getValue()).append("&"));
             
-            // Remove trailing &
             if (url.charAt(url.length() - 1) == '&') {
                 url.deleteCharAt(url.length() - 1);
             }
@@ -806,6 +816,65 @@ public class FHIRTestSearchService {
         
         return url.toString();
     }
+    
+    /**
+     * Convert a Bundle to JSON string
+     */
+    public String getBundleAsJson(Bundle bundle) {
+        logger.debug("Serializing Bundle to JSON");
+        return jsonParser.encodeResourceToString(bundle);
+    }
+    
+    /**
+     * Handle special composite parameters that require OR logic instead of AND
+     */
+    private boolean handleCompositeParameters(String paramName, String resourceType, String value, List<String> ftsConditions) {
+        if ("Patient".equals(resourceType) && "name".equals(paramName)) {
+            logger.info("🔍 Handling composite 'name' search for Patient: {}", value);
+            
+            // Create OR condition for name fields (family, given, prefix, suffix)
+            // This will be handled specially in buildFtsJsonQuery
+            String nameCondition = "_composite_name_or:" + value;
+            ftsConditions.add(nameCondition);
+            return true;
+        }
+        
+        // Add more composite parameters as needed
+        // if ("Organization".equals(resourceType) && "name".equals(paramName)) { ... }
+        
+        return false;
+    }
+    
+    /**
+     * Extract pagination parameters from query params
+     */
+    private PaginationParams extractPaginationParams(Map<String, String> queryParams) {
+        int offset = 0;
+        int size = DEFAULT_PAGE_SIZE;
+        
+        // Check for _offset parameter
+        if (queryParams.containsKey("_offset")) {
+            try {
+                offset = Math.max(0, Integer.parseInt(queryParams.get("_offset")));
+            } catch (NumberFormatException e) {
+                logger.warn("Invalid _offset parameter: {}, using default: 0", queryParams.get("_offset"));
+            }
+        }
+        
+        // Check for _count parameter (FHIR standard)
+        if (queryParams.containsKey("_count")) {
+            try {
+                size = Integer.parseInt(queryParams.get("_count"));
+                size = Math.min(Math.max(1, size), MAX_PAGE_SIZE); // Clamp between 1 and MAX_PAGE_SIZE
+            } catch (NumberFormatException e) {
+                logger.warn("Invalid _count parameter: {}, using default: {}", queryParams.get("_count"), DEFAULT_PAGE_SIZE);
+            }
+        }
+        
+        return new PaginationParams(offset, size);
+    }
+    
+
     
     // Helper classes
     private static class ParsedParameter {
@@ -829,107 +898,7 @@ public class FHIRTestSearchService {
             this.paramType = paramType;
         }
     }
-
-    private JsonObject buildFtsJsonQuery(List<String> ftsConditions) {
-        JsonObject query = JsonObject.create();
-        JsonObject queryRoot = JsonObject.create();
-        
-        if (ftsConditions.size() == 1) {
-            // Single condition - parse and use directly
-            FtsCondition condition = parseFtsCondition(ftsConditions.get(0));
-            JsonObject singleQuery = createMatchQuery(condition);
-            query.put("query", singleQuery);
-        } else {
-            // Multiple conditions - use conjuncts (all must match)
-            JsonArray conjuncts = JsonArray.create();
-            
-            for (String conditionStr : ftsConditions) {
-                FtsCondition condition = parseFtsCondition(conditionStr);
-                JsonObject conjunct = createMatchQuery(condition);
-                conjuncts.add(conjunct);
-            }
-            
-            queryRoot.put("conjuncts", conjuncts);
-            query.put("query", queryRoot);
-        }
-        
-        // Add size parameter to FTS query (replaces SQL LIMIT clause)
-        query.put("size", 50);
-        
-        return query;
-    }
     
-    private JsonObject createMatchQuery(FtsCondition condition) {
-        JsonObject matchQuery = JsonObject.create();
-        
-        if (condition.field.isEmpty()) {
-            // Full-text search without specific field
-            matchQuery.put("match", condition.value);
-            return matchQuery;
-        }
-        
-        // Parse type:value format (field is already separated)
-        String[] parts = condition.value.split(":", 2);
-        if (parts.length != 2) {
-            // Fallback to simple match if format is incorrect
-            matchQuery.put("match", condition.value);
-            matchQuery.put("field", condition.field);
-            return matchQuery;
-        }
-        
-        String type = parts[0];
-        String value = parts[1];
-        
-        switch (type) {
-            case "match":
-                // Exact match - use original value
-                matchQuery.put("match", value);
-                matchQuery.put("field", condition.field);
-                break;
-                
-            case "wildcard":
-                // Wildcard search - use wildcard query
-                matchQuery.put("wildcard", value);
-                matchQuery.put("field", condition.field);
-                break;
-                
-            case "range":
-                // Range query for dates and numbers with prefix operators
-                handleRangeQuery(matchQuery, condition.field, value);
-                break;
-                
-            default:
-                // Unknown type, fallback to simple match
-                matchQuery.put("match", value);
-                matchQuery.put("field", condition.field);
-        }
-        
-        return matchQuery;
-    }
-    
-    private FtsCondition parseFtsCondition(String condition) {
-        // Parse conditions like "telecom.system:match:phone" or "name.family:wildcard:smith*"
-        if (!condition.contains(":")) {
-            // Full-text search without field
-            return new FtsCondition("", condition);
-        }
-        
-        // Split into field and type:value
-        String[] parts = condition.split(":", 3);
-        if (parts.length != 3) {
-            // Fallback for malformed conditions
-            return new FtsCondition("", condition);
-        }
-        
-        String field = parts[0];
-        String type = parts[1];
-        String value = parts[2];
-        
-        // Return field and type:value (createMatchQuery will parse the type)
-        return new FtsCondition(field, type + ":" + value);
-    }
-    
-    // Helper class to hold FTS condition components
     private static class FtsCondition {
         final String field;
         final String value;
@@ -939,15 +908,15 @@ public class FHIRTestSearchService {
             this.value = value;
         }
     }
-
     
-    /**
-     * Convert a Bundle to JSON string
-     */
-    public String getBundleAsJson(Bundle bundle) {
-        logger.info("🔄 Service: Serializing Bundle to JSON...");
-        String json = jsonParser.encodeResourceToString(bundle);
-        logger.info("✅ Service: Bundle serialized successfully");
-        return json;
+    // Helper class for pagination parameters
+    private static class PaginationParams {
+        final int offset;
+        final int size;
+        
+        PaginationParams(int offset, int size) {
+            this.offset = offset;
+            this.size = size;
+        }
     }
 } 

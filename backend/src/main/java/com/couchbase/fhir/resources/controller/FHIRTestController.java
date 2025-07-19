@@ -15,6 +15,7 @@ import com.couchbase.fhir.resources.service.FHIRBundleProcessingService;
 import java.util.*;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.net.URLDecoder;
 import org.hl7.fhir.r4.model.Bundle;
 import org.hl7.fhir.r4.model.OperationOutcome;
 import ca.uhn.fhir.parser.IParser;
@@ -112,6 +113,83 @@ public class FHIRTestController {
                 Map.of("error", "Failed to search " + resourceType + ": " + e.getMessage())
             );
         }
+    }
+
+    // Dynamic Resource Search via POST - FHIR compliant search for Inferno and other test suites
+    @PostMapping("/{bucketName}/{resourceType}/_search")
+    public ResponseEntity<?> searchResourcesPost(
+            @PathVariable String bucketName,
+            @PathVariable String resourceType,
+            @RequestParam(required = false) String connectionName,
+            @RequestParam Map<String, String> queryParams,
+            @RequestBody(required = false) String formData) {
+        
+        try {
+            // Start with query parameters
+            Map<String, String> allParams = new HashMap<>(queryParams);
+            
+            // Parse form data if present (application/x-www-form-urlencoded)
+            if (formData != null && !formData.trim().isEmpty()) {
+                String[] pairs = formData.split("&");
+                for (String pair : pairs) {
+                    String[] keyValue = pair.split("=", 2);
+                    if (keyValue.length == 2) {
+                        String key = java.net.URLDecoder.decode(keyValue[0], "UTF-8");
+                        String value = java.net.URLDecoder.decode(keyValue[1], "UTF-8");
+                        allParams.put(key, value); // Form params override query params
+                    }
+                }
+            }
+            
+            // Remove connection/bucket params from search parameters
+            allParams.remove("connectionName");
+            allParams.remove("bucketName");
+            
+            logger.info("🔍 POST Search request - Resource: {}, Parameters: {}", resourceType, allParams);
+            
+            // Use the same search service as GET
+            List<Map<String, Object>> resources = searchService.searchResources(
+                resourceType, allParams, connectionName, bucketName);
+            
+            // Create proper FHIR Bundle using HAPI FHIR utilities
+            String baseUrl = "http://localhost:8080/api/fhir-test/" + bucketName;
+            Bundle bundle = searchService.createSearchBundle(resourceType, resources, baseUrl, allParams);
+            
+            // Convert Bundle to JSON string for response
+            String bundleJson = searchService.getBundleAsJson(bundle);
+            return ResponseEntity.ok()
+                .header("Content-Type", "application/fhir+json")
+                .body(bundleJson);
+            
+        } catch (Exception e) {
+            logger.error("❌ POST search failed for {}: {}", resourceType, e.getMessage());
+            return ResponseEntity.internalServerError().body(
+                Map.of("error", "Failed to search " + resourceType + ": " + e.getMessage())
+            );
+        }
+    }
+
+    // Standard FHIR R4 pattern - POST search without bucket in path (uses default bucket)
+    @PostMapping("/fhir/{resourceType}/_search")
+    public ResponseEntity<?> searchResourcesPostFhir(
+            @PathVariable String resourceType,
+            @RequestParam(required = false) String connectionName,
+            @RequestParam Map<String, String> queryParams,
+            @RequestBody(required = false) String formData) {
+        
+        // Use default bucket "fhir" for standard FHIR R4 pattern
+        return searchResourcesPost("fhir", resourceType, connectionName, queryParams, formData);
+    }
+
+    // Standard FHIR R4 pattern - GET search without bucket in path (uses default bucket)
+    @GetMapping("/fhir/{resourceType}")
+    public ResponseEntity<?> searchResourcesFhir(
+            @PathVariable String resourceType,
+            @RequestParam(required = false) String connectionName,
+            @RequestParam Map<String, String> searchParams) {
+        
+        // Use default bucket "fhir" for standard FHIR R4 pattern
+        return searchResources("fhir", resourceType, connectionName, searchParams);
     }
 
     // Dynamic Resource by ID - handles any resource type
