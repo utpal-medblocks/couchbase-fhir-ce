@@ -17,6 +17,7 @@ import jakarta.annotation.PostConstruct;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 @Service
 public class FHIRTestCreateService {
@@ -42,6 +43,9 @@ public class FHIRTestCreateService {
     private static final String DEFAULT_CONNECTION = "default";
     private static final String DEFAULT_BUCKET = "fhir";
     private static final String DEFAULT_SCOPE = "Resources";
+    
+    // Reuse ObjectMapper for performance - expensive to create each time
+    private static final ObjectMapper objectMapper = new ObjectMapper();
 
     public FHIRTestCreateService() {
         // Empty - Spring will inject dependencies
@@ -49,7 +53,20 @@ public class FHIRTestCreateService {
     
     @PostConstruct
     private void init() {
-        logger.info("Initialized FHIR R4 context and validator for create operations");
+        logger.info("🚀 FHIRTestCreateService initialized with FHIR R4 context");
+        
+        // Configure parser for optimal performance
+        jsonParser.setPrettyPrint(false);                    // ✅ No formatting overhead
+        jsonParser.setStripVersionsFromReferences(false);    // Skip processing
+        jsonParser.setOmitResourceId(false);                 // Keep IDs as-is
+        jsonParser.setSummaryMode(false);                    // Full resources
+        jsonParser.setOverrideResourceIdWithBundleEntryFullUrl(false); // Big performance gain
+        
+        // Context-level optimizations
+        fhirContext.getParserOptions().setStripVersionsFromReferences(false);
+        fhirContext.getParserOptions().setOverrideResourceIdWithBundleEntryFullUrl(false);
+        
+        logger.info("✅ FHIR Create Service optimized for high-performance resource creation");
     }
 
     /**
@@ -81,21 +98,33 @@ public class FHIRTestCreateService {
             validatedResourceData.put("resourceType", resourceType);
             validatedResourceData.put("id", resourceId);
             
-            // Step 4: Convert to FHIR resource and add audit information
-            String resourceJson = JsonObject.from(validatedResourceData).toString();
-            IBaseResource fhirResource = jsonParser.parseResource(resourceJson);
+            // Step 4: Convert to FHIR resource and add audit information - optimized JSON processing
+            String resourceJson;
+            Map<String, Object> auditedResourceData;
+            try {
+                resourceJson = objectMapper.writeValueAsString(validatedResourceData);
+                IBaseResource fhirResource = jsonParser.parseResource(resourceJson);
+                
+                // Add comprehensive audit information
+                auditService.addAuditInfoToMeta(fhirResource, auditService.getCurrentUserId(), "CREATE");
+                
+                // Convert back to JSON with audit info - optimized conversion
+                String auditedResourceJson = jsonParser.encodeResourceToString(fhirResource);
+                auditedResourceData = objectMapper.readValue(auditedResourceJson, Map.class);
+            } catch (Exception jsonException) {
+                // Fallback to original method if Jackson fails
+                logger.debug("ObjectMapper failed, using fallback: {}", jsonException.getMessage());
+                resourceJson = JsonObject.from(validatedResourceData).toString();
+                IBaseResource fhirResource = jsonParser.parseResource(resourceJson);
+                auditService.addAuditInfoToMeta(fhirResource, auditService.getCurrentUserId(), "CREATE");
+                String auditedResourceJson = jsonParser.encodeResourceToString(fhirResource);
+                auditedResourceData = JsonObject.fromJson(auditedResourceJson).toMap();
+            }
             
-            // Add comprehensive audit information
-            auditService.addAuditInfoToMeta(fhirResource, auditService.getCurrentUserId(), "CREATE");
-            
-            // Convert back to JSON with audit info
-            String auditedResourceJson = jsonParser.encodeResourceToString(fhirResource);
-            Map<String, Object> auditedResourceData = JsonObject.fromJson(auditedResourceJson).toMap();
-            
-            // Add additional meta information - keep minimal
+            // Add additional meta information - pre-allocate for performance
             Map<String, Object> meta = (Map<String, Object>) auditedResourceData.get("meta");
             if (meta == null) {
-                meta = new HashMap<>();
+                meta = new HashMap<>(4); // Pre-allocate expected meta fields
                 auditedResourceData.put("meta", meta);
             }
             meta.put("versionId", "1");
