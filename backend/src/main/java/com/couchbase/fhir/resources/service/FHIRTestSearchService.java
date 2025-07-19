@@ -75,6 +75,11 @@ public class FHIRTestSearchService {
         "clinicalStatus", "verificationStatus", "status", "category", "type", "class", "code",
         "criticality", "severity", "priority", "intent", "maritalStatus", "use"
     );
+    
+    // Fields that are simple codes (TOKEN type) but don't have .value/.system structure
+    private static final Set<String> SIMPLE_CODE_FIELDS = Set.of(
+        "gender", "active", "deceasedBoolean", "multipleBirthBoolean"
+    );
 
     // FHIR search parameter field path resolution result
     private static class FieldPathMapping {
@@ -161,14 +166,20 @@ public class FHIRTestSearchService {
         if (hapiPath.contains(".where(system=")) {
             return handleFilteredTokenPath(basePath, hapiPath);
         } else {
+            // Check if this is a simple code field first
+            if (SIMPLE_CODE_FIELDS.contains(basePath)) {
+                logger.debug("Detected simple code field: {}", basePath);
+                // Simple code fields don't have .value/.system structure - use field directly
+                return new FieldPathMapping(basePath, null, null, false);
+            } 
             // Check if this is a CodeableConcept field
-            if (CODEABLE_CONCEPT_FIELDS.contains(basePath)) {
+            else if (CODEABLE_CONCEPT_FIELDS.contains(basePath)) {
                 logger.debug("Detected CodeableConcept field: {}", basePath);
                 String fieldPath = basePath + ".coding.code";
                 String systemField = basePath + ".coding.system";
                 return new FieldPathMapping(fieldPath, systemField, null, true);
             } else {
-                logger.debug("Detected simple TOKEN field: {}", basePath);
+                logger.debug("Detected complex TOKEN field: {}", basePath);
                 String fieldPath = basePath + ".value";
                 String systemField = basePath + ".system";
                 return new FieldPathMapping(fieldPath, systemField, null, true);
@@ -428,6 +439,9 @@ public class FHIRTestSearchService {
             return fieldPath + ":range:" + paramType.name() + ":" + prefix + ":" + value;
         } else if ("id".equals(fieldPath)) {
             // ID searches should be exact matches, not wildcard
+            return fieldPath + ":match:" + value;
+        } else if (SIMPLE_CODE_FIELDS.contains(fieldPath)) {
+            // Simple code fields like gender should be exact matches, not wildcard
             return fieldPath + ":match:" + value;
         } else {
             // Preserve original case for FHIR compliance
