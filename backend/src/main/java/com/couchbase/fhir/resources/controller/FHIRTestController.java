@@ -94,13 +94,13 @@ public class FHIRTestController {
             cleanParams.remove("connectionName");
             cleanParams.remove("bucketName");
             
-            // Use advanced search service for all searches
-            List<Map<String, Object>> resources = searchService.searchResources(
+            // Use advanced search service for all searches (now supports _revinclude)
+            FHIRTestSearchService.SearchResult searchResult = searchService.searchResources(
                 resourceType, cleanParams, connectionName, bucketName);
             
             // Create proper FHIR Bundle using HAPI FHIR utilities
             String baseUrl = "http://localhost:8080/api/fhir-test/" + bucketName;
-            Bundle bundle = searchService.createSearchBundle(resourceType, resources, baseUrl, cleanParams);
+            Bundle bundle = searchService.createSearchBundle(searchResult, baseUrl, cleanParams);
             
             // Convert Bundle to JSON string for response
             String bundleJson = searchService.getBundleAsJson(bundle);
@@ -147,13 +147,13 @@ public class FHIRTestController {
             
             logger.info("🔍 POST Search request - Resource: {}, Parameters: {}", resourceType, allParams);
             
-            // Use the same search service as GET
-            List<Map<String, Object>> resources = searchService.searchResources(
+            // Use the same search service as GET (now supports _revinclude)
+            FHIRTestSearchService.SearchResult searchResult = searchService.searchResources(
                 resourceType, allParams, connectionName, bucketName);
             
             // Create proper FHIR Bundle using HAPI FHIR utilities
             String baseUrl = "http://localhost:8080/api/fhir-test/" + bucketName;
-            Bundle bundle = searchService.createSearchBundle(resourceType, resources, baseUrl, allParams);
+            Bundle bundle = searchService.createSearchBundle(searchResult, baseUrl, allParams);
             
             // Convert Bundle to JSON string for response
             String bundleJson = searchService.getBundleAsJson(bundle);
