@@ -37,7 +37,13 @@ public class FHIRTestGeneralService {
     
     @PostConstruct
     private void init() {
-        logger.info("Initialized FHIR R4 context for general operations");
+        logger.info("🚀 FHIRTestGeneralService initialized with FHIR R4 context");
+        
+        // Configure FHIR context for optimal performance
+        fhirContext.getParserOptions().setStripVersionsFromReferences(false);
+        fhirContext.getParserOptions().setOverrideResourceIdWithBundleEntryFullUrl(false);
+        
+        logger.info("✅ FHIR General Service optimized for capabilities and metadata operations");
     }
 
     /**

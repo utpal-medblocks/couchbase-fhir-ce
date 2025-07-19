@@ -50,6 +50,19 @@ public class FHIRBundleProcessingService {
     @PostConstruct
     private void init() {
         logger.info("🚀 FHIR Bundle Processing Service initialized");
+        
+        // Configure parser for optimal performance - critical for bundle processing
+        jsonParser.setPrettyPrint(false);                    // ✅ No formatting overhead
+        jsonParser.setStripVersionsFromReferences(false);    // Skip processing
+        jsonParser.setOmitResourceId(false);                 // Keep IDs as-is
+        jsonParser.setSummaryMode(false);                    // Full resources
+        jsonParser.setOverrideResourceIdWithBundleEntryFullUrl(false); // Big performance gain for bundles
+        
+        // Context-level optimizations
+        fhirContext.getParserOptions().setStripVersionsFromReferences(false);
+        fhirContext.getParserOptions().setOverrideResourceIdWithBundleEntryFullUrl(false);
+        
+        logger.info("✅ Bundle Processing Service optimized for high-performance transactions");
     }
 
     /**
