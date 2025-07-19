@@ -224,7 +224,7 @@ public class FHIRTestSearchService {
             }
             
             // Build FTS query - always use SEARCH function
-            String ftsQuery = buildFtsSearchQuery(resourceType, queryParams, bucketName);
+            String ftsQuery = buildFtsSearchQuery(resourceType, queryParams, bucketName, connectionName);
             logger.info("📡 Executing FTS query: {}", ftsQuery);
             
             QueryResult result = cluster.query(ftsQuery);
@@ -244,12 +244,12 @@ public class FHIRTestSearchService {
     /**
      * Build FTS search query using SEARCH function - never use straight N1QL
      */
-    private String buildFtsSearchQuery(String resourceType, Map<String, String> queryParams, String bucketName) {
+    private String buildFtsSearchQuery(String resourceType, Map<String, String> queryParams, String bucketName, String connectionName) {
         // FTS index name: fully qualified <bucket>.Resources.<indexname>
         String ftsIndexName = bucketName + ".Resources.fts" + resourceType;
         
         // Build FTS query JSON
-        JsonObject ftsQueryJson = buildFtsQueryJson(resourceType, queryParams);
+        JsonObject ftsQueryJson = buildFtsQueryJson(resourceType, queryParams, connectionName, bucketName);
         
         // Build the N1QL query using SEARCH function
         StringBuilder queryBuilder = new StringBuilder();
@@ -268,9 +268,9 @@ public class FHIRTestSearchService {
     }
     
     /**
-     * Build FTS query JSON from search parameters - now with pagination
+     * Build FTS query JSON from search parameters - now with pagination and chained query support
      */
-    private JsonObject buildFtsQueryJson(String resourceType, Map<String, String> queryParams) {
+    private JsonObject buildFtsQueryJson(String resourceType, Map<String, String> queryParams, String connectionName, String bucketName) {
         RuntimeResourceDefinition resourceDef = fhirContext.getResourceDefinition(resourceType);
         List<String> ftsConditions = new ArrayList<>();
         
@@ -286,17 +286,17 @@ public class FHIRTestSearchService {
                 continue;
             }
             
-            processSearchParameter(resourceDef, paramName, value, ftsConditions);
+            processSearchParameter(resourceDef, paramName, value, ftsConditions, connectionName, bucketName);
         }
         
         return buildFtsJsonQuery(ftsConditions, pagination);
     }
     
     /**
-     * Process individual search parameter
+     * Process individual search parameter with chained query support
      */
     private void processSearchParameter(RuntimeResourceDefinition resourceDef, String paramName, 
-                                      String value, List<String> ftsConditions) {
+                                      String value, List<String> ftsConditions, String connectionName, String bucketName) {
         
         ParsedParameter parsed = parseParameterName(paramName);
         
@@ -320,6 +320,11 @@ public class FHIRTestSearchService {
         
         // Handle special composite parameters that need OR logic
         if (handleCompositeParameters(parsed.baseName, resourceDef.getName(), value, ftsConditions)) {
+            return;
+        }
+        
+        // Handle chained parameters (e.g., subject.name=Nicolas)
+        if (handleChainedParameters(parsed.baseName, resourceDef.getName(), value, ftsConditions, connectionName, bucketName)) {
             return;
         }
         
@@ -508,30 +513,38 @@ public class FHIRTestSearchService {
         JsonObject query = JsonObject.create();
         JsonObject mainQuery;
         
-        // Separate regular conditions from composite conditions
+        // Separate regular conditions from special conditions
         List<String> regularConditions = new ArrayList<>();
         List<String> compositeConditions = new ArrayList<>();
+        List<String> chainedConditions = new ArrayList<>();
+        boolean hasNoResultsCondition = false;
         
         for (String condition : ftsConditions) {
             if (condition.startsWith("_composite_")) {
                 compositeConditions.add(condition);
+            } else if (condition.startsWith("_chained_")) {
+                if (condition.equals("_chained_no_results:true")) {
+                    hasNoResultsCondition = true;
+                } else {
+                    chainedConditions.add(condition);
+                }
             } else {
                 regularConditions.add(condition);
             }
         }
         
-        if (regularConditions.isEmpty() && compositeConditions.isEmpty()) {
+        // Handle impossible condition first
+        if (hasNoResultsCondition) {
+            // Create impossible condition that matches nothing
+            JsonObject impossibleQuery = JsonObject.create();
+            impossibleQuery.put("match", "___IMPOSSIBLE_MATCH___");
+            impossibleQuery.put("field", "___NON_EXISTENT_FIELD___");
+            mainQuery = impossibleQuery;
+        } else if (regularConditions.isEmpty() && compositeConditions.isEmpty() && chainedConditions.isEmpty()) {
             // Match all documents
             mainQuery = JsonObject.create().put("match_all", JsonObject.create());
-        } else if (regularConditions.size() == 1 && compositeConditions.isEmpty()) {
-            // Single regular condition
-            FtsCondition condition = parseFtsCondition(regularConditions.get(0));
-            mainQuery = createMatchQuery(condition);
-        } else if (regularConditions.isEmpty() && compositeConditions.size() == 1) {
-            // Single composite condition
-            mainQuery = handleCompositeCondition(compositeConditions.get(0));
         } else {
-            // Multiple conditions - use conjuncts for AND logic
+            // Build query with all condition types
             JsonArray conjuncts = JsonArray.create();
             
             // Add regular conditions
@@ -545,7 +558,16 @@ public class FHIRTestSearchService {
                 conjuncts.add(handleCompositeCondition(compositeCondition));
             }
             
-            mainQuery = JsonObject.create().put("conjuncts", conjuncts);
+            // Add chained conditions
+            for (String chainedCondition : chainedConditions) {
+                conjuncts.add(handleChainedCondition(chainedCondition));
+            }
+            
+            if (conjuncts.size() == 1) {
+                mainQuery = (JsonObject) conjuncts.get(0);
+            } else {
+                mainQuery = JsonObject.create().put("conjuncts", conjuncts);
+            }
         }
         
         query.put("query", mainQuery);
@@ -671,6 +693,36 @@ public class FHIRTestSearchService {
             default:
                 matchQuery.put("match", numberValue);
         }
+    }
+    
+    /**
+     * Handle chained conditions that match against referenced resource IDs
+     */
+    private JsonObject handleChainedCondition(String chainedCondition) {
+        // Parse chained condition: "_chained_subject:Patient/id1,Patient/id2"
+        String[] parts = chainedCondition.split(":", 2);
+        if (parts.length != 2) {
+            logger.warn("Invalid chained condition format: {}", chainedCondition);
+            return JsonObject.create().put("match_all", JsonObject.create());
+        }
+        
+        String referenceField = parts[0].substring("_chained_".length()); // Remove "_chained_" prefix
+        String[] resourceIds = parts[1].split(",");
+        
+        logger.info("🔗 Creating disjunct query for {} with {} resource IDs", referenceField, resourceIds.length);
+        
+        // Create disjuncts (OR) for all referenced resource IDs using exact matching
+        JsonArray disjuncts = JsonArray.create();
+        
+        for (String resourceId : resourceIds) {
+            JsonObject referenceMatch = JsonObject.create();
+            // Use exact match for references - much faster than wildcard (62ms → 13ms!)
+            referenceMatch.put("match", resourceId);
+            referenceMatch.put("field", referenceField + ".reference");
+            disjuncts.add(referenceMatch);
+        }
+        
+        return JsonObject.create().put("disjuncts", disjuncts);
     }
     
     /**
@@ -857,6 +909,228 @@ public class FHIRTestSearchService {
         // if ("Organization".equals(resourceType) && "name".equals(paramName)) { ... }
         
         return false;
+    }
+    
+    /**
+     * Handle chained parameters like subject.name=Nicolas
+     * Step 1: Query referenced resource type to get IDs
+     * Step 2: Create disjunct condition for main resource
+     */
+    private boolean handleChainedParameters(String paramName, String resourceType, String value, 
+                                          List<String> ftsConditions, String connectionName, String bucketName) {
+        
+        // Check if this is a chained parameter (contains a dot)
+        if (!paramName.contains(".")) {
+            return false;
+        }
+        
+        logger.info("🔗 Handling chained parameter: {} = {}", paramName, value);
+        
+        try {
+            // Parse the chain: "subject.name" -> referenceField="subject", chainedParam="name"
+            String[] parts = paramName.split("\\.", 2);
+            String referenceField = parts[0];
+            String chainedParam = parts[1];
+            
+            // Determine referenced resource type from reference field
+            String referencedResourceType = determineReferencedResourceType(resourceType, referenceField);
+            if (referencedResourceType == null) {
+                logger.warn("Could not determine referenced resource type for {}.{}", resourceType, referenceField);
+                return false;
+            }
+            
+            logger.info("🔗 Chain resolved: {} -> {} ({}={})", referenceField, referencedResourceType, chainedParam, value);
+            
+            // Step 1: Execute chained query to get referenced resource IDs
+            List<String> referencedResourceIds = executeChainedQuery(referencedResourceType, chainedParam, value, connectionName, bucketName);
+            
+            if (referencedResourceIds.isEmpty()) {
+                logger.info("🔗 No matching {} resources found for {}={}, adding impossible condition", referencedResourceType, chainedParam, value);
+                // Add impossible condition to ensure no results
+                ftsConditions.add("_chained_no_results:true");
+                return true;
+            }
+            
+            logger.info("🔗 Found {} matching {} resources", referencedResourceIds.size(), referencedResourceType);
+            
+            // Step 2: Create chained condition for main resource
+            String chainedCondition = "_chained_" + referenceField + ":" + String.join(",", referencedResourceIds);
+            ftsConditions.add(chainedCondition);
+            
+            return true;
+            
+        } catch (Exception e) {
+            logger.error("Failed to process chained parameter {}: {}", paramName, e.getMessage());
+            return false;
+        }
+    }
+    
+    /**
+     * Determine the referenced resource type based on the main resource type and reference field
+     */
+    private String determineReferencedResourceType(String resourceType, String referenceField) {
+        // Map common reference fields to their target resource types
+        Map<String, String> commonReferences = Map.of(
+            "subject", "Patient",           // Observation.subject, DiagnosticReport.subject, etc.
+            "patient", "Patient",           // Encounter.patient, Condition.patient, etc.
+            "performer", "Practitioner",    // Observation.performer
+            "encounter", "Encounter",       // Observation.encounter, Condition.encounter
+            "organization", "Organization", // Patient.organization, Practitioner.organization
+            "location", "Location"          // Encounter.location
+        );
+        
+        return commonReferences.get(referenceField.toLowerCase());
+    }
+    
+    /**
+     * Execute chained query to get IDs of referenced resources
+     */
+    private List<String> executeChainedQuery(String referencedResourceType, String chainedParam, String value, String connectionName, String bucketName) {
+        try {
+            logger.info("🔗 Executing chained query: {} where {}={}", referencedResourceType, chainedParam, value);
+            
+            // Create temporary search params for the referenced resource
+            Map<String, String> chainedSearchParams = new HashMap<>();
+            chainedSearchParams.put(chainedParam, value);
+            
+            // Build FTS query for referenced resource (without chained parameters to avoid recursion)
+            RuntimeResourceDefinition referencedResourceDef = fhirContext.getResourceDefinition(referencedResourceType);
+            List<String> chainedFtsConditions = new ArrayList<>();
+            
+            // Process the chained parameter (but without chained parameter handling to avoid recursion)
+            processChainedSearchParameter(referencedResourceDef, chainedParam, value, chainedFtsConditions);
+            
+            // Build simple FTS query to get resource IDs
+            String ftsIndexName = bucketName + ".Resources.fts" + referencedResourceType;
+            JsonObject ftsQueryJson = buildSimpleFtsQuery(chainedFtsConditions);
+            
+            // Execute query to get META().id only for performance
+            Cluster cluster = connectionService.getConnection(connectionName);
+            String chainedQuery = String.format(
+                "SELECT RAW META(resource).id FROM `%s`.`%s`.`%s` resource " +
+                "WHERE SEARCH(resource, %s, {\"index\": \"%s\"}) " +
+                "AND resource.deletedDate IS MISSING",
+                bucketName, DEFAULT_SCOPE, referencedResourceType, 
+                ftsQueryJson.toString(), ftsIndexName
+            );
+            
+            logger.info("🔗 Chained query: {}", chainedQuery);
+            
+            QueryResult result = cluster.query(chainedQuery);
+            List<String> resourceIds = new ArrayList<>();
+            
+            // RAW query returns strings directly, not JsonObjects
+            for (String documentKey : result.rowsAs(String.class)) {
+                // documentKey is already in "ResourceType/id" format from META().id
+                resourceIds.add(documentKey);
+            }
+            
+            logger.info("🔗 Chained query returned {} resource IDs", resourceIds.size());
+            return resourceIds;
+            
+        } catch (Exception e) {
+            logger.error("Failed to execute chained query for {}: {}", referencedResourceType, e.getMessage());
+            return new ArrayList<>(); // Return empty list on error
+        }
+    }
+    
+    /**
+     * Process search parameter without chained parameter handling (to avoid recursion)
+     */
+    private void processChainedSearchParameter(RuntimeResourceDefinition resourceDef, String paramName, 
+                                             String value, List<String> ftsConditions) {
+        
+        ParsedParameter parsed = parseParameterName(paramName);
+        
+        // Handle special FHIR _id parameter
+        if ("_id".equals(parsed.baseName)) {
+            FieldPathMapping mapping = new FieldPathMapping("id", null, null, false);
+            ParsedValue parsedValue = parseParameterValue(value, RestSearchParameterTypeEnum.TOKEN);
+            generateFtsCondition(mapping, parsedValue, parsed, RestSearchParameterTypeEnum.TOKEN, ftsConditions);
+            return;
+        }
+        
+        // Handle special composite parameters
+        if (handleCompositeParameters(parsed.baseName, resourceDef.getName(), value, ftsConditions)) {
+            return;
+        }
+        
+        // Regular parameter processing (without chained handling)
+        RuntimeSearchParam searchParam = resourceDef.getSearchParam(parsed.baseName);
+        
+        FieldPathMapping mapping;
+        RestSearchParameterTypeEnum paramType;
+        
+        if (searchParam == null) {
+            mapping = handleUSCoreParameters(parsed.baseName, resourceDef.getName());
+            if (mapping == null) {
+                logger.warn("Unknown search parameter: {} for resource type: {}", parsed.baseName, resourceDef.getName());
+                return;
+            }
+            paramType = RestSearchParameterTypeEnum.TOKEN;
+        } else {
+            paramType = searchParam.getParamType();
+            mapping = resolveFieldPathFromHapi(searchParam);
+        }
+        
+        ParsedValue parsedValue = parseParameterValue(value, paramType);
+        generateFtsCondition(mapping, parsedValue, parsed, paramType, ftsConditions);
+    }
+    
+    /**
+     * Build simple FTS query without pagination for chained queries
+     */
+    private JsonObject buildSimpleFtsQuery(List<String> ftsConditions) {
+        JsonObject query = JsonObject.create();
+        JsonObject mainQuery;
+        
+        // Separate regular and composite conditions
+        List<String> regularConditions = new ArrayList<>();
+        List<String> compositeConditions = new ArrayList<>();
+        
+        for (String condition : ftsConditions) {
+            if (condition.startsWith("_composite_")) {
+                compositeConditions.add(condition);
+            } else {
+                regularConditions.add(condition);
+            }
+        }
+        
+        if (regularConditions.isEmpty() && compositeConditions.isEmpty()) {
+            mainQuery = JsonObject.create().put("match_all", JsonObject.create());
+        } else if (regularConditions.size() == 1 && compositeConditions.isEmpty()) {
+            // Single regular condition
+            FtsCondition condition = parseFtsCondition(regularConditions.get(0));
+            mainQuery = createMatchQuery(condition);
+        } else if (regularConditions.isEmpty() && compositeConditions.size() == 1) {
+            // Single composite condition
+            mainQuery = handleCompositeCondition(compositeConditions.get(0));
+        } else {
+            // Multiple conditions
+            JsonArray conjuncts = JsonArray.create();
+            
+            // Add regular conditions
+            for (String conditionStr : regularConditions) {
+                FtsCondition condition = parseFtsCondition(conditionStr);
+                conjuncts.add(createMatchQuery(condition));
+            }
+            
+            // Add composite conditions
+            for (String compositeCondition : compositeConditions) {
+                conjuncts.add(handleCompositeCondition(compositeCondition));
+            }
+            
+            if (conjuncts.size() == 1) {
+                mainQuery = (JsonObject) conjuncts.get(0);
+            } else {
+                mainQuery = JsonObject.create().put("conjuncts", conjuncts);
+            }
+        }
+        
+        query.put("query", mainQuery);
+        query.put("size", 1000); // Limit for chained queries
+        
+        return query;
     }
     
     /**
