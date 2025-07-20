@@ -4,6 +4,7 @@ import com.couchbase.admin.connections.service.ConnectionService;
 import com.couchbase.client.java.Cluster;
 import com.couchbase.client.java.query.QueryResult;
 import com.couchbase.client.java.json.JsonObject;
+import org.apache.jena.base.Sys;
 import org.hl7.fhir.instance.model.api.IBaseResource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -88,7 +89,9 @@ public class FhirResourceDaoImpl<T extends IBaseResource> implements  FhirResour
                 throw new RuntimeException("No active connection found: " + connectionName);
             }
 
-            String documentKey = resourceType + "::" + resource.getIdElement().getIdPart();
+            String documentKey = resourceType + "/" + resource.getIdElement().getIdPart();
+            System.out.println("document key --- ");
+            System.out.println(documentKey);
             String resourceJson = fhirContext.newJsonParser().encodeResourceToString(resource);
 
             String insertQuery = String.format(
