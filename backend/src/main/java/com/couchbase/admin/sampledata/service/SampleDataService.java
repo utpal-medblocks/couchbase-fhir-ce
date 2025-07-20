@@ -6,6 +6,8 @@ import com.couchbase.admin.sampledata.model.SampleDataResponse;
 import com.couchbase.admin.sampledata.model.SampleDataProgress;
 import com.couchbase.fhir.resources.service.FHIRBundleProcessingService;
 import com.couchbase.client.java.Cluster;
+import com.couchbase.client.java.Bucket;
+import com.couchbase.client.java.Collection;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.hl7.fhir.r4.model.Bundle;
@@ -16,7 +18,6 @@ import org.springframework.core.io.ClassPathResource;
 import org.springframework.stereotype.Service;
 
 import java.io.ByteArrayInputStream;
-import java.io.IOException;
 import java.io.InputStream;
 import java.util.HashMap;
 import java.util.Map;
@@ -30,7 +31,13 @@ import java.util.zip.ZipInputStream;
 public class SampleDataService {
     
     private static final Logger log = LoggerFactory.getLogger(SampleDataService.class);
-    private static final String SAMPLE_DATA_ZIP_PATH = "static/sample-data/synthea-patients-sample.zip";
+    
+    // Sample data file paths
+    private static final String SYNTHEA_SAMPLE_DATA_PATH = "static/sample-data/synthea-patients-sample.zip";
+    private static final String USCORE_SAMPLE_DATA_PATH = "static/sample-data/us-core-examples.zip";
+    
+    // FHIR scope name - matches Bundle processor
+    private static final String DEFAULT_SCOPE = "Resources";
     
     @Autowired
     private ConnectionService connectionService;
@@ -39,6 +46,24 @@ public class SampleDataService {
     private FHIRBundleProcessingService bundleProcessor;
     
     private final ObjectMapper objectMapper = new ObjectMapper();
+    
+    /**
+     * Get the sample data file path based on the sample type
+     */
+    private String getSampleDataPath(String sampleType) {
+        if (sampleType == null) {
+            return SYNTHEA_SAMPLE_DATA_PATH; // Default fallback
+        }
+        
+        switch (sampleType.toLowerCase()) {
+            case "uscore":
+            case "us-core":
+                return USCORE_SAMPLE_DATA_PATH;
+            case "synthea":
+            default:
+                return SYNTHEA_SAMPLE_DATA_PATH;
+        }
+    }
     
     /**
      * Check if a ZIP entry should be processed (filters out macOS metadata files)
@@ -86,7 +111,8 @@ public class SampleDataService {
             
             // First pass: count total files for progress tracking
             int totalFiles = 0;
-            try (InputStream zipStream = new ClassPathResource(SAMPLE_DATA_ZIP_PATH).getInputStream();
+            String sampleDataPath = getSampleDataPath(request.getSampleType());
+            try (InputStream zipStream = new ClassPathResource(sampleDataPath).getInputStream();
                  ZipInputStream zis = new ZipInputStream(zipStream)) {
                 
                 ZipEntry entry;
@@ -99,7 +125,7 @@ public class SampleDataService {
             
             // Second pass: process files with progress tracking
             int processedFiles = 0;
-            try (InputStream zipStream = new ClassPathResource(SAMPLE_DATA_ZIP_PATH).getInputStream();
+            try (InputStream zipStream = new ClassPathResource(sampleDataPath).getInputStream();
                  ZipInputStream zis = new ZipInputStream(zipStream)) {
                 
                 ZipEntry entry;
@@ -117,9 +143,9 @@ public class SampleDataService {
                         }
                         byte[] jsonBytes = baos.toByteArray();
                         
-                        // Process the bundle using our sophisticated Bundle processor
-                        String bundleJson = new String(jsonBytes, java.nio.charset.StandardCharsets.UTF_8);
-                        Map<String, Integer> resourceCounts = processBundle(bundleJson, request.getConnectionName(), request.getBucketName());
+                        // Process the data - check if it's a Bundle or individual resource
+                        String jsonContent = new String(jsonBytes, java.nio.charset.StandardCharsets.UTF_8);
+                        Map<String, Integer> resourceCounts = processJsonContent(jsonContent, request.getConnectionName(), request.getBucketName(), request.getSampleType());
                         resourcesLoaded += resourceCounts.getOrDefault("resources", 0);
                         patientsLoaded += resourceCounts.getOrDefault("patients", 0);
                         
@@ -156,11 +182,19 @@ public class SampleDataService {
      */
     public SampleDataResponse checkSampleDataAvailability() {
         try {
-            ClassPathResource resource = new ClassPathResource(SAMPLE_DATA_ZIP_PATH);
-            if (resource.exists()) {
-                return new SampleDataResponse(true, "Sample data is available");
+            ClassPathResource syntheaResource = new ClassPathResource(SYNTHEA_SAMPLE_DATA_PATH);
+            ClassPathResource uscoreResource = new ClassPathResource(USCORE_SAMPLE_DATA_PATH);
+            
+            boolean syntheaAvailable = syntheaResource.exists();
+            boolean uscoreAvailable = uscoreResource.exists();
+            
+            if (syntheaAvailable || uscoreAvailable) {
+                String message = "Sample data available: ";
+                if (syntheaAvailable) message += "Synthea ";
+                if (uscoreAvailable) message += "US Core ";
+                return new SampleDataResponse(true, message.trim());
             } else {
-                return new SampleDataResponse(false, "Sample data file not found");
+                return new SampleDataResponse(false, "No sample data files found");
             }
         } catch (Exception e) {
             log.error("Error checking sample data availability: {}", e.getMessage());
@@ -216,6 +250,83 @@ public class SampleDataService {
     }
     
     /**
+     * Process JSON content - determines if it's a Bundle or individual resource and processes accordingly
+     */
+    private Map<String, Integer> processJsonContent(String jsonContent, String connectionName, String bucketName, String sampleType) {
+        Map<String, Integer> counts = new HashMap<>();
+        
+        try {
+            // Parse JSON to determine resource type
+            com.fasterxml.jackson.databind.JsonNode jsonNode = objectMapper.readTree(jsonContent);
+            String resourceType = jsonNode.get("resourceType").asText();
+            
+            if ("Bundle".equals(resourceType)) {
+                // Process as Bundle (Synthea data)
+                return processBundle(jsonContent, connectionName, bucketName);
+            } else {
+                // Process as individual resource (US Core data)
+                return processIndividualResource(jsonContent, connectionName, bucketName);
+            }
+        } catch (Exception e) {
+            log.error("Error processing JSON content: {}", e.getMessage());
+            counts.put("resources", 0);
+            counts.put("patients", 0);
+            return counts;
+        }
+    }
+    
+    /**
+     * Process an individual FHIR resource (for US Core data)
+     */
+    private Map<String, Integer> processIndividualResource(String resourceJson, String connectionName, String bucketName) {
+        Map<String, Integer> counts = new HashMap<>();
+        int resourceCount = 0;
+        int patientCount = 0;
+        
+        try {
+            // Get connection
+            Cluster cluster = connectionService.getConnection(connectionName);
+            if (cluster == null) {
+                log.error("Connection not found: {}", connectionName);
+                counts.put("resources", 0);
+                counts.put("patients", 0);
+                return counts;
+            }
+            
+            // Parse the resource to get type and ID
+            com.fasterxml.jackson.databind.JsonNode jsonNode = objectMapper.readTree(resourceJson);
+            String resourceType = jsonNode.get("resourceType").asText();
+            String resourceId = jsonNode.get("id").asText();
+            
+            // Construct document key: resourceType/id
+            String documentKey = resourceType + "/" + resourceId;
+            
+            // Get bucket and collection - use Resources scope and resourceType as collection
+            Bucket bucket = cluster.bucket(bucketName);
+            Collection collection = bucket.scope(DEFAULT_SCOPE).collection(resourceType);
+            
+            // Upsert the resource as JSON object (not string)
+            collection.upsert(documentKey, jsonNode);
+            resourceCount = 1;
+            
+            // Count patients
+            if ("Patient".equals(resourceType)) {
+                patientCount = 1;
+            }
+            
+            log.debug("Successfully upserted {} resource with ID: {} into scope: {}, collection: {}", 
+                    resourceType, resourceId, DEFAULT_SCOPE, resourceType);
+            
+        } catch (Exception e) {
+            log.error("Error processing individual resource: {}", e.getMessage());
+        }
+        
+        counts.put("resources", resourceCount);
+        counts.put("patients", patientCount);
+        return counts;
+    }
+    
+    /**
      * Get sample data statistics (without loading)
      */
     public SampleDataResponse getSampleDataStats() {
@@ -223,7 +334,9 @@ public class SampleDataService {
             int totalResources = 0;
             int totalPatients = 0;
             
-            try (InputStream zipStream = new ClassPathResource(SAMPLE_DATA_ZIP_PATH).getInputStream();
+            // Default to Synthea for stats - could be enhanced to take sampleType parameter
+            String sampleDataPath = getSampleDataPath("synthea");
+            try (InputStream zipStream = new ClassPathResource(sampleDataPath).getInputStream();
                  ZipInputStream zis = new ZipInputStream(zipStream)) {
                 
                 ZipEntry entry;
@@ -295,7 +408,8 @@ public class SampleDataService {
             
             // First pass: count total files
             int totalFiles = 0;
-            try (InputStream zipStream = new ClassPathResource(SAMPLE_DATA_ZIP_PATH).getInputStream();
+            String sampleDataPath = getSampleDataPath(request.getSampleType());
+            try (InputStream zipStream = new ClassPathResource(sampleDataPath).getInputStream();
                  ZipInputStream zis = new ZipInputStream(zipStream)) {
                 
                 ZipEntry entry;
@@ -316,7 +430,7 @@ public class SampleDataService {
             
             // Second pass: process files
             int processedFiles = 0;
-            try (InputStream zipStream = new ClassPathResource(SAMPLE_DATA_ZIP_PATH).getInputStream();
+            try (InputStream zipStream = new ClassPathResource(sampleDataPath).getInputStream();
                  ZipInputStream zis = new ZipInputStream(zipStream)) {
                 
                 ZipEntry entry;
@@ -343,9 +457,9 @@ public class SampleDataService {
                         }
                         byte[] jsonBytes = baos.toByteArray();
                         
-                        // Process the bundle using our sophisticated Bundle processor
-                        String bundleJson = new String(jsonBytes, java.nio.charset.StandardCharsets.UTF_8);
-                        Map<String, Integer> resourceCounts = processBundle(bundleJson, request.getConnectionName(), request.getBucketName());
+                        // Process the data - check if it's a Bundle or individual resource
+                        String jsonContent = new String(jsonBytes, java.nio.charset.StandardCharsets.UTF_8);
+                        Map<String, Integer> resourceCounts = processJsonContent(jsonContent, request.getConnectionName(), request.getBucketName(), request.getSampleType());
                         resourcesLoaded += resourceCounts.getOrDefault("resources", 0);
                         patientsLoaded += resourceCounts.getOrDefault("patients", 0);
                         

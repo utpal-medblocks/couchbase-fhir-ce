@@ -45,8 +45,8 @@ public class FHIRAuditService {
             // Set meta back to resource
             setMetaOnResource(resource, meta);
             
-            logger.info("✅ Added audit info to {} resource - User: {}, Operation: {}", 
-                resource.fhirType(), auditInfo.getUserId(), operation);
+            // logger.info("✅ Added audit info to {} resource - User: {}, Operation: {}", 
+            //     resource.fhirType(), auditInfo.getUserId(), operation);
                 
         } catch (Exception e) {
             logger.error("❌ Failed to add audit info to resource: {}", e.getMessage(), e);
