@@ -1,4 +1,10 @@
-import React, { useState, useEffect } from "react";
+import React, {
+  useState,
+  useEffect,
+  useMemo,
+  useCallback,
+  useRef,
+} from "react";
 import {
   Alert,
   Button,
@@ -16,6 +22,7 @@ interface LoadSamplesDialogProps {
   onClose: () => void;
   bucketName: string;
   connectionName: string;
+  sampleType: "synthea" | "uscore";
   onSuccess?: () => void;
 }
 
@@ -35,35 +42,90 @@ const LoadSamplesDialog: React.FC<LoadSamplesDialogProps> = ({
   onClose,
   bucketName,
   connectionName,
+  sampleType,
   onSuccess,
 }) => {
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
-  const [loadStatus, setLoadStatus] = useState<SampleLoadStatus | null>(null);
+  const [isCompleted, setIsCompleted] = useState(false);
+
+  // Use ref for progress to avoid re-renders of main dialog
+  const progressRef = useRef<{
+    updateProgress: (status: SampleLoadStatus) => void;
+  }>(null);
+
+  // Memoize sample type configuration to prevent recalculation on every render
+  const sampleConfig = useMemo(() => {
+    switch (sampleType) {
+      case "synthea":
+        return {
+          title: "Load Synthea Sample Data",
+          description: "Synthea-generated sample FHIR data",
+          details:
+            "Sample includes: 15 patients with 20 different FHIR resource types.",
+          patients: 15,
+          resourceTypes: 20,
+          apiEndpoint: "/api/sample-data/load-with-progress",
+        };
+      case "uscore":
+        return {
+          title: "Load US Core Sample Data",
+          description: "US Core-supplied sample FHIR data",
+          details:
+            "Sample includes: 15 patients with 20 different FHIR resource types.",
+          patients: 4,
+          resourceTypes: 28,
+          apiEndpoint: "/api/sample-data/load-with-progress",
+        };
+      default:
+        return {
+          title: "Load Sample Data",
+          description: "Sample FHIR data",
+          details: "Sample FHIR data will be loaded.",
+          patients: 0,
+          resourceTypes: 0,
+          apiEndpoint: "/api/sample-data/load-with-progress",
+        };
+    }
+  }, [sampleType]);
+
+  // Memoize reset function to prevent recreation on every render
+  const resetState = useCallback(() => {
+    setError(null);
+    setInfo(null);
+    setIsLoading(false);
+    setIsCompleted(false);
+    // Reset progress through ref without causing re-render
+    if (progressRef.current) {
+      progressRef.current.updateProgress({
+        totalFiles: 0,
+        processedFiles: 0,
+        currentFile: "",
+        resourcesLoaded: 0,
+        patientsLoaded: 0,
+        percentComplete: 0,
+        status: "INITIATED",
+        message: "",
+      });
+    }
+  }, []);
 
   // Cleanup when dialog closes
   useEffect(() => {
     if (!open) {
       resetState();
     }
-  }, [open]);
-
-  const resetState = () => {
-    setError(null);
-    setInfo(null);
-    setIsLoading(false);
-    setLoadStatus(null);
-  };
+  }, [open, resetState]);
 
   const startSampleLoad = async () => {
     setIsLoading(true);
     setError(null);
-    setInfo("Initiating Synthea sample data loading...");
+    setInfo(`Initiating ${sampleConfig.description} loading...`);
 
     try {
       // First, make a POST request to start the loading process
-      const startResponse = await fetch("/api/sample-data/load-with-progress", {
+      const startResponse = await fetch(sampleConfig.apiEndpoint, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -72,6 +134,7 @@ const LoadSamplesDialog: React.FC<LoadSamplesDialogProps> = ({
           connectionName: connectionName,
           bucketName: bucketName,
           overwriteExisting: false,
+          sampleType: sampleType, // Include sample type for future backend support
         }),
       });
 
@@ -103,7 +166,7 @@ const LoadSamplesDialog: React.FC<LoadSamplesDialogProps> = ({
                 currentLoadStatus?.status !== "ERROR"
               ) {
                 setIsLoading(false);
-                setInfo("Synthea sample data loaded successfully!");
+                setInfo(`${sampleConfig.description} loaded successfully!`);
                 if (onSuccess) {
                   setTimeout(() => {
                     onSuccess();
@@ -153,7 +216,11 @@ const LoadSamplesDialog: React.FC<LoadSamplesDialogProps> = ({
 
                   // Update both state and local variable
                   currentLoadStatus = progress;
-                  setLoadStatus(progress);
+
+                  // Update progress through ref to avoid main dialog re-render
+                  if (progressRef.current) {
+                    progressRef.current.updateProgress(progress);
+                  }
 
                   if (progress.message) {
                     setInfo(progress.message);
@@ -162,9 +229,10 @@ const LoadSamplesDialog: React.FC<LoadSamplesDialogProps> = ({
                   // Handle completion
                   if (progress.status === "COMPLETED") {
                     setIsLoading(false);
+                    setIsCompleted(true);
                     setInfo(
                       progress.message ||
-                        "Synthea sample data loaded successfully!"
+                        `${sampleConfig.description} loaded successfully!`
                     );
 
                     if (onSuccess) {
@@ -224,17 +292,14 @@ const LoadSamplesDialog: React.FC<LoadSamplesDialogProps> = ({
     }
   };
 
-  const handleClose = () => {
+  const handleClose = useCallback(() => {
     if (!isLoading) {
       resetState();
       onClose();
     }
-  };
+  }, [isLoading, resetState, onClose]);
 
-  const canClose =
-    !isLoading ||
-    loadStatus?.status === "COMPLETED" ||
-    loadStatus?.status === "ERROR";
+  const canClose = !isLoading || isCompleted;
 
   return (
     <Dialog
@@ -248,7 +313,7 @@ const LoadSamplesDialog: React.FC<LoadSamplesDialogProps> = ({
       maxWidth={"sm"}
       disableEscapeKeyDown={!canClose}
     >
-      <DialogTitle>Load Synthea Sample Data</DialogTitle>
+      <DialogTitle>{sampleConfig.title}</DialogTitle>
       <DialogContent>
         {error && (
           <Alert variant="filled" severity="error" sx={{ mb: 2 }}>
@@ -258,59 +323,19 @@ const LoadSamplesDialog: React.FC<LoadSamplesDialogProps> = ({
 
         {info && (
           <Alert variant="outlined" severity="info" sx={{ mb: 2 }}>
-            {info}
+            Loading sample data...
           </Alert>
         )}
 
         <Typography gutterBottom variant="body2" sx={{ mb: 2 }}>
-          This will load Synthea-generated sample FHIR data into{" "}
+          This will load {sampleConfig.description} into{" "}
           <strong>{bucketName}</strong> bucket.
           <br />
-          <strong>Sample includes:</strong> 15 patients with 20 different FHIR
-          resource types.
+          <strong>{sampleConfig.details}</strong>
         </Typography>
 
         {/* Progress Information */}
-        {loadStatus && (
-          <Box sx={{ mt: 2 }}>
-            <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-              Progress: {loadStatus.processedFiles} of {loadStatus.totalFiles}{" "}
-              files processed
-            </Typography>
-
-            <LinearProgress
-              variant="determinate"
-              value={loadStatus.percentComplete}
-              sx={{ mb: 2, height: 8, borderRadius: 4 }}
-            />
-
-            <Typography variant="caption" color="text.secondary">
-              Current file: {loadStatus.currentFile || "Processing..."}
-            </Typography>
-
-            {loadStatus.resourcesLoaded > 0 && (
-              <Typography
-                variant="caption"
-                color="text.secondary"
-                display="block"
-                sx={{ mt: 1 }}
-              >
-                Resources loaded: {loadStatus.resourcesLoaded.toLocaleString()}
-              </Typography>
-            )}
-
-            {loadStatus.patientsLoaded > 0 && (
-              <Typography
-                variant="caption"
-                color="text.secondary"
-                display="block"
-                sx={{ mt: 1 }}
-              >
-                Patients loaded: {loadStatus.patientsLoaded.toLocaleString()}
-              </Typography>
-            )}
-          </Box>
-        )}
+        <IsolatedProgressSection ref={progressRef} />
 
         {/* Show warning when loading is in progress */}
         {isLoading && (
@@ -330,7 +355,7 @@ const LoadSamplesDialog: React.FC<LoadSamplesDialogProps> = ({
           {isLoading ? "Please Wait..." : "Close"}
         </Button>
 
-        {!isLoading && !loadStatus && (
+        {!isLoading && !isCompleted && (
           <Button
             variant="contained"
             size="small"
@@ -344,5 +369,92 @@ const LoadSamplesDialog: React.FC<LoadSamplesDialogProps> = ({
     </Dialog>
   );
 };
+
+// Isolated progress section that manages its own state to prevent parent re-renders
+const IsolatedProgressSection = React.forwardRef<{
+  updateProgress: (status: SampleLoadStatus) => void;
+}>((_, ref) => {
+  const [loadStatus, setLoadStatus] = useState<SampleLoadStatus | null>(null);
+
+  // Expose update function to parent via ref
+  React.useImperativeHandle(ref, () => ({
+    updateProgress: (status: SampleLoadStatus) => {
+      setLoadStatus(status);
+    },
+  }));
+
+  // Helper function to truncate long filenames
+  const getDisplayFileName = (fileName: string) => {
+    if (!fileName) return "Processing...";
+
+    // Extract just the filename from path if it's a path
+    const name = fileName.split("/").pop() || fileName;
+
+    // Truncate if too long (keep first and last parts)
+    if (name.length > 50) {
+      return `${name.substring(0, 20)}...${name.substring(name.length - 20)}`;
+    }
+
+    return name;
+  };
+
+  if (!loadStatus)
+    return (
+      <Box sx={{ mt: 2 }}>
+        {/* Reserve space even when no progress to prevent height changes */}
+      </Box>
+    );
+
+  return (
+    <Box sx={{ mt: 2 }}>
+      <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+        Progress: {loadStatus.processedFiles} of {loadStatus.totalFiles} files
+        processed
+      </Typography>
+
+      <LinearProgress
+        variant="determinate"
+        value={loadStatus.percentComplete}
+        sx={{ mb: 2, height: 8, borderRadius: 4 }}
+      />
+
+      <Typography
+        variant="caption"
+        color="text.secondary"
+        sx={{
+          display: "block",
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+          maxWidth: "100%",
+        }}
+      >
+        Current file: {getDisplayFileName(loadStatus.currentFile)}
+      </Typography>
+
+      {loadStatus.resourcesLoaded > 0 && (
+        <Typography
+          variant="caption"
+          color="text.secondary"
+          display="block"
+          sx={{ mt: 1 }}
+        >
+          Resources loaded: {loadStatus.resourcesLoaded.toLocaleString()}
+        </Typography>
+      )}
+
+      {loadStatus.patientsLoaded > 0 && (
+        <Typography
+          variant="caption"
+          color="text.secondary"
+          display="block"
+          sx={{ mt: 1 }}
+        >
+          Patients loaded: {loadStatus.patientsLoaded.toLocaleString()}
+        </Typography>
+      )}
+    </Box>
+  );
+});
 
 export default LoadSamplesDialog;
