@@ -12,6 +12,7 @@ import org.hl7.fhir.common.hapi.validation.support.ValidationSupportChain;
 import org.hl7.fhir.common.hapi.validation.validator.FhirInstanceValidator;
 import org.hl7.fhir.r4.model.Resource;
 import org.hl7.fhir.r4.model.StructureDefinition;
+import org.springframework.core.io.support.PathMatchingResourcePatternResolver;
 
 import java.io.InputStream;
 
@@ -35,30 +36,11 @@ public class ValidationUtil {
         FhirValidator validator = fhirContext.newValidator();
         validator.setValidateAgainstStandardSchema(true);
         validator.setValidateAgainstStandardSchematron(true);
-
-        IParser parser = fhirContext.newJsonParser();
-        PrePopulatedValidationSupport usCoreSupport = new PrePopulatedValidationSupport(fhirContext);
-        StructureDefinition sd;
-        try{
-            String fileName = "StructureDefinition-us-core-" + resourceName.toLowerCase() + ".json";
-            String profilePath = "us_core/"+fileName;
-            InputStream profileStream = getClass().getClassLoader().getResourceAsStream(profilePath);
-            sd = (StructureDefinition) parser.parseResource(profileStream);
-        } catch (Exception e) {
-            throw new RuntimeException(e);
-        }
-
-        usCoreSupport.addStructureDefinition(sd);
-        ValidationSupportChain chain = new ValidationSupportChain(
-                usCoreSupport,
-                new DefaultProfileValidationSupport(fhirContext),
-                new InMemoryTerminologyServerValidationSupport(fhirContext), // Enables CodeSystem/ValueSet resolution
-                new CommonCodeSystemsTerminologyService(fhirContext)
-
-        );
-
+        ValidationSupportChain chain = ValidationSupportChainUtil.buildValidationSupport(fhirContext);
         FhirInstanceValidator instanceValidator = new FhirInstanceValidator(chain);
         validator.registerValidatorModule(instanceValidator);
         return validator.validateWithResult(resource);
     }
+
+
 }

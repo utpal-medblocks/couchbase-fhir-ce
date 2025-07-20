@@ -3,6 +3,7 @@ package com.couchbase.fhir.resources.provider;
 import ca.uhn.fhir.context.FhirContext;
 import ca.uhn.fhir.context.RuntimeResourceDefinition;
 import ca.uhn.fhir.context.RuntimeSearchParam;
+import ca.uhn.fhir.parser.IParser;
 import ca.uhn.fhir.rest.annotation.*;
 import ca.uhn.fhir.rest.api.MethodOutcome;
 import ca.uhn.fhir.rest.api.server.RequestDetails;
@@ -12,7 +13,9 @@ import ca.uhn.fhir.rest.server.exceptions.ResourceNotFoundException;
 import ca.uhn.fhir.rest.server.exceptions.UnprocessableEntityException;
 import ca.uhn.fhir.validation.ValidationResult;
 import com.couchbase.fhir.resources.repository.FhirResourceDaoImpl;
+import com.couchbase.fhir.resources.util.BundleProcessor;
 import com.couchbase.fhir.validation.ValidationUtil;
+import org.apache.jena.base.Sys;
 import org.hl7.fhir.r4.model.*;
 
 import java.io.IOException;
@@ -56,7 +59,7 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
             resource.setId(UUID.randomUUID().toString());
         }
         if (resource instanceof DomainResource) {
-            ((DomainResource) resource).getMeta().addProfile("http://hl7.org/fhir/us/core/StructureDefinition/us-core-" + resourceClass.getSimpleName().toLowerCase());
+            ((DomainResource) resource).getMeta().addProfile("http://hl7.org/fhir/us/core/StructureDefinition/us-core-" +  resource.getClass().getSimpleName().toLowerCase());
             ((DomainResource) resource).getMeta().setLastUpdated(new Date());
         }
 
@@ -75,7 +78,7 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
         }
 
 
-        T created =  dao.create(resourceClass.getSimpleName() , resource).orElseThrow(() ->
+        T created =  dao.create( resource.getClass().getSimpleName() , resource).orElseThrow(() ->
                 new InternalErrorException("Failed to create resource"));
         MethodOutcome outcome = new MethodOutcome();
         outcome.setCreated(true);
@@ -98,14 +101,11 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
 
         String resourceType = resourceClass.getSimpleName();
 
-
-
         RuntimeResourceDefinition resourceDef = fhirContext.getResourceDefinition(resourceType);
 
         for (RuntimeSearchParam param : resourceDef.getSearchParams()) {
             System.out.println("SearchParam: " + param.getName() + ", Type : "+param.getParamType()+" ,  path=" + param.getPath());
         }
-
 
         // Call DAO's search method
         List<T> results = dao.search(resourceType, searchParams);
@@ -123,6 +123,75 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
 
         return bundle;
     }
+
+    @Transaction
+    public Bundle transaction(@TransactionParam Bundle bundle) {
+        Bundle responseBundle = new Bundle();
+        responseBundle.setType(Bundle.BundleType.TRANSACTIONRESPONSE);
+
+        BundleProcessor processor = new BundleProcessor();
+        processor.process(bundle);
+
+        for (Bundle.BundleEntryComponent entry : bundle.getEntry()) {
+            Resource resource = entry.getResource();
+            MethodOutcome outcome = null;
+
+            if (entry.getRequest().getMethod() == Bundle.HTTPVerb.POST) {
+                outcome = createResource((T) resource);
+                System.out.println( resource.getClass().getSimpleName() +" id - "+ outcome.getId().toUnqualifiedVersionless().getValue());
+            } else if (entry.getRequest().getMethod() == Bundle.HTTPVerb.PUT) {
+               // outcome = updateResource((T) resource);
+                System.out.println("update resource :: PUT method called");
+            } else {
+                throw new UnprocessableEntityException("Unsupported HTTP verb: " + entry.getRequest().getMethod());
+            }
+
+            // Build response entry
+            Bundle.BundleEntryComponent responseEntry = new Bundle.BundleEntryComponent();
+            responseEntry.setResponse(new Bundle.BundleEntryResponseComponent()
+                    .setStatus("201 Created")
+                    .setLocation(outcome.getId().toUnqualifiedVersionless().getValue()));
+            responseEntry.setResource((Resource)outcome.getResource());
+            responseBundle.addEntry(responseEntry);
+        }
+
+        return responseBundle;
+    }
+
+
+    private MethodOutcome createResource(T resource) {
+        try {
+
+
+            if (resource instanceof DomainResource) {
+            //    ((DomainResource) resource).getMeta().addProfile("http://hl7.org/fhir/us/core/StructureDefinition/us-core-" +  resource.getClass().getSimpleName().toLowerCase());
+                ((DomainResource) resource).getMeta().setLastUpdated(new Date());
+            }
+            ValidationUtil validationUtil = new ValidationUtil();
+            ValidationResult result = validationUtil.validate(resource, resourceClass.getSimpleName(), fhirContext);
+            if (!result.isSuccessful()) {
+                StringBuilder issues = new StringBuilder();
+                result.getMessages().forEach(msg -> issues.append(msg.getSeverity())
+                        .append(": ")
+                        .append(msg.getLocationString())
+                        .append(" - ")
+                        .append(msg.getMessage())
+                        .append("\n"));
+
+                throw new UnprocessableEntityException("FHIR Validation failed:\n" + issues.toString());
+            }
+
+            T created = dao.create(resource.getClass().getSimpleName(), resource).orElseThrow(() ->
+                    new InternalErrorException("Failed to create resource"));
+            return new MethodOutcome(new IdType(resource.getClass().getSimpleName(), created.getIdElement().getIdPart()))
+                    .setCreated(true)
+                    .setResource(created);
+        } catch (Exception e) {
+            throw new InternalErrorException("Error creating resource: " + e.getMessage(), e);
+        }
+    }
+
+
 
     @Override
     public Class<T> getResourceType() {
