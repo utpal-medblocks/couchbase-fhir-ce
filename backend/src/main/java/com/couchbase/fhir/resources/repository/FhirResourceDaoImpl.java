@@ -54,7 +54,7 @@ public class FhirResourceDaoImpl<T extends IBaseResource> implements  FhirResour
                 throw new RuntimeException("No active connection found: " + connectionName);
             }
             // Build N1QL query to get specific document using ResourceType::id format
-            String documentKey = resourceType + "::" + id;
+            String documentKey = resourceType + "/" + id;
             String query = String.format(
                     "SELECT c.* " +
                             "FROM `%s`.`%s`.`%s` c " +
