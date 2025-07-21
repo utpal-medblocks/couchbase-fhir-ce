@@ -13,6 +13,7 @@ import ca.uhn.fhir.rest.server.exceptions.UnprocessableEntityException;
 import ca.uhn.fhir.validation.ValidationResult;
 import com.couchbase.fhir.resources.repository.FhirResourceDaoImpl;
 import com.couchbase.fhir.resources.util.BundleProcessor;
+import com.couchbase.fhir.resources.util.QueryBuilder;
 import com.couchbase.fhir.resources.util.TokenSearchHelper;
 import com.couchbase.fhir.validation.ValidationUtil;
 import org.hl7.fhir.r4.model.*;
@@ -91,6 +92,7 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
     public Bundle search(RequestDetails requestDetails) {
 
         List<String> filters = new ArrayList<>();
+        List<String> revIncludes = new ArrayList<>();
         Map<String, String[]> rawParams = requestDetails.getParameters();
         // Flatten and convert to Map<String, String>
         Map<String, String> searchParams = rawParams.entrySet().stream()
@@ -106,26 +108,25 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
             String paramName = entry.getKey();
             String value = entry.getValue();
 
-            RuntimeSearchParam searchParam = fhirContext
-                    .getResourceDefinition(resourceType)
-                    .getSearchParam(paramName);
+            if(paramName.equalsIgnoreCase("_revinclude")){
+                revIncludes.add(value);
+            }else{
+                RuntimeSearchParam searchParam = fhirContext
+                        .getResourceDefinition(resourceType)
+                        .getSearchParam(paramName);
 
-            if (searchParam == null) continue;
+                if (searchParam == null) continue;
 
-            if (searchParam.getParamType() == RestSearchParameterTypeEnum.TOKEN) {
-                filters.add(TokenSearchHelper.buildTokenWhereClause(fhirContext, resourceType, paramName, value));
+                if (searchParam.getParamType() == RestSearchParameterTypeEnum.TOKEN) {
+                    filters.add(TokenSearchHelper.buildTokenWhereClause(fhirContext, resourceType, paramName, value));
+                }
             }
             // TODO: Add support for string/date/reference/etc.
         }
 
-        String whereClause = filters.isEmpty() ? "" : "WHERE " + String.join(" AND ", filters);
-        for (RuntimeSearchParam param : resourceDef.getSearchParams()) {
-            System.out.println("SearchParam: " + param.getName() + ", Type : "+param.getParamType()+" ,  path=" + param.getPath());
-        }
 
-        //Build Query and  Call DAO's search method
-
-        List<T> results = dao.search(resourceType, whereClause);
+        QueryBuilder queryBuilder = new QueryBuilder();
+        List<T> results = dao.search(resourceType, queryBuilder.buildQuery(filters , revIncludes , resourceType));
 
         // Construct a FHIR Bundle response
         Bundle bundle = new Bundle();

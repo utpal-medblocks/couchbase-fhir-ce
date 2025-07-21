@@ -4,6 +4,7 @@ import com.couchbase.admin.connections.service.ConnectionService;
 import com.couchbase.client.java.Cluster;
 import com.couchbase.client.java.query.QueryResult;
 import com.couchbase.client.java.json.JsonObject;
+import com.google.gson.JsonElement;
 import org.apache.jena.base.Sys;
 import org.hl7.fhir.instance.model.api.IBaseResource;
 import org.slf4j.Logger;
@@ -151,7 +152,7 @@ public class FhirResourceDaoImpl<T extends IBaseResource> implements  FhirResour
  */
 
 
-    public List<T> search(String resourceType, String whereClause) {
+    public List<T> search(String resourceType, String query) {
         List<T> resources = new ArrayList<>();
         try {
 
@@ -164,14 +165,17 @@ public class FhirResourceDaoImpl<T extends IBaseResource> implements  FhirResour
             }
 
 
-            String query = String.format("SELECT c.* FROM `%s`.`%s`.`%s` c %s LIMIT 50",
-                    DEFAULT_BUCKET, DEFAULT_SCOPE, resourceType, whereClause);
+          //  String query = String.format("SELECT c.* FROM `%s`.`%s`.`%s` c %s LIMIT 50",
+           //         DEFAULT_BUCKET, DEFAULT_SCOPE, resourceType, whereClause);
 
             QueryResult result = cluster.query(query);
             List<JsonObject> rows = result.rowsAs(JsonObject.class);
 
             for (JsonObject row : rows) {
-                T resource = (T) fhirContext.newJsonParser().parseResource(row.toString());
+                Map.Entry<String, Object> entry = row.toMap().entrySet().iterator().next();
+                Object value = entry.getValue();
+                JsonObject nestedResource = JsonObject.from((Map<String, Object>) value);
+                T resource = (T) fhirContext.newJsonParser().parseResource(nestedResource.toString());
                 resources.add(resource);
             }
         } catch (Exception e) {
