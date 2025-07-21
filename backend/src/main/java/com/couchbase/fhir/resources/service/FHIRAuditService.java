@@ -58,9 +58,9 @@ public class FHIRAuditService {
      * Add minimal audit tags - only created-by user information
      */
     private void addAuditTags(Meta meta, UserAuditInfo auditInfo, String operation) {
-        // Only add who performed the action - keep it simple
+        // Use custom CodeSystem to avoid validation conflicts with official FHIR terminology
         meta.addTag(new Coding()
-            .setSystem("http://terminology.hl7.org/CodeSystem/common-tags")
+            .setSystem("http://couchbase.fhir.com/fhir/custom-tags")
             .setCode("created-by")
             .setDisplay("user:" + auditInfo.getUserId()));
     }
