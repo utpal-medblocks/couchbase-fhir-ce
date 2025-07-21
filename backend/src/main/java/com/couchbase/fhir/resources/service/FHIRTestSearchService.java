@@ -150,6 +150,9 @@ public class FHIRTestSearchService {
         // Convert Patient.xxx to xxx (remove resource type prefix)
         String basePath = convertToFieldPath(hapiPath);
         
+        // Translate HAPI conceptual paths to actual JSON field names
+        basePath = translateHapiPathToJsonField(basePath, searchParam.getName());
+        
         if (paramType == RestSearchParameterTypeEnum.TOKEN) {
             return handleTokenFieldPath(basePath, hapiPath, searchParam.getName());
         } else {
@@ -159,6 +162,49 @@ public class FHIRTestSearchService {
     
     private String convertToFieldPath(String hapiPath) {
         return hapiPath.replaceFirst("^[^.]+\\.", "");
+    }
+    
+    /**
+     * Translate HAPI conceptual paths to actual JSON field names
+     * Handles polymorphic fields like deceased[x] -> deceasedDateTime/deceasedBoolean
+     */
+    private String translateHapiPathToJsonField(String basePath, String paramName) {
+        // Handle polymorphic fields that HAPI describes conceptually
+        // Example: "(deceased as dateTime)" -> "deceasedDateTime"
+        if (basePath.contains(" as ")) {
+            String[] parts = basePath.split(" as ");
+            if (parts.length == 2) {
+                String baseField = parts[0].replaceAll("[()]", ""); // Remove parentheses
+                String dataType = parts[1].replaceAll("[()]", ""); // Remove parentheses
+                
+                // Convert to proper JSON field name: deceased + DateTime = deceasedDateTime
+                String jsonFieldName = baseField + capitalize(dataType);
+                logger.debug("Translated HAPI path '{}' to JSON field '{}'", basePath, jsonFieldName);
+                return jsonFieldName;
+            }
+        }
+        
+        // Handle other known HAPI -> JSON field mappings
+        switch (basePath) {
+            case "active":
+            case "gender": 
+            case "birthDate":
+                // These are already correct JSON field names
+                return basePath;
+            default:
+                // Return as-is if no translation needed
+                return basePath;
+        }
+    }
+    
+    /**
+     * Capitalize first letter of string
+     */
+    private String capitalize(String str) {
+        if (str == null || str.isEmpty()) {
+            return str;
+        }
+        return str.substring(0, 1).toUpperCase() + str.substring(1);
     }
     
     private FieldPathMapping handleTokenFieldPath(String basePath, String hapiPath, String paramName) {
