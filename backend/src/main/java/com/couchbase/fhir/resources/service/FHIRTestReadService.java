@@ -10,6 +10,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.util.*;
+import java.util.stream.Collectors;
 
 @Service
 public class FHIRTestReadService {
@@ -25,7 +26,7 @@ public class FHIRTestReadService {
     private static final String DEFAULT_SCOPE = "Resources";
 
     /**
-     * Get resource by ID using N1QL query
+     * Get resource by ID using N1QL query with GSI index to exclude deleted documents
      */
     public Map<String, Object> getResourceById(String resourceType, String id, 
                                              String connectionName, String bucketName) {
@@ -39,13 +40,12 @@ public class FHIRTestReadService {
                 throw new RuntimeException("No active connection found: " + connectionName);
             }
 
-            // Build N1QL query to get specific document using ResourceType::id format
-            String documentKey = resourceType + "::" + id;
+            // Build N1QL query using GSI index to filter by ID and exclude deleted documents
             String sql = String.format(
                 "SELECT c.* " +
                 "FROM `%s`.`%s`.`%s` c " +
-                "USE KEYS '%s'",
-                bucketName, DEFAULT_SCOPE, resourceType, documentKey
+                "WHERE c.id = '%s' AND c.deletedDate IS MISSING",
+                bucketName, DEFAULT_SCOPE, resourceType, id
             );
 
             logger.info("Executing N1QL query for {}/{}: {}", resourceType, id, sql);
@@ -54,7 +54,7 @@ public class FHIRTestReadService {
             List<JsonObject> rows = result.rowsAs(JsonObject.class);
             
             if (rows.isEmpty()) {
-                logger.warn("No {} found with ID: {}", resourceType, id);
+                logger.warn("No active {} found with ID: {}", resourceType, id);
                 return null;
             }
 
@@ -69,7 +69,7 @@ public class FHIRTestReadService {
     }
 
     /**
-     * Get multiple resources by IDs
+     * Get multiple resources by IDs using GSI index to exclude deleted documents
      */
     public List<Map<String, Object>> getResourcesByIds(String resourceType, List<String> ids,
                                                        String connectionName, String bucketName) {
@@ -82,17 +82,16 @@ public class FHIRTestReadService {
                 throw new RuntimeException("No active connection found: " + connectionName);
             }
 
-            // Build document keys
-            List<String> documentKeys = ids.stream()
-                .map(id -> resourceType + "::" + id)
-                .toList();
+            // Build IN clause for multiple IDs
+            String idsString = ids.stream()
+                .map(id -> "'" + id + "'")
+                .collect(Collectors.joining(","));
 
-            String keysString = String.join("','", documentKeys);
             String sql = String.format(
                 "SELECT c.* " +
                 "FROM `%s`.`%s`.`%s` c " +
-                "USE KEYS ['%s']",
-                bucketName, DEFAULT_SCOPE, resourceType, keysString
+                "WHERE c.id IN [%s] AND c.deletedDate IS MISSING",
+                bucketName, DEFAULT_SCOPE, resourceType, idsString
             );
 
             logger.info("Executing N1QL query for {} resources with {} IDs", resourceType, ids.size());
@@ -102,7 +101,7 @@ public class FHIRTestReadService {
                 .map(JsonObject::toMap)
                 .toList();
             
-            logger.info("Successfully retrieved {} out of {} requested {} resources", 
+            logger.info("Successfully retrieved {} out of {} requested active {} resources", 
                 resources.size(), ids.size(), resourceType);
             return resources;
 

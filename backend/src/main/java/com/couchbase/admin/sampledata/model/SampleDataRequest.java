@@ -16,6 +16,9 @@ public class SampleDataRequest {
     @JsonProperty("overwriteExisting")
     private boolean overwriteExisting = false;
     
+    @JsonProperty("sampleType")
+    private String sampleType = "synthea"; // Default to synthea for backward compatibility
+    
     // Constructors
     public SampleDataRequest() {}
     
@@ -55,12 +58,21 @@ public class SampleDataRequest {
         this.overwriteExisting = overwriteExisting;
     }
     
+    public String getSampleType() {
+        return sampleType;
+    }
+    
+    public void setSampleType(String sampleType) {
+        this.sampleType = sampleType;
+    }
+    
     @Override
     public String toString() {
         return "SampleDataRequest{" +
                 "connectionName='" + connectionName + '\'' +
                 ", bucketName='" + bucketName + '\'' +
                 ", overwriteExisting=" + overwriteExisting +
+                ", sampleType='" + sampleType + '\'' +
                 '}';
     }
 } 

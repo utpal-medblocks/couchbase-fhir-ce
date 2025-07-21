@@ -12,10 +12,12 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import jakarta.annotation.PostConstruct;
 
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 @Service
 public class FHIRTestCreateService {
@@ -25,28 +27,46 @@ public class FHIRTestCreateService {
     @Autowired
     private ConnectionService connectionService;
     
-    private final FhirContext fhirContext;
-    private final FhirValidator fhirValidator;
-    private final IParser jsonParser;
+    @Autowired
+    private FhirContext fhirContext;  // ✅ Inject the configured context
+    
+    @Autowired
+    private FhirValidator fhirValidator;  // ✅ Inject the configured validator
+    
+    @Autowired
+    private IParser jsonParser;       // ✅ Inject the configured parser
+    
+    @Autowired
+    private FHIRAuditService auditService;  // ✅ Inject the audit service
 
     // Default connection and bucket names if not provided
     private static final String DEFAULT_CONNECTION = "default";
     private static final String DEFAULT_BUCKET = "fhir";
     private static final String DEFAULT_SCOPE = "Resources";
+    
+    // Reuse ObjectMapper for performance - expensive to create each time
+    private static final ObjectMapper objectMapper = new ObjectMapper();
 
     public FHIRTestCreateService() {
-        // Suppress harmless StAX warnings in logs  
-        java.util.logging.Logger.getLogger("ca.uhn.fhir.util.XmlUtil").setLevel(java.util.logging.Level.WARNING);
+        // Empty - Spring will inject dependencies
+    }
+    
+    @PostConstruct
+    private void init() {
+        logger.info("🚀 FHIRTestCreateService initialized with FHIR R4 context");
         
-        this.fhirContext = FhirContext.forR4();
-        this.fhirValidator = fhirContext.newValidator();
+        // Configure parser for optimal performance
+        jsonParser.setPrettyPrint(false);                    // ✅ No formatting overhead
+        jsonParser.setStripVersionsFromReferences(false);    // Skip processing
+        jsonParser.setOmitResourceId(false);                 // Keep IDs as-is
+        jsonParser.setSummaryMode(false);                    // Full resources
+        jsonParser.setOverrideResourceIdWithBundleEntryFullUrl(false); // Big performance gain
         
-        // Enable schema validation (schematron requires additional dependencies)
-        this.fhirValidator.setValidateAgainstStandardSchema(true);
+        // Context-level optimizations
+        fhirContext.getParserOptions().setStripVersionsFromReferences(false);
+        fhirContext.getParserOptions().setOverrideResourceIdWithBundleEntryFullUrl(false);
         
-        this.jsonParser = fhirContext.newJsonParser();
-        
-        logger.info("Initialized FHIR R4 context and validator for create operations");
+        logger.info("✅ FHIR Create Service optimized for high-performance resource creation");
     }
 
     /**
@@ -72,43 +92,70 @@ public class FHIRTestCreateService {
             // Step 2: Generate ID if not provided (after validation to ensure ID field is proper)
             String resourceId = validatedResourceData.containsKey("id") ? 
                 validatedResourceData.get("id").toString() : 
-                resourceType.toLowerCase() + "-" + System.currentTimeMillis();
+                UUID.randomUUID().toString();
             
             // Step 3: Set/update resource metadata
             validatedResourceData.put("resourceType", resourceType);
             validatedResourceData.put("id", resourceId);
             
-            // Add meta information
-            Map<String, Object> meta = new HashMap<>();
+            // Step 4: Convert to FHIR resource and add audit information - optimized JSON processing
+            String resourceJson;
+            Map<String, Object> auditedResourceData;
+            try {
+                resourceJson = objectMapper.writeValueAsString(validatedResourceData);
+                IBaseResource fhirResource = jsonParser.parseResource(resourceJson);
+                
+                // Add comprehensive audit information
+                auditService.addAuditInfoToMeta(fhirResource, auditService.getCurrentUserId(), "CREATE");
+                
+                // Convert back to JSON with audit info - optimized conversion
+                String auditedResourceJson = jsonParser.encodeResourceToString(fhirResource);
+                auditedResourceData = objectMapper.readValue(auditedResourceJson, Map.class);
+            } catch (Exception jsonException) {
+                // Fallback to original method if Jackson fails
+                logger.debug("ObjectMapper failed, using fallback: {}", jsonException.getMessage());
+                resourceJson = JsonObject.from(validatedResourceData).toString();
+                IBaseResource fhirResource = jsonParser.parseResource(resourceJson);
+                auditService.addAuditInfoToMeta(fhirResource, auditService.getCurrentUserId(), "CREATE");
+                String auditedResourceJson = jsonParser.encodeResourceToString(fhirResource);
+                auditedResourceData = JsonObject.fromJson(auditedResourceJson).toMap();
+            }
+            
+            // Add additional meta information - pre-allocate for performance
+            Map<String, Object> meta = (Map<String, Object>) auditedResourceData.get("meta");
+            if (meta == null) {
+                meta = new HashMap<>(4); // Pre-allocate expected meta fields
+                auditedResourceData.put("meta", meta);
+            }
             meta.put("versionId", "1");
-            meta.put("lastUpdated", getCurrentFhirTimestamp());
-            meta.put("profile", Arrays.asList("http://hl7.org/fhir/StructureDefinition/" + resourceType));
-            validatedResourceData.put("meta", meta);
+            // Skip profile to keep meta minimal
 
-            // Step 4: Create document key with ResourceType::id format
-            String documentKey = resourceType + "::" + resourceId;
+            // Step 5: Create document key with ResourceType::id format
+            String documentKey = resourceType + "/" + resourceId;
 
-            // Step 5: Build N1QL INSERT query
+            // Step 6: Build N1QL UPSERT query (changed from INSERT to UPSERT)
             String sql = String.format(
-                "INSERT INTO `%s`.`%s`.`%s` (KEY, VALUE) VALUES ('%s', %s)",
+                "UPSERT INTO `%s`.`%s`.`%s` (KEY, VALUE) VALUES ('%s', %s)",
                 bucketName, DEFAULT_SCOPE, resourceType, documentKey, 
-                JsonObject.from(validatedResourceData).toString()
+                JsonObject.from(auditedResourceData).toString()
             );
 
-            logger.info("Executing N1QL INSERT for validated {}: {}", resourceType, resourceId);
+            logger.info("Executing N1QL UPSERT for validated {}: {}", resourceType, resourceId);
             
             cluster.query(sql);
             
-            // Step 6: Create response
+            // Step 7: Create response
             Map<String, Object> response = new HashMap<>();
             response.put("id", resourceId);
             response.put("resourceType", resourceType);
             response.put("created", getCurrentFhirTimestamp());
             response.put("location", "/api/fhir-test/" + bucketName + "/" + resourceType + "/" + resourceId);
             response.put("status", "created");
+            response.put("operation", "UPSERT");
             response.put("validationStatus", "passed");
+            response.put("auditInfo", "Added comprehensive audit trail");
             
-            logger.info("✅ Successfully created validated {} with ID: {}", resourceType, resourceId);
+            logger.info("✅ Successfully upserted validated {} with ID: {}", resourceType, resourceId);
             return response;
 
         } catch (Exception e) {

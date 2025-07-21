@@ -9,6 +9,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.*;
+import org.hl7.fhir.r4.model.Bundle;
 
 @RestController
 @RequestMapping("/api/fhir-search")
@@ -19,59 +20,120 @@ public class FHIRTestSearchController {
 
     @Autowired
     private FHIRTestSearchService searchService;
+    
+    public FHIRTestSearchController() {
+        // Empty - Spring will inject dependencies
+    }
 
     /**
      * Search FHIR resources with parameters
      * Example: GET /api/fhir-search/Patient?name=John&gender=male
      */
     @GetMapping("/{resourceType}")
-    public ResponseEntity<Map<String, Object>> searchResources(
+    public ResponseEntity<String> searchResources(
             @PathVariable String resourceType,
             @RequestParam Map<String, String> queryParams,
             @RequestParam(required = false) String connectionName,
             @RequestParam(required = false) String bucketName) {
         
         try {
-            logger.info("Searching {} resources with params: {}", resourceType, queryParams);
+            logger.info("🚀 Controller: Starting search for {} resources with params: {}", resourceType, queryParams);
+            logger.info("🚀 Controller: Connection: {}, Bucket: {}", connectionName, bucketName);
             
             // Remove connection/bucket params from search parameters
-            queryParams.remove("connectionName");
-            queryParams.remove("bucketName");
+            Map<String, String> searchParams = new HashMap<>(queryParams);
+            searchParams.remove("connectionName");
+            searchParams.remove("bucketName");
             
-            List<Map<String, Object>> resources = searchService.searchResources(
-                resourceType, queryParams, connectionName, bucketName);
+            logger.info("🔍 Controller: About to call searchService.searchResources()");
             
-            // Create FHIR Bundle response
-            Map<String, Object> bundle = new HashMap<>();
-            bundle.put("resourceType", "Bundle");
-            bundle.put("id", resourceType.toLowerCase() + "-search-" + System.currentTimeMillis());
-            bundle.put("type", "searchset");
-            bundle.put("total", resources.size());
-            bundle.put("timestamp", new Date().toString());
-            
-            List<Map<String, Object>> entries = new ArrayList<>();
-            for (Map<String, Object> resource : resources) {
-                String resourceId = (String) resource.get("id");
-                Map<String, Object> entry = new HashMap<>();
-                entry.put("fullUrl", String.format("http://localhost:8080/api/fhir-test/%s/%s/%s", 
-                    bucketName != null ? bucketName : "fhir", resourceType, resourceId));
-                entry.put("resource", resource);
-                entries.add(entry);
+            FHIRTestSearchService.SearchResult searchResult;
+            try {
+                searchResult = searchService.searchResources(resourceType, searchParams, connectionName, bucketName);
+                logger.info("✅ Controller: Search service call completed successfully!");
+                logger.info("✅ Controller: Retrieved {} resources from search service", searchResult.getPrimaryResources().size());
+            } catch (Exception searchException) {
+                logger.error("❌ Controller: Search service call failed: {}", searchException.getMessage(), searchException);
+                throw searchException;
             }
-            bundle.put("entry", entries);
             
-            return ResponseEntity.ok(bundle);
+            // Debug: Check if searchResult is null
+            if (searchResult == null) {
+                logger.error("❌ Controller: SearchResult is null! This should not happen.");
+                throw new RuntimeException("Search service returned null searchResult");
+            }
+            
+            List<Map<String, Object>> resources = searchResult.getPrimaryResources();
+            logger.info("🔍 Controller: About to process {} resources", resources.size());
+            
+            // Debug: Check first resource structure
+            if (!resources.isEmpty()) {
+                Map<String, Object> firstResource = resources.get(0);
+                logger.info("📋 Controller: First resource keys: {}", firstResource.keySet());
+                logger.info("📋 Controller: First resource ID: {}", firstResource.get("id"));
+                logger.info("📋 Controller: First resource type: {}", firstResource.get("resourceType"));
+            }
+            
+            if (resources.isEmpty()) {
+                logger.info("📭 No resources found, will create empty bundle");
+            }
+            
+            // Create proper FHIR Bundle using HAPI FHIR (now supports _revinclude)
+            String baseUrl = "http://localhost:8080/api/fhir-test/" + (bucketName != null ? bucketName : "fhir");
+            logger.info("📦 Controller: Creating Bundle with baseUrl: {}", baseUrl);
+            
+            Bundle bundle;
+            try {
+                bundle = searchService.createSearchBundle(searchResult, baseUrl, searchParams);
+                logger.info("✅ Controller: Bundle created successfully with {} entries", bundle.getEntry().size());
+            } catch (Exception bundleException) {
+                logger.error("❌ Controller: Bundle creation failed: {}", bundleException.getMessage(), bundleException);
+                throw new RuntimeException("Bundle creation failed: " + bundleException.getMessage(), bundleException);
+            }
+            
+            // Debug: Check bundle structure before serialization
+            logger.info("Bundle before serialization: {} entries", bundle.getEntry().size());
+            if (!bundle.getEntry().isEmpty()) {
+                Bundle.BundleEntryComponent firstEntry = bundle.getEntry().get(0);
+                logger.info("First entry has search: {}", firstEntry.hasSearch());
+                if (firstEntry.hasSearch()) {
+                    logger.info("Search mode: {}", firstEntry.getSearch().getMode());
+                }
+            }
+            
+            // Convert Bundle to JSON string
+            logger.info("🔄 Controller: Serializing Bundle to JSON...");
+            String bundleJson = searchService.getBundleAsJson(bundle);
+            logger.info("✅ Controller: Bundle serialized successfully");
+            logger.info("Serialized Bundle contains 'search': {}", bundleJson.contains("\"search\""));
+            
+            // Show a snippet of the serialized JSON for debugging
+            String jsonSnippet = bundleJson.length() > 500 ? bundleJson.substring(0, 500) + "..." : bundleJson;
+            logger.info("Bundle JSON snippet: {}", jsonSnippet);
+            
+            ResponseEntity<String> response = ResponseEntity.ok()
+                .header("Content-Type", "application/fhir+json")
+                .body(bundleJson);
+            
+            logger.info("🚀 Controller: Returning response with status: {}", response.getStatusCode());
+            return response;
             
         } catch (Exception e) {
             logger.error("Error searching {} resources: {}", resourceType, e.getMessage(), e);
             
-            Map<String, Object> error = new HashMap<>();
-            error.put("error", "Search failed");
-            error.put("message", e.getMessage());
-            error.put("resourceType", resourceType);
-            error.put("timestamp", new Date().toString());
+            // Create FHIR OperationOutcome for error response
+            String errorJson = "{\n" +
+                "  \"resourceType\": \"OperationOutcome\",\n" +
+                "  \"issue\": [{\n" +
+                "    \"severity\": \"error\",\n" +
+                "    \"code\": \"processing\",\n" +
+                "    \"diagnostics\": \"Search failed: " + e.getMessage() + "\"\n" +
+                "  }]\n" +
+                "}";
             
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(error);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .header("Content-Type", "application/fhir+json")
+                .body(errorJson);
         }
     }
 
@@ -109,36 +171,5 @@ public class FHIRTestSearchController {
         }
     }
 
-    /**
-     * Test endpoint to verify search functionality
-     */
-    @GetMapping("/test/{resourceType}")
-    public ResponseEntity<Map<String, Object>> testSearch(@PathVariable String resourceType) {
-        try {
-            Map<String, String> testParams = new HashMap<>();
-            testParams.put("_text", "test");
-            
-            List<Map<String, Object>> resources = searchService.searchResources(
-                resourceType, testParams, null, null);
-            
-            Map<String, Object> result = new HashMap<>();
-            result.put("status", "success");
-            result.put("resourceType", resourceType);
-            result.put("totalFound", resources.size());
-            result.put("searchQuery", testParams);
-            result.put("timestamp", new Date().toString());
-            
-            return ResponseEntity.ok(result);
-            
-        } catch (Exception e) {
-            logger.error("Test search failed: {}", e.getMessage(), e);
-            
-            Map<String, Object> error = new HashMap<>();
-            error.put("status", "error");
-            error.put("message", e.getMessage());
-            error.put("timestamp", new Date().toString());
-            
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(error);
-        }
-    }
+
 } 

@@ -9,6 +9,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import jakarta.annotation.PostConstruct;
 
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
@@ -22,7 +23,8 @@ public class FHIRTestGeneralService {
     @Autowired
     private ConnectionService connectionService;
     
-    private final FhirContext fhirContext;
+    @Autowired
+    private FhirContext fhirContext;  // ✅ Inject the configured context
 
     // Default connection and bucket names if not provided
     private static final String DEFAULT_CONNECTION = "default";
@@ -30,8 +32,18 @@ public class FHIRTestGeneralService {
     private static final String DEFAULT_SCOPE = "Resources";
 
     public FHIRTestGeneralService() {
-        this.fhirContext = FhirContext.forR4();
-        logger.info("Initialized FHIR R4 context for general operations");
+        // Empty - Spring will inject dependencies
+    }
+    
+    @PostConstruct
+    private void init() {
+        logger.info("🚀 FHIRTestGeneralService initialized with FHIR R4 context");
+        
+        // Configure FHIR context for optimal performance
+        fhirContext.getParserOptions().setStripVersionsFromReferences(false);
+        fhirContext.getParserOptions().setOverrideResourceIdWithBundleEntryFullUrl(false);
+        
+        logger.info("✅ FHIR General Service optimized for capabilities and metadata operations");
     }
 
     /**

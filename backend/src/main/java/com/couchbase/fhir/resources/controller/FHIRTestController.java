@@ -10,14 +10,23 @@ import com.couchbase.fhir.resources.service.FHIRTestReadService;
 import com.couchbase.fhir.resources.service.FHIRTestUpdateService;
 import com.couchbase.fhir.resources.service.FHIRTestDeleteService;
 import com.couchbase.fhir.resources.service.FHIRTestSearchService;
+import com.couchbase.fhir.resources.service.FHIRBundleProcessingService;
 
 import java.util.*;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.net.URLDecoder;
+import org.hl7.fhir.r4.model.Bundle;
+import org.hl7.fhir.r4.model.OperationOutcome;
+import ca.uhn.fhir.parser.IParser;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 @RestController
 @RequestMapping("/api/fhir-test")
 public class FHIRTestController {
+
+    private static final Logger logger = LoggerFactory.getLogger(FHIRTestController.class);
 
     @Autowired
     private FHIRTestGeneralService generalService;
@@ -36,6 +45,12 @@ public class FHIRTestController {
     
     @Autowired
     private FHIRTestSearchService searchService;
+    
+    @Autowired
+    private FHIRBundleProcessingService bundleService;
+    
+    @Autowired
+    private IParser jsonParser;
 
     @GetMapping("/info")
     public Map<String, Object> info() {
@@ -79,19 +94,102 @@ public class FHIRTestController {
             cleanParams.remove("connectionName");
             cleanParams.remove("bucketName");
             
-            // Use advanced search service for all searches
-            List<Map<String, Object>> resources = searchService.searchResources(
+            // Use advanced search service for all searches (now supports _revinclude)
+            FHIRTestSearchService.SearchResult searchResult = searchService.searchResources(
                 resourceType, cleanParams, connectionName, bucketName);
             
-            // Create FHIR Bundle response
-            Map<String, Object> bundle = createSearchBundle(resourceType, bucketName, resources);
-            return ResponseEntity.ok(bundle);
+            // Create proper FHIR Bundle using HAPI FHIR utilities
+            String baseUrl = "http://localhost:8080/api/fhir-test/" + bucketName;
+            Bundle bundle = searchService.createSearchBundle(searchResult, baseUrl, cleanParams);
+            
+            // Convert Bundle to JSON string for response
+            String bundleJson = searchService.getBundleAsJson(bundle);
+            return ResponseEntity.ok()
+                .header("Content-Type", "application/fhir+json")
+                .body(bundleJson);
             
         } catch (Exception e) {
             return ResponseEntity.internalServerError().body(
                 Map.of("error", "Failed to search " + resourceType + ": " + e.getMessage())
             );
         }
+    }
+
+    // Dynamic Resource Search via POST - FHIR compliant search for Inferno and other test suites
+    @PostMapping("/{bucketName}/{resourceType}/_search")
+    public ResponseEntity<?> searchResourcesPost(
+            @PathVariable String bucketName,
+            @PathVariable String resourceType,
+            @RequestParam(required = false) String connectionName,
+            @RequestParam Map<String, String> queryParams,
+            @RequestBody(required = false) String formData) {
+        
+        try {
+            // Start with query parameters
+            Map<String, String> allParams = new HashMap<>(queryParams);
+            
+            // Parse form data if present (application/x-www-form-urlencoded)
+            if (formData != null && !formData.trim().isEmpty()) {
+                String[] pairs = formData.split("&");
+                for (String pair : pairs) {
+                    String[] keyValue = pair.split("=", 2);
+                    if (keyValue.length == 2) {
+                        String key = java.net.URLDecoder.decode(keyValue[0], "UTF-8");
+                        String value = java.net.URLDecoder.decode(keyValue[1], "UTF-8");
+                        allParams.put(key, value); // Form params override query params
+                    }
+                }
+            }
+            
+            // Remove connection/bucket params from search parameters
+            allParams.remove("connectionName");
+            allParams.remove("bucketName");
+            
+            logger.info("🔍 POST Search request - Resource: {}, Parameters: {}", resourceType, allParams);
+            
+            // Use the same search service as GET (now supports _revinclude)
+            FHIRTestSearchService.SearchResult searchResult = searchService.searchResources(
+                resourceType, allParams, connectionName, bucketName);
+            
+            // Create proper FHIR Bundle using HAPI FHIR utilities
+            String baseUrl = "http://localhost:8080/api/fhir-test/" + bucketName;
+            Bundle bundle = searchService.createSearchBundle(searchResult, baseUrl, allParams);
+            
+            // Convert Bundle to JSON string for response
+            String bundleJson = searchService.getBundleAsJson(bundle);
+            return ResponseEntity.ok()
+                .header("Content-Type", "application/fhir+json")
+                .body(bundleJson);
+            
+        } catch (Exception e) {
+            logger.error("❌ POST search failed for {}: {}", resourceType, e.getMessage());
+            return ResponseEntity.internalServerError().body(
+                Map.of("error", "Failed to search " + resourceType + ": " + e.getMessage())
+            );
+        }
+    }
+
+    // Standard FHIR R4 pattern - POST search without bucket in path (uses default bucket)
+    @PostMapping("/fhir/{resourceType}/_search")
+    public ResponseEntity<?> searchResourcesPostFhir(
+            @PathVariable String resourceType,
+            @RequestParam(required = false) String connectionName,
+            @RequestParam Map<String, String> queryParams,
+            @RequestBody(required = false) String formData) {
+        
+        // Use default bucket "fhir" for standard FHIR R4 pattern
+        return searchResourcesPost("fhir", resourceType, connectionName, queryParams, formData);
+    }
+
+    // Standard FHIR R4 pattern - GET search without bucket in path (uses default bucket)
+    @GetMapping("/fhir/{resourceType}")
+    public ResponseEntity<?> searchResourcesFhir(
+            @PathVariable String resourceType,
+            @RequestParam(required = false) String connectionName,
+            @RequestParam Map<String, String> searchParams) {
+        
+        // Use default bucket "fhir" for standard FHIR R4 pattern
+        return searchResources("fhir", resourceType, connectionName, searchParams);
     }
 
     // Dynamic Resource by ID - handles any resource type
@@ -181,26 +279,64 @@ public class FHIRTestController {
         }
     }
 
-    // Create consistent FHIR Bundle response
-    private Map<String, Object> createSearchBundle(String resourceType, String bucketName, List<Map<String, Object>> resources) {
-        Map<String, Object> bundle = new HashMap<>();
-        bundle.put("resourceType", "Bundle");
-        bundle.put("id", resourceType.toLowerCase() + "-search-" + System.currentTimeMillis());
-        bundle.put("type", "searchset");
-        bundle.put("total", resources.size());
-        bundle.put("timestamp", LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'")));
+    // FHIR Bundle Transaction Processing - handles multiple resource types
+    @PostMapping("/{bucketName}/Bundle")
+    public ResponseEntity<String> processBundleTransaction(
+            @PathVariable String bucketName,
+            @RequestParam(required = false) String connectionName,
+            @RequestBody String bundleJson) {
         
-        List<Map<String, Object>> entries = new ArrayList<>();
-        for (Map<String, Object> resource : resources) {
-            String resourceId = (String) resource.get("id");
-            Map<String, Object> entry = new HashMap<>();
-            entry.put("fullUrl", String.format("http://localhost:8080/api/fhir-test/%s/%s/%s", 
-                bucketName, resourceType, resourceId));
-            entry.put("resource", resource);
-            entries.add(entry);
+        try {
+            logger.info("🔄 Processing FHIR Bundle transaction for bucket: {}", bucketName);
+            
+            // Process the bundle and get proper FHIR Bundle response
+            Bundle responseBundle = bundleService.processBundleTransaction(bundleJson, connectionName, bucketName);
+            
+            // Convert to JSON and return with proper FHIR content type
+            String responseJson = jsonParser.encodeResourceToString(responseBundle);
+            
+            return ResponseEntity.status(HttpStatus.CREATED)
+                .header("Content-Type", "application/fhir+json")
+                .body(responseJson);
+            
+        } catch (RuntimeException e) {
+            logger.error("❌ Bundle transaction processing failed: {}", e.getMessage(), e);
+            return createErrorResponse(e.getMessage());
+        } catch (Exception e) {
+            logger.error("❌ Bundle transaction processing failed: {}", e.getMessage(), e);
+            return createErrorResponse(e.getMessage());
         }
-        bundle.put("entry", entries);
-        
-        return bundle;
     }
+    
+    /**
+     * Create FHIR OperationOutcome error response
+     */
+    private ResponseEntity<String> createErrorResponse(String errorMessage) {
+        try {
+            OperationOutcome outcome = new OperationOutcome();
+            
+            OperationOutcome.OperationOutcomeIssueComponent issue = new OperationOutcome.OperationOutcomeIssueComponent();
+            issue.setSeverity(OperationOutcome.IssueSeverity.ERROR);
+            issue.setCode(OperationOutcome.IssueType.PROCESSING);
+            issue.setDiagnostics(errorMessage);
+            
+            outcome.addIssue(issue);
+            
+            String outcomeJson = jsonParser.encodeResourceToString(outcome);
+            
+            return ResponseEntity.badRequest()
+                .header("Content-Type", "application/fhir+json")
+                .body(outcomeJson);
+                
+        } catch (Exception e) {
+            // Fallback to simple JSON if FHIR encoding fails
+            return ResponseEntity.internalServerError()
+                .header("Content-Type", "application/json")
+                .body("{\"error\": \"" + errorMessage + "\"}");
+        }
+    }
+    
+
+
+    // Note: Now using proper HAPI FHIR Bundle creation via searchService.createSearchBundle()
 }
