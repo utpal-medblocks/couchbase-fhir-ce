@@ -25,7 +25,7 @@ public class TokenSearchHelper {
         // Example FHIRPath: Patient.identifier
         String path = searchParam.getPath();
         if ("Resource.id".equals(path) || (resourceType + ".id").equals(path)) {
-            return "c.id = \"" + token.code + "\"";
+            return "id = \"" + token.code + "\"";
         }
 
         String jsonPath = toCouchbasePath(path, resourceType);
@@ -65,9 +65,9 @@ public class TokenSearchHelper {
                 .replace(".system", "");
 
         // For now, assume most are arrays
-        if (!jsonPath.contains("[")) {
+       /* if (!jsonPath.contains("[")) {
             jsonPath = "c."+jsonPath + "";
-        }
+        }*/
 
         return jsonPath;
     }

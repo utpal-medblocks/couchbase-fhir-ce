@@ -14,10 +14,12 @@ import org.springframework.context.annotation.Configuration;
 @Configuration
 public class FhirServletConfig {
 
+/*
     @Bean
     public FhirContext fhirContext() {
         return FhirContext.forR4(); // or forR5() depending on version
     }
+*/
 
     @Bean
     public ServletRegistrationBean<RestfulServer> fhirServletRegistration(RestfulServer restfulServer) {
