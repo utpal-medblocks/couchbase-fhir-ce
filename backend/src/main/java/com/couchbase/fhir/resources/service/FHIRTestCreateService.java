@@ -18,6 +18,7 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.core.JsonProcessingException;
 
 @Service
 public class FHIRTestCreateService {
@@ -38,6 +39,12 @@ public class FHIRTestCreateService {
     
     @Autowired
     private FHIRAuditService auditService;  // ✅ Inject the audit service
+    
+    @Autowired
+    private FHIRBundleProcessingService bundleProcessor;  // ✅ Inject bundle processor
+    
+    @Autowired
+    private FHIRResourceStorageHelper storageHelper;  // ✅ Inject storage helper
 
     // Default connection and bucket names if not provided
     private static final String DEFAULT_CONNECTION = "default";
@@ -70,7 +77,7 @@ public class FHIRTestCreateService {
     }
 
     /**
-     * Create resource using N1QL INSERT with FHIR validation
+     * Create resource using the storage helper with FHIR validation
      */
     public Map<String, Object> createResource(String resourceType, String connectionName, 
                                             String bucketName, Map<String, Object> resourceData) {
@@ -89,10 +96,76 @@ public class FHIRTestCreateService {
             // Step 1: Validate and prepare the FHIR resource
             Map<String, Object> validatedResourceData = validateAndPrepareResource(resourceType, resourceData);
             
+            // Step 2: Generate ID if not provided
+            String resourceId = validatedResourceData.containsKey("id") ? 
+                validatedResourceData.get("id").toString() : 
+                java.util.UUID.randomUUID().toString();
+            
+            // Step 3: Set/update resource metadata
+            validatedResourceData.put("resourceType", resourceType);
+            validatedResourceData.put("id", resourceId);
+            
+            // Step 4: Convert to JSON for the storage helper
+            String resourceJson;
+            try {
+                resourceJson = objectMapper.writeValueAsString(validatedResourceData);
+            } catch (Exception jsonException) {
+                logger.error("Failed to convert resource to JSON: {}", jsonException.getMessage());
+                throw new RuntimeException("JSON conversion failed: " + jsonException.getMessage(), jsonException);
+            }
+            
+            // Step 5: Use storage helper to process and store with audit metadata
+            Map<String, Object> storageResult = storageHelper.processAndStoreResource(resourceJson, cluster, bucketName, "CREATE");
+            
+            if (!(Boolean) storageResult.get("success")) {
+                throw new RuntimeException("Storage failed: " + storageResult.get("error"));
+            }
+            
+            // Step 6: Create response
+            Map<String, Object> response = new HashMap<>();
+            response.put("id", storageResult.get("resourceId"));
+            response.put("resourceType", storageResult.get("resourceType"));
+            response.put("created", getCurrentFhirTimestamp());
+            response.put("location", "/api/fhir-test/" + bucketName + "/" + resourceType + "/" + storageResult.get("resourceId"));
+            response.put("status", "created");
+            response.put("operation", "UPSERT");
+            response.put("validationStatus", "passed");
+            response.put("auditInfo", "Added comprehensive audit trail");
+            response.put("documentKey", storageResult.get("documentKey"));
+            
+            logger.info("✅ Successfully created validated {} with ID: {}", resourceType, storageResult.get("resourceId"));
+            return response;
+
+        } catch (Exception e) {
+            logger.error("Failed to create {}: {}", resourceType, e.getMessage());
+            throw e;
+        }
+    }
+
+    /**
+     * Create resource using N1QL INSERT with FHIR validation (legacy method for reference)
+     */
+    public Map<String, Object> createResourceLegacy(String resourceType, String connectionName, 
+                                            String bucketName, Map<String, Object> resourceData) {
+        try {
+            logger.info("🚀 Creating FHIR {} resource with validation (legacy method)", resourceType);
+            
+            // Use provided connection or default
+            connectionName = connectionName != null ? connectionName : getDefaultConnection();
+            bucketName = bucketName != null ? bucketName : DEFAULT_BUCKET;
+            
+            Cluster cluster = connectionService.getConnection(connectionName);
+            if (cluster == null) {
+                throw new RuntimeException("No active connection found: " + connectionName);
+            }
+
+            // Step 1: Validate and prepare the FHIR resource
+            Map<String, Object> validatedResourceData = validateAndPrepareResource(resourceType, resourceData);
+            
             // Step 2: Generate ID if not provided (after validation to ensure ID field is proper)
             String resourceId = validatedResourceData.containsKey("id") ? 
                 validatedResourceData.get("id").toString() : 
-                UUID.randomUUID().toString();
+                java.util.UUID.randomUUID().toString();
             
             // Step 3: Set/update resource metadata
             validatedResourceData.put("resourceType", resourceType);
@@ -110,7 +183,9 @@ public class FHIRTestCreateService {
                 
                 // Convert back to JSON with audit info - optimized conversion
                 String auditedResourceJson = jsonParser.encodeResourceToString(fhirResource);
-                auditedResourceData = objectMapper.readValue(auditedResourceJson, Map.class);
+                @SuppressWarnings("unchecked")
+                Map<String, Object> tempAuditedResourceData = objectMapper.readValue(auditedResourceJson, Map.class);
+                auditedResourceData = tempAuditedResourceData;
             } catch (Exception jsonException) {
                 // Fallback to original method if Jackson fails
                 logger.debug("ObjectMapper failed, using fallback: {}", jsonException.getMessage());
@@ -122,6 +197,7 @@ public class FHIRTestCreateService {
             }
             
             // Add additional meta information - pre-allocate for performance
+            @SuppressWarnings("unchecked")
             Map<String, Object> meta = (Map<String, Object>) auditedResourceData.get("meta");
             if (meta == null) {
                 meta = new HashMap<>(4); // Pre-allocate expected meta fields
@@ -165,9 +241,85 @@ public class FHIRTestCreateService {
     }
 
     /**
-     * Create resource from JSON string with FHIR validation
+     * Create resource from JSON string with FHIR validation - handles both Bundles and individual resources
      */
     public Map<String, Object> createResourceFromJson(String resourceType, String connectionName, 
+                                                     String bucketName, String resourceJson) {
+        try {
+            logger.info("🚀 Processing FHIR resource from JSON with validation");
+            
+            // Parse JSON to determine if it's a Bundle or individual resource
+            JsonObject jsonObject = JsonObject.fromJson(resourceJson);
+            String actualResourceType = jsonObject.getString("resourceType");
+            
+            if ("Bundle".equals(actualResourceType)) {
+                // Handle Bundle using Bundle processor
+                return processBundleResource(connectionName, bucketName, resourceJson);
+            } else {
+                // Handle individual resource using existing method
+                Map<String, Object> resourceData = jsonObject.toMap();
+                return createResource(actualResourceType, connectionName, bucketName, resourceData);
+            }
+            
+        } catch (Exception e) {
+            logger.error("Failed to create resource from JSON: {}", e.getMessage());
+            throw e;
+        }
+    }
+    
+    /**
+     * Process a Bundle resource using the Bundle processor
+     */
+    private Map<String, Object> processBundleResource(String connectionName, String bucketName, String bundleJson) {
+        try {
+            logger.info("🔄 Processing FHIR Bundle with transaction support");
+            
+            // Use provided connection or default
+            connectionName = connectionName != null ? connectionName : getDefaultConnection();
+            bucketName = bucketName != null ? bucketName : DEFAULT_BUCKET;
+            
+            // Process Bundle using the Bundle processor
+            org.hl7.fhir.r4.model.Bundle responseBundle = bundleProcessor.processBundleTransaction(bundleJson, connectionName, bucketName);
+            
+            // Convert response Bundle back to Map for consistent API response
+            String responseBundleJson = jsonParser.encodeResourceToString(responseBundle);
+            JsonObject responseBundleObject = JsonObject.fromJson(responseBundleJson);
+            Map<String, Object> bundleData = responseBundleObject.toMap();
+            
+            // Create summary response
+            Map<String, Object> response = new HashMap<>();
+            response.put("id", responseBundle.getId());
+            response.put("resourceType", "Bundle");
+            response.put("created", getCurrentFhirTimestamp());
+            response.put("status", "processed");
+            response.put("operation", "BUNDLE_TRANSACTION");
+            response.put("entryCount", responseBundle.getEntry().size());
+            response.put("bundleType", responseBundle.getType().name());
+            response.put("validationStatus", "passed");
+            response.put("auditInfo", "Bundle processed with comprehensive audit trail");
+            response.put("bundleResponse", bundleData);
+            
+            logger.info("✅ Successfully processed Bundle with {} entries", responseBundle.getEntry().size());
+            return response;
+            
+        } catch (Exception e) {
+            logger.error("Failed to process Bundle: {}", e.getMessage());
+            
+            Map<String, Object> errorResponse = new HashMap<>();
+            errorResponse.put("resourceType", "Bundle");
+            errorResponse.put("status", "error");
+            errorResponse.put("operation", "BUNDLE_TRANSACTION");
+            errorResponse.put("message", "Bundle processing failed: " + e.getMessage());
+            errorResponse.put("timestamp", getCurrentFhirTimestamp());
+            
+            throw new RuntimeException("Bundle processing failed: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Create resource from JSON string with FHIR validation (original method - keeping for backward compatibility)
+     */
+    public Map<String, Object> createResourceFromJsonLegacy(String resourceType, String connectionName, 
                                                      String bucketName, String resourceJson) {
         try {
             logger.info("🚀 Creating FHIR {} resource from JSON with validation", resourceType);

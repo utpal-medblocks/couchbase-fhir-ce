@@ -5,9 +5,8 @@ import com.couchbase.admin.sampledata.model.SampleDataRequest;
 import com.couchbase.admin.sampledata.model.SampleDataResponse;
 import com.couchbase.admin.sampledata.model.SampleDataProgress;
 import com.couchbase.fhir.resources.service.FHIRBundleProcessingService;
+import com.couchbase.fhir.resources.service.FHIRResourceStorageHelper;
 import com.couchbase.client.java.Cluster;
-import com.couchbase.client.java.Bucket;
-import com.couchbase.client.java.Collection;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.hl7.fhir.r4.model.Bundle;
@@ -36,14 +35,14 @@ public class SampleDataService {
     private static final String SYNTHEA_SAMPLE_DATA_PATH = "static/sample-data/synthea-patients-sample.zip";
     private static final String USCORE_SAMPLE_DATA_PATH = "static/sample-data/us-core-examples.zip";
     
-    // FHIR scope name - matches Bundle processor
-    private static final String DEFAULT_SCOPE = "Resources";
-    
     @Autowired
     private ConnectionService connectionService;
     
     @Autowired
     private FHIRBundleProcessingService bundleProcessor;
+    
+    @Autowired
+    private FHIRResourceStorageHelper storageHelper;
     
     private final ObjectMapper objectMapper = new ObjectMapper();
     
@@ -293,29 +292,23 @@ public class SampleDataService {
                 return counts;
             }
             
-            // Parse the resource to get type and ID
-            com.fasterxml.jackson.databind.JsonNode jsonNode = objectMapper.readTree(resourceJson);
-            String resourceType = jsonNode.get("resourceType").asText();
-            String resourceId = jsonNode.get("id").asText();
+            // Use the storage helper to process and store with audit metadata
+            Map<String, Object> result = storageHelper.processAndStoreResource(resourceJson, cluster, bucketName, "CREATE");
             
-            // Construct document key: resourceType/id
-            String documentKey = resourceType + "/" + resourceId;
-            
-            // Get bucket and collection - use Resources scope and resourceType as collection
-            Bucket bucket = cluster.bucket(bucketName);
-            Collection collection = bucket.scope(DEFAULT_SCOPE).collection(resourceType);
-            
-            // Upsert the resource as JSON object (not string)
-            collection.upsert(documentKey, jsonNode);
-            resourceCount = 1;
-            
-            // Count patients
-            if ("Patient".equals(resourceType)) {
-                patientCount = 1;
+            if ((Boolean) result.get("success")) {
+                resourceCount = 1;
+                String resourceType = (String) result.get("resourceType");
+                String resourceId = (String) result.get("resourceId");
+                
+                // Count patients
+                if ("Patient".equals(resourceType)) {
+                    patientCount = 1;
+                }
+                
+                log.debug("Successfully processed {} resource with ID: {} using storage helper", resourceType, resourceId);
+            } else {
+                log.error("Failed to process resource: {}", result.get("error"));
             }
-            
-            log.debug("Successfully upserted {} resource with ID: {} into scope: {}, collection: {}", 
-                    resourceType, resourceId, DEFAULT_SCOPE, resourceType);
             
         } catch (Exception e) {
             log.error("Error processing individual resource: {}", e.getMessage());
