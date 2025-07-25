@@ -223,12 +223,23 @@ public class FHIRTestController {
             @PathVariable String bucketName,
             @PathVariable String resourceType,
             @RequestParam(required = false) String connectionName,
+            @RequestParam(required = false, defaultValue = "strict") String validationMode,
             @RequestBody Map<String, Object> resourceData) {
         
         try {
+            // Determine validation strictness
+            boolean useLenientValidation = "lenient".equalsIgnoreCase(validationMode);
+            
+            logger.info("🚀 Creating {} resource with {} validation", resourceType, 
+                useLenientValidation ? "lenient (basic FHIR R4)" : "strict (US Core 6.1.0)");
+            
             Map<String, Object> result = createService.createResource(
-                resourceType, connectionName, bucketName, resourceData
+                resourceType, connectionName, bucketName, resourceData, useLenientValidation
             );
+            
+            // Add validation mode info to response
+            result.put("validationMode", useLenientValidation ? "lenient" : "strict");
+            
             return ResponseEntity.status(HttpStatus.CREATED).body(result);
         } catch (RuntimeException e) {
             // If it's a validation error, return 400 Bad Request
@@ -237,6 +248,7 @@ public class FHIRTestController {
                 errorResponse.put("error", "FHIR Validation Failed");
                 errorResponse.put("message", e.getMessage());
                 errorResponse.put("resourceType", resourceType);
+                errorResponse.put("validationMode", "lenient".equalsIgnoreCase(validationMode) ? "lenient" : "strict");
                 errorResponse.put("timestamp", LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'")));
                 return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(errorResponse);
             }
@@ -257,10 +269,20 @@ public class FHIRTestController {
     public ResponseEntity<?> validateResource(
             @PathVariable String bucketName,
             @PathVariable String resourceType,
+            @RequestParam(required = false, defaultValue = "strict") String validationMode,
             @RequestBody Map<String, Object> resourceData) {
         
         try {
-            Map<String, Object> result = createService.validateResourceOnly(resourceType, resourceData);
+            // Determine validation strictness
+            boolean useLenientValidation = "lenient".equalsIgnoreCase(validationMode);
+            String validationType = useLenientValidation ? "lenient (basic FHIR R4)" : "strict (US Core 6.1.0)";
+            
+            logger.info("🔍 Validating {} resource with {} validation", resourceType, validationType);
+            
+            Map<String, Object> result = createService.validateResourceOnly(resourceType, resourceData, useLenientValidation);
+            
+            // Add validation mode info to response
+            result.put("validationMode", useLenientValidation ? "lenient" : "strict");
             
             if ((Boolean) result.get("valid")) {
                 return ResponseEntity.ok(result);
@@ -273,6 +295,7 @@ public class FHIRTestController {
             errorResponse.put("error", "FHIR Resource Validation Failed");
             errorResponse.put("message", e.getMessage());
             errorResponse.put("resourceType", resourceType);
+            errorResponse.put("validationMode", "lenient".equalsIgnoreCase(validationMode) ? "lenient" : "strict");
             errorResponse.put("timestamp", LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'")));
             
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(errorResponse);
@@ -284,19 +307,25 @@ public class FHIRTestController {
     public ResponseEntity<String> processBundleTransaction(
             @PathVariable String bucketName,
             @RequestParam(required = false) String connectionName,
+            @RequestParam(required = false, defaultValue = "strict") String validationMode,
             @RequestBody String bundleJson) {
         
         try {
-            logger.info("🔄 Processing FHIR Bundle transaction for bucket: {}", bucketName);
+            // Determine validation strictness
+            boolean useLenientValidation = "lenient".equalsIgnoreCase(validationMode);
+            String validationType = useLenientValidation ? "lenient (basic FHIR R4)" : "strict (US Core 6.1.0)";
             
-            // Process the bundle and get proper FHIR Bundle response
-            Bundle responseBundle = bundleService.processBundleTransaction(bundleJson, connectionName, bucketName);
+            logger.info("🔄 Processing FHIR Bundle transaction for bucket: {} with {} validation", bucketName, validationType);
+            
+            // Process the bundle and get proper FHIR Bundle response with specified validation
+            Bundle responseBundle = bundleService.processBundleTransaction(bundleJson, connectionName, bucketName, useLenientValidation);
             
             // Convert to JSON and return with proper FHIR content type
             String responseJson = jsonParser.encodeResourceToString(responseBundle);
             
             return ResponseEntity.status(HttpStatus.CREATED)
                 .header("Content-Type", "application/fhir+json")
+                .header("X-Validation-Mode", useLenientValidation ? "lenient" : "strict")
                 .body(responseJson);
             
         } catch (RuntimeException e) {
