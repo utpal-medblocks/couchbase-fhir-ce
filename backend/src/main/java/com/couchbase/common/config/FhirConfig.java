@@ -12,6 +12,7 @@ import org.hl7.fhir.common.hapi.validation.support.NpmPackageValidationSupport;
 import org.hl7.fhir.common.hapi.validation.support.InMemoryTerminologyServerValidationSupport;
 import org.hl7.fhir.common.hapi.validation.support.CommonCodeSystemsTerminologyService;
 import org.hl7.fhir.r5.utils.validation.constants.BestPracticeWarningLevel;
+import org.hl7.fhir.utilities.validation.ValidationMessage;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -98,6 +99,7 @@ public class FhirConfig {
             instanceValidator.setAnyExtensionsAllowed(true);
             instanceValidator.setNoTerminologyChecks(true);
             instanceValidator.setBestPracticeWarningLevel(BestPracticeWarningLevel.Ignore);
+            instanceValidator.setNoExtensibleWarnings(true);  // Add this for extension warnings
             validator.registerValidatorModule(instanceValidator);
 
             logger.info("✅ FHIR Validator with US Core support configured");

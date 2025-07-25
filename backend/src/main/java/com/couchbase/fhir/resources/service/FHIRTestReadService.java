@@ -4,6 +4,7 @@ import com.couchbase.admin.connections.service.ConnectionService;
 import com.couchbase.client.java.Cluster;
 import com.couchbase.client.java.query.QueryResult;
 import com.couchbase.client.java.json.JsonObject;
+import com.couchbase.client.java.json.JsonArray;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -26,7 +27,7 @@ public class FHIRTestReadService {
     private static final String DEFAULT_SCOPE = "Resources";
 
     /**
-     * Get resource by ID using N1QL query with GSI index to exclude deleted documents
+     * Get resource by ID using FTS with SEARCH function (consistent with FHIRTestSearchService)
      */
     public Map<String, Object> getResourceById(String resourceType, String id, 
                                              String connectionName, String bucketName) {
@@ -40,15 +41,20 @@ public class FHIRTestReadService {
                 throw new RuntimeException("No active connection found: " + connectionName);
             }
 
-            // Build N1QL query using GSI index to filter by ID and exclude deleted documents
+            // Build FTS query for exact ID match (consistent with Search Service approach)
+            String ftsIndexName = bucketName + ".Resources.fts" + resourceType;
+            JsonObject ftsQuery = buildFtsQueryForId(id);
+
+            // Build N1QL query using SEARCH function (consistent with FHIRTestSearchService)
             String sql = String.format(
-                "SELECT c.* " +
-                "FROM `%s`.`%s`.`%s` c " +
-                "WHERE c.id = '%s' AND c.deletedDate IS MISSING",
-                bucketName, DEFAULT_SCOPE, resourceType, id
+                "SELECT resource.* FROM `%s`.`%s`.`%s` resource " +
+                "WHERE SEARCH(resource, %s, {\"index\": \"%s\"}) " +
+                "AND resource.deletedDate IS MISSING",
+                bucketName, DEFAULT_SCOPE, resourceType, 
+                ftsQuery.toString(), ftsIndexName
             );
 
-            logger.info("Executing N1QL query for {}/{}: {}", resourceType, id, sql);
+            logger.info("🔍 Executing FTS query for {}/{}: {}", resourceType, id, sql);
             
             QueryResult result = cluster.query(sql);
             List<JsonObject> rows = result.rowsAs(JsonObject.class);
@@ -59,17 +65,17 @@ public class FHIRTestReadService {
             }
 
             Map<String, Object> resource = rows.get(0).toMap();
-            logger.info("Successfully retrieved {} with ID: {}", resourceType, id);
+            logger.info("✅ Successfully retrieved {} with ID: {} using FTS", resourceType, id);
             return resource;
 
         } catch (Exception e) {
-            logger.error("Failed to get {}/{}: {}", resourceType, id, e.getMessage());
+            logger.error("❌ Failed to get {}/{}: {}", resourceType, id, e.getMessage());
             throw e;
         }
     }
 
     /**
-     * Get multiple resources by IDs using GSI index to exclude deleted documents
+     * Get multiple resources by IDs using FTS with SEARCH function (consistent with FHIRTestSearchService)
      */
     public List<Map<String, Object>> getResourcesByIds(String resourceType, List<String> ids,
                                                        String connectionName, String bucketName) {
@@ -82,33 +88,76 @@ public class FHIRTestReadService {
                 throw new RuntimeException("No active connection found: " + connectionName);
             }
 
-            // Build IN clause for multiple IDs
-            String idsString = ids.stream()
-                .map(id -> "'" + id + "'")
-                .collect(Collectors.joining(","));
+            // Build FTS query for multiple IDs using disjuncts (OR logic)
+            String ftsIndexName = bucketName + ".Resources.fts" + resourceType;
+            JsonObject ftsQuery = buildFtsQueryForIds(ids);
 
+            // Build N1QL query using SEARCH function
             String sql = String.format(
-                "SELECT c.* " +
-                "FROM `%s`.`%s`.`%s` c " +
-                "WHERE c.id IN [%s] AND c.deletedDate IS MISSING",
-                bucketName, DEFAULT_SCOPE, resourceType, idsString
+                "SELECT resource.* FROM `%s`.`%s`.`%s` resource " +
+                "WHERE SEARCH(resource, %s, {\"index\": \"%s\"}) " +
+                "AND resource.deletedDate IS MISSING",
+                bucketName, DEFAULT_SCOPE, resourceType,
+                ftsQuery.toString(), ftsIndexName
             );
 
-            logger.info("Executing N1QL query for {} resources with {} IDs", resourceType, ids.size());
+            logger.info("🔍 Executing FTS query for {} resources with {} IDs", resourceType, ids.size());
             
             QueryResult result = cluster.query(sql);
             List<Map<String, Object>> resources = result.rowsAs(JsonObject.class).stream()
                 .map(JsonObject::toMap)
                 .toList();
             
-            logger.info("Successfully retrieved {} out of {} requested active {} resources", 
+            logger.info("✅ Successfully retrieved {} out of {} requested active {} resources using FTS", 
                 resources.size(), ids.size(), resourceType);
             return resources;
 
         } catch (Exception e) {
-            logger.error("Failed to get {} resources by IDs: {}", resourceType, e.getMessage());
+            logger.error("❌ Failed to get {} resources by IDs: {}", resourceType, e.getMessage());
             throw e;
         }
+    }
+
+    /**
+     * Build FTS query for single ID - exact match on id field
+     */
+    private JsonObject buildFtsQueryForId(String id) {
+        JsonObject query = JsonObject.create();
+        JsonObject matchQuery = JsonObject.create();
+        matchQuery.put("match", id);
+        matchQuery.put("field", "id");
+        query.put("query", matchQuery);
+        return query;
+    }
+
+    /**
+     * Build FTS query for multiple IDs - disjuncts (OR) for multiple exact matches
+     */
+    private JsonObject buildFtsQueryForIds(List<String> ids) {
+        JsonObject query = JsonObject.create();
+        
+        if (ids.size() == 1) {
+            // Single ID - use simple match
+            JsonObject matchQuery = JsonObject.create();
+            matchQuery.put("match", ids.get(0));
+            matchQuery.put("field", "id");
+            query.put("query", matchQuery);
+        } else {
+            // Multiple IDs - use disjuncts (OR logic)
+            JsonArray disjuncts = JsonArray.create();
+            for (String id : ids) {
+                JsonObject idMatch = JsonObject.create();
+                idMatch.put("match", id);
+                idMatch.put("field", "id");
+                disjuncts.add(idMatch);
+            }
+            
+            JsonObject disjunctQuery = JsonObject.create();
+            disjunctQuery.put("disjuncts", disjuncts);
+            query.put("query", disjunctQuery);
+        }
+        
+        return query;
     }
 
     // Helper methods
