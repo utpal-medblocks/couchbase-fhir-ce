@@ -1,8 +1,6 @@
 package com.couchbase.fhir.resources.provider;
 
-import ca.uhn.fhir.context.FhirContext;
-import ca.uhn.fhir.context.RuntimeResourceDefinition;
-import ca.uhn.fhir.context.RuntimeSearchParam;
+import ca.uhn.fhir.context.*;
 import ca.uhn.fhir.rest.annotation.*;
 import ca.uhn.fhir.rest.api.MethodOutcome;
 import ca.uhn.fhir.rest.api.server.RequestDetails;
@@ -14,8 +12,11 @@ import ca.uhn.fhir.validation.ValidationResult;
 import com.couchbase.fhir.resources.repository.FhirResourceDaoImpl;
 import com.couchbase.fhir.resources.util.BundleProcessor;
 import com.couchbase.fhir.resources.util.QueryBuilder;
+import com.couchbase.fhir.resources.util.StringSearchHelper;
 import com.couchbase.fhir.resources.util.TokenSearchHelper;
 import com.couchbase.fhir.validation.ValidationUtil;
+import org.apache.jena.base.Sys;
+import org.hl7.fhir.instance.model.api.IBase;
 import org.hl7.fhir.r4.model.*;
 import ca.uhn.fhir.rest.api.RestSearchParameterTypeEnum;
 
@@ -119,6 +120,12 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
 
                 if (searchParam.getParamType() == RestSearchParameterTypeEnum.TOKEN) {
                     filters.add(TokenSearchHelper.buildTokenWhereClause(fhirContext, resourceType, paramName, value));
+                }else if(searchParam.getParamType() == RestSearchParameterTypeEnum.STRING){
+                    String searchClause = StringSearchHelper.buildStringWhereCluse(fhirContext , resourceType , paramName , value);
+                    if(searchClause != null){
+                        filters.add(searchClause);
+                    }
+
                 }
             }
             // TODO: Add support for string/date/reference/etc.
