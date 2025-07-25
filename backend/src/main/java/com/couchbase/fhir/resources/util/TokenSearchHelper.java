@@ -26,6 +26,8 @@ public class TokenSearchHelper {
         String path = searchParam.getPath();
         if ("Resource.id".equals(path) || (resourceType + ".id").equals(path)) {
             return "id = \"" + token.code + "\"";
+        }else if("Resource.gender".equals(path) || (resourceType + ".gender").equals(path)){
+            return "gender = \"" + token.code + "\"";
         }
 
         String jsonPath = toCouchbasePath(path, resourceType);

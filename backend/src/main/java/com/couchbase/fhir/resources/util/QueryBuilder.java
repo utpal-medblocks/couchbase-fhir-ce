@@ -28,6 +28,7 @@ public class QueryBuilder {
         }
 
         finalQuery = topLevelQuery + (revQuery.isEmpty() ? "" : " UNION ALL "+String.join(" UNION ALL ", revQuery));
+        System.out.println("finalQuery = " + finalQuery);
         return finalQuery;
     }
 }
