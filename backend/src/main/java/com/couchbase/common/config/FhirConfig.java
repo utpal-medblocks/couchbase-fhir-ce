@@ -16,8 +16,10 @@ import org.hl7.fhir.utilities.validation.ValidationMessage;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Primary;
 
 @Configuration
 public class FhirConfig {
@@ -67,9 +69,10 @@ public class FhirConfig {
     }
 
     /**
-     * Create FHIR validator with US Core support
+     * Create FHIR validator with US Core support (primary validator for normal operations)
      */
     @Bean
+    @Primary
     public FhirValidator fhirValidator(FhirContext fhirContext) {
         logger.info("🔍 Configuring FHIR Validator with US Core support");
         
@@ -113,5 +116,40 @@ public class FhirConfig {
             FhirValidator validator = fhirContext.newValidator();
             return validator;
         }
+    }
+    
+    /**
+     * Create basic FHIR R4 validator for sample data loading (lenient, no US Core enforcement)
+     * This validator is used for loading Synthea and other sample data that may not be US Core compliant
+     */
+    @Bean
+    @Qualifier("basicFhirValidator")
+    public FhirValidator basicFhirValidator(FhirContext fhirContext) {
+        logger.info("🔧 Configuring basic FHIR R4 validator for sample data loading");
+        
+        // Create basic validation support (FHIR R4 base only, no US Core profiles)
+        DefaultProfileValidationSupport defaultSupport = new DefaultProfileValidationSupport(fhirContext);
+        InMemoryTerminologyServerValidationSupport terminologySupport = new InMemoryTerminologyServerValidationSupport(fhirContext);
+        
+        ValidationSupportChain basicValidationChain = new ValidationSupportChain(
+            defaultSupport,
+            terminologySupport
+        );
+        
+        // Create basic validator
+        FhirValidator validator = fhirContext.newValidator();
+        FhirInstanceValidator instanceValidator = new FhirInstanceValidator(basicValidationChain);
+        
+        // Configure to be very lenient for sample data
+        instanceValidator.setErrorForUnknownProfiles(false);
+        instanceValidator.setAnyExtensionsAllowed(true);
+        instanceValidator.setNoTerminologyChecks(true);
+        instanceValidator.setBestPracticeWarningLevel(BestPracticeWarningLevel.Ignore);
+        instanceValidator.setNoExtensibleWarnings(true);
+        
+        validator.registerValidatorModule(instanceValidator);
+        
+        logger.info("✅ Basic FHIR R4 validator configured for sample data loading");
+        return validator;
     }
 }

@@ -1,6 +1,8 @@
 package com.couchbase.fhir.resources.service;
 
 import ca.uhn.fhir.parser.IParser;
+import ca.uhn.fhir.validation.FhirValidator;
+import ca.uhn.fhir.validation.ValidationResult;
 import com.couchbase.client.java.Cluster;
 import com.couchbase.client.java.Collection;
 import com.couchbase.client.java.Bucket;
@@ -9,6 +11,7 @@ import org.hl7.fhir.r4.model.Resource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
 
 import java.util.HashMap;
@@ -27,12 +30,19 @@ public class FHIRResourceStorageHelper {
     private FHIRAuditService auditService;
     
     @Autowired
-    private IParser jsonParser;
+    private FhirValidator fhirValidator;  // Primary US Core validator
+    
+    @Autowired
+    @Qualifier("basicFhirValidator")
+    private FhirValidator basicFhirValidator;  // Basic validator for lenient validation
+    
+    @Autowired
+    public IParser jsonParser;
     
     private final ObjectMapper objectMapper = new ObjectMapper();
     
     /**
-     * Process and store an individual FHIR resource with audit metadata
+     * Process and store an individual FHIR resource with audit metadata using strict validation (default)
      * @param resourceJson The JSON string of the FHIR resource
      * @param cluster The Couchbase cluster connection
      * @param bucketName The bucket name
@@ -41,6 +51,36 @@ public class FHIRResourceStorageHelper {
      */
     public Map<String, Object> processAndStoreResource(String resourceJson, Cluster cluster, 
                                                       String bucketName, String operation) {
+        return processAndStoreResource(resourceJson, cluster, bucketName, operation, false);
+    }
+    
+    /**
+     * Process and store an individual FHIR resource with audit metadata and configurable validation
+     * @param resourceJson The JSON string of the FHIR resource
+     * @param cluster The Couchbase cluster connection
+     * @param bucketName The bucket name
+     * @param operation The operation type ("CREATE", "UPDATE", etc.)
+     * @param useLenientValidation If true, uses basic FHIR R4 validation; if false, uses strict US Core validation
+     * @return Map with processing results (resourceType, resourceId, success, etc.)
+     */
+    public Map<String, Object> processAndStoreResource(String resourceJson, Cluster cluster, 
+                                                      String bucketName, String operation, boolean useLenientValidation) {
+        return processAndStoreResource(resourceJson, cluster, bucketName, operation, useLenientValidation, false);
+    }
+    
+    /**
+     * Process and store an individual FHIR resource with full validation control
+     * @param resourceJson The JSON string of the FHIR resource
+     * @param cluster The Couchbase cluster connection
+     * @param bucketName The bucket name
+     * @param operation The operation type ("CREATE", "UPDATE", etc.)
+     * @param useLenientValidation If true, uses basic FHIR R4 validation; if false, uses strict US Core validation
+     * @param skipValidation If true, skips all validation for performance (use for trusted sample data)
+     * @return Map with processing results (resourceType, resourceId, success, etc.)
+     */
+    public Map<String, Object> processAndStoreResource(String resourceJson, Cluster cluster, 
+                                                      String bucketName, String operation, boolean useLenientValidation, 
+                                                      boolean skipValidation) {
         Map<String, Object> result = new HashMap<>();
         
         try {
@@ -55,9 +95,28 @@ public class FHIRResourceStorageHelper {
                 fhirResource.setId(resourceId);
             }
             
-            // Add audit information to meta
-            UserAuditInfo auditInfo = auditService.getCurrentUserAuditInfo();
-            auditService.addAuditInfoToMeta(fhirResource, auditInfo, operation);
+            // Validate the resource (skip if requested for performance)
+            if (!skipValidation) {
+                FhirValidator validator = useLenientValidation ? basicFhirValidator : fhirValidator;
+                String validationType = useLenientValidation ? "lenient (basic FHIR R4)" : "strict (US Core 6.1.0)";
+                
+                ValidationResult validationResult = validator.validateWithResult(fhirResource);
+                if (!validationResult.isSuccessful()) {
+                    log.error("FHIR {} validation failed with {} validation:", resourceType, validationType);
+                    validationResult.getMessages().forEach(msg -> 
+                        log.error("   {} - {}: {}", msg.getSeverity(), msg.getLocationString(), msg.getMessage())
+                    );
+                    result.put("success", false);
+                    result.put("error", "FHIR validation failed: " + validationResult.getMessages().size() + " errors");
+                    return result;
+                }
+                log.debug("✅ FHIR {} validation passed with {} validation", resourceType, validationType);
+            } else {
+                log.debug("⚡ FHIR {} validation SKIPPED for performance", resourceType);
+            }
+            
+            // Add audit metadata using centralized service - preserves existing meta
+            auditService.addAuditInfoToMeta(fhirResource, auditService.getCurrentUserId(), operation);
             
             // Construct document key: resourceType/id
             String documentKey = resourceType + "/" + resourceId;
@@ -93,7 +152,7 @@ public class FHIRResourceStorageHelper {
     }
     
     /**
-     * Process and store an individual FHIR resource from parsed Resource object
+     * Process and store an individual FHIR resource from parsed Resource object using strict validation (default)
      * @param fhirResource The FHIR Resource object
      * @param cluster The Couchbase cluster connection
      * @param bucketName The bucket name
@@ -102,10 +161,40 @@ public class FHIRResourceStorageHelper {
      */
     public Map<String, Object> processAndStoreResource(Resource fhirResource, Cluster cluster, 
                                                       String bucketName, String operation) {
+        return processAndStoreResource(fhirResource, cluster, bucketName, operation, false);
+    }
+    
+    /**
+     * Process and store an individual FHIR resource from parsed Resource object with configurable validation
+     * @param fhirResource The FHIR Resource object
+     * @param cluster The Couchbase cluster connection
+     * @param bucketName The bucket name
+     * @param operation The operation type ("CREATE", "UPDATE", etc.)
+     * @param useLenientValidation If true, uses basic FHIR R4 validation; if false, uses strict US Core validation
+     * @return Map with processing results
+     */
+    public Map<String, Object> processAndStoreResource(Resource fhirResource, Cluster cluster, 
+                                                      String bucketName, String operation, boolean useLenientValidation) {
+        return processAndStoreResource(fhirResource, cluster, bucketName, operation, useLenientValidation, false);
+    }
+    
+    /**
+     * Process and store an individual FHIR resource from parsed Resource object with full validation control
+     * @param fhirResource The FHIR Resource object
+     * @param cluster The Couchbase cluster connection
+     * @param bucketName The bucket name
+     * @param operation The operation type ("CREATE", "UPDATE", etc.)
+     * @param useLenientValidation If true, uses basic FHIR R4 validation; if false, uses strict US Core validation
+     * @param skipValidation If true, skips all validation for performance (use for trusted sample data)
+     * @return Map with processing results
+     */
+    public Map<String, Object> processAndStoreResource(Resource fhirResource, Cluster cluster, 
+                                                      String bucketName, String operation, boolean useLenientValidation, 
+                                                      boolean skipValidation) {
         try {
             // Convert to JSON and use the main method
             String resourceJson = jsonParser.encodeResourceToString(fhirResource);
-            return processAndStoreResource(resourceJson, cluster, bucketName, operation);
+            return processAndStoreResource(resourceJson, cluster, bucketName, operation, useLenientValidation, skipValidation);
         } catch (Exception e) {
             Map<String, Object> result = new HashMap<>();
             result.put("success", false);

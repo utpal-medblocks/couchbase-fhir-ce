@@ -13,6 +13,7 @@ import org.hl7.fhir.instance.model.api.IBaseResource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 import jakarta.annotation.PostConstruct;
 
@@ -35,7 +36,11 @@ public class FHIRTestCreateService {
     private FhirContext fhirContext;  // ✅ Inject the configured context
     
     @Autowired
-    private FhirValidator fhirValidator;  // ✅ Inject the configured validator
+    private FhirValidator fhirValidator;  // ✅ Primary US Core validator
+    
+    @Autowired
+    @Qualifier("basicFhirValidator")
+    private FhirValidator basicFhirValidator;  // ✅ Basic validator for lenient validation
     
     @Autowired
     private IParser jsonParser;       // ✅ Inject the configured parser
@@ -80,12 +85,27 @@ public class FHIRTestCreateService {
     }
 
     /**
-     * Create resource using the storage helper with FHIR validation
+     * Create resource using the storage helper with strict US Core validation (default)
      */
     public Map<String, Object> createResource(String resourceType, String connectionName, 
                                             String bucketName, Map<String, Object> resourceData) {
+        return createResource(resourceType, connectionName, bucketName, resourceData, false);
+    }
+    
+    /**
+     * Create resource using the storage helper with configurable FHIR validation
+     * @param resourceType FHIR resource type
+     * @param connectionName Couchbase connection name
+     * @param bucketName Couchbase bucket name
+     * @param resourceData Resource data as Map
+     * @param useLenientValidation If true, uses basic FHIR R4 validation; if false, uses strict US Core validation
+     */
+    public Map<String, Object> createResource(String resourceType, String connectionName, 
+                                            String bucketName, Map<String, Object> resourceData, 
+                                            boolean useLenientValidation) {
         try {
-            logger.info("🚀 Creating FHIR {} resource with validation", resourceType);
+            String validationType = useLenientValidation ? "lenient (basic FHIR R4)" : "strict (US Core 6.1.0)";
+            logger.info("🚀 Creating FHIR {} resource with {} validation", resourceType, validationType);
             
             // Use provided connection or default
             connectionName = connectionName != null ? connectionName : getDefaultConnection();
@@ -96,8 +116,8 @@ public class FHIRTestCreateService {
                 throw new RuntimeException("No active connection found: " + connectionName);
             }
 
-            // Step 1: Validate and prepare the FHIR resource
-            Map<String, Object> validatedResourceData = validateAndPrepareResource(resourceType, resourceData);
+            // Step 1: Validate and prepare the FHIR resource with specified validation mode
+            Map<String, Object> validatedResourceData = validateAndPrepareResource(resourceType, resourceData, useLenientValidation);
             
             // Step 2: Generate ID if not provided
             String resourceId = validatedResourceData.containsKey("id") ? 
@@ -174,67 +194,35 @@ public class FHIRTestCreateService {
             validatedResourceData.put("resourceType", resourceType);
             validatedResourceData.put("id", resourceId);
             
-            // Step 4: Convert to FHIR resource and add audit information - optimized JSON processing
+            // Step 4: Convert to JSON for the storage helper
             String resourceJson;
-            Map<String, Object> auditedResourceData;
             try {
                 resourceJson = objectMapper.writeValueAsString(validatedResourceData);
-                IBaseResource fhirResource = jsonParser.parseResource(resourceJson);
-                
-                // Add comprehensive audit information
-                auditService.addAuditInfoToMeta(fhirResource, auditService.getCurrentUserId(), "CREATE");
-                
-                // Convert back to JSON with audit info - optimized conversion
-                String auditedResourceJson = jsonParser.encodeResourceToString(fhirResource);
-                @SuppressWarnings("unchecked")
-                Map<String, Object> tempAuditedResourceData = objectMapper.readValue(auditedResourceJson, Map.class);
-                auditedResourceData = tempAuditedResourceData;
             } catch (Exception jsonException) {
-                // Fallback to original method if Jackson fails
-                logger.debug("ObjectMapper failed, using fallback: {}", jsonException.getMessage());
-                resourceJson = JsonObject.from(validatedResourceData).toString();
-                IBaseResource fhirResource = jsonParser.parseResource(resourceJson);
-                auditService.addAuditInfoToMeta(fhirResource, auditService.getCurrentUserId(), "CREATE");
-                String auditedResourceJson = jsonParser.encodeResourceToString(fhirResource);
-                auditedResourceData = JsonObject.fromJson(auditedResourceJson).toMap();
+                logger.error("Failed to convert resource to JSON: {}", jsonException.getMessage());
+                throw new RuntimeException("JSON conversion failed: " + jsonException.getMessage(), jsonException);
             }
             
-            // Add additional meta information - pre-allocate for performance
-            @SuppressWarnings("unchecked")
-            Map<String, Object> meta = (Map<String, Object>) auditedResourceData.get("meta");
-            if (meta == null) {
-                meta = new HashMap<>(4); // Pre-allocate expected meta fields
-                auditedResourceData.put("meta", meta);
+            // Step 5: Use storage helper to process and store with audit metadata
+            Map<String, Object> storageResult = storageHelper.processAndStoreResource(resourceJson, cluster, bucketName, "CREATE");
+            
+            if (!(Boolean) storageResult.get("success")) {
+                throw new RuntimeException("Storage failed: " + storageResult.get("error"));
             }
-            meta.put("versionId", "1");
-            // Skip profile to keep meta minimal
-
-            // Step 5: Create document key with ResourceType::id format
-            String documentKey = resourceType + "/" + resourceId;
-
-            // Step 6: Build N1QL UPSERT query (changed from INSERT to UPSERT)
-            String sql = String.format(
-                "UPSERT INTO `%s`.`%s`.`%s` (KEY, VALUE) VALUES ('%s', %s)",
-                bucketName, DEFAULT_SCOPE, resourceType, documentKey, 
-                JsonObject.from(auditedResourceData).toString()
-            );
-
-            logger.info("Executing N1QL UPSERT for validated {}: {}", resourceType, resourceId);
             
-            cluster.query(sql);
-            
-            // Step 7: Create response
+            // Step 6: Create response
             Map<String, Object> response = new HashMap<>();
-            response.put("id", resourceId);
-            response.put("resourceType", resourceType);
+            response.put("id", storageResult.get("resourceId"));
+            response.put("resourceType", storageResult.get("resourceType"));
             response.put("created", getCurrentFhirTimestamp());
-            response.put("location", "/api/fhir-test/" + bucketName + "/" + resourceType + "/" + resourceId);
+            response.put("location", "/api/fhir-test/" + bucketName + "/" + resourceType + "/" + storageResult.get("resourceId"));
             response.put("status", "created");
             response.put("operation", "UPSERT");
             response.put("validationStatus", "passed");
             response.put("auditInfo", "Added comprehensive audit trail");
+            response.put("documentKey", storageResult.get("documentKey"));
             
-            logger.info("✅ Successfully upserted validated {} with ID: {}", resourceType, resourceId);
+            logger.info("✅ Successfully created validated {} with ID: {}", resourceType, storageResult.get("resourceId"));
             return response;
 
         } catch (Exception e) {
@@ -271,18 +259,30 @@ public class FHIRTestCreateService {
     }
     
     /**
-     * Process a Bundle resource using the Bundle processor
+     * Process a Bundle resource using the Bundle processor with strict validation
      */
     private Map<String, Object> processBundleResource(String connectionName, String bucketName, String bundleJson) {
+        return processBundleResource(connectionName, bucketName, bundleJson, false);
+    }
+    
+    /**
+     * Process a Bundle resource using the Bundle processor with configurable validation
+     * @param connectionName Couchbase connection name
+     * @param bucketName Couchbase bucket name  
+     * @param bundleJson Bundle JSON string
+     * @param useLenientValidation If true, uses basic FHIR validation; if false, uses strict US Core validation
+     */
+    private Map<String, Object> processBundleResource(String connectionName, String bucketName, String bundleJson, boolean useLenientValidation) {
         try {
-            logger.info("🔄 Processing FHIR Bundle with transaction support");
+            String validationType = useLenientValidation ? "lenient (basic FHIR R4)" : "strict (US Core 6.1.0)";
+            logger.info("🔄 Processing FHIR Bundle with transaction support using {} validation", validationType);
             
             // Use provided connection or default
             connectionName = connectionName != null ? connectionName : getDefaultConnection();
             bucketName = bucketName != null ? bucketName : DEFAULT_BUCKET;
             
-            // Process Bundle using the Bundle processor
-            org.hl7.fhir.r4.model.Bundle responseBundle = bundleProcessor.processBundleTransaction(bundleJson, connectionName, bucketName);
+            // Process Bundle using the Bundle processor with specified validation
+            org.hl7.fhir.r4.model.Bundle responseBundle = bundleProcessor.processBundleTransaction(bundleJson, connectionName, bucketName, useLenientValidation);
             
             // Convert response Bundle back to Map for consistent API response
             String responseBundleJson = jsonParser.encodeResourceToString(responseBundle);
@@ -298,11 +298,11 @@ public class FHIRTestCreateService {
             response.put("operation", "BUNDLE_TRANSACTION");
             response.put("entryCount", responseBundle.getEntry().size());
             response.put("bundleType", responseBundle.getType().name());
-            response.put("validationStatus", "passed");
+            response.put("validationStatus", "passed (" + validationType + ")");
             response.put("auditInfo", "Bundle processed with comprehensive audit trail");
             response.put("bundleResponse", bundleData);
             
-            logger.info("✅ Successfully processed Bundle with {} entries", responseBundle.getEntry().size());
+            logger.info("✅ Successfully processed Bundle with {} entries using {} validation", responseBundle.getEntry().size(), validationType);
             return response;
             
         } catch (Exception e) {
@@ -341,17 +341,31 @@ public class FHIRTestCreateService {
     }
 
     /**
-     * Validate FHIR resource using HAPI FHIR validator
+     * Validate FHIR resource using HAPI FHIR validator (uses strict US Core validation by default)
      */
     public ValidationResult validateFhirResource(String resourceJson, String resourceType) {
+        return validateFhirResource(resourceJson, resourceType, false);
+    }
+    
+    /**
+     * Validate FHIR resource using HAPI FHIR validator with configurable validation strictness
+     * @param resourceJson JSON string of the FHIR resource
+     * @param resourceType Resource type name
+     * @param useLenientValidation If true, uses basic FHIR R4 validation; if false, uses strict US Core validation
+     */
+    public ValidationResult validateFhirResource(String resourceJson, String resourceType, boolean useLenientValidation) {
         try {
-            logger.info("🔍 Validating FHIR {} resource", resourceType);
+            String validationType = useLenientValidation ? "lenient (basic FHIR R4)" : "strict (US Core 6.1.0)";
+            logger.info("🔍 Validating FHIR {} resource with {} validation", resourceType, validationType);
             
             // Parse JSON to FHIR resource
             IBaseResource resource = jsonParser.parseResource(resourceJson);
             
+            // Choose validator based on validation type
+            FhirValidator validator = useLenientValidation ? basicFhirValidator : fhirValidator;
+            
             // Validate the resource
-            ValidationResult result = fhirValidator.validateWithResult(resource);
+            ValidationResult result = validator.validateWithResult(resource);
             
             // Filter out INFORMATION level messages
             List<SingleValidationMessage> filteredMessages = result
@@ -364,10 +378,10 @@ public class FHIRTestCreateService {
             ValidationResult validationResult = new ValidationResult(result.getContext(), filteredMessages);
             
             if (validationResult.isSuccessful()) {
-                logger.info("✅ FHIR {} validation passed", resourceType);
+                logger.info("✅ FHIR {} validation passed ({})", resourceType, validationType);
             } else {
-                logger.warn("❌ FHIR {} validation failed with {} significant issues", 
-                    resourceType, validationResult.getMessages().size());
+                logger.warn("❌ FHIR {} validation failed with {} significant issues ({})", 
+                    resourceType, validationResult.getMessages().size(), validationType);
                 
                 // Log validation errors (without full stack trace)
                 validationResult.getMessages().forEach(message -> {
@@ -394,15 +408,25 @@ public class FHIRTestCreateService {
     }
     
     /**
-     * Validate and prepare FHIR resource data for storage
+     * Validate and prepare FHIR resource data for storage using strict US Core validation (default)
      */
     private Map<String, Object> validateAndPrepareResource(String resourceType, Map<String, Object> resourceData) {
+        return validateAndPrepareResource(resourceType, resourceData, false);
+    }
+    
+    /**
+     * Validate and prepare FHIR resource data for storage with configurable validation
+     * @param resourceType FHIR resource type
+     * @param resourceData Resource data as Map
+     * @param useLenientValidation If true, uses basic FHIR R4 validation; if false, uses strict US Core validation
+     */
+    private Map<String, Object> validateAndPrepareResource(String resourceType, Map<String, Object> resourceData, boolean useLenientValidation) {
         try {
             // Convert Map to JSON string for HAPI validation
             String resourceJson = JsonObject.from(resourceData).toString();
             
-            // Validate with HAPI FHIR
-            ValidationResult validationResult = validateFhirResource(resourceJson, resourceType);
+            // Validate with HAPI FHIR using specified validation mode
+            ValidationResult validationResult = validateFhirResource(resourceJson, resourceType, useLenientValidation);
             
             if (!validationResult.isSuccessful()) {
                 StringBuilder errorMsg = new StringBuilder("FHIR validation failed:\n");
@@ -430,17 +454,28 @@ public class FHIRTestCreateService {
     }
 
     /**
-     * Validate FHIR resource without creating it (useful for testing)
+     * Validate FHIR resource without creating it using strict US Core validation (default)
      */
     public Map<String, Object> validateResourceOnly(String resourceType, Map<String, Object> resourceData) {
+        return validateResourceOnly(resourceType, resourceData, false);
+    }
+    
+    /**
+     * Validate FHIR resource without creating it with configurable validation (useful for testing)
+     * @param resourceType FHIR resource type
+     * @param resourceData Resource data as Map
+     * @param useLenientValidation If true, uses basic FHIR R4 validation; if false, uses strict US Core validation
+     */
+    public Map<String, Object> validateResourceOnly(String resourceType, Map<String, Object> resourceData, boolean useLenientValidation) {
         try {
-            logger.info("🔍 Validating FHIR {} resource only", resourceType);
+            String validationType = useLenientValidation ? "lenient (basic FHIR R4)" : "strict (US Core 6.1.0)";
+            logger.info("🔍 Validating FHIR {} resource only with {} validation", resourceType, validationType);
             
             // Convert Map to JSON string for HAPI validation
             String resourceJson = JsonObject.from(resourceData).toString();
             
-            // Validate with HAPI FHIR
-            ValidationResult validationResult = validateFhirResource(resourceJson, resourceType);
+            // Validate with HAPI FHIR using specified validation mode
+            ValidationResult validationResult = validateFhirResource(resourceJson, resourceType, useLenientValidation);
             
             // Create response
             Map<String, Object> response = new HashMap<>();
