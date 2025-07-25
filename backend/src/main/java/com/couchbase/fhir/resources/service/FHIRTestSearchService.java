@@ -80,6 +80,8 @@ public class FHIRTestSearchService {
     private static final Set<String> SIMPLE_CODE_FIELDS = Set.of(
         "gender", "active", "deceasedBoolean", "multipleBirthBoolean"
     );
+    
+
 
     // FHIR search parameter field path resolution result
     private static class FieldPathMapping {
@@ -155,6 +157,10 @@ public class FHIRTestSearchService {
         
         if (paramType == RestSearchParameterTypeEnum.TOKEN) {
             return handleTokenFieldPath(basePath, hapiPath, searchParam.getName());
+        } else if (paramType == RestSearchParameterTypeEnum.REFERENCE) {
+            // REFERENCE parameters need to search in the .reference field
+            logger.debug("Detected REFERENCE field: {} -> {}.reference", basePath, basePath);
+            return new FieldPathMapping(basePath + ".reference", null, null, false);
         } else {
             return new FieldPathMapping(basePath, null, null, false);
         }
@@ -455,7 +461,7 @@ public class FHIRTestSearchService {
         } else if (mapping.hasSystem && mapping.systemValue != null) {
             handleImpliedSystemParameter(mapping, value, prefix, ftsConditions);
         } else {
-            handleRegularParameter(mapping, value, prefix, parsed.modifiers, paramType, ftsConditions);
+            handleRegularParameter(mapping, value, prefix, parsed.modifiers, paramType, ftsConditions, parsed.baseName);
         }
     }
     
@@ -481,23 +487,36 @@ public class FHIRTestSearchService {
     
     private void handleRegularParameter(FieldPathMapping mapping, String value, String prefix, 
                                       Set<String> modifiers, RestSearchParameterTypeEnum paramType,
-                                      List<String> ftsConditions) {
+                                      List<String> ftsConditions, String baseName) {
         
         String[] fieldPaths = mapping.fieldPath.split(",");
         String fieldPath = fieldPaths[0].trim(); // Use first field for multiple paths
         
-        String condition = createSingleFieldCondition(fieldPath, value, prefix, modifiers, paramType);
+        String condition = createSingleFieldCondition(fieldPath, value, prefix, modifiers, paramType, baseName);
         ftsConditions.add(condition);
     }
     
     private String createSingleFieldCondition(String fieldPath, String value, String prefix, 
-                                            Set<String> modifiers, RestSearchParameterTypeEnum paramType) {
+                                            Set<String> modifiers, RestSearchParameterTypeEnum paramType, String baseName) {
         if (modifiers.contains("exact")) {
             return fieldPath + ":match:" + value;
         } else if (modifiers.contains("contains")) {
             return fieldPath + ":wildcard:*" + value + "*";
         } else if (paramType == RestSearchParameterTypeEnum.DATE || paramType == RestSearchParameterTypeEnum.NUMBER) {
             return fieldPath + ":range:" + paramType.name() + ":" + prefix + ":" + value;
+        } else if (paramType == RestSearchParameterTypeEnum.REFERENCE) {
+            // REFERENCE searches: performance optimization using exact match
+            if (value.contains("/")) {
+                // Full reference format (e.g., "Patient/example") - exact match
+                return fieldPath + ":match:" + value;
+            } else {
+                // ID-only format (e.g., "example") - infer resource type from field name
+                // Field name IS the resource type: patient -> Patient, organization -> Organization
+                String resourceType = capitalize(baseName);
+                String fullReference = resourceType + "/" + value;
+                logger.debug("🚀 REFERENCE optimization: {} + {} -> {}", baseName, value, fullReference);
+                return fieldPath + ":match:" + fullReference;
+            }
         } else if ("id".equals(fieldPath)) {
             // ID searches should be exact matches, not wildcard
             return fieldPath + ":match:" + value;
@@ -637,6 +656,7 @@ public class FHIRTestSearchService {
         return query;
     }
     
+
     private JsonObject createMatchQuery(FtsCondition condition) {
         JsonObject matchQuery = JsonObject.create();
         
@@ -699,31 +719,113 @@ public class FHIRTestSearchService {
     private void handleDateRangeQuery(JsonObject matchQuery, String prefix, String dateValue) {
         switch (prefix) {
             case "eq":
-                matchQuery.put("start", dateValue);
-                matchQuery.put("end", dateValue);
-                matchQuery.put("inclusive_start", true);
-                matchQuery.put("inclusive_end", true);
+                // FHIR-compliant: date-only searches should match entire day
+                if (isDateOnly(dateValue)) {
+                    String[] dayRange = expandDateToFullDay(dateValue);
+                    matchQuery.put("start", dayRange[0]);
+                    matchQuery.put("end", dayRange[1]);
+                    matchQuery.put("inclusive_start", true);
+                    matchQuery.put("inclusive_end", true);
+                    logger.debug("🗓️ Expanded date search '{}' to range: {} - {}", dateValue, dayRange[0], dayRange[1]);
+                } else {
+                    // Datetime value - use exact match
+                    matchQuery.put("start", dateValue);
+                    matchQuery.put("end", dateValue);
+                    matchQuery.put("inclusive_start", true);
+                    matchQuery.put("inclusive_end", true);
+                }
                 break;
             case "ge": 
-                matchQuery.put("start", dateValue);
+                // For date-only ge searches, start from beginning of day
+                if (isDateOnly(dateValue)) {
+                    String startOfDay = dateValue + "T00:00:00Z";
+                    matchQuery.put("start", startOfDay);
+                    logger.debug("🗓️ Expanded ge date search '{}' to start: {}", dateValue, startOfDay);
+                } else {
+                    matchQuery.put("start", dateValue);
+                }
                 matchQuery.put("inclusive_start", true);
                 break;
             case "gt":
             case "sa":
-                matchQuery.put("start", dateValue);
+                // For date-only gt searches, start from end of day (exclusive)
+                if (isDateOnly(dateValue)) {
+                    String endOfDay = dateValue + "T23:59:59Z";
+                    matchQuery.put("start", endOfDay);
+                    logger.debug("🗓️ Expanded gt date search '{}' to start: {}", dateValue, endOfDay);
+                } else {
+                    matchQuery.put("start", dateValue);
+                }
                 matchQuery.put("inclusive_start", false);
                 break;
             case "le":
-                matchQuery.put("end", dateValue);
+                // For date-only le searches, end at end of day
+                if (isDateOnly(dateValue)) {
+                    String endOfDay = dateValue + "T23:59:59Z";
+                    matchQuery.put("end", endOfDay);
+                    logger.debug("🗓️ Expanded le date search '{}' to end: {}", dateValue, endOfDay);
+                } else {
+                    matchQuery.put("end", dateValue);
+                }
                 matchQuery.put("inclusive_end", true);
                 break;
             case "lt":
             case "eb":
-                matchQuery.put("end", dateValue);
+                // For date-only lt searches, end at beginning of day (exclusive)
+                if (isDateOnly(dateValue)) {
+                    String startOfDay = dateValue + "T00:00:00Z";
+                    matchQuery.put("end", startOfDay);
+                    logger.debug("🗓️ Expanded lt date search '{}' to end: {}", dateValue, startOfDay);
+                } else {
+                    matchQuery.put("end", dateValue);
+                }
                 matchQuery.put("inclusive_end", false);
                 break;
             default:
                 matchQuery.put("match", dateValue);
+        }
+    }
+    
+    /**
+     * Check if date value is date-only (YYYY-MM-DD) vs datetime format
+     * FHIR-compliant: date-only searches should match entire day
+     */
+    private boolean isDateOnly(String dateValue) {
+        // Date-only format: YYYY-MM-DD (10 characters)
+        // Datetime formats: YYYY-MM-DDTHH:MM:SS[.mmm][Z|±HH:MM] (longer)
+        if (dateValue == null || dateValue.length() <= 10) {
+            return true;
+        }
+        
+        // Check if it contains time indicators
+        return !dateValue.contains("T") && !dateValue.contains(" ");
+    }
+    
+    /**
+     * Expand date-only value to full day range for FHIR-compliant searching
+     * Input: "2017-07-20" 
+     * Output: ["2017-07-20T00:00:00Z", "2017-07-20T23:59:59Z"]
+     */
+    private String[] expandDateToFullDay(String dateValue) {
+        // Ensure we have a valid date format
+        if (dateValue == null || dateValue.length() != 10) {
+            // Fallback to original value if not standard date format
+            return new String[]{dateValue, dateValue};
+        }
+        
+        try {
+            // Validate date format by parsing
+            LocalDate.parse(dateValue, DateTimeFormatter.ISO_LOCAL_DATE);
+            
+            // Create full day range in UTC
+            String startOfDay = dateValue + "T00:00:00Z";
+            String endOfDay = dateValue + "T23:59:59Z";
+            
+            return new String[]{startOfDay, endOfDay};
+            
+        } catch (DateTimeParseException e) {
+            logger.warn("Invalid date format for expansion: {}, using as-is", dateValue);
+            return new String[]{dateValue, dateValue};
         }
     }
     
@@ -787,9 +889,10 @@ public class FHIRTestSearchService {
     private JsonObject handleCompositeCondition(String compositeCondition) {
         if (compositeCondition.startsWith("_composite_name_or:")) {
             String value = compositeCondition.substring("_composite_name_or:".length());
-            logger.info("🔍 Creating OR query for name fields with value: {}", value);
+            logger.info("🔍 Creating OR query for primary name fields (family, given) with value: {}", value);
             
-            // Create disjuncts (OR) for Patient name fields
+            // Create disjuncts (OR) for primary Patient name fields only
+            // Focus on family and given names - exclude prefix/suffix for typical name searches
             JsonArray disjuncts = JsonArray.create();
             
             // Search in name.family
@@ -804,17 +907,8 @@ public class FHIRTestSearchService {
             givenMatch.put("field", "name.given");
             disjuncts.add(givenMatch);
             
-            // Search in name.prefix
-            JsonObject prefixMatch = JsonObject.create();
-            prefixMatch.put("wildcard", value + "*");
-            prefixMatch.put("field", "name.prefix");
-            disjuncts.add(prefixMatch);
-            
-            // Search in name.suffix
-            JsonObject suffixMatch = JsonObject.create();
-            suffixMatch.put("wildcard", value + "*");
-            suffixMatch.put("field", "name.suffix");
-            disjuncts.add(suffixMatch);
+            // Note: Excluding name.prefix and name.suffix from general name searches
+            // These can be searched explicitly using family/given/prefix/suffix parameters
             
             return JsonObject.create().put("disjuncts", disjuncts);
         }
@@ -995,7 +1089,7 @@ public class FHIRTestSearchService {
         if ("Patient".equals(resourceType) && "name".equals(paramName)) {
             logger.info("🔍 Handling composite 'name' search for Patient: {}", value);
             
-            // Create OR condition for name fields (family, given, prefix, suffix)
+            // Create OR condition for primary name fields (family, given only)
             // This will be handled specially in buildFtsJsonQuery
             String nameCondition = "_composite_name_or:" + value;
             ftsConditions.add(nameCondition);

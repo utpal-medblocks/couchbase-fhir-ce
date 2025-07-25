@@ -6,6 +6,8 @@ import ca.uhn.fhir.util.BundleUtil;
 import ca.uhn.fhir.util.FhirTerser;
 import ca.uhn.fhir.validation.FhirValidator;
 import ca.uhn.fhir.validation.ValidationResult;
+import ca.uhn.fhir.validation.SingleValidationMessage;
+import ca.uhn.fhir.validation.ResultSeverityEnum;
 import com.couchbase.admin.connections.service.ConnectionService;
 import com.couchbase.client.java.Cluster;
 import com.couchbase.client.java.json.JsonObject;
@@ -130,9 +132,19 @@ public class FHIRBundleProcessingService {
                 resolveUuidReferencesInResource(resource, uuidToIdMapping);
                 
                 // Step 2b: Validate the resource
-                ValidationResult validation = fhirValidator.validateWithResult(resource);
+                ValidationResult result = fhirValidator.validateWithResult(resource);
+                
+                // Filter out INFORMATION level messages
+                List<SingleValidationMessage> filteredMessages = result
+                    .getMessages()
+                    .stream()
+                    .filter(msg -> msg.getSeverity() != ResultSeverityEnum.INFORMATION)
+                    .collect(Collectors.toList());
+                
+                ValidationResult validation = new ValidationResult(result.getContext(), filteredMessages);
+                
                 if (!validation.isSuccessful()) {
-                    logger.warn("⚠️ Validation failed for {}: {}", resourceType, validation.getMessages());
+                    logger.warn("⚠️ Validation failed for {} with {} significant issues", resourceType, validation.getMessages().size());
                     // Continue processing even if validation fails (configurable behavior)
                 }
                 
@@ -342,7 +354,16 @@ public class FHIRBundleProcessingService {
      * Validate Bundle structure
      */
     private ValidationResult validateBundle(Bundle bundle) {
-        return fhirValidator.validateWithResult(bundle);
+        ValidationResult result = fhirValidator.validateWithResult(bundle);
+        
+        // Filter out INFORMATION level messages
+        List<SingleValidationMessage> filteredMessages = result
+            .getMessages()
+            .stream()
+            .filter(msg -> msg.getSeverity() != ResultSeverityEnum.INFORMATION)
+            .collect(Collectors.toList());
+        
+        return new ValidationResult(result.getContext(), filteredMessages);
     }
 
     /**

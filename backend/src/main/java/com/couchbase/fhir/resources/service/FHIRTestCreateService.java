@@ -4,6 +4,8 @@ import ca.uhn.fhir.context.FhirContext;
 import ca.uhn.fhir.parser.IParser;
 import ca.uhn.fhir.validation.FhirValidator;
 import ca.uhn.fhir.validation.ValidationResult;
+import ca.uhn.fhir.validation.SingleValidationMessage;
+import ca.uhn.fhir.validation.ResultSeverityEnum;
 import com.couchbase.admin.connections.service.ConnectionService;
 import com.couchbase.client.java.Cluster;
 import com.couchbase.client.java.json.JsonObject;
@@ -17,6 +19,7 @@ import jakarta.annotation.PostConstruct;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
+import java.util.stream.Collectors;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.core.JsonProcessingException;
 
@@ -348,12 +351,22 @@ public class FHIRTestCreateService {
             IBaseResource resource = jsonParser.parseResource(resourceJson);
             
             // Validate the resource
-            ValidationResult validationResult = fhirValidator.validateWithResult(resource);
+            ValidationResult result = fhirValidator.validateWithResult(resource);
+            
+            // Filter out INFORMATION level messages
+            List<SingleValidationMessage> filteredMessages = result
+                .getMessages()
+                .stream()
+                .filter(msg -> msg.getSeverity() != ResultSeverityEnum.INFORMATION)
+                .collect(Collectors.toList());
+            
+            // Create new ValidationResult with filtered messages
+            ValidationResult validationResult = new ValidationResult(result.getContext(), filteredMessages);
             
             if (validationResult.isSuccessful()) {
                 logger.info("✅ FHIR {} validation passed", resourceType);
             } else {
-                logger.warn("❌ FHIR {} validation failed with {} issues", 
+                logger.warn("❌ FHIR {} validation failed with {} significant issues", 
                     resourceType, validationResult.getMessages().size());
                 
                 // Log validation errors (without full stack trace)
