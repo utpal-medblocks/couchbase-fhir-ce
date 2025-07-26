@@ -1,11 +1,15 @@
 package com.couchbase.fhir.resources.controller;
 
 import com.couchbase.fhir.resources.service.FHIRTestSearchService;
+import com.couchbase.fhir.resources.search.validation.FHIRSearchParameterPreprocessor;
+import com.couchbase.fhir.resources.search.validation.FHIRSearchValidationException;
+import com.couchbase.fhir.resources.search.validation.FHIROperationOutcomeBuilder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.util.MultiValueMap;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.*;
@@ -21,6 +25,12 @@ public class FHIRTestSearchController {
     @Autowired
     private FHIRTestSearchService searchService;
     
+    @Autowired
+    private FHIRSearchParameterPreprocessor parameterPreprocessor;
+    
+    @Autowired
+    private FHIROperationOutcomeBuilder outcomeBuilder;
+    
     public FHIRTestSearchController() {
         // Empty - Spring will inject dependencies
     }
@@ -32,7 +42,7 @@ public class FHIRTestSearchController {
     @GetMapping("/{resourceType}")
     public ResponseEntity<String> searchResources(
             @PathVariable String resourceType,
-            @RequestParam Map<String, String> queryParams,
+            @RequestParam MultiValueMap<String, String> queryParams,
             @RequestParam(required = false) String connectionName,
             @RequestParam(required = false) String bucketName) {
         
@@ -40,8 +50,40 @@ public class FHIRTestSearchController {
             logger.info("🚀 Controller: Starting search for {} resources with params: {}", resourceType, queryParams);
             logger.info("🚀 Controller: Connection: {}, Bucket: {}", connectionName, bucketName);
             
-            // Remove connection/bucket params from search parameters
-            Map<String, String> searchParams = new HashMap<>(queryParams);
+            // Convert MultiValueMap to Map<String, List<String>> for validation
+            Map<String, List<String>> allParams = new HashMap<>();
+            for (Map.Entry<String, List<String>> entry : queryParams.entrySet()) {
+                allParams.put(entry.getKey(), entry.getValue());
+            }
+            
+            // Remove framework parameters from validation
+            Map<String, List<String>> validationParams = new HashMap<>(allParams);
+            validationParams.remove("connectionName");
+            validationParams.remove("bucketName");
+            
+            // STEP 1: Validate parameters BEFORE query execution
+            logger.info("🔍 Controller: Running parameter validation...");
+            try {
+                parameterPreprocessor.validateSearchParameters(resourceType, validationParams);
+                logger.info("✅ Controller: Parameter validation passed!");
+            } catch (FHIRSearchValidationException validationException) {
+                logger.warn("❌ Controller: Parameter validation failed: {}", validationException.getMessage());
+                // Return FHIR-compliant error response
+                String outcomeJson = outcomeBuilder.toJson(validationException.getOperationOutcome());
+                return ResponseEntity.badRequest()
+                    .header("Content-Type", "application/fhir+json")
+                    .body(outcomeJson);
+            }
+            
+            // STEP 2: Convert to legacy Map<String, String> format for existing search service
+            // NOTE: This temporarily loses multiple values until we refactor the search service
+            Map<String, String> searchParams = new HashMap<>();
+            for (Map.Entry<String, List<String>> entry : allParams.entrySet()) {
+                if (!entry.getValue().isEmpty()) {
+                    // Take the first value for now - validation already caught conflicts
+                    searchParams.put(entry.getKey(), entry.getValue().get(0));
+                }
+            }
             searchParams.remove("connectionName");
             searchParams.remove("bucketName");
             
