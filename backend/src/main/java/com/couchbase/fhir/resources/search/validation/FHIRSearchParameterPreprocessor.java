@@ -27,15 +27,15 @@ import java.util.regex.Pattern;
  * - Detect logically impossible parameter combinations
  */
 @Component
-public class FHIRSearchParameterPreprocessor {
+public class FhirSearchParameterPreprocessor {
     
-    private static final Logger logger = LoggerFactory.getLogger(FHIRSearchParameterPreprocessor.class);
+    private static final Logger logger = LoggerFactory.getLogger(FhirSearchParameterPreprocessor.class);
     
     @Autowired
     private FhirContext fhirContext;
     
     @Autowired
-    private FHIROperationOutcomeBuilder outcomeBuilder;
+    private FhirOperationOutcomeBuilder outcomeBuilder;
     
     // FHIR prefix pattern for validation
     private static final Pattern PREFIX_PATTERN = Pattern.compile("^(eq|ne|gt|lt|ge|le|sa|eb|ap)(.+)");
@@ -44,7 +44,7 @@ public class FHIRSearchParameterPreprocessor {
      * Main entry point for parameter preprocessing and validation
      * @param resourceType FHIR resource type (e.g., "Patient")
      * @param allParams All query parameters with multiple values per key
-     * @throws FHIRSearchValidationException if validation fails
+     * @throws FhirSearchValidationException if validation fails
      */
     public void validateSearchParameters(String resourceType, Map<String, List<String>> allParams) {
         logger.info("🔍 Validating search parameters for {} - {} parameters", resourceType, allParams.size());
@@ -61,7 +61,7 @@ public class FHIRSearchParameterPreprocessor {
             
             logger.info("✅ Parameter validation passed for {}", resourceType);
             
-        } catch (FHIRSearchValidationException e) {
+        } catch (FhirSearchValidationException e) {
             logger.warn("❌ Parameter validation failed: {}", e.getMessage());
             throw e;
         }
@@ -83,7 +83,7 @@ public class FHIRSearchParameterPreprocessor {
             if (searchParam == null) {
                 logger.warn("Unknown parameter: {} for resource type: {}", paramName, resourceType);
                 OperationOutcome outcome = outcomeBuilder.createUnsupportedParameterError(paramName, resourceType);
-                throw new FHIRSearchValidationException(
+                throw new FhirSearchValidationException(
                     "Unknown search parameter: " + paramName, 
                     paramName, 
                     outcome
@@ -143,7 +143,7 @@ public class FHIRSearchParameterPreprocessor {
                 OperationOutcome outcome = outcomeBuilder.createInvalidParameterValueError(
                     paramName, value, getExpectedFormat(paramType)
                 );
-                throw new FHIRSearchValidationException(e.getMessage(), paramName, outcome);
+                throw new FhirSearchValidationException(e.getMessage(), paramName, outcome);
             }
         }
     }
@@ -223,7 +223,7 @@ public class FHIRSearchParameterPreprocessor {
         if (implicitEqualityValues.size() > 1) {
             logger.warn("❌ Multiple implicit equality date values detected: {}", implicitEqualityValues);
             OperationOutcome outcome = outcomeBuilder.createConflictingDateParametersError(paramName);
-            throw new FHIRSearchValidationException(
+            throw new FhirSearchValidationException(
                 "Can not have multiple date range parameters for the same param without a qualifier", 
                 paramName, 
                 outcome
@@ -235,7 +235,7 @@ public class FHIRSearchParameterPreprocessor {
         if (!implicitEqualityValues.isEmpty() && !explicitPrefixValues.isEmpty()) {
             logger.warn("❌ Mixed implicit and explicit date values detected");
             OperationOutcome outcome = outcomeBuilder.createConflictingDateParametersError(paramName);
-            throw new FHIRSearchValidationException(
+            throw new FhirSearchValidationException(
                 "Can not have multiple date range parameters for the same param without a qualifier", 
                 paramName, 
                 outcome
@@ -268,7 +268,7 @@ public class FHIRSearchParameterPreprocessor {
             logger.warn("❌ Multiple implicit equality number values detected: {}", implicitEqualityValues);
             OperationOutcome outcome = outcomeBuilder.createParameterValidationError(paramName,
                 "Multiple values without explicit prefixes not allowed for numeric parameters");
-            throw new FHIRSearchValidationException(
+            throw new FhirSearchValidationException(
                 "Multiple number values without prefixes", paramName, outcome
             );
         }
@@ -290,7 +290,7 @@ public class FHIRSearchParameterPreprocessor {
                 logger.warn("❌ Multiple conflicting token values for single-value field {}: {}", paramName, values);
                 OperationOutcome outcome = outcomeBuilder.createParameterValidationError(paramName,
                     "Multiple conflicting values not allowed for single-value field");
-                throw new FHIRSearchValidationException(
+                throw new FhirSearchValidationException(
                     "Conflicting token values for single-value field", paramName, outcome
                 );
             }

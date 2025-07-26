@@ -26,9 +26,9 @@ import java.util.*;
 import java.util.stream.Collectors;
 
 @Service
-public class FHIRBundleProcessingService {
+public class FhirBundleProcessingService {
 
-    private static final Logger logger = LoggerFactory.getLogger(FHIRBundleProcessingService.class);
+    private static final Logger logger = LoggerFactory.getLogger(FhirBundleProcessingService.class);
 
     @Autowired
     private ConnectionService connectionService;
@@ -47,7 +47,7 @@ public class FHIRBundleProcessingService {
     private IParser jsonParser;
     
     @Autowired
-    private FHIRAuditService auditService;
+    private FhirAuditService auditService;
 
     // Default connection and bucket names
     private static final String DEFAULT_CONNECTION = "default";
@@ -371,7 +371,7 @@ public class FHIRBundleProcessingService {
         // Use auditService to get user info if available, else fallback
         String createdBy = "user:anonymous";
         try {
-            com.couchbase.fhir.resources.service.FHIRAuditService auditService = this.auditService;
+            com.couchbase.fhir.resources.service.FhirAuditService auditService = this.auditService;
             if (auditService != null) {
                 com.couchbase.fhir.resources.service.UserAuditInfo auditInfo = auditService.getCurrentUserAuditInfo();
                 if (auditInfo != null && auditInfo.getUserId() != null) {

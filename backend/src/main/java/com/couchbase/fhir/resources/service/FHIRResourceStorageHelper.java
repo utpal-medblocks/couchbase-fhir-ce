@@ -21,13 +21,13 @@ import java.util.Map;
  * Helper service for common FHIR resource storage operations with audit metadata
  */
 @Component
-public class FHIRResourceStorageHelper {
+public class FhirResourceStorageHelper {
     
-    private static final Logger log = LoggerFactory.getLogger(FHIRResourceStorageHelper.class);
+    private static final Logger log = LoggerFactory.getLogger(FhirResourceStorageHelper.class);
     private static final String DEFAULT_SCOPE = "Resources";
     
     @Autowired
-    private FHIRAuditService auditService;
+    private FhirAuditService auditService;
     
     @Autowired
     private FhirValidator fhirValidator;  // Primary US Core validator

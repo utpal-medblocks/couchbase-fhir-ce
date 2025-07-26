@@ -12,9 +12,9 @@ import java.time.format.DateTimeFormatter;
 import java.util.*;
 
 @Service
-public class FHIRTestUpdateService {
+public class FhirUpdateService {
 
-    private static final Logger logger = LoggerFactory.getLogger(FHIRTestUpdateService.class);
+    private static final Logger logger = LoggerFactory.getLogger(FhirUpdateService.class);
 
     @Autowired
     private ConnectionService connectionService;

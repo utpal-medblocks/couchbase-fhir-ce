@@ -16,9 +16,9 @@ import java.time.format.DateTimeFormatter;
 import java.util.*;
 
 @Service
-public class FHIRTestGeneralService {
+public class FhirCapabilityService {
 
-    private static final Logger logger = LoggerFactory.getLogger(FHIRTestGeneralService.class);
+    private static final Logger logger = LoggerFactory.getLogger(FhirCapabilityService.class);
 
     @Autowired
     private ConnectionService connectionService;
@@ -31,13 +31,13 @@ public class FHIRTestGeneralService {
     private static final String DEFAULT_BUCKET = "fhir";
     private static final String DEFAULT_SCOPE = "Resources";
 
-    public FHIRTestGeneralService() {
+    public FhirCapabilityService() {
         // Empty - Spring will inject dependencies
     }
     
     @PostConstruct
     private void init() {
-        logger.info("🚀 FHIRTestGeneralService initialized with FHIR R4 context");
+        logger.info("🚀 FhirCapabilityService initialized with FHIR R4 context");
         
         // Configure FHIR context for optimal performance
         fhirContext.getParserOptions().setStripVersionsFromReferences(false);

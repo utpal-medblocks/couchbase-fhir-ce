@@ -10,9 +10,9 @@ import org.springframework.stereotype.Service;
 import java.util.*;
 
 @Service
-public class FHIRTestDeleteService {
+public class FhirDeleteService {
 
-    private static final Logger logger = LoggerFactory.getLogger(FHIRTestDeleteService.class);
+    private static final Logger logger = LoggerFactory.getLogger(FhirDeleteService.class);
 
     @Autowired
     private ConnectionService connectionService;

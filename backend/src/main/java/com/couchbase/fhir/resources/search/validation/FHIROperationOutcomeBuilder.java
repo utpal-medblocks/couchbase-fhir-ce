@@ -13,7 +13,7 @@ import java.util.Date;
  * Handles error response creation for FHIR validation and processing errors
  */
 @Component
-public class FHIROperationOutcomeBuilder {
+public class FhirOperationOutcomeBuilder {
     
     @Autowired
     private FhirContext fhirContext;

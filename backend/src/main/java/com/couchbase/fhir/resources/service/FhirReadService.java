@@ -14,9 +14,9 @@ import java.util.*;
 import java.util.stream.Collectors;
 
 @Service
-public class FHIRTestReadService {
+public class FhirReadService {
 
-    private static final Logger logger = LoggerFactory.getLogger(FHIRTestReadService.class);
+    private static final Logger logger = LoggerFactory.getLogger(FhirReadService.class);
 
     @Autowired
     private ConnectionService connectionService;

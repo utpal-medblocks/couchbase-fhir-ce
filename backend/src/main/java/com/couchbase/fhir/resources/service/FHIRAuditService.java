@@ -15,9 +15,9 @@ import java.util.*;
 import java.util.stream.Collectors;
 
 @Service
-public class FHIRAuditService {
-    
-    private static final Logger logger = LoggerFactory.getLogger(FHIRAuditService.class);
+public class FhirAuditService {
+
+    private static final Logger logger = LoggerFactory.getLogger(FhirAuditService.class);
     
     /**
      * Add comprehensive audit information to resource meta using centralized helper

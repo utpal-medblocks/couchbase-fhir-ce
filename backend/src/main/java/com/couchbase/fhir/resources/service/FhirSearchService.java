@@ -30,9 +30,9 @@ import java.util.UUID;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 @Service
-public class FHIRTestSearchService {
+public class FhirSearchService {
     
-    private static final Logger logger = LoggerFactory.getLogger(FHIRTestSearchService.class);
+    private static final Logger logger = LoggerFactory.getLogger(FhirSearchService.class);
     
     @Autowired
     private ConnectionService connectionService;
@@ -100,7 +100,7 @@ public class FHIRTestSearchService {
     
     @PostConstruct
     private void init() {
-        logger.info("🚀 FHIRTestSearchService initialized with FHIR R4 context");
+        logger.info("🚀 FhirSearchService initialized with FHIR R4 context");
         
         // Configure parser for optimal performance
         jsonParser.setPrettyPrint(false);                    // ✅ No formatting

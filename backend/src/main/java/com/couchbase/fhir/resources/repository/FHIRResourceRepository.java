@@ -4,7 +4,7 @@ import org.springframework.stereotype.Repository;
 import java.util.Map;
 
 @Repository
-public class FHIRResourceRepository {
+public class FhirResourceRepository {
 
     public Object findById(String tenant, String resourceType, String id) {
         // TODO: Implement Couchbase connectivity

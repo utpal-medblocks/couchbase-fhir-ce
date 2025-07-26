@@ -25,9 +25,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.core.JsonProcessingException;
 
 @Service
-public class FHIRTestCreateService {
+public class FhirCreateService {
 
-    private static final Logger logger = LoggerFactory.getLogger(FHIRTestCreateService.class);
+    private static final Logger logger = LoggerFactory.getLogger(FhirCreateService.class);
 
     @Autowired
     private ConnectionService connectionService;
@@ -46,13 +46,13 @@ public class FHIRTestCreateService {
     private IParser jsonParser;       // ✅ Inject the configured parser
     
     @Autowired
-    private FHIRAuditService auditService;  // ✅ Inject the audit service
+    private FhirAuditService auditService;  // ✅ Inject the audit service
     
     @Autowired
-    private FHIRBundleProcessingService bundleProcessor;  // ✅ Inject bundle processor
+    private FhirBundleProcessingService bundleProcessor;  // ✅ Inject bundle processor
     
     @Autowired
-    private FHIRResourceStorageHelper storageHelper;  // ✅ Inject storage helper
+    private FhirResourceStorageHelper storageHelper;  // ✅ Inject storage helper
 
     // Default connection and bucket names if not provided
     private static final String DEFAULT_CONNECTION = "default";
@@ -62,13 +62,13 @@ public class FHIRTestCreateService {
     // Reuse ObjectMapper for performance - expensive to create each time
     private static final ObjectMapper objectMapper = new ObjectMapper();
 
-    public FHIRTestCreateService() {
+    public FhirCreateService() {
         // Empty - Spring will inject dependencies
     }
     
     @PostConstruct
     private void init() {
-        logger.info("🚀 FHIRTestCreateService initialized with FHIR R4 context");
+        logger.info("🚀 FhirCreateService initialized with FHIR R4 context");
         
         // Configure parser for optimal performance
         jsonParser.setPrettyPrint(false);                    // ✅ No formatting overhead
