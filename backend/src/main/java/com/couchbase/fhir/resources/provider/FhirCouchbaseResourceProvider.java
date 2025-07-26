@@ -10,10 +10,7 @@ import ca.uhn.fhir.rest.server.exceptions.ResourceNotFoundException;
 import ca.uhn.fhir.rest.server.exceptions.UnprocessableEntityException;
 import ca.uhn.fhir.validation.ValidationResult;
 import com.couchbase.fhir.resources.repository.FhirResourceDaoImpl;
-import com.couchbase.fhir.resources.util.BundleProcessor;
-import com.couchbase.fhir.resources.util.QueryBuilder;
-import com.couchbase.fhir.resources.util.StringSearchHelper;
-import com.couchbase.fhir.resources.util.TokenSearchHelper;
+import com.couchbase.fhir.resources.util.*;
 import com.couchbase.fhir.validation.ValidationUtil;
 import org.apache.jena.base.Sys;
 import org.hl7.fhir.instance.model.api.IBase;
@@ -107,6 +104,7 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
         RuntimeResourceDefinition resourceDef = fhirContext.getResourceDefinition(resourceType);
         for (Map.Entry<String, String> entry : searchParams.entrySet()) {
             String paramName = entry.getKey();
+            paramName = QueryBuilder.getActualFieldName(fhirContext , resourceType, paramName);
             String value = entry.getValue();
 
             if(paramName.equalsIgnoreCase("_revinclude")){
@@ -125,6 +123,9 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
                     if(searchClause != null){
                         filters.add(searchClause);
                     }
+                }else if(searchParam.getParamType() == RestSearchParameterTypeEnum.DATE){
+                    String dateClause = DateSearchHelper.buildDateCondition(fhirContext , resourceType , paramName , value);
+                    filters.add(dateClause);
                 }
             }
         }

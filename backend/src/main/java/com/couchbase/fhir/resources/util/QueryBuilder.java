@@ -1,5 +1,8 @@
 package com.couchbase.fhir.resources.util;
 
+import ca.uhn.fhir.context.BaseRuntimeChildDefinition;
+import ca.uhn.fhir.context.FhirContext;
+import ca.uhn.fhir.context.RuntimeResourceDefinition;
 import com.couchbase.fhir.resources.queries.Queries;
 
 import java.util.ArrayList;
@@ -30,5 +33,18 @@ public class QueryBuilder {
         finalQuery = topLevelQuery + (revQuery.isEmpty() ? "" : " UNION ALL "+String.join(" UNION ALL ", revQuery));
         System.out.println("finalQuery = " + finalQuery);
         return finalQuery;
+    }
+
+
+    public static String getActualFieldName(FhirContext ctx, String resourceName, String searchParam) {
+        RuntimeResourceDefinition def = ctx.getResourceDefinition(resourceName);
+        for (BaseRuntimeChildDefinition child : def.getChildren()) {
+            String elementName = child.getElementName();
+
+            if (elementName.equalsIgnoreCase(searchParam)) {
+                return elementName;
+            }
+        }
+        return searchParam;
     }
 }
