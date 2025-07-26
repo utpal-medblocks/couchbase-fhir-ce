@@ -4,8 +4,8 @@ import com.couchbase.admin.connections.service.ConnectionService;
 import com.couchbase.admin.sampledata.model.SampleDataRequest;
 import com.couchbase.admin.sampledata.model.SampleDataResponse;
 import com.couchbase.admin.sampledata.model.SampleDataProgress;
-import com.couchbase.fhir.resources.service.FHIRBundleProcessingService;
-import com.couchbase.fhir.resources.service.FHIRResourceStorageHelper;
+import com.couchbase.fhir.resources.service.FhirBundleProcessingService;
+import com.couchbase.fhir.resources.service.FhirResourceStorageHelper;
 import com.couchbase.client.java.Cluster;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -42,10 +42,10 @@ public class SampleDataService {
     private ConnectionService connectionService;
     
     @Autowired
-    private FHIRBundleProcessingService bundleProcessor;
+    private FhirBundleProcessingService bundleProcessor;
     
     @Autowired
-    private FHIRResourceStorageHelper storageHelper;
+    private FhirResourceStorageHelper storageHelper;
     
     private final ObjectMapper objectMapper = new ObjectMapper();
     

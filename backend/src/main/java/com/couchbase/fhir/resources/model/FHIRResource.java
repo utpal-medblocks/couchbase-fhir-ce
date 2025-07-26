@@ -9,7 +9,7 @@ import java.util.Map;
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
-public class FHIRResource {
+public class FhirResource {
     private String id;
     private String resourceType;
     private String version;
