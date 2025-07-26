@@ -5,7 +5,6 @@ import ca.uhn.fhir.context.FhirContext;
 public class DateSearchHelper {
     public static String buildDateCondition(FhirContext fhirContext, String resourceType, String paramName, String searchValue){
 
-
         String operator = "=";
         String dateValue = searchValue;
 

@@ -104,7 +104,7 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
         RuntimeResourceDefinition resourceDef = fhirContext.getResourceDefinition(resourceType);
         for (Map.Entry<String, String> entry : searchParams.entrySet()) {
             String paramName = entry.getKey();
-            paramName = QueryBuilder.getActualFieldName(fhirContext , resourceType, paramName);
+            String fhirParamName = QueryBuilder.getActualFieldName(fhirContext , resourceType, paramName);
             String value = entry.getValue();
 
             if(paramName.equalsIgnoreCase("_revinclude")){
@@ -117,14 +117,14 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
                 if (searchParam == null) continue;
 
                 if (searchParam.getParamType() == RestSearchParameterTypeEnum.TOKEN) {
-                    filters.add(TokenSearchHelper.buildTokenWhereClause(fhirContext, resourceType, paramName, value));
+                    filters.add(TokenSearchHelper.buildTokenWhereClause(fhirContext, resourceType, fhirParamName, value));
                 }else if(searchParam.getParamType() == RestSearchParameterTypeEnum.STRING){
-                    String searchClause = StringSearchHelper.buildStringWhereCluse(fhirContext , resourceType , paramName , value , searchParam);
+                    String searchClause = StringSearchHelper.buildStringWhereCluse(fhirContext , resourceType , fhirParamName , value , searchParam);
                     if(searchClause != null){
                         filters.add(searchClause);
                     }
                 }else if(searchParam.getParamType() == RestSearchParameterTypeEnum.DATE){
-                    String dateClause = DateSearchHelper.buildDateCondition(fhirContext , resourceType , paramName , value);
+                    String dateClause = DateSearchHelper.buildDateCondition(fhirContext , resourceType , fhirParamName , value);
                     filters.add(dateClause);
                 }
             }
