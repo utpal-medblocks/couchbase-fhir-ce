@@ -4,6 +4,7 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.HttpStatus;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.util.MultiValueMap;
 import com.couchbase.fhir.resources.service.FHIRTestGeneralService;
 import com.couchbase.fhir.resources.service.FHIRTestCreateService;
 import com.couchbase.fhir.resources.service.FHIRTestReadService;
@@ -11,6 +12,9 @@ import com.couchbase.fhir.resources.service.FHIRTestUpdateService;
 import com.couchbase.fhir.resources.service.FHIRTestDeleteService;
 import com.couchbase.fhir.resources.service.FHIRTestSearchService;
 import com.couchbase.fhir.resources.service.FHIRBundleProcessingService;
+import com.couchbase.fhir.resources.search.validation.FHIRSearchParameterPreprocessor;
+import com.couchbase.fhir.resources.search.validation.FHIRSearchValidationException;
+import com.couchbase.fhir.resources.search.validation.FHIROperationOutcomeBuilder;
 
 import java.util.*;
 import java.time.LocalDateTime;
@@ -51,6 +55,12 @@ public class FHIRTestController {
     
     @Autowired
     private IParser jsonParser;
+    
+    @Autowired
+    private FHIRSearchParameterPreprocessor parameterPreprocessor;
+    
+    @Autowired
+    private FHIROperationOutcomeBuilder outcomeBuilder;
 
     @GetMapping("/info")
     public Map<String, Object> info() {
@@ -86,11 +96,45 @@ public class FHIRTestController {
             @PathVariable String bucketName,
             @PathVariable String resourceType,
             @RequestParam(required = false) String connectionName,
-            @RequestParam Map<String, String> searchParams) {
+            @RequestParam MultiValueMap<String, String> searchParams) {
         
         try {
-            // Remove connection/bucket params from search parameters
-            Map<String, String> cleanParams = new HashMap<>(searchParams);
+            logger.info("🚀 FHIRTestController: Starting search for {} resources with params: {}", resourceType, searchParams);
+            
+            // Convert MultiValueMap to Map<String, List<String>> for validation
+            Map<String, List<String>> allParams = new HashMap<>();
+            for (Map.Entry<String, List<String>> entry : searchParams.entrySet()) {
+                allParams.put(entry.getKey(), entry.getValue());
+            }
+            
+            // Remove framework parameters from validation
+            Map<String, List<String>> validationParams = new HashMap<>(allParams);
+            validationParams.remove("connectionName");
+            validationParams.remove("bucketName");
+            
+            // STEP 1: Validate parameters BEFORE query execution
+            logger.info("🔍 FHIRTestController: Running parameter validation...");
+            try {
+                parameterPreprocessor.validateSearchParameters(resourceType, validationParams);
+                logger.info("✅ FHIRTestController: Parameter validation passed!");
+            } catch (FHIRSearchValidationException validationException) {
+                logger.warn("❌ FHIRTestController: Parameter validation failed: {}", validationException.getMessage());
+                // Return FHIR-compliant error response
+                String outcomeJson = outcomeBuilder.toJson(validationException.getOperationOutcome());
+                return ResponseEntity.badRequest()
+                    .header("Content-Type", "application/fhir+json")
+                    .body(outcomeJson);
+            }
+            
+            // STEP 2: Convert to legacy Map<String, String> format for existing search service
+            // NOTE: This temporarily loses multiple values until we refactor the search service
+            Map<String, String> cleanParams = new HashMap<>();
+            for (Map.Entry<String, List<String>> entry : allParams.entrySet()) {
+                if (!entry.getValue().isEmpty()) {
+                    // Take the first value for now - validation already caught conflicts
+                    cleanParams.put(entry.getKey(), entry.getValue().get(0));
+                }
+            }
             cleanParams.remove("connectionName");
             cleanParams.remove("bucketName");
             
@@ -186,7 +230,7 @@ public class FHIRTestController {
     public ResponseEntity<?> searchResourcesFhir(
             @PathVariable String resourceType,
             @RequestParam(required = false) String connectionName,
-            @RequestParam Map<String, String> searchParams) {
+            @RequestParam MultiValueMap<String, String> searchParams) {
         
         // Use default bucket "fhir" for standard FHIR R4 pattern
         return searchResources("fhir", resourceType, connectionName, searchParams);
