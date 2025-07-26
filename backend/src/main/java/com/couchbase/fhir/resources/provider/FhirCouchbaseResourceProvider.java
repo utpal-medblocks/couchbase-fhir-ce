@@ -121,14 +121,12 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
                 if (searchParam.getParamType() == RestSearchParameterTypeEnum.TOKEN) {
                     filters.add(TokenSearchHelper.buildTokenWhereClause(fhirContext, resourceType, paramName, value));
                 }else if(searchParam.getParamType() == RestSearchParameterTypeEnum.STRING){
-                    String searchClause = StringSearchHelper.buildStringWhereCluse(fhirContext , resourceType , paramName , value);
+                    String searchClause = StringSearchHelper.buildStringWhereCluse(fhirContext , resourceType , paramName , value , searchParam);
                     if(searchClause != null){
                         filters.add(searchClause);
                     }
-
                 }
             }
-            // TODO: Add support for string/date/reference/etc.
         }
 
 
