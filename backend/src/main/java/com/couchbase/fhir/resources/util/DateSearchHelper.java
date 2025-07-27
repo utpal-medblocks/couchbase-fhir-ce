@@ -22,6 +22,10 @@ public class DateSearchHelper {
             dateValue = searchValue.substring(2);
         }
 
+        if(paramName.equalsIgnoreCase("death-date")){
+            paramName = "deceasedDateTime";
+        }
+
         return String.format(" %s %s \"%s\" ", paramName, operator, dateValue);
     }
 

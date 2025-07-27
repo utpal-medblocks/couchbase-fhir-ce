@@ -6,8 +6,6 @@ import ca.uhn.fhir.context.RuntimeSearchParam;
 import ca.uhn.fhir.rest.api.RestSearchParameterTypeEnum;
 import com.couchbase.fhir.search.model.TokenParam;
 
-import java.util.Optional;
-
 
 
 public class TokenSearchHelper {
@@ -22,7 +20,6 @@ public class TokenSearchHelper {
             return null;
         }
 
-        // Example FHIRPath: Patient.identifier
         String path = searchParam.getPath();
         if ("Resource.id".equals(path) || (resourceType + ".id").equals(path)) {
             return "id = \"" + token.code + "\"";
@@ -32,8 +29,7 @@ public class TokenSearchHelper {
 
         String jsonPath = toCouchbasePath(path, resourceType);
 
-        // Based on FHIR semantics, identifiers and codings are arrays
-        String alias = "iden"; // loop variable in ANY expression
+        String alias = "iden";
 
         StringBuilder whereClause = new StringBuilder();
         whereClause.append("ANY ").append(alias).append(" IN ").append(jsonPath).append(" SATISFIES ");
@@ -56,20 +52,13 @@ public class TokenSearchHelper {
             throw new IllegalArgumentException("Invalid FHIRPath: " + fhirPath);
         }
 
-        // Strip resourceType prefix
         String subPath = fhirPath.substring(resourceType.length() + 1);
 
-        // Convert to JSON field path: identifier.coding -> identifier
         String jsonPath = subPath
-                .replace(".coding", "") // optional - Couchbase model may flatten this
+                .replace(".coding", "")
                 .replace(".value", "")
                 .replace(".code", "")
                 .replace(".system", "");
-
-        // For now, assume most are arrays
-       /* if (!jsonPath.contains("[")) {
-            jsonPath = "c."+jsonPath + "";
-        }*/
 
         return jsonPath;
     }

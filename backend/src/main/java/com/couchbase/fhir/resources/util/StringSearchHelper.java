@@ -27,21 +27,16 @@ public class StringSearchHelper {
 
         }
 
-
-
-
         return sb.toString();
     }
 
 
     public static String getSubFieldsComposite(FhirContext ctx, String resource, String fieldName , String searchValue , String fhirPath) {
-        List<String> fieldConditions = new ArrayList<>();
         String[] pathParts = fhirPath.split("\\.");
 
         String parentField = pathParts[0];
         String childField = pathParts[1];
 
-        String arrayAlias = "elem";
         String escapedValue = searchValue.toLowerCase().replace("\"", "\\\"");
         BaseRuntimeElementCompositeDefinition<?> resourceDef = (BaseRuntimeElementCompositeDefinition<?>) ctx.getResourceDefinition(resource);
         BaseRuntimeChildDefinition parentDef = resourceDef.getChildByName(parentField);
@@ -85,10 +80,8 @@ public class StringSearchHelper {
 
                     boolean isList = sub.getMax() == -1;
                     if (isList) {
-                        // e.g. ANY g IN nameElem.given SATISFIES LOWER(g) LIKE "%doe%" END
                         fieldConditions.add(String.format("ANY x IN %s.%s SATISFIES LOWER(x) LIKE \"%%%s%%\" END ", arrayAlias, subName, escapedValue));
                     } else {
-                        // e.g. LOWER(nameElem.family) LIKE "%doe%"
                         fieldConditions.add(String.format("LOWER(%s.%s) LIKE \"%%%s%%\"", arrayAlias, subName, escapedValue));
                     }
                 }

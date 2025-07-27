@@ -16,6 +16,7 @@ import org.apache.jena.base.Sys;
 import org.hl7.fhir.instance.model.api.IBase;
 import org.hl7.fhir.r4.model.*;
 import ca.uhn.fhir.rest.api.RestSearchParameterTypeEnum;
+import org.springframework.boot.actuate.autoconfigure.metrics.MetricsProperties;
 
 import java.io.IOException;
 import java.util.*;
@@ -116,6 +117,9 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
 
                 if (searchParam == null) continue;
 
+                String rawPath = searchParam.getPath();
+                String fhirPath = rawPath.replaceFirst("^" + resourceType + "\\.", "");
+                System.out.println(fhirPath);
                 if (searchParam.getParamType() == RestSearchParameterTypeEnum.TOKEN) {
                     filters.add(TokenSearchHelper.buildTokenWhereClause(fhirContext, resourceType, fhirParamName, value));
                 }else if(searchParam.getParamType() == RestSearchParameterTypeEnum.STRING){
