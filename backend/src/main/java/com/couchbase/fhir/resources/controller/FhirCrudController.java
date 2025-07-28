@@ -17,12 +17,15 @@ import com.couchbase.fhir.resources.search.validation.FhirSearchValidationExcept
 import com.couchbase.fhir.resources.search.validation.FhirOperationOutcomeBuilder;
 
 import java.util.*;
+import java.util.Set;
+import java.util.HashSet;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.net.URLDecoder;
 import org.hl7.fhir.r4.model.Bundle;
 import org.hl7.fhir.r4.model.OperationOutcome;
 import ca.uhn.fhir.parser.IParser;
+import ca.uhn.fhir.rest.api.SummaryEnum;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -202,18 +205,37 @@ public class FhirCrudController {
             cleanParams.remove("connectionName");
             cleanParams.remove("bucketName");
             
-            // STEP 3: Execute search with validated parameters
+            // STEP 3: Parse _summary and _elements parameters
+            SummaryEnum summaryMode = parseSummaryParameter(cleanParams);
+            Set<String> elements = parseElementsParameter(cleanParams);
+            
+            if (summaryMode != null) {
+                logger.info("🔍 Summary mode detected: {}", summaryMode);
+            }
+            if (elements != null) {
+                logger.info("🔍 Elements filter detected: {}", elements);
+            }
+            
+            // STEP 4: Execute search with validated parameters
             FhirSearchService.SearchResult searchResult = searchService.searchResources(
                 resourceType, cleanParams, connectionName, bucketName);
             
-            // STEP 4: Create proper FHIR Bundle response
+            // STEP 5: Create proper FHIR Bundle response with summary and elements support
             String baseUrl = "http://localhost:8080/api/fhir/" + bucketName;
-            Bundle bundle = searchService.createSearchBundle(searchResult, baseUrl, cleanParams);
+            Bundle bundle = searchService.createSearchBundle(searchResult, baseUrl, cleanParams, summaryMode, elements);
             
-            // STEP 5: Return JSON response
-            String bundleJson = searchService.getBundleAsJson(bundle);
-            logger.info("✅ Search completed - Found {} {} resources", 
-                       searchResult.getPrimaryResources().size(), resourceType);
+            // STEP 6: Return JSON response with summary mode and elements
+            String bundleJson = searchService.getBundleAsJson(bundle, summaryMode, elements, resourceType);
+            String responseDetails = "";
+            if (summaryMode != null || elements != null) {
+                List<String> details = new ArrayList<>();
+                if (summaryMode != null) details.add("summary: " + summaryMode);
+                if (elements != null) details.add("elements: " + elements.size() + " fields");
+                responseDetails = " (" + String.join(", ", details) + ")";
+            }
+            
+            logger.info("✅ Search completed - Found {} {} resources{}", 
+                       searchResult.getPrimaryResources().size(), resourceType, responseDetails);
             
             return ResponseEntity.ok()
                 .header("Content-Type", "application/fhir+json")
@@ -264,18 +286,37 @@ public class FhirCrudController {
             
             logger.debug("🔍 POST Search parameters: {}", allParams);
             
+            // Parse _summary and _elements parameters
+            SummaryEnum summaryMode = parseSummaryParameter(allParams);
+            Set<String> elements = parseElementsParameter(allParams);
+            
+            if (summaryMode != null) {
+                logger.info("🔍 POST Search summary mode detected: {}", summaryMode);
+            }
+            if (elements != null) {
+                logger.info("🔍 POST Search elements filter detected: {}", elements);
+            }
+            
             // Use the same search service as GET (supports _revinclude)
             FhirSearchService.SearchResult searchResult = searchService.searchResources(
                 resourceType, allParams, connectionName, bucketName);
             
-            // Create proper FHIR Bundle using HAPI FHIR utilities
+            // Create proper FHIR Bundle using HAPI FHIR utilities with summary and elements support
             String baseUrl = "http://localhost:8080/api/fhir/" + bucketName;
-            Bundle bundle = searchService.createSearchBundle(searchResult, baseUrl, allParams);
+            Bundle bundle = searchService.createSearchBundle(searchResult, baseUrl, allParams, summaryMode, elements);
             
-            // Convert Bundle to JSON string for response
-            String bundleJson = searchService.getBundleAsJson(bundle);
-            logger.info("✅ POST Search completed - Found {} {} resources", 
-                       searchResult.getPrimaryResources().size(), resourceType);
+            // Convert Bundle to JSON string for response with summary mode and elements
+            String bundleJson = searchService.getBundleAsJson(bundle, summaryMode, elements, resourceType);
+            String postResponseDetails = "";
+            if (summaryMode != null || elements != null) {
+                List<String> postDetails = new ArrayList<>();
+                if (summaryMode != null) postDetails.add("summary: " + summaryMode);
+                if (elements != null) postDetails.add("elements: " + elements.size() + " fields");
+                postResponseDetails = " (" + String.join(", ", postDetails) + ")";
+            }
+            
+            logger.info("✅ POST Search completed - Found {} {} resources{}", 
+                       searchResult.getPrimaryResources().size(), resourceType, postResponseDetails);
             
             return ResponseEntity.ok()
                 .header("Content-Type", "application/fhir+json")
@@ -456,6 +497,72 @@ public class FhirCrudController {
             return ResponseEntity.internalServerError().body(
                 Map.of("error", "Failed to process bundle: " + e.getMessage())
             );
+        }
+    }
+    
+    /**
+     * Parse _summary parameter from search parameters
+     */
+    private SummaryEnum parseSummaryParameter(Map<String, String> searchParams) {
+        String summaryValue = searchParams.get("_summary");
+        if (summaryValue == null || summaryValue.isEmpty()) {
+            return null;
+        }
+        
+        try {
+            switch (summaryValue.toLowerCase()) {
+                case "true":
+                    return SummaryEnum.TRUE;
+                case "false":
+                    return SummaryEnum.FALSE;
+                case "text":
+                    return SummaryEnum.TEXT;
+                case "data":
+                    return SummaryEnum.DATA;
+                case "count":
+                    return SummaryEnum.COUNT;
+                default:
+                    logger.warn("Unknown _summary value: {}, defaulting to false", summaryValue);
+                    return SummaryEnum.FALSE;
+            }
+        } catch (Exception e) {
+            logger.warn("Failed to parse _summary parameter: {}, defaulting to false", summaryValue);
+            return SummaryEnum.FALSE;
+        }
+    }
+    
+    /**
+     * Parse _elements parameter from search parameters
+     */
+    private Set<String> parseElementsParameter(Map<String, String> searchParams) {
+        String elementsValue = searchParams.get("_elements");
+        if (elementsValue == null || elementsValue.isEmpty()) {
+            return null;
+        }
+        
+        try {
+            // Split by comma and trim whitespace
+            Set<String> elements = new HashSet<>();
+            String[] elementArray = elementsValue.split(",");
+            
+            for (String element : elementArray) {
+                String trimmedElement = element.trim();
+                if (!trimmedElement.isEmpty() && !trimmedElement.equals("*")) {
+                    elements.add(trimmedElement);
+                }
+            }
+            
+            // If only "*" was specified or no valid elements, return null (means all elements)
+            if (elements.isEmpty()) {
+                return null;
+            }
+            
+            logger.debug("🔍 Parsed _elements parameter: {}", elements);
+            return elements;
+            
+        } catch (Exception e) {
+            logger.warn("Failed to parse _elements parameter: {}, returning all elements", elementsValue);
+            return null;
         }
     }
 } 

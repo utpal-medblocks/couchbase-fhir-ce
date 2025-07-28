@@ -4,6 +4,7 @@ import ca.uhn.fhir.context.FhirContext;
 import ca.uhn.fhir.context.RuntimeResourceDefinition;
 import ca.uhn.fhir.context.RuntimeSearchParam;
 import ca.uhn.fhir.rest.api.RestSearchParameterTypeEnum;
+import ca.uhn.fhir.rest.api.SummaryEnum;
 import ca.uhn.fhir.parser.IParser;
 import org.hl7.fhir.r4.model.*;
 import org.hl7.fhir.instance.model.api.IBaseResource;
@@ -944,12 +945,29 @@ public class FhirSearchService {
      * Create a proper FHIR Bundle response using HAPI FHIR utilities - supports _revinclude
      */
     public Bundle createSearchBundle(SearchResult searchResult, String baseUrl, Map<String, String> searchParams) {
+        return createSearchBundle(searchResult, baseUrl, searchParams, null);
+    }
+    
+    /**
+     * Create a proper FHIR Bundle response with summary support using HAPI FHIR utilities
+     */
+    public Bundle createSearchBundle(SearchResult searchResult, String baseUrl, Map<String, String> searchParams, SummaryEnum summaryMode) {
+        return createSearchBundle(searchResult, baseUrl, searchParams, summaryMode, null);
+    }
+    
+    /**
+     * Create a proper FHIR Bundle response with summary and elements support using HAPI FHIR utilities
+     */
+    public Bundle createSearchBundle(SearchResult searchResult, String baseUrl, Map<String, String> searchParams, 
+                                   SummaryEnum summaryMode, Set<String> elements) {
         String resourceType = searchResult.getPrimaryResourceType();
         List<Map<String, Object>> primaryResources = searchResult.getPrimaryResources();
         Map<String, List<Map<String, Object>>> includedResources = searchResult.getIncludedResources();
         
-        logger.info("📦 Creating FHIR Bundle - Primary: {} {}, Included: {} resource types", 
-                   primaryResources.size(), resourceType, includedResources.size());
+        boolean isCountOnly = (summaryMode == SummaryEnum.COUNT);
+        logger.info("📦 Creating FHIR Bundle - Primary: {} {}, Included: {} resource types, Summary: {}, Elements: {}", 
+                   primaryResources.size(), resourceType, includedResources.size(), summaryMode, 
+                   elements != null ? elements.size() + " fields" : "all");
         
         try {
             Bundle bundle = new Bundle();
@@ -963,6 +981,18 @@ public class FhirSearchService {
             }
             bundle.setTotal(totalResources);
             bundle.setTimestamp(new Date());
+            
+            // For _summary=count, only return count information, no actual resources
+            if (isCountOnly) {
+                logger.info("🔢 Creating count-only bundle with {} total resources", totalResources);
+                // Add self link with summary parameter
+                Bundle.BundleLinkComponent selfLink = new Bundle.BundleLinkComponent();
+                selfLink.setRelation("self");
+                selfLink.setUrl(buildSearchUrl(baseUrl, resourceType, searchParams));
+                bundle.addLink(selfLink);
+                
+                return bundle; // Return early with no entries, just count
+            }
             
             // Minimal Bundle meta for performance
             Meta bundleMeta = new Meta();
@@ -985,7 +1015,7 @@ public class FhirSearchService {
             for (Map<String, Object> rawResource : primaryResources) {
                 try {
                     Bundle.BundleEntryComponent entry = createBundleEntry(rawResource, resourceType, baseUrl, 
-                                                                         objectMapper, Bundle.SearchEntryMode.MATCH);
+                                                                         objectMapper, Bundle.SearchEntryMode.MATCH, summaryMode);
                     entries.add(entry);
                 } catch (Exception e) {
                     logger.error("Failed to process primary resource {}: {}", rawResource.get("id"), e.getMessage());
@@ -1002,7 +1032,7 @@ public class FhirSearchService {
                 for (Map<String, Object> rawResource : includeList) {
                     try {
                         Bundle.BundleEntryComponent entry = createBundleEntry(rawResource, includeResourceType, baseUrl,
-                                                                             objectMapper, Bundle.SearchEntryMode.INCLUDE);
+                                                                             objectMapper, Bundle.SearchEntryMode.INCLUDE, null);
                         entries.add(entry);
                     } catch (Exception e) {
                         logger.error("Failed to process included resource {}: {}", rawResource.get("id"), e.getMessage());
@@ -1029,14 +1059,29 @@ public class FhirSearchService {
     }
     
     /**
-     * Create a single bundle entry from a raw resource map
+     * Create a single bundle entry from a raw resource map (backward compatibility)
      */
     private Bundle.BundleEntryComponent createBundleEntry(Map<String, Object> rawResource, String resourceType, 
                                                          String baseUrl, ObjectMapper objectMapper, 
                                                          Bundle.SearchEntryMode searchMode) throws Exception {
+        return createBundleEntry(rawResource, resourceType, baseUrl, objectMapper, searchMode, null);
+    }
+    
+    /**
+     * Create a single bundle entry from a raw resource map with summary support
+     */
+    private Bundle.BundleEntryComponent createBundleEntry(Map<String, Object> rawResource, String resourceType, 
+                                                         String baseUrl, ObjectMapper objectMapper, 
+                                                         Bundle.SearchEntryMode searchMode, SummaryEnum summaryMode) throws Exception {
         // Fast JSON conversion
         String resourceJson = objectMapper.writeValueAsString(rawResource);
         IBaseResource fhirResource = jsonParser.parseResource(resourceJson);
+        
+        // Apply summary mode if specified
+        if (summaryMode != null && summaryMode != SummaryEnum.FALSE) {
+            logger.debug("🔍 Applying summary mode: {} to resource", summaryMode);
+            fhirResource = applySummaryToResource(fhirResource, summaryMode);
+        }
         
         // Create entry with minimal metadata
         Bundle.BundleEntryComponent entry = new Bundle.BundleEntryComponent();
@@ -1052,6 +1097,32 @@ public class FhirSearchService {
         entry.setSearch(search);
         
         return entry;
+    }
+    
+    /**
+     * Apply HAPI FHIR summary mode to a resource
+     * Note: For COUNT mode, this returns null (handled at bundle level)
+     */
+    private IBaseResource applySummaryToResource(IBaseResource resource, SummaryEnum summaryMode) {
+        try {
+            switch (summaryMode) {
+                case COUNT:
+                    // For count, we don't include the resource at all (handled at bundle level)
+                    return null;
+                case FALSE:
+                default:
+                    // Return full resource - summary will be applied during JSON encoding
+                    return resource;
+                case TRUE:
+                case TEXT:
+                case DATA:
+                    // Return resource - summary will be applied during JSON encoding with setSummaryMode
+                    return resource;
+            }
+        } catch (Exception e) {
+            logger.warn("Failed to apply summary mode {}, returning full resource: {}", summaryMode, e.getMessage());
+            return resource;
+        }
     }
     
     /**
@@ -1078,8 +1149,84 @@ public class FhirSearchService {
      * Convert a Bundle to JSON string
      */
     public String getBundleAsJson(Bundle bundle) {
-        logger.debug("Serializing Bundle to JSON");
-        return jsonParser.encodeResourceToString(bundle);
+        return getBundleAsJson(bundle, null);
+    }
+    
+    /**
+     * Convert a Bundle to JSON string with summary mode support
+     */
+    public String getBundleAsJson(Bundle bundle, SummaryEnum summaryMode) {
+        return getBundleAsJson(bundle, summaryMode, null);
+    }
+    
+    /**
+     * Convert a Bundle to JSON string with summary mode and elements support
+     */
+    public String getBundleAsJson(Bundle bundle, SummaryEnum summaryMode, Set<String> elements) {
+        return getBundleAsJson(bundle, summaryMode, elements, null);
+    }
+    
+    /**
+     * Convert a Bundle to JSON string with summary mode and elements support for a specific resource type
+     */
+    public String getBundleAsJson(Bundle bundle, SummaryEnum summaryMode, Set<String> elements, String resourceType) {
+        logger.debug("Serializing Bundle to JSON with summary mode: {}, elements: {}", summaryMode, elements);
+        
+        boolean needsCustomParser = (summaryMode != null && summaryMode != SummaryEnum.FALSE) || 
+                                   (elements != null && !elements.isEmpty());
+        
+        if (needsCustomParser) {
+            // Create a parser with custom encoding options
+            IParser customParser = fhirContext.newJsonParser();
+            
+            // Apply summary mode if specified
+            if (summaryMode != null && summaryMode != SummaryEnum.FALSE) {
+                boolean enableSummary = (summaryMode == SummaryEnum.TRUE || 
+                                       summaryMode == SummaryEnum.TEXT || 
+                                       summaryMode == SummaryEnum.DATA);
+                
+                if (enableSummary) {
+                    customParser.setSummaryMode(true);
+                    logger.debug("🔍 Using HAPI summary encoding enabled for mode: {}", summaryMode);
+                }
+            }
+            
+            // Apply elements filter if specified
+            if (elements != null && !elements.isEmpty()) {
+                // FHIR Spec: _elements typically applies only to primary resource type
+                // Included resources (from _include/_revinclude) should return full resources
+                Set<String> hapiElements = new HashSet<>();
+                if (resourceType != null) {
+                    // Apply elements filter only to the primary resource type
+                    for (String element : elements) {
+                        hapiElements.add(resourceType + "." + element);
+                    }
+                    
+                    // Always include mandatory fields for the primary resource type
+                    hapiElements.add(resourceType + ".id");
+                    hapiElements.add(resourceType + ".meta");
+                    // resourceType is always included by HAPI automatically
+                    
+                    logger.debug("🔍 Elements filter applies to PRIMARY resource type only: {} -> {}", 
+                                elements, hapiElements);
+                    logger.debug("🔍 Included resources will be returned in full (FHIR compliant)");
+                } else {
+                    // Fallback: when resource type is unknown, elements may not work properly
+                    // This can happen with complex bundles containing multiple resource types
+                    hapiElements.addAll(elements);
+                    logger.warn("⚠️ Elements filtering without resource type context - may not work correctly for mixed bundles");
+                }
+                
+                customParser.setEncodeElements(hapiElements);
+                logger.debug("🔍 Using HAPI elements filtering with {} elements", hapiElements.size());
+            }
+            
+            customParser.setPrettyPrint(false);
+            return customParser.encodeResourceToString(bundle);
+        } else {
+            // Use default parser for full resources
+            return jsonParser.encodeResourceToString(bundle);
+        }
     }
     
     /**
