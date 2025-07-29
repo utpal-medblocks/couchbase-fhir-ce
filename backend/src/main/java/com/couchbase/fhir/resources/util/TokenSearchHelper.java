@@ -1,25 +1,17 @@
 package com.couchbase.fhir.resources.util;
 
-import ca.uhn.fhir.context.FhirContext;
-import ca.uhn.fhir.context.RuntimeResourceDefinition;
-import ca.uhn.fhir.context.RuntimeSearchParam;
+import ca.uhn.fhir.context.*;
 import ca.uhn.fhir.rest.api.RestSearchParameterTypeEnum;
 import com.couchbase.fhir.search.model.TokenParam;
 
 
-
 public class TokenSearchHelper {
 
-    public static String buildTokenWhereClause(FhirContext fhirContext , String resourceType, String paramName, String tokenValue) {
+    public static String buildTokenWhereClause(FhirContext fhirContext , String resourceType, String paramName, String tokenValue ) {
 
         TokenParam token = new TokenParam(tokenValue);
         RuntimeResourceDefinition def = fhirContext.getResourceDefinition(resourceType);
         RuntimeSearchParam searchParam = def.getSearchParam(paramName);
-
-        if (searchParam == null || searchParam.getParamType() != RestSearchParameterTypeEnum.TOKEN) {
-            return null;
-        }
-
         String path = searchParam.getPath();
         if ("Resource.id".equals(path) || (resourceType + ".id").equals(path)) {
             return "id = \"" + token.code + "\"";
@@ -27,8 +19,9 @@ public class TokenSearchHelper {
             return "gender = \"" + token.code + "\"";
         }
 
-        String jsonPath = toCouchbasePath(path, resourceType);
+        boolean codableConcept = isCodableConcept(path , resourceType , def);
 
+        String jsonPath = toCouchbasePath(path, resourceType , codableConcept);
         String alias = "iden";
 
         StringBuilder whereClause = new StringBuilder();
@@ -37,13 +30,40 @@ public class TokenSearchHelper {
         if (token.system != null) {
             whereClause.append(alias).append(".`system` = \"").append(token.system).append("\" AND ");
         }
-
-        whereClause.append(alias).append(".`value` = \"").append(token.code).append("\" END");
+        if(codableConcept){
+            whereClause.append(alias).append(".`").append("code").append("` = \"")
+                    .append(token.code).append("\" END");
+        }else{
+            whereClause.append(alias).append(".`value` = \"").append(token.code).append("\" END");
+        }
 
         return whereClause.toString();
     }
 
-    private static String toCouchbasePath(String fhirPath, String resourceType) {
+    public static boolean isCodableConcept(String path , String resourceType , RuntimeResourceDefinition def){
+        boolean isCodableConcept = false;
+        try{
+            String fhirPath = path.replaceFirst("^" + resourceType + "\\.", "");
+            String[] pathParts = fhirPath.split("\\.");
+            for (String part : pathParts) {
+                if (def != null) {
+                    BaseRuntimeChildDefinition child = ((BaseRuntimeElementCompositeDefinition<?>) def).getChildByName(part);
+                    if (child != null) {
+                        if(child.getChildByName(part).getImplementingClass().getSimpleName().equalsIgnoreCase("CodeableConcept")){
+                            isCodableConcept = true;
+                        }
+                    }
+                }
+            }
+
+        } catch (Exception e) {
+            System.out.println( e.getMessage() );
+        }
+        return isCodableConcept;
+    }
+
+
+    private static String toCouchbasePath(String fhirPath, String resourceType , boolean codableConcept) {
         if (fhirPath == null) {
             throw new IllegalArgumentException("FHIRPath is null ");
         }
@@ -54,12 +74,16 @@ public class TokenSearchHelper {
 
         String subPath = fhirPath.substring(resourceType.length() + 1);
 
+
         String jsonPath = subPath
                 .replace(".coding", "")
                 .replace(".value", "")
                 .replace(".code", "")
                 .replace(".system", "");
 
+        if (codableConcept) {
+            jsonPath += ".coding";
+        }
         return jsonPath;
     }
 

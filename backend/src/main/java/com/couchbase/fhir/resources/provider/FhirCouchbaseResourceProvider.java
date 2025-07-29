@@ -117,9 +117,6 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
 
                 if (searchParam == null) continue;
 
-                String rawPath = searchParam.getPath();
-                String fhirPath = rawPath.replaceFirst("^" + resourceType + "\\.", "");
-                System.out.println(fhirPath);
                 if (searchParam.getParamType() == RestSearchParameterTypeEnum.TOKEN) {
                     filters.add(TokenSearchHelper.buildTokenWhereClause(fhirContext, resourceType, fhirParamName, value));
                 }else if(searchParam.getParamType() == RestSearchParameterTypeEnum.STRING){
@@ -130,6 +127,9 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
                 }else if(searchParam.getParamType() == RestSearchParameterTypeEnum.DATE){
                     String dateClause = DateSearchHelper.buildDateCondition(fhirContext , resourceType , fhirParamName , value);
                     filters.add(dateClause);
+                }else if(searchParam.getParamType() == RestSearchParameterTypeEnum.REFERENCE){
+                    String referenceClause = ReferenceSearchHelper.buildReferenceWhereCluse(fhirContext , resourceType , fhirParamName , value , searchParam);
+                    filters.add(referenceClause);
                 }
             }
         }
