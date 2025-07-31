@@ -4,10 +4,9 @@ import com.couchbase.admin.connections.service.ConnectionService;
 import com.couchbase.admin.sampledata.model.SampleDataRequest;
 import com.couchbase.admin.sampledata.model.SampleDataResponse;
 import com.couchbase.admin.sampledata.model.SampleDataProgress;
-import com.couchbase.fhir.resources.service.FHIRBundleProcessingService;
+import com.couchbase.fhir.resources.service.FhirBundleProcessingService;
+import com.couchbase.fhir.resources.service.FhirResourceStorageHelper;
 import com.couchbase.client.java.Cluster;
-import com.couchbase.client.java.Bucket;
-import com.couchbase.client.java.Collection;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.hl7.fhir.r4.model.Bundle;
@@ -36,14 +35,17 @@ public class SampleDataService {
     private static final String SYNTHEA_SAMPLE_DATA_PATH = "static/sample-data/synthea-patients-sample.zip";
     private static final String USCORE_SAMPLE_DATA_PATH = "static/sample-data/us-core-examples.zip";
     
-    // FHIR scope name - matches Bundle processor
-    private static final String DEFAULT_SCOPE = "Resources";
+    // Debug mode - set to true to process only 1 file for debugging
+    private static final boolean DEBUG_MODE_SINGLE_FILE = false;
     
     @Autowired
     private ConnectionService connectionService;
     
     @Autowired
-    private FHIRBundleProcessingService bundleProcessor;
+    private FhirBundleProcessingService bundleProcessor;
+    
+    @Autowired
+    private FhirResourceStorageHelper storageHelper;
     
     private final ObjectMapper objectMapper = new ObjectMapper();
     
@@ -119,6 +121,10 @@ public class SampleDataService {
                 while ((entry = zis.getNextEntry()) != null) {
                     if (shouldProcessEntry(entry)) {
                         totalFiles++;
+                        if (DEBUG_MODE_SINGLE_FILE) {
+                            log.warn("🐛 DEBUG MODE: Processing only 1 file for debugging");
+                            break; // Only count 1 file in debug mode
+                        }
                     }
                 }
             }
@@ -145,6 +151,9 @@ public class SampleDataService {
                         
                         // Process the data - check if it's a Bundle or individual resource
                         String jsonContent = new String(jsonBytes, java.nio.charset.StandardCharsets.UTF_8);
+                        
+                        log.debug("🔍 Processing JSON content (length: {} chars)", jsonContent.length());
+                        
                         Map<String, Integer> resourceCounts = processJsonContent(jsonContent, request.getConnectionName(), request.getBucketName(), request.getSampleType());
                         resourcesLoaded += resourceCounts.getOrDefault("resources", 0);
                         patientsLoaded += resourceCounts.getOrDefault("patients", 0);
@@ -153,6 +162,12 @@ public class SampleDataService {
                         double progress = (double) processedFiles / totalFiles * 100;
                         log.info("Progress: {:.1f}% ({} resources, {} patients loaded so far)", 
                                 progress, resourcesLoaded, patientsLoaded);
+                        
+                        if (DEBUG_MODE_SINGLE_FILE) {
+                            log.warn("🐛 DEBUG MODE: Stopping after processing 1 file. Total processed: {} resources, {} patients", 
+                                resourcesLoaded, patientsLoaded);
+                            break; // Only process 1 file in debug mode
+                        }
                     }
                 }
             }
@@ -203,7 +218,7 @@ public class SampleDataService {
     }
     
     /**
-     * Process a FHIR bundle using our sophisticated Bundle processor
+     * Process a FHIR bundle using our sophisticated Bundle processor with lenient validation for sample data
      */
     private Map<String, Integer> processBundle(String bundleJson, String connectionName, String bucketName) {
         Map<String, Integer> counts = new HashMap<>();
@@ -211,13 +226,18 @@ public class SampleDataService {
         int patientCount = 0;
         
         try {
-            // Use our sophisticated Bundle processor that handles:
+            log.debug("🚀 Starting bundle processing for connection: {}, bucket: {}", connectionName, bucketName);
+            log.debug("📦 Bundle JSON length: {} chars", bundleJson.length());
+            
+            // Use our sophisticated Bundle processor with NO VALIDATION for sample data
+            // Sample data is vetted and bundled, so validation is unnecessary and slow
+            // The processor handles:
             // - UUID reference resolution
-            // - FHIR validation
-            // - Sequential processing
+            // - Sequential processing  
             // - Proper document keys (resourceType/id)
             // - Audit trails
-            Bundle responseBundle = bundleProcessor.processBundleTransaction(bundleJson, connectionName, bucketName);
+            // - SKIPS validation for maximum performance
+            Bundle responseBundle = bundleProcessor.processBundleTransaction(bundleJson, connectionName, bucketName, false, true);
             
             // Count successful entries from the response
             if (responseBundle != null && responseBundle.getEntry() != null) {
@@ -236,7 +256,7 @@ public class SampleDataService {
                 }
             }
             
-            log.debug("Processed bundle with {} resources ({} patients) using Bundle processor", 
+            log.debug("Processed bundle with {} resources ({} patients) using Bundle processor with lenient validation", 
                     resourceCount, patientCount);
             
         } catch (Exception e) {
@@ -260,15 +280,20 @@ public class SampleDataService {
             com.fasterxml.jackson.databind.JsonNode jsonNode = objectMapper.readTree(jsonContent);
             String resourceType = jsonNode.get("resourceType").asText();
             
+            log.debug("📋 Detected resource type: {}", resourceType);
+            
             if ("Bundle".equals(resourceType)) {
                 // Process as Bundle (Synthea data)
+                log.debug("🔄 Processing as Bundle");
                 return processBundle(jsonContent, connectionName, bucketName);
             } else {
-                // Process as individual resource (US Core data)
+                // Process as individual resource (US Core data)  
+                log.debug("🔄 Processing as individual resource");
                 return processIndividualResource(jsonContent, connectionName, bucketName);
             }
         } catch (Exception e) {
-            log.error("Error processing JSON content: {}", e.getMessage());
+            log.error("❌ Error processing JSON content: {} (Exception: {})", e.getMessage(), e.getClass().getSimpleName(), e);
+            log.error("   JSON content length: {} chars", jsonContent.length());
             counts.put("resources", 0);
             counts.put("patients", 0);
             return counts;
@@ -292,31 +317,26 @@ public class SampleDataService {
                 counts.put("patients", 0);
                 return counts;
             }
-            
-            // Parse the resource to get type and ID
-            com.fasterxml.jackson.databind.JsonNode jsonNode = objectMapper.readTree(resourceJson);
-            String resourceType = jsonNode.get("resourceType").asText();
-            String resourceId = jsonNode.get("id").asText();
-            
-            // Construct document key: resourceType/id
-            String documentKey = resourceType + "/" + resourceId;
-            
-            // Get bucket and collection - use Resources scope and resourceType as collection
-            Bucket bucket = cluster.bucket(bucketName);
-            Collection collection = bucket.scope(DEFAULT_SCOPE).collection(resourceType);
-            
-            // Upsert the resource as JSON object (not string)
-            collection.upsert(documentKey, jsonNode);
-            resourceCount = 1;
-            
-            // Count patients
-            if ("Patient".equals(resourceType)) {
-                patientCount = 1;
+
+            // Use the storage helper to process and store with NO VALIDATION for sample data performance
+            // Sample data is vetted and bundled, so validation is unnecessary and slow
+            Map<String, Object> result = storageHelper.processAndStoreResource(resourceJson, cluster, bucketName, "SAMPLE_DATA_LOAD", false, true);
+
+            if ((Boolean) result.get("success")) {
+                resourceCount = 1;
+                String resourceType = (String) result.get("resourceType");
+                String resourceId = (String) result.get("resourceId");
+
+                // Count patients
+                if ("Patient".equals(resourceType)) {
+                    patientCount = 1;
+                }
+
+                log.debug("Successfully processed {} resource with ID: {} using storage helper", resourceType, resourceId);
+            } else {
+                log.error("Failed to process resource: {}", result.get("error"));
             }
-            
-            log.debug("Successfully upserted {} resource with ID: {} into scope: {}, collection: {}", 
-                    resourceType, resourceId, DEFAULT_SCOPE, resourceType);
-            
+
         } catch (Exception e) {
             log.error("Error processing individual resource: {}", e.getMessage());
         }

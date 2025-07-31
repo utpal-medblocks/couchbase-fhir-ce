@@ -2,7 +2,7 @@ package com.couchbase.admin.fhirResource.controller;
 
 import com.couchbase.admin.fhirResource.model.DocumentKeyRequest;
 import com.couchbase.admin.fhirResource.model.DocumentKeyResponse;
-import com.couchbase.admin.fhirResource.service.FhirResourceService;
+import com.couchbase.admin.fhirResource.service.FhirDocumentAdminService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -12,12 +12,12 @@ import org.springframework.web.bind.annotation.*;
 @RestController
 @RequestMapping("/api/fhir-resources")
 @CrossOrigin(origins = "*")
-public class FhirResourceController {
+public class FhirDocumentAdminController {
     
-    private static final Logger logger = LoggerFactory.getLogger(FhirResourceController.class);
+    private static final Logger logger = LoggerFactory.getLogger(FhirDocumentAdminController.class);
     
     @Autowired
-    private FhirResourceService fhirResourceService;
+    private FhirDocumentAdminService fhirDocumentAdminService;
     
     /**
      * Get document keys for a specific FHIR collection with pagination
@@ -43,7 +43,7 @@ public class FhirResourceController {
             request.setPageSize(pageSize);
             request.setPatientId(patientId);
             
-            DocumentKeyResponse response = fhirResourceService.getDocumentKeys(request, connectionName);
+            DocumentKeyResponse response = fhirDocumentAdminService.getDocumentKeys(request, connectionName);
             
             return ResponseEntity.ok(response);
             
@@ -68,7 +68,7 @@ public class FhirResourceController {
             logger.info("Getting document for connection: {}, bucket: {}, collection: {}, key: {}", 
                        connectionName, bucketName, collectionName, documentKey);
             
-            Object document = fhirResourceService.getDocument(bucketName, collectionName, documentKey, connectionName);
+            Object document = fhirDocumentAdminService.getDocument(bucketName, collectionName, documentKey, connectionName);
             
             if (document != null) {
                 return ResponseEntity.ok(document);

@@ -15,9 +15,9 @@ import java.util.ArrayList;
 import java.util.List;
 
 @Service
-public class FhirResourceService {
+public class FhirDocumentAdminService {
     
-    private static final Logger logger = LoggerFactory.getLogger(FhirResourceService.class);
+    private static final Logger logger = LoggerFactory.getLogger(FhirDocumentAdminService.class);
     
     @Autowired
     private ConnectionService connectionService;

@@ -6,6 +6,8 @@ import ca.uhn.fhir.util.BundleUtil;
 import ca.uhn.fhir.util.FhirTerser;
 import ca.uhn.fhir.validation.FhirValidator;
 import ca.uhn.fhir.validation.ValidationResult;
+import ca.uhn.fhir.validation.SingleValidationMessage;
+import ca.uhn.fhir.validation.ResultSeverityEnum;
 import com.couchbase.admin.connections.service.ConnectionService;
 import com.couchbase.client.java.Cluster;
 import com.couchbase.client.java.json.JsonObject;
@@ -14,6 +16,7 @@ import org.hl7.fhir.r4.model.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 import jakarta.annotation.PostConstruct;
 
@@ -23,9 +26,9 @@ import java.util.*;
 import java.util.stream.Collectors;
 
 @Service
-public class FHIRBundleProcessingService {
+public class FhirBundleProcessingService {
 
-    private static final Logger logger = LoggerFactory.getLogger(FHIRBundleProcessingService.class);
+    private static final Logger logger = LoggerFactory.getLogger(FhirBundleProcessingService.class);
 
     @Autowired
     private ConnectionService connectionService;
@@ -34,13 +37,17 @@ public class FHIRBundleProcessingService {
     private FhirContext fhirContext;
     
     @Autowired
-    private FhirValidator fhirValidator;
+    private FhirValidator fhirValidator;  // Primary US Core validator
+    
+    @Autowired
+    @Qualifier("basicFhirValidator")
+    private FhirValidator basicFhirValidator;  // Basic validator for sample data
     
     @Autowired
     private IParser jsonParser;
     
     @Autowired
-    private FHIRAuditService auditService;
+    private FhirAuditService auditService;
 
     // Default connection and bucket names
     private static final String DEFAULT_CONNECTION = "default";
@@ -66,29 +73,67 @@ public class FHIRBundleProcessingService {
     }
 
     /**
-     * Process a FHIR Bundle transaction - extract, validate, resolve references, and prepare for insertion
+     * Process a FHIR Bundle transaction with strict US Core validation (default)
      */
     public Bundle processBundleTransaction(String bundleJson, String connectionName, String bucketName) {
+        return processBundleTransaction(bundleJson, connectionName, bucketName, false);
+    }
+    
+    /**
+     * Process a FHIR Bundle transaction with configurable validation
+     * @param bundleJson Bundle JSON string
+     * @param connectionName Couchbase connection name
+     * @param bucketName Couchbase bucket name
+     * @param useLenientValidation If true, uses basic FHIR validation instead of strict US Core validation
+     */
+    public Bundle processBundleTransaction(String bundleJson, String connectionName, String bucketName, boolean useLenientValidation) {
+        return processBundleTransaction(bundleJson, connectionName, bucketName, useLenientValidation, false);
+    }
+    
+    /**
+     * Process a FHIR Bundle transaction with full validation control
+     * @param bundleJson Bundle JSON string
+     * @param connectionName Couchbase connection name
+     * @param bucketName Couchbase bucket name
+     * @param useLenientValidation If true, uses basic FHIR validation instead of strict US Core validation
+     * @param skipValidation If true, skips all validation for performance (use for trusted sample data)
+     */
+    public Bundle processBundleTransaction(String bundleJson, String connectionName, String bucketName, 
+                                         boolean useLenientValidation, boolean skipValidation) {
         try {
-            logger.info("🔄 Processing FHIR Bundle transaction");
+            String validationType;
+            if (skipValidation) {
+                validationType = "NONE (skip validation for performance)";
+            } else {
+                validationType = useLenientValidation ? "lenient (basic FHIR R4)" : "strict (US Core 6.1.0)";
+            }
+            logger.info("🔄 Processing FHIR Bundle transaction with {} validation", validationType);
             
             // Step 1: Parse Bundle
             Bundle bundle = (Bundle) jsonParser.parseResource(bundleJson);
             logger.info("📦 Parsed Bundle with {} entries", bundle.getEntry().size());
 
-            // Step 2: Validate Bundle structure
-            ValidationResult bundleValidation = validateBundle(bundle);
-            if (!bundleValidation.isSuccessful()) {
-                throw new RuntimeException("Bundle validation failed: " + bundleValidation.getMessages());
+            // Step 2: Validate Bundle structure (skip if requested for performance)
+            if (!skipValidation) {
+                ValidationResult bundleValidation = validateBundle(bundle, useLenientValidation);
+                if (!bundleValidation.isSuccessful()) {
+                    logger.error("❌ Bundle validation failed with {} errors", bundleValidation.getMessages().size());
+                    bundleValidation.getMessages().forEach(msg -> 
+                        logger.error("   {} - {}: {}", msg.getSeverity(), msg.getLocationString(), msg.getMessage())
+                    );
+                    throw new RuntimeException("Bundle validation failed - see logs for details");
+                }
+                logger.info("✅ Bundle structure validation passed ({})", validationType);
+            } else {
+                logger.info("⚡ Bundle structure validation SKIPPED for performance");
             }
-            logger.info("✅ Bundle structure validation passed");
 
             // Step 3: Extract all resources from Bundle using HAPI utility
             List<IBaseResource> allResources = BundleUtil.toListOfResources(fhirContext, bundle);
             logger.info("📋 Extracted {} resources from Bundle", allResources.size());
 
             // Step 4: Process entries sequentially with proper UUID resolution
-            List<ProcessedEntry> processedEntries = processEntriesSequentially(bundle, connectionName, bucketName);
+            List<ProcessedEntry> processedEntries = processEntriesSequentially(bundle, connectionName, bucketName, skipValidation);
 
             // Step 5: Create proper FHIR transaction-response Bundle
             return createTransactionResponseBundle(processedEntries, bundle.getType());
@@ -102,8 +147,8 @@ public class FHIRBundleProcessingService {
     /**
      * Process Bundle entries sequentially with proper UUID resolution
      */
-    private List<ProcessedEntry> processEntriesSequentially(Bundle bundle, String connectionName, String bucketName) {
-        logger.info("🔄 Processing Bundle entries sequentially");
+    private List<ProcessedEntry> processEntriesSequentially(Bundle bundle, String connectionName, String bucketName, boolean skipValidation) {
+        logger.info("🔄 Processing Bundle entries sequentially (validation: {})", skipValidation ? "SKIPPED" : "ENABLED");
         
         connectionName = connectionName != null ? connectionName : getDefaultConnection();
         bucketName = bucketName != null ? bucketName : DEFAULT_BUCKET;
@@ -129,11 +174,23 @@ public class FHIRBundleProcessingService {
                 // Step 2a: Resolve UUID references in this resource
                 resolveUuidReferencesInResource(resource, uuidToIdMapping);
                 
-                // Step 2b: Validate the resource
-                ValidationResult validation = fhirValidator.validateWithResult(resource);
-                if (!validation.isSuccessful()) {
-                    logger.warn("⚠️ Validation failed for {}: {}", resourceType, validation.getMessages());
-                    // Continue processing even if validation fails (configurable behavior)
+                // Step 2b: Validate the resource (skip if requested for performance)
+                if (!skipValidation) {
+                    ValidationResult result = fhirValidator.validateWithResult(resource);
+                    
+                    // Filter out INFORMATION level messages
+                    List<SingleValidationMessage> filteredMessages = result
+                        .getMessages()
+                        .stream()
+                        .filter(msg -> msg.getSeverity() != ResultSeverityEnum.INFORMATION)
+                        .collect(Collectors.toList());
+                    
+                    ValidationResult validation = new ValidationResult(result.getContext(), filteredMessages);
+                    
+                    if (!validation.isSuccessful()) {
+                        logger.warn("⚠️ Validation failed for {} with {} significant issues", resourceType, validation.getMessages().size());
+                        // Continue processing even if validation fails (configurable behavior)
+                    }
                 }
                 
                 // Step 2c: Add audit information
@@ -153,8 +210,17 @@ public class FHIRBundleProcessingService {
                 logger.debug("✅ Successfully processed {}/{}", resourceType, resourceId);
                 
             } catch (Exception e) {
-                logger.error("❌ Failed to process {} entry: {}", resourceType, e.getMessage());
-                processedEntries.add(ProcessedEntry.failed("Failed to process " + resourceType + ": " + e.getMessage()));
+                String errorMessage = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
+                logger.error("❌ Failed to process {} entry: {} (Exception: {})", resourceType, errorMessage, e.getClass().getSimpleName(), e);
+                
+                // Additional debug logging for the resource that failed
+                logger.error("   Resource ID: {}", resource.getId());
+                logger.error("   Resource Type: {}", resourceType);
+                if (entry.getFullUrl() != null) {
+                    logger.error("   FullUrl: {}", entry.getFullUrl());
+                }
+                
+                processedEntries.add(ProcessedEntry.failed("Failed to process " + resourceType + ": " + errorMessage));
             }
         }
         
@@ -292,19 +358,39 @@ public class FHIRBundleProcessingService {
      */
     private void insertResourceIntoCouchbase(Cluster cluster, String bucketName, String resourceType, 
                                            String documentKey, Resource resource) {
-        // Ensure proper meta information - keep minimal
-        Meta meta = resource.getMeta();
-        if (meta == null) {
-            meta = new Meta();
-            resource.setMeta(meta);
+        // Ensure proper meta information using FhirMetaHelper
+        String versionId = "1";
+        Date lastUpdated = new Date();
+        java.util.List<String> profiles = null;
+        if (resource.getMeta() != null && resource.getMeta().hasProfile()) {
+            profiles = new java.util.ArrayList<>();
+            for (org.hl7.fhir.r4.model.CanonicalType ct : resource.getMeta().getProfile()) {
+                profiles.add(ct.getValue());
+            }
         }
-        meta.setVersionId("1");
-        // Skip profile to keep meta minimal
-        
+        // Use auditService to get user info if available, else fallback
+        String createdBy = "user:anonymous";
+        try {
+            com.couchbase.fhir.resources.service.FhirAuditService auditService = this.auditService;
+            if (auditService != null) {
+                com.couchbase.fhir.resources.service.UserAuditInfo auditInfo = auditService.getCurrentUserAuditInfo();
+                if (auditInfo != null && auditInfo.getUserId() != null) {
+                    createdBy = "user:" + auditInfo.getUserId();
+                }
+            }
+        } catch (Exception e) {}
+        com.couchbase.common.fhir.FhirMetaHelper.applyMeta(
+            resource,
+            lastUpdated,
+            versionId,
+            profiles,
+            createdBy
+        );
+
         // Convert to JSON and then to Map for Couchbase
         String resourceJson = jsonParser.encodeResourceToString(resource);
         Map<String, Object> resourceMap = JsonObject.fromJson(resourceJson).toMap();
-        
+
         // UPSERT into appropriate collection
         String sql = String.format(
             "UPSERT INTO `%s`.`%s`.`%s` (KEY, VALUE) VALUES ('%s', %s)",
@@ -341,8 +427,26 @@ public class FHIRBundleProcessingService {
     /**
      * Validate Bundle structure
      */
-    private ValidationResult validateBundle(Bundle bundle) {
-        return fhirValidator.validateWithResult(bundle);
+    private ValidationResult validateBundle(Bundle bundle, boolean useLenientValidation) {
+        FhirValidator validator;
+        if (useLenientValidation) {
+            validator = basicFhirValidator;
+            logger.info("Using basic FHIR R4 validator for lenient validation.");
+        } else {
+            validator = fhirValidator;
+            logger.info("Using strict US Core 6.1.0 validator.");
+        }
+
+        ValidationResult result = validator.validateWithResult(bundle);
+        
+        // Filter out INFORMATION level messages
+        List<SingleValidationMessage> filteredMessages = result
+            .getMessages()
+            .stream()
+            .filter(msg -> msg.getSeverity() != ResultSeverityEnum.INFORMATION)
+            .collect(Collectors.toList());
+        
+        return new ValidationResult(result.getContext(), filteredMessages);
     }
 
     /**

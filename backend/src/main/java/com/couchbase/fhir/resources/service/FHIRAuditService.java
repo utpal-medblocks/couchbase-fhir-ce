@@ -1,5 +1,6 @@
 package com.couchbase.fhir.resources.service;
 
+import com.couchbase.common.fhir.FhirMetaHelper;
 import org.hl7.fhir.instance.model.api.IBaseResource;
 import org.hl7.fhir.r4.model.*;
 import org.slf4j.Logger;
@@ -14,12 +15,12 @@ import java.util.*;
 import java.util.stream.Collectors;
 
 @Service
-public class FHIRAuditService {
-    
-    private static final Logger logger = LoggerFactory.getLogger(FHIRAuditService.class);
+public class FhirAuditService {
+
+    private static final Logger logger = LoggerFactory.getLogger(FhirAuditService.class);
     
     /**
-     * Add comprehensive audit information to resource meta
+     * Add comprehensive audit information to resource meta using centralized helper
      */
     public void addAuditInfoToMeta(IBaseResource resource, String userId, String operation) {
         UserAuditInfo auditInfo = getCurrentUserAuditInfo();
@@ -27,27 +28,38 @@ public class FHIRAuditService {
     }
     
     /**
-     * Add comprehensive audit information to resource meta with detailed audit info
+     * Add comprehensive audit information to resource meta with detailed audit info using centralized helper
      */
     public void addAuditInfoToMeta(IBaseResource resource, UserAuditInfo auditInfo, String operation) {
         try {
-            Meta meta = getOrCreateMeta(resource);
+            if (!(resource instanceof Resource)) {
+                logger.warn("⚠️ Cannot add audit info to non-R4 resource: {}", resource.getClass().getSimpleName());
+                return;
+            }
             
-            // Update timestamp
-            meta.setLastUpdated(new Date());
+            Resource r4Resource = (Resource) resource;
             
-            // Add audit tags for who and what
-            addAuditTags(meta, auditInfo, operation);
+            // Determine user ID - prefer auditInfo, fallback to current user
+            String userId = (auditInfo != null && auditInfo.getUserId() != null) 
+                ? auditInfo.getUserId() 
+                : getCurrentUserId();
             
-            // Add security labels if needed
-            addSecurityLabels(meta, auditInfo);
+            // Extract existing profiles to preserve them
+            List<String> existingProfiles = FhirMetaHelper.extractExistingProfiles(r4Resource);
             
-            // Set meta back to resource
-            setMetaOnResource(resource, meta);
+            // Use centralized helper to apply complete meta information
+            FhirMetaHelper.applyCompleteMeta(
+                r4Resource,
+                userId,
+                operation,
+                new Date(),        // lastUpdated - always current time
+                "1",              // versionId - simple for now
+                existingProfiles  // preserve existing profiles
+            );
             
-            // logger.info("✅ Added audit info to {} resource - User: {}, Operation: {}", 
-            //     resource.fhirType(), auditInfo.getUserId(), operation);
-                
+            logger.debug("✅ Applied audit meta to {} resource for user: {}, operation: {}", 
+                r4Resource.getResourceType().name(), userId, operation);
+            
         } catch (Exception e) {
             logger.error("❌ Failed to add audit info to resource: {}", e.getMessage(), e);
             // Don't throw - audit failure shouldn't break resource processing
@@ -55,21 +67,28 @@ public class FHIRAuditService {
     }
     
     /**
-     * Add minimal audit tags - only created-by user information
+     * Add minimal audit information to resource (preserves existing meta)
      */
-    private void addAuditTags(Meta meta, UserAuditInfo auditInfo, String operation) {
-        // Only add who performed the action - keep it simple
-        meta.addTag(new Coding()
-            .setSystem("http://terminology.hl7.org/CodeSystem/common-tags")
-            .setCode("created-by")
-            .setDisplay("user:" + auditInfo.getUserId()));
-    }
-    
-    /**
-     * Add security labels for access control - skip to keep meta minimal
-     */
-    private void addSecurityLabels(Meta meta, UserAuditInfo auditInfo) {
-        // Skip security labels to keep meta minimal as requested
+    public void addMinimalAuditInfo(IBaseResource resource, String operation) {
+        try {
+            if (!(resource instanceof Resource)) {
+                logger.warn("⚠️ Cannot add audit info to non-R4 resource: {}", resource.getClass().getSimpleName());
+                return;
+            }
+            
+            Resource r4Resource = (Resource) resource;
+            String userId = getCurrentUserId();
+            
+            // Use audit-only method to preserve existing meta
+            FhirMetaHelper.applyAuditOnly(r4Resource, userId, operation);
+            
+            logger.debug("✅ Applied minimal audit meta to {} resource for user: {}, operation: {}", 
+                r4Resource.getResourceType().name(), userId, operation);
+            
+        } catch (Exception e) {
+            logger.error("❌ Failed to add minimal audit info to resource: {}", e.getMessage(), e);
+            // Don't throw - audit failure shouldn't break resource processing
+        }
     }
     
     /**
@@ -148,48 +167,4 @@ public class FHIRAuditService {
             return "user";
         }
     }
-    
-    /**
-     * Get or create Meta object for a resource
-     */
-    private Meta getOrCreateMeta(IBaseResource resource) {
-        if (resource instanceof DomainResource) {
-            DomainResource domainResource = (DomainResource) resource;
-            Meta meta = domainResource.getMeta();
-            if (meta == null) {
-                meta = new Meta();
-                domainResource.setMeta(meta);
-            }
-            return meta;
-        } else if (resource instanceof Resource) {
-            Resource res = (Resource) resource;
-            Meta meta = res.getMeta();
-            if (meta == null) {
-                meta = new Meta();
-                res.setMeta(meta);
-            }
-            return meta;
-        }
-        
-        // Fallback - create new Meta
-        return new Meta();
-    }
-    
-    /**
-     * Set Meta object back to resource
-     */
-    private void setMetaOnResource(IBaseResource resource, Meta meta) {
-        if (resource instanceof DomainResource) {
-            ((DomainResource) resource).setMeta(meta);
-        } else if (resource instanceof Resource) {
-            ((Resource) resource).setMeta(meta);
-        }
-    }
-    
-    /**
-     * Add Bundle-specific audit context
-     */
-    public void addBundleAuditContext(IBaseResource resource, String bundleId, String operation) {
-        // Skip Bundle context to keep meta minimal as requested
-    }
-} 
+}
