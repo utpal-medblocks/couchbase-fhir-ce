@@ -79,7 +79,7 @@ class FhirMetricsService {
     const timeoutId = setTimeout(() => controller.abort(), 5000);
 
     try {
-      const response = await fetch(`${this.baseUrl}/metrics`, {
+      const response = await fetch(`${this.baseUrl}/fhir-metrics`, {
         signal: controller.signal,
       });
 
