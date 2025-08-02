@@ -2,6 +2,9 @@ package com.couchbase.admin.dashboard.controller;
 
 import com.couchbase.admin.dashboard.model.DashboardMetrics;
 import com.couchbase.admin.dashboard.service.ActuatorAggregatorService;
+import com.couchbase.admin.connections.service.ClusterMetricsService;
+import com.couchbase.admin.connections.service.ConnectionService;
+import com.couchbase.admin.connections.model.ClusterMetrics;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.http.ResponseEntity;
@@ -9,6 +12,7 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.List;
 
 @RestController
 @RequestMapping("/api/dashboard")
@@ -17,27 +21,43 @@ public class DashboardMetricsController {
 
     @Autowired
     private ActuatorAggregatorService actuatorAggregatorService;
+    
+    @Autowired
+    private ClusterMetricsService clusterMetricsService;
+    
+    @Autowired
+    private ConnectionService connectionService;
 
     @GetMapping("/metrics")
     @Cacheable(value = "dashboardMetrics", unless = "#result.body == null")
-    public ResponseEntity<DashboardMetrics> getDashboardMetrics() {
+    public ResponseEntity<ClusterMetrics> getDashboardMetrics(@RequestParam(required = false) String connectionName) {
         long startTime = System.currentTimeMillis();
-        System.out.println("🚀 DashboardMetricsController: Starting getDashboardMetrics");
+        System.out.println("🚀 DashboardMetricsController: Getting Couchbase cluster metrics");
         
         try {
-            DashboardMetrics metrics = actuatorAggregatorService.getAggregatedMetrics();
+            // Get connection name - use provided or get the first active connection
+            if (connectionName == null || connectionName.isEmpty()) {
+                List<String> activeConnections = connectionService.getActiveConnections();
+                if (activeConnections.isEmpty()) {
+                    System.out.println("❌ No active Couchbase connections found");
+                    return ResponseEntity.badRequest().build();
+                }
+                connectionName = activeConnections.get(0);
+            }
+            
+            System.out.println("🔍 Getting cluster metrics for connection: " + connectionName);
+            ClusterMetrics clusterMetrics = clusterMetricsService.getClusterMetrics(connectionName);
+            
             long endTime = System.currentTimeMillis();
-            System.out.println("✅ DashboardMetricsController: getDashboardMetrics completed in " + (endTime - startTime) + "ms");
-            return ResponseEntity.ok(metrics);
+            System.out.println("✅ DashboardMetricsController: Couchbase cluster metrics retrieved in " + (endTime - startTime) + "ms");
+            System.out.println("📊 Cluster: " + clusterMetrics.getClusterName() + " | Nodes: " + clusterMetrics.getNodes().size() + " | Buckets: " + clusterMetrics.getBuckets().size());
+            
+            return ResponseEntity.ok(clusterMetrics);
         } catch (Exception e) {
             long endTime = System.currentTimeMillis();
-            System.out.println("❌ DashboardMetricsController: getDashboardMetrics failed after " + (endTime - startTime) + "ms");
-            // Return partial metrics with error information
-            DashboardMetrics errorMetrics = new DashboardMetrics();
-            Map<String, Object> errorInfo = new HashMap<>();
-            errorInfo.put("error", "Failed to fetch metrics: " + e.getMessage());
-            errorMetrics.setApplicationInfo(errorInfo);
-            return ResponseEntity.ok(errorMetrics);
+            System.out.println("❌ DashboardMetricsController: Failed to get cluster metrics after " + (endTime - startTime) + "ms: " + e.getMessage());
+            e.printStackTrace();
+            return ResponseEntity.status(500).build();
         }
     }
 
@@ -136,18 +156,19 @@ public class DashboardMetricsController {
     }
 
     @GetMapping("/fhir-metrics")
-    public ResponseEntity<Map<String, Object>> getFhirMetrics() {
+    public ResponseEntity<DashboardMetrics> getFhirMetrics() {
         try {
+            System.out.println("🚀 DashboardMetricsController: Getting FHIR application metrics");
             DashboardMetrics metrics = actuatorAggregatorService.getAggregatedMetrics();
-            Map<String, Object> fhirResponse = new HashMap<>();
-            fhirResponse.put("fhirMetrics", metrics.getFhirMetrics());
-            fhirResponse.put("timestamp", System.currentTimeMillis());
-            return ResponseEntity.ok(fhirResponse);
+            System.out.println("✅ FHIR application metrics retrieved successfully");
+            return ResponseEntity.ok(metrics);
         } catch (Exception e) {
-            Map<String, Object> errorResponse = new HashMap<>();
-            errorResponse.put("error", "Failed to fetch FHIR metrics: " + e.getMessage());
-            errorResponse.put("timestamp", System.currentTimeMillis());
-            return ResponseEntity.ok(errorResponse);
+            System.out.println("❌ Failed to get FHIR metrics: " + e.getMessage());
+            DashboardMetrics errorMetrics = new DashboardMetrics();
+            Map<String, Object> errorInfo = new HashMap<>();
+            errorInfo.put("error", "Failed to fetch FHIR metrics: " + e.getMessage());
+            errorMetrics.setApplicationInfo(errorInfo);
+            return ResponseEntity.ok(errorMetrics);
         }
     }
 }
