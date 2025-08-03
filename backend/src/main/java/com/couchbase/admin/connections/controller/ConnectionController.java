@@ -56,12 +56,17 @@ public class ConnectionController {
     public ResponseEntity<Map<String, Object>> getActiveConnections() {
         try {
             List<String> activeConnections = connectionService.getActiveConnections();
+            String lastError = connectionService.getLastConnectionError();
             
-            Map<String, Object> response = Map.of(
-                "success", true,
-                "connections", activeConnections,
-                "count", activeConnections.size()
-            );
+            Map<String, Object> response = new HashMap<>();
+            response.put("success", true);
+            response.put("connections", activeConnections);
+            response.put("count", activeConnections.size());
+            
+            // Include last connection error if present (for frontend error display)
+            if (lastError != null) {
+                response.put("lastConnectionError", lastError);
+            }
             
             return ResponseEntity.ok(response);
         } catch (Exception e) {

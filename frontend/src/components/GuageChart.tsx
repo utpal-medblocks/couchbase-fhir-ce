@@ -18,6 +18,8 @@ export const GaugeChart = ({
   name: string;
   value: number;
 }) => {
+  // Ensure value is a valid number
+  const safeValue = typeof value === "number" && !isNaN(value) ? value : 0;
   const theme = useTheme();
 
   const needle = (
@@ -97,7 +99,14 @@ export const GaugeChart = ({
               const iR = height * 0.27; // approx 40 for height = 150
               // const oR = height * 0.4; // approx 60 for height = 150
               const oR = Math.min(width, height) * 0.5;
-              return needle(value, cx, cy, iR, oR, theme.palette.primary.main);
+              return needle(
+                safeValue,
+                cx,
+                cy,
+                iR,
+                oR,
+                theme.palette.primary.main
+              );
             }}
           />
         </PieChart>
@@ -124,7 +133,7 @@ export const GaugeChart = ({
           {name}
         </Typography>
         <Typography variant="h6" sx={{ lineHeight: 1.0 }}>
-          {value.toFixed(1)}%
+          {safeValue.toFixed(1)}%
         </Typography>
       </Box>
     </Box>

@@ -1,0 +1,47 @@
+# Couchbase FHIR Configuration Template
+# Copy this file to 'config.yaml' and update with your actual connection details
+# DO NOT commit config.yaml to git - it contains sensitive credentials
+
+connection:
+##  connectionString: "ec2-xxx-xxx-xxx-xxx.compute-1.amazonaws.com"
+connectionString: "localhost"
+  username: "Administrator"
+  password: "password"
+  serverType: "Server" # "Server" or "Capella"
+  sslEnabled: false
+  sslCertificate: "-----BEGIN CERTIFICATE----
+MIIDDDCCAfSgAwIBAgIIGFbWQXbe3TEwDQYJKoZIhvcNAQELBQAwJDEiMCAGA1UE
+AxMZQ291Y2hiYXNlIFNlcnZlciBmNTk2ZTZiYjAeFw0xMzAxMDEwMDAwMDBaFw00
+OTEyMzEyMzU5NTlaMCQxIjAgBgNVBAMTGUNvdWNoYmFzZSBTZXJ2ZXIgZjU5NmU2
+YmIwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQDEGUyscHFHGl5vQR64
+fsUw0sLBg8r9jh8RhIFiM38zlRyEI2AKQojxOoklnSCG6WE9kOsAto8meIwkwCw+
+w6VG6bHY8HNYpjTThsIsx5mz0OCfE1wgCOS3GiOh/GGhIH0gksFuxVb3pSOHWTnj
+/5wbfpvCwDWEdW4Oa1jsxtgtRnVr7aM5uEfGEcjHNWDYGog8eMfe0/VcrWTWsJhQ
+ej0fgmF5EA9bNxZfYhtYCsd3viPpz7NZqdTMyxmSPI/qDuHmKqjk1nwRQuAgsHDc
+h/psLZrRhm5bMJkMXD8SrwNML7ps5zJZMxtQOE/+kkplgm6dogrjho1Pa2eyW/i7
+XDMbAgMBAAGjQjBAMA4GA1UdDwEB/wQEAwIBhjAPBgNVHRMBAf8EBTADAQH/MB0G
+A1UdDgQWBBRM+tswsHpPWNgEWKdePpsL8ABhUzANBgkqhkiG9w0BAQsFAAOCAQEA
+VKXoaHxQeiv17GfWhjVS4JHAaVds5mX7/ervQjhmrlWPcK8HJyedmpjBh8JgnCpe
+vLCx9xTt9qEyjsyxnr7eGFQh0pP34CN/MUf6Jo60RAeuONSdR7eCFwJEBE/LXW15
+c70vdqikvEQaGDlmiABpqR3ggDuFrjRvVVNJtXdATbZo3Y6RU8WM/KizpT4L5cMa
+7jQHnZXiE4l1UdHepX3xfq0DO1AZOVUkUvbbkf8PhimHd5r7D9ZM6NN6Y/AsoYkI
+VflTb2jAbH/zod+3UI+ddQwYLu9XZgv4oStAm4nEfPI3ptNJorqXSkMEdGbw1lnA
+EItoo4jU18oLHbU12SWU2A==
+-----END CERTIFICATE-----"
+
+# Capella Connection (COMMENTED OUT)
+# connection:
+#   connectionString: "couchbases://cb.your-endpoint.cloud.couchbase.com"
+#   username: "your-capella-user"
+#   password: "your-capella-password"
+#   serverType: "Capella"
+#   sslEnabled: true
+
+fhir:
+  profile: "US Core"
+  endpoint: "/fhir"
+  version: "V4"
+
+app:
+  autoConnect: true
+  showConnectionDialog: false # Set to false to prevent dialog if YAML config is valid
