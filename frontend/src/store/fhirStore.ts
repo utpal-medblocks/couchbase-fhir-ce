@@ -42,7 +42,9 @@ export const useFhirStore = create<FhirState>((set, get) => {
 
     fetchMetrics: async () => {
       try {
+        console.log("🔍 fhirStore: Fetching FHIR metrics...");
         const data = await fhirMetricsService.getFhirMetrics();
+        console.log("✅ fhirStore: FHIR metrics received:", data);
         set((state) => {
           // Only update if data has actually changed
           const hasChanged =

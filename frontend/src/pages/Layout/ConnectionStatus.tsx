@@ -3,18 +3,16 @@ import { BsUnlock, BsLock } from "react-icons/bs";
 import { AiOutlineCluster } from "react-icons/ai";
 import flame from "../../assets/icons/flame.png";
 import { useConnectionStore } from "../../store/connectionStore";
-import { useConfigStore } from "../../store/configStore";
 
 const ConnectionStatus = () => {
   const { connection, metrics } = useConnectionStore();
-  const { yamlConfig } = useConfigStore();
 
   const nodes = metrics?.nodes || [];
   const clusterName = metrics?.clusterName || "No Connection";
   const clusterVersion = nodes.length > 0 ? nodes[0].version : "No Connection";
 
-  // Get FHIR configuration from YAML or use defaults
-  const fhirConfig = yamlConfig?.fhir || {
+  // Static FHIR configuration - backend manages the actual config
+  const fhirConfig = {
     profile: "US Core",
     endpoint: "/fhir/demo",
     version: "V4",

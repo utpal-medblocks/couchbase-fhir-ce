@@ -65,3 +65,8 @@ lerna-debug.log*
 # Build
 /build
 /out
+
+# Configuration files with credentials
+config.yaml
+config*.yaml
+*.config.yaml

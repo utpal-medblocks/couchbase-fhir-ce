@@ -27,6 +27,9 @@ public class ConnectionService {
     // Store connection details including SSL status
     private final Map<String, ConnectionDetails> connectionDetails = new ConcurrentHashMap<>();
     
+    // Store last connection error for frontend
+    private volatile String lastConnectionError = null;
+    
     // Inner class to store connection details
     public static class ConnectionDetails {
         private final boolean sslEnabled;
@@ -56,19 +59,66 @@ public class ConnectionService {
         try {
             ClusterOptions options = ClusterOptions.clusterOptions(request.getUsername(), request.getPassword())
                     .environment(env -> {
-                        // Set reasonable timeouts for good error detection
+                        // Aggressive timeouts to prevent hanging on auth failures
                         env.timeoutConfig().connectTimeout(Duration.ofSeconds(10));
-                        env.timeoutConfig().queryTimeout(Duration.ofSeconds(30));
-                        env.timeoutConfig().managementTimeout(Duration.ofSeconds(15));
+                        env.timeoutConfig().queryTimeout(Duration.ofSeconds(15));     // Shorter timeout for fast failure
+                        env.timeoutConfig().managementTimeout(Duration.ofSeconds(15)); // Shorter timeout for fast failure
+                        env.timeoutConfig().kvTimeout(Duration.ofSeconds(10));        // Key-Value operation timeout
+                        
+                        // Optimize connection pooling for reuse
+                        env.ioConfig().numKvConnections(4);                          // More connections per node
+                        env.ioConfig().maxHttpConnections(12);                       // More HTTP connections
+                        env.ioConfig().idleHttpConnectionTimeout(Duration.ofSeconds(30)); // Keep connections alive longer
+                        
+                        // Use best effort retry strategy with default settings
+                        env.retryStrategy(com.couchbase.client.core.retry.BestEffortRetryStrategy.INSTANCE);
                     });
             
             Cluster cluster = Cluster.connect(request.getConnectionString(), options);
             
-            // IMPORTANT: Test the connection immediately with a timeout
+            // IMPORTANT: Test the connection immediately with a strict timeout
             try {
-                // Try to get cluster info to validate the connection
-                cluster.buckets().getAllBuckets();
-                logger.info("Connection validation successful for: {}", request.getName());
+                logger.info("🔍 Validating connection with 15-second timeout...");
+                
+                // Use CompletableFuture with timeout to prevent hanging
+                java.util.concurrent.CompletableFuture<Void> validationFuture = 
+                    java.util.concurrent.CompletableFuture.runAsync(() -> {
+                        try {
+                            cluster.buckets().getAllBuckets();
+                        } catch (RuntimeException e) {
+                            throw e;
+                        }
+                    });
+                
+                // Wait with strict timeout - if this times out, it's likely an auth issue
+                validationFuture.get(15, java.util.concurrent.TimeUnit.SECONDS);
+                
+                logger.info("✅ Connection validation successful for: {}", request.getName());
+            } catch (java.util.concurrent.TimeoutException timeoutError) {
+                // Close the cluster immediately if validation times out
+                try {
+                    cluster.disconnect();
+                } catch (Exception disconnectError) {
+                    logger.warn("Error disconnecting timed-out cluster: {}", disconnectError.getMessage());
+                }
+                
+                logger.error("⏰ Connection validation timed out for {}: likely authentication failure", request.getName());
+                String errorMsg = "Authentication failed - please check username and password in config.yaml";
+                this.lastConnectionError = errorMsg;
+                return ConnectionResponse.failure("Connection failed", errorMsg);
+            } catch (java.util.concurrent.ExecutionException executionError) {
+                // Close the cluster immediately if validation fails
+                try {
+                    cluster.disconnect();
+                } catch (Exception disconnectError) {
+                    logger.warn("Error disconnecting failed cluster: {}", disconnectError.getMessage());
+                }
+                
+                Throwable cause = executionError.getCause();
+                String userFriendlyMessage = getUserFriendlyErrorMessage(new Exception(cause));
+                logger.error("❌ Connection validation failed for {}: {}", request.getName(), cause.getMessage());
+                this.lastConnectionError = userFriendlyMessage;
+                return ConnectionResponse.failure("Connection failed", userFriendlyMessage);
             } catch (Exception validationError) {
                 // Close the cluster immediately if validation fails
                 try {
@@ -77,9 +127,9 @@ public class ConnectionService {
                     logger.warn("Error disconnecting failed cluster: {}", disconnectError.getMessage());
                 }
                 
-                // Provide user-friendly error messages based on the error type
                 String userFriendlyMessage = getUserFriendlyErrorMessage(validationError);
-                logger.error("Connection validation failed for {}: {}", request.getName(), validationError.getMessage());
+                logger.error("❌ Connection validation failed for {}: {}", request.getName(), validationError.getMessage());
+                this.lastConnectionError = userFriendlyMessage;
                 return ConnectionResponse.failure("Connection failed", userFriendlyMessage);
             }
             
@@ -94,6 +144,9 @@ public class ConnectionService {
             
             logger.info("Successfully created and stored connection: {}", request.getName());
             
+            // Clear any previous connection error on success
+            this.lastConnectionError = null;
+            
             // Extract cluster name from connection string for response
             String clusterName = extractClusterName(request.getConnectionString());
             
@@ -105,10 +158,14 @@ public class ConnectionService {
             // Check if it's an UnknownHostException specifically
             if (e.getCause() instanceof java.net.UnknownHostException || 
                 e.getMessage().contains("UnknownHostException")) {
-                return ConnectionResponse.failure("Connection failed", "Invalid hostname - please check the server address");
+                String errorMsg = "Invalid hostname - please check the server address";
+                this.lastConnectionError = errorMsg;
+                return ConnectionResponse.failure("Connection failed", errorMsg);
             }
             
-            return ConnectionResponse.failure("Failed to create connection", getUserFriendlyErrorMessage(e));
+            String errorMsg = getUserFriendlyErrorMessage(e);
+            this.lastConnectionError = errorMsg;
+            return ConnectionResponse.failure("Failed to create connection", errorMsg);
         }
     }
     
@@ -207,6 +264,13 @@ public class ConnectionService {
     public List<String> getActiveConnections() {
         return activeConnections.keySet().stream()
                 .collect(Collectors.toList());
+    }
+    
+    /**
+     * Get the last connection error for frontend display
+     */
+    public String getLastConnectionError() {
+        return this.lastConnectionError;
     }
     
     /**

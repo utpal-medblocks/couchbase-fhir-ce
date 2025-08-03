@@ -136,6 +136,12 @@
 			<artifactId>jackson-databind</artifactId>
 		</dependency>
 
+		<!-- YAML Configuration Support -->
+		<dependency>
+			<groupId>org.yaml</groupId>
+			<artifactId>snakeyaml</artifactId>
+		</dependency>
+
 	</dependencies>
 
 	<build>

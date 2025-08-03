@@ -1,6 +1,5 @@
 import { create } from "zustand";
 import axios from "axios";
-import { connectionService } from "../services/connectionService";
 
 // Types for connection details
 interface ConnectionInfo {
@@ -9,14 +8,6 @@ interface ConnectionInfo {
   version: string;
   isConnected: boolean;
   isSSL?: boolean; // SSL connection status
-}
-
-interface ConnectionRequest {
-  connectionString: string;
-  username: string;
-  password: string;
-  serverType: "Server" | "Capella";
-  sslEnabled: boolean;
 }
 
 // Types for metrics data
@@ -96,32 +87,23 @@ interface ConnectionState {
   // Connection state
   connection: ConnectionInfo;
   error: string | null;
-  showDialog: boolean;
+  backendReady: boolean; // Track if backend has ever responded
 
   // Metrics state
   metrics: ClusterMetrics | null;
   metricsError: string | null;
-  //  fhirBuckets: Set<string>;
 
   // Connection actions
   setConnection: (connection: ConnectionInfo) => void;
   setError: (error: string | null) => void;
-  setShowDialog: (show: boolean) => void;
 
   // Metrics actions
   setMetrics: (metrics: ClusterMetrics | null) => void;
   setMetricsError: (error: string | null) => void;
-  // setFhirBuckets: (buckets: Set<string>) => void;
-  // toggleFhirBucket: (bucketName: string) => void;
 
   // Async actions
   fetchConnection: () => Promise<void>;
-  createConnection: (
-    request: ConnectionRequest
-  ) => Promise<{ success: boolean; error?: string }>;
-  deleteConnection: () => Promise<void>;
   fetchMetrics: () => Promise<void>;
-  //  fetchFhirBuckets: () => Promise<void>;
 
   // Utility actions
   clearError: () => void;
@@ -139,7 +121,7 @@ const initialState = {
     isConnected: false,
   },
   error: null,
-  showDialog: false,
+  backendReady: false,
   metrics: null,
   metricsError: null,
   fhirBuckets: new Set<string>(),
@@ -151,18 +133,11 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
 
   // Synchronous actions
   setConnection: (connection) => {
-    //    console.log("🔍 connectionStore: Setting connection", connection);
     set({ connection });
   },
 
   setError: (error) => {
-    //    console.log("🔍 connectionStore: Setting error", error);
     set({ error });
-  },
-
-  setShowDialog: (showDialog) => {
-    //    console.log("🔍 connectionStore: Setting showDialog", showDialog);
-    set({ showDialog });
   },
 
   clearError: () => set({ error: null }),
@@ -171,22 +146,13 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
 
   // Metrics actions
   setMetrics: (metrics) => {
-    //    console.log("connectionStore: Setting metrics", metrics);
     if (metrics && metrics.buckets) {
-      // console.log(
-      //   "🔍 connectionStore: Bucket metrics with FHIR status:",
-      //   metrics.buckets.map((bucket) => ({
-      //     name: bucket.name,
-      //     isFhirBucket: bucket.isFhirBucket,
-      //     status: bucket.status,
-      //   }))
-      // );
+      // Additional processing if needed
     }
     set({ metrics });
   },
 
   setMetricsError: (error) => {
-    //    console.log("🔍 connectionStore: Setting metricsError", error);
     set({ metricsError: error });
   },
 
@@ -210,74 +176,76 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
 
   // Async actions
   fetchConnection: async () => {
-    //    console.log("🔗 connectionStore: Starting fetchConnection");
-    set({ error: null });
-
     try {
       const response = await axios.get("/api/connections/active", {
         timeout: 5000,
       });
 
-      //      console.log("🔍 connectionStore: API response", response.data);
+      console.log("🔍 connectionStore: API response", response.data);
 
-      if (response.data && response.data.success && response.data.connections) {
-        const connections = response.data.connections;
-        // console.log(
-        //   "🔍 connectionStore: API returned connections",
-        //   connections
-        // );
+      // Backend responded - mark as ready
+      set({ backendReady: true });
 
-        if (connections.length > 0) {
-          const activeConnection = connections[0];
-
-          // Fetch SSL status for this connection
-          let isSSL = false;
-          try {
-            const sslResponse = await axios.get(
-              `/api/connections/${activeConnection}/details`,
-              {
-                timeout: 5000,
-              }
-            );
-            if (sslResponse.data && sslResponse.data.success) {
-              isSSL = sslResponse.data.isSSL;
-            }
-          } catch (sslError) {
-            console.warn(
-              "Failed to fetch SSL status for connection:",
-              sslError
-            );
-          }
-
-          const connectionInfo: ConnectionInfo = {
-            id: `conn-${activeConnection}`,
-            name: activeConnection,
-            version: "7.6.0",
-            isConnected: true,
-            isSSL: isSSL,
-          };
-
-          // console.log(
-          //   "🔍 connectionStore: Setting connection info",
-          //   connectionInfo
-          // );
-          set({ connection: connectionInfo });
+      if (response.data && response.data.success) {
+        // Check for lastConnectionError from backend
+        if (response.data.lastConnectionError) {
+          console.log(
+            "🔍 connectionStore: Backend reports connection error:",
+            response.data.lastConnectionError
+          );
+          set({ error: response.data.lastConnectionError });
         } else {
-          //          console.log("🔍 connectionStore: No connections available");
-          set({
-            connection: {
-              id: "No Connection",
-              name: "No Connection",
-              version: "No Connection",
-              isConnected: false,
-            },
-          });
+          set({ error: null });
+        }
+
+        if (response.data.connections) {
+          const connections = response.data.connections;
+          console.log(
+            "🔍 connectionStore: API returned connections",
+            connections
+          );
+
+          if (connections.length > 0) {
+            const activeConnection = connections[0];
+
+            // TODO: Backend should return complete ConnectionInfo including SSL status
+            const connectionInfo: ConnectionInfo = {
+              id: `conn-${activeConnection}`,
+              name: activeConnection,
+              version: "7.6.0", // TODO: Get from backend response
+              isConnected: true,
+              isSSL: false, // TODO: Backend should provide this
+            };
+
+            console.log(
+              "✅ connectionStore: Setting connection info",
+              connectionInfo
+            );
+            set({ connection: connectionInfo });
+
+            // Fetch cluster metrics immediately after connection success
+            setTimeout(() => {
+              console.log(
+                "🔍 connectionStore: Triggering fetchMetrics after connection"
+              );
+              get().fetchMetrics();
+            }, 100);
+          } else {
+            set({
+              connection: {
+                id: "No Connection",
+                name: "No Connection",
+                version: "No Connection",
+                isConnected: false,
+              },
+            });
+          }
         }
       } else {
-        // console.log(
-        //   "🔍 connectionStore: Invalid response format",
-        //   response.data
-        // );
+        console.log(
+          "🔍 connectionStore: Invalid response format",
+          response.data
+        );
         set({
           connection: {
             id: "No Connection",
@@ -288,147 +256,49 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
         });
       }
     } catch (error: any) {
-      //      console.error("❌ connectionStore: fetchConnection failed", error);
-      let errorMessage = "Failed to fetch connection";
+      console.log("🔗 connectionStore: fetchConnection failed", error.message);
 
-      if (error.name === "AbortError" || error.code === "ECONNABORTED") {
-        errorMessage = "Connection request timed out";
-      } else if (error.response?.status === 404) {
-        errorMessage = "Backend not available";
-      } else if (error.response?.data?.error) {
-        errorMessage = error.response.data.error;
-      }
+      const { backendReady } = get();
 
-      set({
-        error: errorMessage,
-        connection: {
-          id: "No Connection",
-          name: "No Connection",
-          version: "No Connection",
-          isConnected: false,
-        },
-      });
-    }
-  },
+      // Only show errors if backend was previously ready (real connection issues)
+      // Don't show errors during initial startup when backend isn't ready yet
+      if (backendReady) {
+        let errorMessage = "Connection lost - check backend status";
 
-  createConnection: async (connectionRequest: ConnectionRequest) => {
-    //    console.log("🔗 connectionStore: Creating connection", connectionRequest);
-    set({ error: null });
+        if (error.response?.status === 401) {
+          errorMessage =
+            "Authentication failed - check credentials in config.yaml";
+        } else if (error.response?.data?.error) {
+          errorMessage = error.response.data.error;
+        }
 
-    try {
-      const safeConnectionString = connectionRequest.connectionString.replace(
-        /localhost(?![\w.])/g,
-        "127.0.0.1"
-      );
-
-      const connectionName = `${
-        connectionRequest.serverType || "Couchbase"
-      }-${Date.now()}`;
-
-      const safeRequest = {
-        ...connectionRequest,
-        name: connectionName,
-        connectionString: safeConnectionString,
-      };
-
-      const createResponse = await axios.post(
-        "/api/connections/create",
-        safeRequest
-      );
-
-      if (!createResponse.data.success) {
-        const errorMessage =
-          createResponse.data.error || "Failed to create connection";
-        set({ error: errorMessage });
-        return { success: false, error: errorMessage };
-      }
-
-      // Store connection details for metrics
-      try {
-        await axios.post("/api/metrics/connection-details", {
-          name: connectionName,
-          connectionString: safeRequest.connectionString,
-          username: safeRequest.username,
-          password: safeRequest.password,
+        set({
+          error: errorMessage,
+          connection: {
+            id: "No Connection",
+            name: "No Connection",
+            version: "No Connection",
+            isConnected: false,
+          },
         });
-      } catch (metricsError) {
-        // console.warn(
-        //   "[connectionStore] Failed to store connection details for metrics:",
-        //   metricsError
-        // );
+      } else {
+        // Backend not ready yet - just set connection to disconnected, no error
+        set({
+          connection: {
+            id: "No Connection",
+            name: "No Connection",
+            version: "No Connection",
+            isConnected: false,
+          },
+        });
       }
-
-      // Update connection state
-      const connectionInfo: ConnectionInfo = {
-        id: `conn-${connectionName}`,
-        name: connectionName,
-        version: "7.6.0",
-        isConnected: true,
-      };
-
-      // console.log(
-      //   "🔍 connectionStore: Setting connection after creation",
-      //   connectionInfo
-      // );
-      set({
-        connection: connectionInfo,
-        showDialog: false,
-      });
-
-      // Fetch metrics immediately after successful connection
-      setTimeout(() => {
-        get().fetchMetrics();
-      }, 100);
-
-      return { success: true };
-    } catch (error: any) {
-      console.error("[connectionStore] Error creating connection:", error);
-      const errorMessage =
-        error.response?.data?.error || "Failed to create connection";
-      set({ error: errorMessage });
-      return { success: false, error: errorMessage };
-    }
-  },
-
-  deleteConnection: async () => {
-    const { connection } = get();
-    if (!connection.isConnected) {
-      return;
-    }
-
-    //    console.log("🔗 connectionStore: Deleting connection", connection.name);
-
-    try {
-      await axios.delete(`/api/connections/${connection.name}`);
-      await axios.delete(`/api/metrics/connection-details/${connection.name}`);
-
-      set({
-        connection: {
-          id: "No Connection",
-          name: "No Connection",
-          version: "No Connection",
-          isConnected: false,
-        },
-        showDialog: true,
-        metrics: null,
-      });
-    } catch (error: any) {
-      console.error("[connectionStore] Error deleting connection:", error);
-      set({
-        error: "Failed to delete connection",
-      });
     }
   },
 
   fetchMetrics: async () => {
     const { connection } = get();
-    // console.log(
-    //   "🔗 connectionStore: Starting fetchMetrics for connection:",
-    //   connection.name
-    // );
 
     if (!connection.isConnected || !connection.name) {
-      //      console.log("🔍 connectionStore: No connection, skipping metrics fetch");
       set({ metrics: null, metricsError: null });
       return;
     }
@@ -436,26 +306,16 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
     set({ metricsError: null });
 
     try {
-      const metricsData = await connectionService.getClusterMetrics(
-        connection.name
+      const response = await axios.get(`/api/dashboard/metrics`, {
+        params: { connectionName: connection.name },
+        timeout: 5000,
+      });
+      const metricsData = response.data;
+
+      console.log(
+        "🔍 connectionStore: Received Couchbase cluster metrics:",
+        metricsData
       );
-
-      // console.log(
-      //   "🔍 connectionStore: Raw metrics data from API:",
-      //   metricsData
-      // );
-      // console.log(
-      //   "🔍 connectionStore: Buckets in raw data:",
-      //   metricsData.buckets?.map((bucket: any) => ({
-      //     name: bucket.name,
-      //     isFhirBucket: bucket.isFhirBucket,
-      //     hasIsFhirBucket: "isFhirBucket" in bucket,
-      //     status: bucket.status,
-      //     hasStatus: "status" in bucket,
-      //   }))
-      // );
-
-      //      console.log("🔍 connectionStore: Received metrics data:", metricsData);
 
       // Always update with new data using the setMetrics action
       get().setMetrics({
@@ -463,7 +323,6 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
         retrievedAt: Date.now(),
       });
     } catch (error: any) {
-      //      console.error("❌ connectionStore: fetchMetrics failed", error);
       let errorMessage = "Failed to fetch metrics";
 
       if (error.name === "AbortError" || error.code === "ECONNABORTED") {
