@@ -5,12 +5,17 @@ import ca.uhn.fhir.rest.api.RestSearchParameterTypeEnum;
 import com.couchbase.fhir.search.model.ConceptInfo;
 import com.couchbase.fhir.search.model.TokenParam;
 
+import java.util.Arrays;
+import java.util.List;
+import java.util.stream.Collectors;
+
 
 public class TokenSearchHelper {
 
     public static String buildTokenWhereClause(FhirContext fhirContext , String resourceType, String paramName, String tokenValue ) {
 
         TokenParam token = new TokenParam(tokenValue);
+        boolean isMultipleValues = token.code.contains(",");
         RuntimeResourceDefinition def = fhirContext.getResourceDefinition(resourceType);
         RuntimeSearchParam searchParam = def.getSearchParam(paramName);
         String path = searchParam.getPath();
@@ -25,7 +30,19 @@ public class TokenSearchHelper {
         String jsonPath = toCouchbasePath(path, resourceType , conceptInfo.isCodableConcept , conceptInfo.isArray , conceptInfo.isPrimitive);
 
         if(conceptInfo.isPrimitive){
-            return jsonPath + " = \"" + token.code + "\" ";
+            if(isMultipleValues){
+                List<String> values = Arrays.stream(token.code.split(","))
+                        .map(String::trim)
+                        .toList();
+
+                String joined = values.stream()
+                        .map(val -> "\"" + val + "\"")
+                        .collect(Collectors.joining(", "));
+                return jsonPath + " IN [" + joined + "]";
+            }else{
+                return jsonPath + " = \"" + token.code + "\" ";
+            }
+
         }
 
         StringBuilder whereClause = new StringBuilder();
