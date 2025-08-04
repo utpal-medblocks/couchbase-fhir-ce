@@ -1,0 +1,79 @@
+version: '3.8'
+
+services:
+  couchbase:
+    image: couchbase:community-7.2.4
+    container_name: couchbase-server
+    ports:
+      - "8091-8096:8091-8096"
+      - "11210:11210"           
+    environment:
+      - COUCHBASE_ADMINISTRATOR_USERNAME=Administrator
+      - COUCHBASE_ADMINISTRATOR_PASSWORD=password
+    volumes:
+      - couchbase_data:/opt/couchbase/var
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8091/ui/index.html"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  fhir-server:
+    build:
+      context: ./backend
+    environment:
+      - SPRING_PROFILES_ACTIVE=prod
+      - JAVA_OPTS=-Xms256m -Xmx1024m
+    ports:
+      - "8080:8080"
+    depends_on:
+      couchbase:
+        condition: service_healthy
+    # deploy:
+    #   mode: replicated
+    #   replicas: 1
+    #   resources:
+    #     limits:
+    #       cpus: '0.50'
+    #       memory: 1024M
+    #     reservations:
+    #       cpus: '0.25'
+    #       memory: 256M
+    #   restart_policy:
+    #     condition: on-failure
+    restart: unless-stopped
+
+  fhir-admin:
+    build:
+      context: ./frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - fhir-server
+    # deploy:
+    #   mode: replicated
+    #   replicas: 1
+    #   resources:
+    #     limits:
+    #       cpus: '0.25'
+    #       memory: 256M
+    #     reservations:
+    #       cpus: '0.10'
+    #       memory: 128M
+    #   restart_policy:
+    #     condition: on-failure
+    restart: unless-stopped
+
+  haproxy:
+    image: haproxy:2.9-alpine
+    ports:
+      - "80:80"
+    volumes:
+      - ./haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    depends_on:
+      - fhir-admin
+      - fhir-server
+    restart: unless-stopped
+
+volumes:
+  couchbase_data:
