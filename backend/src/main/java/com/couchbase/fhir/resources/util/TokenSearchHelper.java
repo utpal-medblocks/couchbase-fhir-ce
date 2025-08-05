@@ -2,7 +2,12 @@ package com.couchbase.fhir.resources.util;
 
 import ca.uhn.fhir.context.*;
 import ca.uhn.fhir.rest.api.RestSearchParameterTypeEnum;
+import com.couchbase.fhir.search.model.ConceptInfo;
 import com.couchbase.fhir.search.model.TokenParam;
+
+import java.util.Arrays;
+import java.util.List;
+import java.util.stream.Collectors;
 
 
 public class TokenSearchHelper {
@@ -10,38 +15,73 @@ public class TokenSearchHelper {
     public static String buildTokenWhereClause(FhirContext fhirContext , String resourceType, String paramName, String tokenValue ) {
 
         TokenParam token = new TokenParam(tokenValue);
+        boolean isMultipleValues = token.code.contains(",");
         RuntimeResourceDefinition def = fhirContext.getResourceDefinition(resourceType);
         RuntimeSearchParam searchParam = def.getSearchParam(paramName);
         String path = searchParam.getPath();
-        if ("Resource.id".equals(path) || (resourceType + ".id").equals(path)) {
+       /* if ("Resource.id".equals(path) || (resourceType + ".id").equals(path)) {
             return "id = \"" + token.code + "\"";
         }else if("Resource.gender".equals(path) || (resourceType + ".gender").equals(path)){
             return "gender = \"" + token.code + "\"";
+        }*/
+
+        ConceptInfo conceptInfo = getConceptInfo(path , resourceType , def);
+
+        String jsonPath = toCouchbasePath(path, resourceType , conceptInfo.isCodableConcept , conceptInfo.isArray , conceptInfo.isPrimitive);
+
+        if(conceptInfo.isPrimitive){
+            if(isMultipleValues){
+                List<String> values = Arrays.stream(token.code.split(","))
+                        .map(String::trim)
+                        .toList();
+
+                String joined = values.stream()
+                        .map(val -> "\"" + val + "\"")
+                        .collect(Collectors.joining(", "));
+                return jsonPath + " IN [" + joined + "]";
+            }else{
+                return jsonPath + " = \"" + token.code + "\" ";
+            }
+
         }
-
-        boolean codableConcept = isCodableConcept(path , resourceType , def);
-
-        String jsonPath = toCouchbasePath(path, resourceType , codableConcept);
-        String alias = "iden";
 
         StringBuilder whereClause = new StringBuilder();
-        whereClause.append("ANY ").append(alias).append(" IN ").append(jsonPath).append(" SATISFIES ");
+        String alias = "iden";
+        if(conceptInfo.isCodableConcept && conceptInfo.isArray){
 
-        if (token.system != null) {
-            whereClause.append(alias).append(".`system` = \"").append(token.system).append("\" AND ");
-        }
-        if(codableConcept){
+            whereClause.append("ANY cat IN ").append(jsonPath)
+                    .append(" SATISFIES ANY ").append(alias).append(" IN cat.coding SATISFIES ");
+            if (token.system != null) {
+                whereClause.append(alias).append(".`system` = \"").append(token.system).append("\" AND ");
+            }
+            whereClause.append(alias).append(".`code` = \"").append(token.code).append("\" END END");
+
+        }else if(conceptInfo.isCodableConcept){
+            whereClause.append("ANY ").append(alias).append(" IN ").append(jsonPath).append(" SATISFIES ");
+
+            if (token.system != null) {
+                whereClause.append(alias).append(".`system` = \"").append(token.system).append("\" AND ");
+            }
+
             whereClause.append(alias).append(".`").append("code").append("` = \"")
                     .append(token.code).append("\" END");
-        }else{
-            whereClause.append(alias).append(".`value` = \"").append(token.code).append("\" END");
+        }
+        else{
+            whereClause.append("ANY ").append(" c ").append(" IN ").append(jsonPath).append(" SATISFIES ");
+            if (token.system != null) {
+                whereClause.append(" c ").append(".`system` = \"").append(token.system).append("\" AND ");
+            }
+            whereClause.append(" c ").append(".`value` = \"").append(token.code).append("\" END");
         }
 
         return whereClause.toString();
     }
 
-    public static boolean isCodableConcept(String path , String resourceType , RuntimeResourceDefinition def){
+    public static ConceptInfo getConceptInfo(String path , String resourceType , RuntimeResourceDefinition def){
         boolean isCodableConcept = false;
+        boolean isArray = false;
+        boolean isPrimitive = false;
+        BaseRuntimeElementDefinition<?> current = def;
         try{
             String fhirPath = path.replaceFirst("^" + resourceType + "\\.", "");
             String[] pathParts = fhirPath.split("\\.");
@@ -49,8 +89,16 @@ public class TokenSearchHelper {
                 if (def != null) {
                     BaseRuntimeChildDefinition child = ((BaseRuntimeElementCompositeDefinition<?>) def).getChildByName(part);
                     if (child != null) {
+                        if (child.getMax() == -1) {
+                            isArray = true;
+                        }
                         if(child.getChildByName(part).getImplementingClass().getSimpleName().equalsIgnoreCase("CodeableConcept")){
                             isCodableConcept = true;
+                        }
+
+                        current = child.getChildByName(part);
+                        if (current.isStandardType() && !(current instanceof BaseRuntimeElementCompositeDefinition)) {
+                            isPrimitive = true;
                         }
                     }
                 }
@@ -59,11 +107,12 @@ public class TokenSearchHelper {
         } catch (Exception e) {
             System.out.println( e.getMessage() );
         }
-        return isCodableConcept;
+
+        return new ConceptInfo(isCodableConcept , isArray , isPrimitive);
     }
 
 
-    private static String toCouchbasePath(String fhirPath, String resourceType , boolean codableConcept) {
+    private static String toCouchbasePath(String fhirPath, String resourceType , boolean codableConcept , boolean isArray , boolean isPrimitive) {
         if (fhirPath == null) {
             throw new IllegalArgumentException("FHIRPath is null ");
         }
@@ -71,8 +120,12 @@ public class TokenSearchHelper {
         if (!fhirPath.startsWith(resourceType + ".") && !fhirPath.startsWith("Resource.")) {
             throw new IllegalArgumentException("Invalid FHIRPath: " + fhirPath);
         }
-
-        String subPath = fhirPath.substring(resourceType.length() + 1);
+        String subPath = "";
+        if(fhirPath.contains("Resource")){
+            subPath = fhirPath.substring(9);
+        }else{
+            subPath =  fhirPath.substring(resourceType.length() + 1);
+        }
 
 
         String jsonPath = subPath
@@ -81,7 +134,11 @@ public class TokenSearchHelper {
                 .replace(".code", "")
                 .replace(".system", "");
 
-        if (codableConcept) {
+        if(isPrimitive){
+            return jsonPath;
+        }
+
+        if (codableConcept && !isArray) {
             jsonPath += ".coding";
         }
         return jsonPath;

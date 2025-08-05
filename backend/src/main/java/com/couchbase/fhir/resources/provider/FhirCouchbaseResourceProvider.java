@@ -10,6 +10,8 @@ import ca.uhn.fhir.rest.server.exceptions.ResourceNotFoundException;
 import ca.uhn.fhir.rest.server.exceptions.UnprocessableEntityException;
 import ca.uhn.fhir.validation.ValidationResult;
 import com.couchbase.fhir.resources.repository.FhirResourceDaoImpl;
+import com.couchbase.fhir.resources.service.FhirAuditService;
+import com.couchbase.fhir.resources.service.UserAuditInfo;
 import com.couchbase.fhir.resources.util.*;
 import com.couchbase.fhir.validation.ValidationUtil;
 import org.apache.jena.base.Sys;
@@ -58,10 +60,15 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
         if (resource.getIdElement().isEmpty()) {
             resource.setId(UUID.randomUUID().toString());
         }
-        if (resource instanceof DomainResource) {
-            ((DomainResource) resource).getMeta().addProfile("http://hl7.org/fhir/us/core/StructureDefinition/us-core-" +  resource.getClass().getSimpleName().toLowerCase());
+
+        FhirAuditService auditService = new FhirAuditService();
+        UserAuditInfo auditInfo = auditService.getCurrentUserAuditInfo();
+        auditService.addAuditInfoToMeta(resource, auditInfo, "CREATE");
+
+       /* if (resource instanceof DomainResource) {
+         //   ((DomainResource) resource).getMeta().addProfile("http://hl7.org/fhir/us/core/StructureDefinition/us-core-" +  resource.getClass().getSimpleName().toLowerCase());
             ((DomainResource) resource).getMeta().setLastUpdated(new Date());
-        }
+        }*/
 
         ValidationUtil validationUtil = new ValidationUtil();
         ValidationResult result = validationUtil.validate(resource , resourceClass.getSimpleName() , fhirContext);

@@ -18,7 +18,7 @@ import java.util.stream.Collectors;
 public class FhirAuditService {
 
     private static final Logger logger = LoggerFactory.getLogger(FhirAuditService.class);
-    
+
     /**
      * Add comprehensive audit information to resource meta using centralized helper
      */
@@ -26,7 +26,7 @@ public class FhirAuditService {
         UserAuditInfo auditInfo = getCurrentUserAuditInfo();
         addAuditInfoToMeta(resource, auditInfo, operation);
     }
-    
+
     /**
      * Add comprehensive audit information to resource meta with detailed audit info using centralized helper
      */
@@ -36,36 +36,36 @@ public class FhirAuditService {
                 logger.warn("⚠️ Cannot add audit info to non-R4 resource: {}", resource.getClass().getSimpleName());
                 return;
             }
-            
+
             Resource r4Resource = (Resource) resource;
-            
+
             // Determine user ID - prefer auditInfo, fallback to current user
-            String userId = (auditInfo != null && auditInfo.getUserId() != null) 
-                ? auditInfo.getUserId() 
-                : getCurrentUserId();
-            
+            String userId = (auditInfo != null && auditInfo.getUserId() != null)
+                    ? auditInfo.getUserId()
+                    : getCurrentUserId();
+
             // Extract existing profiles to preserve them
             List<String> existingProfiles = FhirMetaHelper.extractExistingProfiles(r4Resource);
-            
+
             // Use centralized helper to apply complete meta information
             FhirMetaHelper.applyCompleteMeta(
-                r4Resource,
-                userId,
-                operation,
-                new Date(),        // lastUpdated - always current time
-                "1",              // versionId - simple for now
-                existingProfiles  // preserve existing profiles
+                    r4Resource,
+                    userId,
+                    operation,
+                    new Date(),        // lastUpdated - always current time
+                    "1",              // versionId - simple for now
+                    existingProfiles  // preserve existing profiles
             );
-            
-            logger.debug("✅ Applied audit meta to {} resource for user: {}, operation: {}", 
-                r4Resource.getResourceType().name(), userId, operation);
-            
+
+            logger.debug("✅ Applied audit meta to {} resource for user: {}, operation: {}",
+                    r4Resource.getResourceType().name(), userId, operation);
+
         } catch (Exception e) {
             logger.error("❌ Failed to add audit info to resource: {}", e.getMessage(), e);
             // Don't throw - audit failure shouldn't break resource processing
         }
     }
-    
+
     /**
      * Add minimal audit information to resource (preserves existing meta)
      */
@@ -75,32 +75,32 @@ public class FhirAuditService {
                 logger.warn("⚠️ Cannot add audit info to non-R4 resource: {}", resource.getClass().getSimpleName());
                 return;
             }
-            
+
             Resource r4Resource = (Resource) resource;
             String userId = getCurrentUserId();
-            
+
             // Use audit-only method to preserve existing meta
             FhirMetaHelper.applyAuditOnly(r4Resource, userId, operation);
-            
-            logger.debug("✅ Applied minimal audit meta to {} resource for user: {}, operation: {}", 
-                r4Resource.getResourceType().name(), userId, operation);
-            
+
+            logger.debug("✅ Applied minimal audit meta to {} resource for user: {}, operation: {}",
+                    r4Resource.getResourceType().name(), userId, operation);
+
         } catch (Exception e) {
             logger.error("❌ Failed to add minimal audit info to resource: {}", e.getMessage(), e);
             // Don't throw - audit failure shouldn't break resource processing
         }
     }
-    
+
     /**
      * Get current authenticated user from Spring Security context
      */
     public String getCurrentUserId() {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
-        
+
         if (authentication == null || !authentication.isAuthenticated()) {
             return "anonymous";
         }
-        
+
         // For different auth types:
         if (authentication instanceof OAuth2AuthenticationToken) {
             // OAuth2 - extract from attributes
@@ -108,7 +108,7 @@ public class FhirAuditService {
             Object sub = oauth2Auth.getPrincipal().getAttribute("sub");
             Object preferredUsername = oauth2Auth.getPrincipal().getAttribute("preferred_username");
             Object userId = oauth2Auth.getPrincipal().getAttribute("user_id");
-            
+
             // Use preferred order: user_id > preferred_username > sub > name
             if (userId != null) return userId.toString();
             if (preferredUsername != null) return preferredUsername.toString();
@@ -119,38 +119,38 @@ public class FhirAuditService {
             return authentication.getName();
         }
     }
-    
+
     /**
      * Get user details including roles/permissions
      */
     public UserAuditInfo getCurrentUserAuditInfo() {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
-        
+
         if (authentication == null || !authentication.isAuthenticated()) {
             return new UserAuditInfo("anonymous", "system", Collections.emptySet());
         }
-        
+
         String userId = getCurrentUserId();
         String userType = determineUserType(authentication);
         Set<String> roles = authentication.getAuthorities().stream()
-            .map(GrantedAuthority::getAuthority)
-            .collect(Collectors.toSet());
-        
+                .map(GrantedAuthority::getAuthority)
+                .collect(Collectors.toSet());
+
         UserAuditInfo auditInfo = new UserAuditInfo(userId, userType, roles);
-        
+
         // Add additional context if available
         if (authentication instanceof OAuth2AuthenticationToken) {
             OAuth2AuthenticationToken oauth2Auth = (OAuth2AuthenticationToken) authentication;
             Object department = oauth2Auth.getPrincipal().getAttribute("department");
             Object sessionId = oauth2Auth.getPrincipal().getAttribute("session_id");
-            
+
             if (department != null) auditInfo.setDepartment(department.toString());
             if (sessionId != null) auditInfo.setSessionId(sessionId.toString());
         }
-        
+
         return auditInfo;
     }
-    
+
     /**
      * Determine user type based on authentication
      */
