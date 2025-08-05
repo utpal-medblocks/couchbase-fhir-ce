@@ -42,11 +42,18 @@ public class ReferenceSearchHelper {
         String subPath = fhirPath.substring(resourceType.length() + 1);
 
 
+        // Remove .where(...) clause if present
+        int whereIndex = subPath.indexOf(".where(");
+        if (whereIndex != -1) {
+            subPath = subPath.substring(0, whereIndex);
+        }
+
         String jsonPath = subPath
                 .replace(".coding", "")
                 .replace(".value", "")
                 .replace(".code", "")
                 .replace(".system", "");
+
 
 
         return jsonPath;
