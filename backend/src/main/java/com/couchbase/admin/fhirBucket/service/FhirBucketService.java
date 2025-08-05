@@ -5,7 +5,7 @@ import com.couchbase.admin.fhirBucket.config.FhirBucketProperties;
 import com.couchbase.admin.connections.service.ConnectionService;
 import com.couchbase.client.java.Cluster;
 import com.couchbase.client.java.manager.collection.CollectionManager;
-import com.couchbase.client.java.manager.collection.CollectionSpec;
+
 import com.couchbase.client.java.query.QueryOptions;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -120,10 +120,10 @@ public class FhirBucketService {
             // Completion
             status.setStatus(FhirConversionStatus.COMPLETED);
             status.setCurrentStepDescription("FHIR bucket conversion completed successfully");
-            logger.info("FHIR conversion completed for bucket: {}", bucketName);
+            // logger.info("FHIR conversion completed for bucket: {}", bucketName);
             
         } catch (Exception e) {
-            logger.error("FHIR conversion failed for bucket: {}", bucketName, e);
+            // logger.error("FHIR conversion failed for bucket: {}", bucketName, e);
             status.setStatus(FhirConversionStatus.FAILED);
             status.setErrorMessage(e.getMessage());
             status.setCurrentStepDescription("Conversion failed: " + e.getMessage());
@@ -133,16 +133,16 @@ public class FhirBucketService {
     private void updateStatus(FhirConversionStatusDetail status, String stepName, String description) {
         status.setCurrentStep(stepName);
         status.setCurrentStepDescription(description);
-        logger.info("Operation {}: {}", status.getOperationId(), description);
+        // logger.info("Operation {}: {}", status.getOperationId(), description);
     }
     
     private void createScope(CollectionManager manager, String scopeName) throws Exception {
         try {
             manager.createScope(scopeName);
-            logger.info("Created scope: {}", scopeName);
+            // logger.info("Created scope: {}", scopeName);
         } catch (Exception e) {
             if (e.getMessage() != null && e.getMessage().contains("already exists")) {
-                logger.warn("Scope {} already exists, skipping", scopeName);
+                // logger.warn("Scope {} already exists, skipping", scopeName);
             } else {
                 throw e;
             }
@@ -151,18 +151,17 @@ public class FhirBucketService {
     
     private void createCollections(CollectionManager manager, String scopeName, 
                                  FhirBucketProperties.ScopeConfiguration scopeConfig) throws Exception {
-        logger.info("Creating collections for scope: {}", scopeName);
+        // logger.info("Creating collections for scope: {}", scopeName);
         for (FhirBucketProperties.CollectionConfiguration collection : scopeConfig.getCollections()) {
             try {
-                logger.info("Creating collection: {}.{}", scopeName, collection.getName());
-                CollectionSpec spec = CollectionSpec.create(collection.getName(), scopeName);
-                manager.createCollection(spec);
-                logger.info("Successfully created collection: {}.{}", scopeName, collection.getName());
+                // logger.info("Creating collection: {}.{}", scopeName, collection.getName());
+                manager.createCollection(scopeName, collection.getName());
+                // logger.info("Successfully created collection: {}.{}", scopeName, collection.getName());
             } catch (Exception e) {
                 if (e.getMessage() != null && e.getMessage().contains("already exists")) {
-                    logger.warn("Collection {}.{} already exists, skipping", scopeName, collection.getName());
+                    // logger.warn("Collection {}.{} already exists, skipping", scopeName, collection.getName());
                 } else {
-                    logger.error("Failed to create collection {}.{}: {}", scopeName, collection.getName(), e.getMessage());
+                    // logger.error("Failed to create collection {}.{}: {}", scopeName, collection.getName(), e.getMessage());
                     throw e;
                 }
             }
@@ -181,18 +180,18 @@ public class FhirBucketService {
                     try {
                         // Add null check and debug logging
                         if (index.getSql() == null) {
-                            logger.error("SQL is null for index: {} in collection: {}.{}", 
-                                       index.getName(), scopeConfig.getName(), collection.getName());
+                            // logger.error("SQL is null for index: {} in collection: {}.{}", 
+                            //            index.getName(), scopeConfig.getName(), collection.getName());
                             continue; // Skip this index
                         }
                         
                         String sql = index.getSql().replace("{bucket}", bucketName);
                         cluster.query(sql, QueryOptions.queryOptions().timeout(java.time.Duration.ofMinutes(5)));
-                        logger.info("Created index: {} for collection: {}.{}", 
-                                  index.getName(), scopeConfig.getName(), collection.getName());
+                        // logger.info("Created index: {} for collection: {}.{}", 
+                        //           index.getName(), scopeConfig.getName(), collection.getName());
                     } catch (Exception e) {
                         if (e.getMessage() != null && e.getMessage().contains("already exists")) {
-                            logger.warn("Index {} already exists, skipping", index.getName());
+                            // logger.warn("Index {} already exists, skipping", index.getName());
                         } else {
                             throw e;
                         }
@@ -208,7 +207,7 @@ public class FhirBucketService {
         
         if (buildCommands != null && !buildCommands.isEmpty()) {
             for (FhirBucketProperties.BuildCommand buildCommand : buildCommands) {
-                logger.info("Executing build command: {}", buildCommand.getName());
+                // logger.info("Executing build command: {}", buildCommand.getName());
                 
                 // Execute the query to get the BUILD INDEX statements
                 String query = buildCommand.getQuery().replace("{bucket}", bucketName);
@@ -220,23 +219,23 @@ public class FhirBucketService {
                     for (String buildIndexSql : result.rowsAs(String.class)) {
                         // Remove quotes if present
                         buildIndexSql = buildIndexSql.replaceAll("^\"|\"$", "");
-                        logger.info("Executing BUILD INDEX: {}", buildIndexSql);
+                        // logger.info("Executing BUILD INDEX: {}", buildIndexSql);
                         
                         try {
                             cluster.query(buildIndexSql);
-                            logger.info("Successfully built index");
+                            // logger.info("Successfully built index");
                         } catch (Exception e) {
-                            logger.warn("Failed to build index: {} - {}", buildIndexSql, e.getMessage());
+                            // logger.warn("Failed to build index: {} - {}", buildIndexSql, e.getMessage());
                             // Continue with other indexes even if one fails
                         }
                     }
                 } catch (Exception e) {
-                    logger.error("Failed to execute build command query: {}", query, e);
+                    // logger.error("Failed to execute build command query: {}", query, e);
                     throw e;
                 }
             }
         } else {
-            logger.info("No build commands found in configuration");
+            // logger.info("No build commands found in configuration");
         }
     }
     
@@ -263,13 +262,13 @@ public class FhirBucketService {
         
         try {
             cluster.query(sql);
-            logger.info("Successfully marked bucket {} as FHIR-enabled", bucketName);
+            // logger.info("Successfully marked bucket {} as FHIR-enabled", bucketName);
             
         } catch (Exception e) {
             if (e.getMessage() != null && e.getMessage().contains("already exists")) {
-                logger.warn("FHIR config document already exists in bucket: {}", bucketName);
+                // logger.warn("FHIR config document already exists in bucket: {}", bucketName);
             } else {
-                logger.error("Failed to mark bucket {} as FHIR-enabled: {}", bucketName, e.getMessage());
+                // logger.error("Failed to mark bucket {} as FHIR-enabled: {}", bucketName, e.getMessage());
                 throw e;
             }
         }
@@ -299,7 +298,7 @@ public class FhirBucketService {
             
             return buckets;
         } catch (Exception e) {
-            logger.error("Failed to get FHIR buckets: {}", e.getMessage());
+            // logger.error("Failed to get FHIR buckets: {}", e.getMessage());
             return new ArrayList<>();
         }
     }
@@ -316,7 +315,7 @@ public class FhirBucketService {
             var connectionDetails = connectionService.getConnectionDetails(connectionName);
             
             if (hostname == null || connectionDetails == null) {
-                logger.warn("Could not get connection details for REST call");
+                // logger.warn("Could not get connection details for REST call");
                 return false;
             }
             
@@ -326,7 +325,7 @@ public class FhirBucketService {
                                         connectionDetails.getPassword());
             
         } catch (Exception e) {
-            logger.warn("Failed to check if bucket {} is FHIR-enabled: {}", bucketName, e.getMessage());
+            // logger.warn("Failed to check if bucket {} is FHIR-enabled: {}", bucketName, e.getMessage());
             return false;
         }
     }
@@ -340,7 +339,7 @@ public class FhirBucketService {
             // Get the cluster connection to access the HTTP client
             Cluster cluster = connectionService.getConnection(connectionName);
             if (cluster == null) {
-                logger.warn("No cluster connection available for REST call");
+                // logger.warn("No cluster connection available for REST call");
                 return false;
             }
             
@@ -369,12 +368,12 @@ public class FhirBucketService {
             }
             
             // Other status codes are unexpected
-            logger.warn("Unexpected status code {} when checking FHIR config for bucket {}", statusCode, bucketName);
+            // logger.warn("Unexpected status code {} when checking FHIR config for bucket {}", statusCode, bucketName);
             return false;
             
         } catch (Exception e) {
             // Log the error but don't fail the check
-            logger.debug("REST check for FHIR config failed: {}", e.getMessage());
+            // logger.debug("REST check for FHIR config failed: {}", e.getMessage());
             return false;
         }
     }

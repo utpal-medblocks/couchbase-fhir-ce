@@ -20,12 +20,7 @@ export interface CollectionDetails {
   schemaDescription?: string;
   sampleDoc?: any;
 }
-export interface ScopeDetails {
-  scopeName: string;
-  bucketName: string;
-  read: boolean;
-  write: boolean;
-}
+
 export interface BucketDetails {
   bucketName: string;
   bucketType: string;
@@ -76,21 +71,7 @@ export interface IndexPerformance {
   fragmentation: number;
 }
 
-// Fixed scopes for FHIR server
-export const FIXED_SCOPES: ScopeDetails[] = [
-  {
-    scopeName: "Admin",
-    bucketName: "",
-    read: true,
-    write: true,
-  },
-  {
-    scopeName: "Resources",
-    bucketName: "",
-    read: true,
-    write: true,
-  },
-];
+// All FHIR buckets use "Resources" scope only
 
 export type BucketStore = {
   buckets: { [connectionId: string]: BucketDetails[] };
@@ -105,13 +86,6 @@ export type BucketStore = {
   activeBucket: { [connectionId: string]: BucketDetails | null };
   setActiveBucket: (connectionId: string, bucketName: string | null) => void;
   getActiveBucket: (connectionId: string) => BucketDetails | null;
-
-  activeScope: { [connectionId: string]: string | null };
-  setActiveScope: (connectionId: string, scopeName: string | null) => void;
-  getActiveScope: (connectionId: string) => string | null;
-
-  scopes: { [connectionId: string]: ScopeDetails[] };
-  setScopes: (connectionId: string, value: ScopeDetails[]) => void;
 
   collections: { [connectionId: string]: CollectionDetails[] };
   setCollections: (connectionId: string, value: CollectionDetails[]) => void;
@@ -137,8 +111,6 @@ export type BucketStore = {
 export const useBucketStore = create<BucketStore>()((set, get) => ({
   buckets: {},
   activeBucket: {},
-  activeScope: {},
-  scopes: {},
   collections: {},
   indexDetails: {},
   status: {},
@@ -148,7 +120,6 @@ export const useBucketStore = create<BucketStore>()((set, get) => ({
     const state = get();
     const activeData = {
       activeBucket: state.activeBucket[connectionId],
-      activeScope: state.activeScope[connectionId],
     };
     sessionStorage.setItem(
       `bucketStore_${connectionId}`,
@@ -184,13 +155,6 @@ export const useBucketStore = create<BucketStore>()((set, get) => ({
           ...state.buckets,
           [connectionId]: [...buckets],
         },
-        scopes: {
-          ...state.scopes,
-          [connectionId]: FIXED_SCOPES.map((scope) => ({
-            ...scope,
-            bucketName: buckets.length > 0 ? buckets[0].bucketName : "",
-          })),
-        },
       };
 
       // Get FHIR buckets from the buckets we just set (all buckets are FHIR)
@@ -205,14 +169,6 @@ export const useBucketStore = create<BucketStore>()((set, get) => ({
         newState.activeBucket = {
           ...state.activeBucket,
           [connectionId]: fhirBuckets[0],
-        };
-        // Auto-set first scope as active
-        // console.log(
-        //   `🪣 Auto-setting active scope: ${FIXED_SCOPES[0].scopeName}`
-        // );
-        newState.activeScope = {
-          ...state.activeScope,
-          [connectionId]: FIXED_SCOPES[0].scopeName,
         };
       } else {
         // console.log(
@@ -234,12 +190,6 @@ export const useBucketStore = create<BucketStore>()((set, get) => ({
                 [connectionId]: foundBucket,
               };
             }
-          }
-          if (stored.activeScope) {
-            newState.activeScope = {
-              ...state.activeScope,
-              [connectionId]: stored.activeScope,
-            };
           }
         }
       }
@@ -318,33 +268,6 @@ export const useBucketStore = create<BucketStore>()((set, get) => ({
   // Get active bucket
   getActiveBucket: (connectionId) => get().activeBucket[connectionId] || null,
 
-  // Set active scope
-  setActiveScope: (connectionId, scopeName) => {
-    set((state) => ({
-      ...state,
-      activeScope: {
-        ...state.activeScope,
-        [connectionId]: scopeName,
-      },
-    }));
-    // Save to session storage
-    setTimeout(() => get()._saveActiveState(connectionId), 0);
-  },
-
-  // Get active scope
-  getActiveScope: (connectionId) => get().activeScope[connectionId] || null,
-
-  // Set scopes (though they're fixed, this maintains consistency)
-  setScopes: (connectionId, scopes) => {
-    set((state) => ({
-      ...state,
-      scopes: {
-        ...state.scopes,
-        [connectionId]: [...scopes],
-      },
-    }));
-  },
-
   // Set collections
   setCollections: (connectionId, collections) => {
     set((state) => ({
@@ -384,8 +307,6 @@ export const useBucketStore = create<BucketStore>()((set, get) => ({
       ...state,
       buckets: { ...state.buckets, [connectionId]: [] },
       activeBucket: { ...state.activeBucket, [connectionId]: null },
-      activeScope: { ...state.activeScope, [connectionId]: null },
-      scopes: { ...state.scopes, [connectionId]: [] },
       collections: { ...state.collections, [connectionId]: [] },
       indexDetails: { ...state.indexDetails, [connectionId]: [] },
       status: { ...state.status, [connectionId]: "" },

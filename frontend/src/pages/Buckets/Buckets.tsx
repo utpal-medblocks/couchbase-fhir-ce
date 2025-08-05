@@ -30,16 +30,10 @@ const Buckets = () => {
   const bucketStore = useBucketStore();
   const fhirBuckets = bucketStore.getFhirBuckets(connectionId);
   const activeBucket = bucketStore.getActiveBucket(connectionId);
-  const activeScope = bucketStore.getActiveScope(connectionId);
 
   // Handle bucket selection
   const handleBucketChange = (bucketName: string) => {
     bucketStore.setActiveBucket(connectionId, bucketName);
-  };
-
-  // Handle scope selection
-  const handleScopeChange = (scopeName: string) => {
-    bucketStore.setActiveScope(connectionId, scopeName);
   };
 
   // Refresh data
@@ -106,10 +100,10 @@ const Buckets = () => {
       >
         <Tabs value={selectedTab} onChange={handleChange} sx={{ flexGrow: 1 }}>
           <Tab label="Collections" />
-          <Tab disabled={!activeBucket || !activeScope} label="Samples" />
-          <Tab disabled={!activeBucket || !activeScope} label="GSI Indexes" />
-          <Tab disabled={!activeBucket || !activeScope} label="Schema" />
-          <Tab disabled={!activeBucket || !activeScope} label="FTS Indexes" />
+          <Tab disabled={!activeBucket} label="Samples" />
+          <Tab disabled={!activeBucket} label="GSI Indexes" />
+          <Tab disabled={!activeBucket} label="Schema" />
+          <Tab disabled={!activeBucket} label="FTS Indexes" />
         </Tabs>
 
         {/* Bucket and Scope selectors on the right */}
@@ -134,27 +128,6 @@ const Buckets = () => {
                   {bucket.bucketName}
                 </MenuItem>
               ))}
-            </Select>
-          </FormControl>
-
-          <Typography variant="body2" sx={{ color: "primary.main" }}>
-            Scope
-          </Typography>
-          <FormControl
-            variant="standard"
-            sx={{
-              minWidth: 150,
-              color: "GrayText",
-            }}
-            size="small"
-          >
-            <Select
-              value={activeScope || ""}
-              onChange={(e) => handleScopeChange(e.target.value)}
-              disabled={!activeBucket}
-            >
-              <MenuItem value="Admin">Admin</MenuItem>
-              <MenuItem value="Resources">Resources</MenuItem>
             </Select>
           </FormControl>
         </Box>

@@ -21,20 +21,18 @@ const BucketsMain = () => {
 
   // Get bucket data
   const activeBucket = bucketStore.getActiveBucket(connectionId);
-  const activeScope = bucketStore.getActiveScope(connectionId);
   const collections = bucketStore.collections[connectionId] || [];
 
   // Log current state for debugging
   // console.log(`🎯 BucketsMain render - Connection: ${connectionId}`);
   // console.log(`🎯 Active Bucket:`, activeBucket);
-  // console.log(`🎯 Active Scope:`, activeScope);
   // console.log(`🎯 Collections: ${collections.length}`, collections);
 
-  // Filter collections for active bucket and scope
+  // Filter collections for active bucket and Resources scope only
   const filteredCollections = collections.filter(
     (col) =>
       col.bucketName === activeBucket?.bucketName &&
-      col.scopeName === activeScope
+      col.scopeName === "Resources"
   );
 
   // console.log(
@@ -64,7 +62,7 @@ const BucketsMain = () => {
         </Box>
 
         {/* Scrollable Table Container */}
-        {activeBucket && activeScope && (
+        {activeBucket && (
           <TableContainer
             sx={{
               flexGrow: 1,

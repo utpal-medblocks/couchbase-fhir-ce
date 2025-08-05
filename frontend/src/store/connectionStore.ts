@@ -181,7 +181,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
         timeout: 5000,
       });
 
-      console.log("🔍 connectionStore: API response", response.data);
+      // console.log("🔍 connectionStore: API response", response.data);
 
       // Backend responded - mark as ready
       set({ backendReady: true });
@@ -189,10 +189,10 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
       if (response.data && response.data.success) {
         // Check for lastConnectionError from backend
         if (response.data.lastConnectionError) {
-          console.log(
-            "🔍 connectionStore: Backend reports connection error:",
-            response.data.lastConnectionError
-          );
+          // console.log(
+          //   "🔍 connectionStore: Backend reports connection error:",
+          //   response.data.lastConnectionError
+          // );
           set({ error: response.data.lastConnectionError });
         } else {
           set({ error: null });
@@ -200,10 +200,10 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
 
         if (response.data.connections) {
           const connections = response.data.connections;
-          console.log(
-            "🔍 connectionStore: API returned connections",
-            connections
-          );
+          // console.log(
+          //   "🔍 connectionStore: API returned connections",
+          //   connections
+          // );
 
           if (connections.length > 0) {
             const activeConnection = connections[0];
@@ -217,19 +217,13 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
               isSSL: false, // TODO: Backend should provide this
             };
 
-            console.log(
-              "✅ connectionStore: Setting connection info",
-              connectionInfo
-            );
+            // console.log(
+            //   "✅ connectionStore: Setting connection info",
+            //   connectionInfo
+            // );
             set({ connection: connectionInfo });
 
-            // Fetch cluster metrics immediately after connection success
-            setTimeout(() => {
-              console.log(
-                "🔍 connectionStore: Triggering fetchMetrics after connection"
-              );
-              get().fetchMetrics();
-            }, 100);
+            // Note: Removed automatic fetchMetrics() call - let UI components control when to fetch metrics
           } else {
             set({
               connection: {
@@ -242,10 +236,10 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
           }
         }
       } else {
-        console.log(
-          "🔍 connectionStore: Invalid response format",
-          response.data
-        );
+        // console.log(
+        //   "🔍 connectionStore: Invalid response format",
+        //   response.data
+        // );
         set({
           connection: {
             id: "No Connection",
@@ -256,7 +250,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
         });
       }
     } catch (error: any) {
-      console.log("🔗 connectionStore: fetchConnection failed", error.message);
+      // console.log("🔗 connectionStore: fetchConnection failed", error.message);
 
       const { backendReady } = get();
 
@@ -312,10 +306,10 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
       });
       const metricsData = response.data;
 
-      console.log(
-        "🔍 connectionStore: Received Couchbase cluster metrics:",
-        metricsData
-      );
+      // console.log(
+      //   "🔍 connectionStore: Received Couchbase cluster metrics:",
+      //   metricsData
+      // );
 
       // Always update with new data using the setMetrics action
       get().setMetrics({
