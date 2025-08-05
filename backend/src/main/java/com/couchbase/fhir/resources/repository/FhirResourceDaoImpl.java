@@ -42,12 +42,11 @@ public class FhirResourceDaoImpl<T extends IBaseResource> implements  FhirResour
 
 
     @Override
-    public Optional<T> read(String resourceType, String id) {
+    public Optional<T> read(String resourceType, String id , String bucketName) {
 
         try{
             String connectionName =  getDefaultConnection();
-            String bucketName = DEFAULT_BUCKET;
-
+            bucketName = bucketName != null ? bucketName : DEFAULT_BUCKET;
 
             Cluster cluster = connectionService.getConnection(connectionName);
             if (cluster == null) {
@@ -79,11 +78,11 @@ public class FhirResourceDaoImpl<T extends IBaseResource> implements  FhirResour
     }
 
     @Override
-    public Optional<T> create(String resourceType , T resource) {
+    public Optional<T> create(String resourceType , T resource , String bucketName) {
 
         try{
             String connectionName =  getDefaultConnection();
-            String bucketName = DEFAULT_BUCKET;
+            bucketName = bucketName != null ? bucketName : DEFAULT_BUCKET;
 
             Cluster cluster = connectionService.getConnection(connectionName);
             if (cluster == null) {
@@ -114,50 +113,11 @@ public class FhirResourceDaoImpl<T extends IBaseResource> implements  FhirResour
         }
     }
 
-/*
-    public List<T> search(String resourceType, Map<String, String> searchParams) {
+    public List<T> search(String resourceType , String query) {
         List<T> resources = new ArrayList<>();
         try {
 
             String connectionName = getDefaultConnection();
-            String bucketName = DEFAULT_BUCKET;
-
-            Cluster cluster = connectionService.getConnection(connectionName);
-            if (cluster == null) {
-                throw new RuntimeException("No active connection found: " + connectionName);
-            }
-
-            // Build N1QL based on searchParams
-            StringBuilder whereClause = new StringBuilder("WHERE c.resourceType = '" + resourceType + "'");
-            for (Map.Entry<String, String> entry : searchParams.entrySet()) {
-                whereClause.append(" AND c.`").append(entry.getKey()).append("` = '").append(entry.getValue()).append("'");
-            }
-
-            String query = String.format("SELECT c.* FROM `%s`.`%s`.`%s` c %s LIMIT 50",
-                    DEFAULT_BUCKET, DEFAULT_SCOPE, resourceType, whereClause);
-
-            QueryResult result = cluster.query(query);
-            List<JsonObject> rows = result.rowsAs(JsonObject.class);
-
-            for (JsonObject row : rows) {
-                T resource = (T) fhirContext.newJsonParser().parseResource(row.toString());
-                resources.add(resource);
-            }
-        } catch (Exception e) {
-            throw new RuntimeException(e);
-        }
-
-        return resources;
-    }
- */
-
-
-    public List<T> search(String resourceType, String query) {
-        List<T> resources = new ArrayList<>();
-        try {
-
-            String connectionName = getDefaultConnection();
-            String bucketName = DEFAULT_BUCKET;
 
             Cluster cluster = connectionService.getConnection(connectionName);
             if (cluster == null) {
