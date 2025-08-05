@@ -15,11 +15,8 @@ import com.couchbase.fhir.resources.service.FhirAuditService;
 import com.couchbase.fhir.resources.service.UserAuditInfo;
 import com.couchbase.fhir.resources.util.*;
 import com.couchbase.fhir.validation.ValidationUtil;
-import org.apache.jena.base.Sys;
-import org.hl7.fhir.instance.model.api.IBase;
 import org.hl7.fhir.r4.model.*;
 import ca.uhn.fhir.rest.api.RestSearchParameterTypeEnum;
-import org.springframework.boot.actuate.autoconfigure.metrics.MetricsProperties;
 
 import java.io.IOException;
 import java.util.*;

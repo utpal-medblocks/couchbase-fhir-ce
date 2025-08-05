@@ -4,13 +4,9 @@ import com.couchbase.admin.connections.service.ConnectionService;
 import com.couchbase.client.java.Cluster;
 import com.couchbase.client.java.query.QueryResult;
 import com.couchbase.client.java.json.JsonObject;
-import com.google.gson.JsonElement;
-import org.apache.jena.base.Sys;
 import org.hl7.fhir.instance.model.api.IBaseResource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.stereotype.Repository;
 
 import java.util.ArrayList;
 import java.util.List;
