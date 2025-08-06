@@ -9,16 +9,14 @@ import ca.uhn.fhir.rest.server.exceptions.InternalErrorException;
 import ca.uhn.fhir.rest.server.exceptions.ResourceNotFoundException;
 import ca.uhn.fhir.rest.server.exceptions.UnprocessableEntityException;
 import ca.uhn.fhir.validation.ValidationResult;
+import com.couchbase.fhir.resources.config.TenantContextHolder;
 import com.couchbase.fhir.resources.repository.FhirResourceDaoImpl;
 import com.couchbase.fhir.resources.service.FhirAuditService;
 import com.couchbase.fhir.resources.service.UserAuditInfo;
 import com.couchbase.fhir.resources.util.*;
 import com.couchbase.fhir.validation.ValidationUtil;
-import org.apache.jena.base.Sys;
-import org.hl7.fhir.instance.model.api.IBase;
 import org.hl7.fhir.r4.model.*;
 import ca.uhn.fhir.rest.api.RestSearchParameterTypeEnum;
-import org.springframework.boot.actuate.autoconfigure.metrics.MetricsProperties;
 
 import java.io.IOException;
 import java.util.*;
@@ -51,12 +49,15 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
 
     @Read
     public T read(@IdParam IdType theId) {
-        return dao.read(resourceClass.getSimpleName(), theId.getIdPart()).orElseThrow(() ->
+        String bucketName = TenantContextHolder.getTenantId();
+        return dao.read(resourceClass.getSimpleName(), theId.getIdPart() , bucketName).orElseThrow(() ->
                 new ResourceNotFoundException(theId));
     }
 
     @Create
     public MethodOutcome create(@ResourceParam T resource) throws IOException {
+        String bucketName = TenantContextHolder.getTenantId();
+
         if (resource.getIdElement().isEmpty()) {
             resource.setId(UUID.randomUUID().toString());
         }
@@ -85,7 +86,7 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
         }
 
 
-        T created =  dao.create( resource.getClass().getSimpleName() , resource).orElseThrow(() ->
+        T created =  dao.create( resource.getClass().getSimpleName() , resource , bucketName).orElseThrow(() ->
                 new InternalErrorException("Failed to create resource"));
         MethodOutcome outcome = new MethodOutcome();
         outcome.setCreated(true);
@@ -96,6 +97,8 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
 
     @Search(allowUnknownParams = true)
     public Bundle search(RequestDetails requestDetails) {
+
+        String bucketName = TenantContextHolder.getTenantId();
 
         List<String> filters = new ArrayList<>();
         List<String> revIncludes = new ArrayList<>();
@@ -141,9 +144,8 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
             }
         }
 
-
         QueryBuilder queryBuilder = new QueryBuilder();
-        List<T> results = dao.search(resourceType, queryBuilder.buildQuery(filters , revIncludes , resourceType));
+        List<T> results = dao.search(resourceType, queryBuilder.buildQuery(filters , revIncludes , resourceType , bucketName));
 
         // Construct a FHIR Bundle response
         Bundle bundle = new Bundle();
@@ -161,6 +163,7 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
 
     @Transaction
     public Bundle transaction(@TransactionParam Bundle bundle) {
+        String bucketName = TenantContextHolder.getTenantId();
         Bundle responseBundle = new Bundle();
         responseBundle.setType(Bundle.BundleType.TRANSACTIONRESPONSE);
 
@@ -172,7 +175,7 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
             MethodOutcome outcome = null;
 
             if (entry.getRequest().getMethod() == Bundle.HTTPVerb.POST) {
-                outcome = createResource((T) resource);
+                outcome = createResource((T) resource , bucketName);
                 System.out.println( resource.getClass().getSimpleName() +" id - "+ outcome.getId().toUnqualifiedVersionless().getValue());
             } else if (entry.getRequest().getMethod() == Bundle.HTTPVerb.PUT) {
                // outcome = updateResource((T) resource);
@@ -194,7 +197,7 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
     }
 
 
-    private MethodOutcome createResource(T resource) {
+    private MethodOutcome createResource(T resource , String bucketName) {
         try {
 
 
@@ -216,7 +219,7 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
                 throw new UnprocessableEntityException("FHIR Validation failed:\n" + issues.toString());
             }
 
-            T created = dao.create(resource.getClass().getSimpleName(), resource).orElseThrow(() ->
+            T created = dao.create(resource.getClass().getSimpleName(), resource , bucketName).orElseThrow(() ->
                     new InternalErrorException("Failed to create resource"));
             return new MethodOutcome(new IdType(resource.getClass().getSimpleName(), created.getIdElement().getIdPart()))
                     .setCreated(true)
