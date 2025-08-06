@@ -18,7 +18,6 @@ import java.util.stream.Collectors;
 public class FhirAuditService {
 
     private static final Logger logger = LoggerFactory.getLogger(FhirAuditService.class);
-
     /**
      * Add comprehensive audit information to resource meta using centralized helper
      */
@@ -26,7 +25,6 @@ public class FhirAuditService {
         UserAuditInfo auditInfo = getCurrentUserAuditInfo();
         addAuditInfoToMeta(resource, auditInfo, operation);
     }
-
     /**
      * Add comprehensive audit information to resource meta with detailed audit info using centralized helper
      */
@@ -65,7 +63,6 @@ public class FhirAuditService {
             // Don't throw - audit failure shouldn't break resource processing
         }
     }
-
     /**
      * Add minimal audit information to resource (preserves existing meta)
      */
@@ -90,7 +87,6 @@ public class FhirAuditService {
             // Don't throw - audit failure shouldn't break resource processing
         }
     }
-
     /**
      * Get current authenticated user from Spring Security context
      */
@@ -108,7 +104,6 @@ public class FhirAuditService {
             Object sub = oauth2Auth.getPrincipal().getAttribute("sub");
             Object preferredUsername = oauth2Auth.getPrincipal().getAttribute("preferred_username");
             Object userId = oauth2Auth.getPrincipal().getAttribute("user_id");
-
             // Use preferred order: user_id > preferred_username > sub > name
             if (userId != null) return userId.toString();
             if (preferredUsername != null) return preferredUsername.toString();
@@ -119,7 +114,6 @@ public class FhirAuditService {
             return authentication.getName();
         }
     }
-
     /**
      * Get user details including roles/permissions
      */

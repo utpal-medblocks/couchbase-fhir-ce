@@ -55,7 +55,6 @@ public class ReferenceSearchHelper {
                 .replace(".system", "");
 
 
-
         return jsonPath;
     }
 }

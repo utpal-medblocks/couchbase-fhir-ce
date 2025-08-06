@@ -236,10 +236,10 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
           }
         }
       } else {
-        // console.log(
-        //   "🔍 connectionStore: Invalid response format",
-        //   response.data
-        // );
+        console.log(
+          "🔍 connectionStore: Invalid response format",
+          response.data
+        );
         set({
           connection: {
             id: "No Connection",

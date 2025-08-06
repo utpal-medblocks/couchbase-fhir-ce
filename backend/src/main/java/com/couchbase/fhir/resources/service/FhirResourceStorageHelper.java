@@ -88,13 +88,11 @@ public class FhirResourceStorageHelper {
             Resource fhirResource = (Resource) jsonParser.parseResource(resourceJson);
             String resourceType = fhirResource.getResourceType().name();
             String resourceId = fhirResource.getIdElement().getIdPart();
-
             // Generate ID if not present
             if (resourceId == null || resourceId.isEmpty()) {
                 resourceId = java.util.UUID.randomUUID().toString();
                 fhirResource.setId(resourceId);
             }
-
             // Validate the resource (skip if requested for performance)
             if (!skipValidation) {
                 FhirValidator validator = useLenientValidation ? basicFhirValidator : fhirValidator;
