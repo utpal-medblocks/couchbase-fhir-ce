@@ -17,7 +17,7 @@ export const BucketPageExample: React.FC = () => {
 
   // Get current active selections
   const activeBucket = bucketStore.getActiveBucket(connectionId);
-  const activeScope = bucketStore.getActiveScope(connectionId);
+  // All buckets use Resources scope only
 
   // Get collections for the active bucket and scope
   const collections = bucketStore.collections[connectionId] || [];
@@ -26,9 +26,7 @@ export const BucketPageExample: React.FC = () => {
     bucketStore.setActiveBucket(connectionId, bucketName);
   };
 
-  const handleScopeChange = (scopeName: string) => {
-    bucketStore.setActiveScope(connectionId, scopeName);
-  };
+  // Removed scope selection - all buckets use Resources scope
 
   return (
     <div>
@@ -50,25 +48,16 @@ export const BucketPageExample: React.FC = () => {
         </select>
       </div>
 
-      {/* Scope Dropdown - Fixed scopes: Admin and Resources */}
+      {/* Scope - Fixed to Resources */}
       <div>
-        <label>Select Scope:</label>
-        <select
-          value={activeScope || ""}
-          onChange={(e) => handleScopeChange(e.target.value)}
-        >
-          <option value="">Select a scope...</option>
-          <option value="Admin">Admin</option>
-          <option value="Resources">Resources</option>
-        </select>
+        <label>Scope:</label>
+        <span> Resources</span>
       </div>
 
       {/* Collections Table */}
-      {activeBucket && activeScope && (
+      {activeBucket && (
         <div>
-          <h2>
-            Collections in {activeBucket.bucketName} - {activeScope}
-          </h2>
+          <h2>Collections in {activeBucket.bucketName} - Resources</h2>
           <table>
             <thead>
               <tr>
@@ -85,7 +74,7 @@ export const BucketPageExample: React.FC = () => {
                 .filter(
                   (col) =>
                     col.bucketName === activeBucket.bucketName &&
-                    col.scopeName === activeScope
+                    col.scopeName === "Resources"
                 )
                 .map((collection) => (
                   <tr
