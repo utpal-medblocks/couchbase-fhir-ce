@@ -63,6 +63,23 @@ docker compose down -v
   docker compose restart <service-name>
   ```
 
+## 5. First-Time Setup of Couchbase Server
+
+When running Couchbase Server for the first time, you need to initialize the cluster and set up the administrator account. Follow these steps:
+
+
+1. **Access the Couchbase Web Console:**
+   - Open your browser and go to [http://localhost:8091](http://localhost:8091)
+   - You will see the Couchbase setup wizard.
+
+2. **Initialize the cluster and set the administrator account:**
+   - Walk through the setup wizard.
+   - Set the **username** and **password** for the administrator account when prompted. (Remember these credentials; you will need them to access and manage Couchbase.)
+   - Accept the default values or adjust settings as needed for your environment.
+   - Optionally, enable the `beer-sample` bucket to load sample data.
+
+For more details, see the [Couchbase Docker documentation](https://hub.docker.com/_/couchbase) and [official setup guide](https://docs.couchbase.com/server/current/install/getting-started-docker.html).
+
 ---
 
 For more details, see the main `README.md`.
