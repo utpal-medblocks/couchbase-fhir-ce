@@ -24,6 +24,7 @@ services:
     environment:
       - SPRING_PROFILES_ACTIVE=prod
       - JAVA_OPTS=-Xms256m -Xmx1024m
+      - DEPLOYED_ENV=container
     ports:
       - "8080:8080"
     depends_on:
