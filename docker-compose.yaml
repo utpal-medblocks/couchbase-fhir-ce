@@ -29,18 +29,10 @@ services:
     depends_on:
       couchbase:
         condition: service_healthy
-    # deploy:
-    #   mode: replicated
-    #   replicas: 1
-    #   resources:
-    #     limits:
-    #       cpus: '0.50'
-    #       memory: 1024M
-    #     reservations:
-    #       cpus: '0.25'
-    #       memory: 256M
-    #   restart_policy:
-    #     condition: on-failure
+    volumes:
+      - ./config.yaml:/config.yaml
+      - haproxy_socket:/tmp/haproxy
+      - /var/run/docker.sock:/var/run/docker.sock
     restart: unless-stopped
 
   fhir-admin:
@@ -50,30 +42,22 @@ services:
       - "3000:80"
     depends_on:
       - fhir-server
-    # deploy:
-    #   mode: replicated
-    #   replicas: 1
-    #   resources:
-    #     limits:
-    #       cpus: '0.25'
-    #       memory: 256M
-    #     reservations:
-    #       cpus: '0.10'
-    #       memory: 128M
-    #   restart_policy:
-    #     condition: on-failure
     restart: unless-stopped
 
   haproxy:
     image: haproxy:2.9-alpine
+    user: root
     ports:
       - "80:80"
     volumes:
       - ./haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+      - haproxy_socket:/tmp/haproxy
     depends_on:
       - fhir-admin
       - fhir-server
     restart: unless-stopped
+    command: sh -c "mkdir -p /tmp/haproxy && exec haproxy -f /usr/local/etc/haproxy/haproxy.cfg"
 
 volumes:
-  couchbase_data:
+  couchbase_data: {}
+  haproxy_socket: {}
