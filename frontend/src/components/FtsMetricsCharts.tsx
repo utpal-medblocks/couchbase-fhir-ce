@@ -1,15 +1,17 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 import {
   Box,
   Typography,
   FormControl,
   Select,
   MenuItem,
-  Grid,
+  InputLabel,
   Paper,
   CircularProgress,
   Alert,
+  useTheme,
 } from "@mui/material";
+import { lightBlue, orange, green, red, purple } from "@mui/material/colors";
 import type { SelectChangeEvent } from "@mui/material";
 import {
   LineChart,
@@ -19,7 +21,6 @@ import {
   CartesianGrid,
   Tooltip,
   ResponsiveContainer,
-  Legend,
 } from "recharts";
 import {
   getFtsMetrics,
@@ -48,35 +49,68 @@ const FtsMetricsCharts: React.FC<FtsMetricsChartsProps> = ({
   bucketName,
   indexName,
 }) => {
+  const theme = useTheme();
   const [timeRange, setTimeRange] = useState<TimeRange>("HOUR");
   const [metrics, setMetrics] = useState<FtsMetricsResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const fetchMetrics = async () => {
-    if (!connectionName || !bucketName || !indexName) return;
+  // Define theme-aware colors (memoized to prevent re-renders)
+  const chartColors = useMemo(
+    () => ({
+      primary: theme.palette.mode === "dark" ? lightBlue.A100 : lightBlue.A700,
+      secondary: theme.palette.mode === "dark" ? orange.A100 : orange.A700,
+      success: theme.palette.mode === "dark" ? green.A100 : green.A700,
+      warning: theme.palette.mode === "dark" ? orange.A100 : orange.A700,
+      error: theme.palette.mode === "dark" ? red.A100 : red.A700,
+      info: theme.palette.mode === "dark" ? purple.A100 : purple.A700,
+    }),
+    [theme.palette.mode]
+  );
+  const tooltipBackground = theme.palette.mode === "dark" ? "#000" : "#fff";
+  const tooltipTextColor = theme.palette.mode === "dark" ? "#fff" : "#000";
+  const fetchMetrics = useCallback(
+    async (isRefresh = false) => {
+      if (!connectionName || !bucketName || !indexName) return;
 
-    setLoading(true);
-    setError(null);
+      // Only show loading spinner on initial load, not on refresh
+      if (!isRefresh) {
+        setLoading(true);
+      }
+      setError(null);
 
-    try {
-      const data = await getFtsMetrics(
-        connectionName,
-        bucketName,
-        indexName,
-        timeRange
-      );
-      setMetrics(data);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to fetch metrics");
-    } finally {
-      setLoading(false);
-    }
-  };
+      try {
+        const data = await getFtsMetrics(
+          connectionName,
+          bucketName,
+          indexName,
+          timeRange
+        );
+        setMetrics(data);
+      } catch (err) {
+        setError(
+          err instanceof Error ? err.message : "Failed to fetch metrics"
+        );
+      } finally {
+        if (!isRefresh) {
+          setLoading(false);
+        }
+      }
+    },
+    [connectionName, bucketName, indexName, timeRange]
+  );
 
   useEffect(() => {
-    fetchMetrics();
-  }, [connectionName, bucketName, indexName, timeRange]);
+    fetchMetrics(false); // Initial load with loading spinner
+
+    // Set up auto-refresh every 20 seconds
+    const interval = setInterval(() => {
+      fetchMetrics(true); // Refresh without loading spinner
+    }, 20000);
+
+    // Cleanup interval on unmount or dependency change
+    return () => clearInterval(interval);
+  }, [fetchMetrics]);
 
   const handleTimeRangeChange = (event: SelectChangeEvent) => {
     setTimeRange(event.target.value as TimeRange);
@@ -136,7 +170,7 @@ const FtsMetricsCharts: React.FC<FtsMetricsChartsProps> = ({
     dataLength: number
   ): number | "preserveStartEnd" => {
     // Calculate optimal tick interval based on time range and data points
-    const maxTicks = 8; // Maximum number of ticks to show
+    const maxTicks = 3; // Maximum number of ticks to show (reduced from 4)
     const interval = Math.max(1, Math.floor(dataLength / maxTicks));
 
     switch (timeRange) {
@@ -169,6 +203,9 @@ const FtsMetricsCharts: React.FC<FtsMetricsChartsProps> = ({
     if (unit === "ms") {
       return `${value.toFixed(2)} ms`;
     }
+    if (unit === "docs") {
+      return Math.round(value).toLocaleString(); // Always whole numbers for document count
+    }
     return value.toLocaleString();
   };
 
@@ -200,84 +237,102 @@ const FtsMetricsCharts: React.FC<FtsMetricsChartsProps> = ({
     });
   };
 
-  const renderChart = (
-    title: string,
-    metricNames: string[],
-    color: string,
-    unit: string
-  ) => {
-    if (!metrics || !metrics.data.length) {
-      return (
-        <Box
-          display="flex"
-          justifyContent="center"
-          alignItems="center"
-          height={300}
-        >
-          <Typography color="text.secondary">No data available</Typography>
-        </Box>
+  const renderChart = useCallback(
+    (title: string, metricNames: string[], color: string, unit: string) => {
+      if (!metrics || !metrics.data.length) {
+        return (
+          <Box
+            display="flex"
+            justifyContent="center"
+            alignItems="center"
+            height={300}
+          >
+            <Typography color="text.secondary">No data available</Typography>
+          </Box>
+        );
+      }
+
+      const relevantMetrics = metrics.data.filter((m) =>
+        metricNames.includes(m.name)
       );
-    }
+      const chartData = prepareChartData(relevantMetrics);
 
-    const relevantMetrics = metrics.data.filter((m) =>
-      metricNames.includes(m.name)
-    );
-    const chartData = prepareChartData(relevantMetrics);
-
-    return (
-      <ResponsiveContainer width="100%" height={300}>
-        <LineChart data={chartData}>
-          <CartesianGrid strokeDasharray="3 3" />
-          <XAxis
-            dataKey="time"
-            tick={{ fontSize: 12 }}
-            interval={getTickInterval(timeRange, chartData.length)}
-            angle={
-              timeRange === "DAY" ||
-              timeRange === "WEEK" ||
-              timeRange === "MONTH"
-                ? -45
-                : 0
-            }
-            textAnchor={
-              timeRange === "DAY" ||
-              timeRange === "WEEK" ||
-              timeRange === "MONTH"
-                ? "end"
-                : "middle"
-            }
-            height={
-              timeRange === "DAY" ||
-              timeRange === "WEEK" ||
-              timeRange === "MONTH"
-                ? 80
-                : 60
-            }
-          />
-          <YAxis
-            tick={{ fontSize: 12 }}
-            tickFormatter={(value) => formatValue(value, unit)}
-          />
-          <Tooltip
-            formatter={(value: number) => [formatValue(value, unit), title]}
-            labelFormatter={(label) => `Time: ${label}`}
-          />
-          <Legend />
-          {relevantMetrics.map((metric) => (
-            <Line
-              key={metric.name}
-              type="monotone"
-              dataKey={metric.name}
-              stroke={color}
-              strokeWidth={2}
-              dot={false}
-              name={metric.label}
+      return (
+        <ResponsiveContainer width="100%" height={180}>
+          <LineChart
+            data={chartData}
+            margin={{ top: 5, right: 10, left: 10, bottom: 5 }}
+          >
+            <CartesianGrid strokeDasharray="3 3" stroke="#e0e0e0" />
+            <XAxis
+              dataKey="time"
+              tick={{ fontSize: 12, fill: "currentColor" }}
+              interval={getTickInterval(timeRange, chartData.length)}
+              angle={
+                timeRange === "DAY" ||
+                timeRange === "WEEK" ||
+                timeRange === "MONTH"
+                  ? -45
+                  : 0
+              }
+              textAnchor={
+                timeRange === "DAY" ||
+                timeRange === "WEEK" ||
+                timeRange === "MONTH"
+                  ? "end"
+                  : "middle"
+              }
+              height={
+                timeRange === "DAY" ||
+                timeRange === "WEEK" ||
+                timeRange === "MONTH"
+                  ? 80
+                  : 60
+              }
+              axisLine={{ stroke: "#e0e0e0" }}
+              tickLine={{ stroke: "#e0e0e0" }}
             />
-          ))}
-        </LineChart>
-      </ResponsiveContainer>
-    );
-  };
+            <YAxis
+              tick={{ fontSize: 12, fill: "currentColor" }}
+              tickFormatter={(value) => formatValue(value, unit)}
+              axisLine={{ stroke: "#e0e0e0" }}
+              tickLine={{ stroke: "#e0e0e0" }}
+              tickCount={8}
+              width={60}
+              domain={unit === "docs" ? [0, "dataMax"] : ["auto", "auto"]}
+              allowDecimals={unit !== "docs"}
+            />
+            <Tooltip
+              contentStyle={{
+                backgroundColor: tooltipBackground,
+                border: "1px solid #e0e0e0",
+                borderRadius: "4px",
+                color: tooltipTextColor,
+                fontSize: "12px",
+                padding: "4px 6px",
+              }}
+              formatter={(value: number) => [formatValue(value, unit), title]}
+              labelFormatter={(label) => `${label}`}
+              labelStyle={{ color: tooltipTextColor, fontSize: "12px" }}
+            />
+            {relevantMetrics.map((metric) => (
+              <Line
+                key={metric.name}
+                type="monotone"
+                dataKey={metric.name}
+                stroke={color}
+                strokeWidth={2.5}
+                dot={false}
+                name={metric.label}
+                activeDot={{ r: 4, fill: color }}
+              />
+            ))}
+          </LineChart>
+        </ResponsiveContainer>
+      );
+    },
+    [metrics, timeRange]
+  );
 
   if (loading) {
     return (
@@ -303,84 +358,74 @@ const FtsMetricsCharts: React.FC<FtsMetricsChartsProps> = ({
   return (
     <Box>
       {/* Time Range Selector */}
-      <Box
-        display="flex"
-        justifyContent="space-between"
-        alignItems="center"
-        mb={3}
-      >
-        <Typography variant="h6">FTS Index Metrics</Typography>
+      <Box display="flex" justifyContent="flex-end" alignItems="center" mb={2}>
         <FormControl size="small" sx={{ minWidth: 150 }}>
-          <Select value={timeRange} onChange={handleTimeRangeChange}>
+          <InputLabel>Choose Range</InputLabel>
+          <Select
+            value={timeRange}
+            onChange={handleTimeRangeChange}
+            label="Choose Range"
+          >
             {TIME_RANGE_OPTIONS.map((option) => (
               <MenuItem key={option.value} value={option.value}>
-                {option.label}
+                {option.label.replace("Last ", "")}
               </MenuItem>
             ))}
           </Select>
         </FormControl>
       </Box>
 
-      {/* Charts Grid */}
+      {/* Charts Grid - 2x2 layout for 4 core metrics */}
       <Box
         display="grid"
-        gridTemplateColumns="repeat(auto-fit, minmax(400px, 1fr))"
-        gap={3}
+        gridTemplateColumns="repeat(2, 1fr)"
+        gap={2}
+        sx={{ maxWidth: "100%" }}
       >
-        {/* Query Metrics */}
-        <Paper sx={{ p: 2 }}>
-          <Typography variant="subtitle1" gutterBottom>
+        <Paper sx={{ p: 1 }}>
+          <Typography variant="subtitle2" gutterBottom>
             Total Queries
           </Typography>
           {renderChart(
             "Total Queries",
             ["fts_total_queries"],
-            "#1976d2",
+            chartColors.primary,
             "queries"
           )}
         </Paper>
 
-        <Paper sx={{ p: 2 }}>
-          <Typography variant="subtitle1" gutterBottom>
+        <Paper sx={{ p: 1 }}>
+          <Typography variant="subtitle2" gutterBottom>
             Average Query Latency
           </Typography>
           {renderChart(
             "Avg Latency",
             ["fts_avg_queries_latency"],
-            "#ed6c02",
+            chartColors.secondary,
             "ms"
           )}
         </Paper>
 
-        {/* Document Count */}
-        <Paper sx={{ p: 2 }}>
-          <Typography variant="subtitle1" gutterBottom>
+        <Paper sx={{ p: 1 }}>
+          <Typography variant="subtitle2" gutterBottom>
             Document Count
           </Typography>
-          {renderChart("Document Count", ["fts_doc_count"], "#2e7d32", "docs")}
+          {renderChart(
+            "Document Count",
+            ["fts_doc_count"],
+            chartColors.success,
+            "docs"
+          )}
         </Paper>
 
-        {/* Storage Metrics */}
-        <Paper sx={{ p: 2 }}>
-          <Typography variant="subtitle1" gutterBottom>
+        <Paper sx={{ p: 1 }}>
+          <Typography variant="subtitle2" gutterBottom>
             Disk Usage
           </Typography>
           {renderChart(
             "Disk Usage",
             ["fts_num_bytes_used_disk"],
-            "#9c27b0",
-            "bytes"
-          )}
-        </Paper>
-
-        <Paper sx={{ p: 2, gridColumn: "1 / -1" }}>
-          <Typography variant="subtitle1" gutterBottom>
-            RAM Usage
-          </Typography>
-          {renderChart(
-            "RAM Usage",
-            ["fts_num_bytes_used_ram"],
-            "#d32f2f",
+            chartColors.info,
             "bytes"
           )}
         </Paper>

@@ -37,31 +37,22 @@ const Buckets = () => {
     bucketStore.setActiveBucket(connectionId, bucketName);
   };
 
-  // Refresh data
-  const handleRefresh = async () => {
-    try {
-      await bucketStore.fetchBucketData(connectionId);
-    } catch (error) {
-      console.error("Failed to refresh bucket data:", error);
-    }
-  };
-
-  // Effect to load initial data and set up refresh interval
+  // Load initial bucket data only (no refresh interval)
   useEffect(() => {
     if (!connection.isConnected) {
       return;
     }
 
-    // Load initial data
-    handleRefresh();
+    // Load initial data only once
+    const loadInitialData = async () => {
+      try {
+        await bucketStore.fetchBucketData(connectionId);
+      } catch (error) {
+        console.error("Failed to load initial bucket data:", error);
+      }
+    };
 
-    // Set up 30-second refresh interval
-    const interval = setInterval(() => {
-      handleRefresh();
-    }, 30000); // 30 seconds
-
-    // Cleanup interval on unmount or connection change
-    return () => clearInterval(interval);
+    loadInitialData();
   }, [connection.isConnected, connectionId]);
 
   // Check if we have a valid connection
@@ -103,7 +94,6 @@ const Buckets = () => {
           <Tab label="Collections" />
           <Tab disabled={!activeBucket} label="Samples" />
           <Tab disabled={!activeBucket} label="GSI Indexes" />
-          <Tab disabled={!activeBucket} label="Schema" />
           <Tab disabled={!activeBucket} label="FTS Indexes" />
         </Tabs>
 
@@ -139,8 +129,7 @@ const Buckets = () => {
         {selectedTab === 0 && <BucketsMain />}
         {selectedTab === 1 && <Samples />}
         {selectedTab === 2 && <GSIIndexes />}
-        {selectedTab === 3 && <SchemaManager />}
-        {selectedTab === 4 && <FtsIndexes />}
+        {selectedTab === 3 && <FtsIndexes />}
       </Box>
     </Box>
   );
@@ -155,23 +144,5 @@ const GSIIndexes = () => (
     </Alert>
   </Box>
 );
-
-const SchemaManager = () => (
-  <Box p={2}>
-    <Alert severity="info">
-      <AlertTitle>Schema Management</AlertTitle>
-      Schema management will be implemented here.
-    </Alert>
-  </Box>
-);
-
-// const FTSIndexes = () => (
-//   <Box p={2}>
-//     <Alert severity="info">
-//       <AlertTitle>Full Text Search Indexes</AlertTitle>
-//       FTS Indexes management will be implemented here.
-//     </Alert>
-//   </Box>
-// );
 
 export default Buckets;

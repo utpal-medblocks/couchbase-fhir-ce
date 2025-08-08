@@ -6,13 +6,15 @@ import lombok.AllArgsConstructor;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
 /**
- * Combined FTS index information including definition and statistics
+ * Simplified FTS index information for table display
+ * Metrics data is now handled by dedicated metrics endpoint
  */
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
 public class FtsIndexDetails {
     
+    // Core fields needed for table display
     @JsonProperty("indexName")
     private String indexName;
     
@@ -25,41 +27,15 @@ public class FtsIndexDetails {
     @JsonProperty("lastTimeUsed")
     private String lastTimeUsed;
     
-    @JsonProperty("queryLatency")
-    private double queryLatency;
-    
-    @JsonProperty("queryRate")
-    private double queryRate;
-    
-    @JsonProperty("totalQueries")
-    private long totalQueries;
-    
-    @JsonProperty("diskSize")
-    private long diskSize;
-    
-    // Index definition details
-    @JsonProperty("indexDefinition")
-    private FtsIndex indexDefinition;
-    
-    // Bucket and scope information
+    // Context fields needed for metrics and tree view
     @JsonProperty("bucketName")
     private String bucketName;
     
-    @JsonProperty("scopeName")
-    private String scopeName;
+    @JsonProperty("indexDefinition")
+    private FtsIndex indexDefinition;
     
-    // Additional performance metrics
-    @JsonProperty("avgQueryLatency")
-    private double avgQueryLatency;
-    
-    @JsonProperty("numFilesOnDisk")
-    private long numFilesOnDisk;
-    
-    @JsonProperty("totalQueriesError")
-    private long totalQueriesError;
-    
-    @JsonProperty("totalQueriesTimeout")
-    private long totalQueriesTimeout;
+    // Note: All metrics (queryLatency, queryRate, totalQueries, diskSize, etc.) 
+    // are now handled by the dedicated metrics endpoint
     
     // Constructor for basic info
     public FtsIndexDetails(String indexName) {

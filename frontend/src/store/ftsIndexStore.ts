@@ -13,21 +13,18 @@ export interface FtsIndex {
 }
 
 export interface FtsIndexDetails {
+  // Core fields needed for table display
   indexName: string;
   status: string;
   docsIndexed: number;
   lastTimeUsed: string;
-  queryLatency: number;
-  queryRate: number;
-  totalQueries: number;
-  diskSize: number;
-  indexDefinition: FtsIndex;
+
+  // Context fields needed for metrics and tree view
   bucketName: string;
-  scopeName: string;
-  avgQueryLatency: number;
-  numFilesOnDisk: number;
-  totalQueriesError: number;
-  totalQueriesTimeout: number;
+  indexDefinition: FtsIndex;
+
+  // Note: All metrics (queryLatency, queryRate, totalQueries, diskSize, etc.)
+  // are now handled by the dedicated metrics endpoint
 }
 
 interface FtsIndexState {
@@ -52,28 +49,8 @@ interface FtsIndexState {
 }
 
 export const useFtsIndexStore = create<FtsIndexState>((set, get) => {
-  let intervalId: number | null = null;
-
-  const startPolling = (
-    connectionName: string,
-    bucketName: string,
-    scopeName: string
-  ) => {
-    if (intervalId) {
-      clearInterval(intervalId);
-    }
-    // Refresh every 30 seconds
-    intervalId = setInterval(() => {
-      get().fetchIndexes(connectionName, bucketName, scopeName);
-    }, 30000);
-  };
-
-  const stopPolling = () => {
-    if (intervalId) {
-      clearInterval(intervalId);
-      intervalId = null;
-    }
-  };
+  // Removed automatic polling - FTS indexes don't change frequently
+  // Users can manually refresh when needed
 
   return {
     indexes: null,
@@ -116,27 +93,12 @@ export const useFtsIndexStore = create<FtsIndexState>((set, get) => {
         const data: FtsIndexDetails[] = await response.json();
         console.log("✅ ftsIndexStore: FTS indexes received:", data);
 
-        set((state) => {
-          // Only update if data has actually changed
-          const hasChanged =
-            !state.indexes ||
-            JSON.stringify(state.indexes) !== JSON.stringify(data);
-
-          if (hasChanged) {
-            return {
-              indexes: data,
-              error: null,
-              retrievedAt: new Date(),
-              loading: false,
-            };
-          }
-          return { retrievedAt: new Date(), loading: false }; // Update timestamp only
+        set({
+          indexes: data,
+          error: null,
+          retrievedAt: new Date(),
+          loading: false,
         });
-
-        // Start polling after first successful fetch
-        if (!intervalId) {
-          startPolling(connectionName, bucketName, scopeName);
-        }
       } catch (err: any) {
         let errorMessage = "Failed to fetch FTS indexes";
 
@@ -150,9 +112,6 @@ export const useFtsIndexStore = create<FtsIndexState>((set, get) => {
 
         console.error("FTS indexes fetch error:", err);
         set({ error: errorMessage, loading: false });
-
-        // Stop polling on error
-        stopPolling();
       }
     },
 
@@ -169,7 +128,6 @@ export const useFtsIndexStore = create<FtsIndexState>((set, get) => {
     },
 
     clearIndexes: () => {
-      stopPolling();
       set({ indexes: null, error: null, retrievedAt: null, loading: false });
     },
   };

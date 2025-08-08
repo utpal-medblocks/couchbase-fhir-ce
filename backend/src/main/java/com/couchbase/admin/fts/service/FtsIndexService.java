@@ -53,36 +53,19 @@ public class FtsIndexService {
                 FtsIndexDetails details = new FtsIndexDetails(index.getName());
                 details.setIndexDefinition(index);
                 details.setBucketName(bucketName);
-                details.setScopeName(scopeName);
                 
-                // Find matching stats
+                // Find matching stats - only get basic fields needed for table
                 FtsIndexStats stats = statsMap.get(index.getName());
                 if (stats != null) {
                     details.setStatus(stats.getStatus());
                     details.setDocsIndexed(stats.getDocsIndexed());
                     details.setLastTimeUsed(stats.getLastTimeUsed());
-                    details.setQueryLatency(stats.getQueryLatency());
-                    details.setQueryRate(stats.getQueryRate());
-                    details.setTotalQueries(stats.getTotalQueries());
-                    details.setDiskSize(stats.getDiskSize());
-                    details.setAvgQueryLatency(stats.getAvgQueryLatency());
-                    details.setNumFilesOnDisk(stats.getNumFilesOnDisk());
-                    details.setTotalQueriesError(stats.getTotalQueriesError());
-                    details.setTotalQueriesTimeout(stats.getTotalQueriesTimeout());
                 } else {
                     // Set default values if no stats available
                     log.debug("No stats found for index: {}, using defaults", index.getName());
                     details.setStatus("unknown");
                     details.setDocsIndexed(0);
                     details.setLastTimeUsed("never");
-                    details.setQueryLatency(0.0);
-                    details.setQueryRate(0.0);
-                    details.setTotalQueries(0);
-                    details.setDiskSize(0);
-                    details.setAvgQueryLatency(0.0);
-                    details.setNumFilesOnDisk(0);
-                    details.setTotalQueriesError(0);
-                    details.setTotalQueriesTimeout(0);
                 }
                 
                 indexDetails.add(details);

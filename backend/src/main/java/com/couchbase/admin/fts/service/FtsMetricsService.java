@@ -74,8 +74,7 @@ public class FtsMetricsService {
             "fts_total_queries",
             "fts_avg_queries_latency", 
             "fts_doc_count",
-            "fts_num_bytes_used_disk",
-            "fts_num_bytes_used_ram"
+            "fts_num_bytes_used_disk"
         };
         
         for (String metricName : metricNames) {
@@ -248,7 +247,6 @@ public class FtsMetricsService {
             case "fts_avg_queries_latency": return "Avg Query Latency";
             case "fts_doc_count": return "Document Count";
             case "fts_num_bytes_used_disk": return "Disk Usage";
-            case "fts_num_bytes_used_ram": return "RAM Usage";
             default: return metricName;
         }
     }
@@ -261,8 +259,7 @@ public class FtsMetricsService {
             case "fts_total_queries": return "queries";
             case "fts_avg_queries_latency": return "ms";
             case "fts_doc_count": return "docs";
-            case "fts_num_bytes_used_disk":
-            case "fts_num_bytes_used_ram": return "bytes";
+            case "fts_num_bytes_used_disk": return "bytes";
             default: return "";
         }
     }

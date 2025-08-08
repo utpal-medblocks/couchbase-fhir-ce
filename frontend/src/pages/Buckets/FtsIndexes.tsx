@@ -1,9 +1,6 @@
 import {
   Box,
   Typography,
-  FormControl,
-  Select,
-  MenuItem,
   Tab,
   Tabs,
   Table,
@@ -13,10 +10,9 @@ import {
   TableHead,
   TableRow,
   CircularProgress,
-  Chip,
   IconButton,
 } from "@mui/material";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { tableHeaderStyle, tableCellStyle } from "../../styles/styles";
 import { useConnectionStore } from "../../store/connectionStore";
 import { useBucketStore } from "../../store/bucketStore";
@@ -38,48 +34,30 @@ export default function FTSIndexes() {
   const connectionId = connection.name;
 
   // State for component
-  const [selectedBucket, setSelectedBucket] = useState("");
-  const [selectedScope, setSelectedScope] = useState("Resources");
+  const selectedScope = "Resources"; // Always Resources - no dropdown needed
   const [selectedTab, setSelectedTab] = useState(0);
   const [selectedIndex, setSelectedIndex] = useState<FtsIndexDetails | null>(
     null
   );
 
-  // Get available buckets for FHIR
-  const availableBuckets = bucketStore.buckets[connectionId] || [];
+  // Get active bucket from store (no hardcoded dropdown)
+  const activeBucket = bucketStore.getActiveBucket(connectionId);
+  const selectedBucket = activeBucket?.bucketName || "";
 
   // Get FTS indexes from store
   const { indexes, loading, error } = ftsIndexStore;
 
-  // Set default bucket if none selected and buckets are available
-  useEffect(() => {
-    if (!selectedBucket && availableBuckets.length > 0) {
-      // Find a FHIR bucket or use the first one
-      const fhirBucket =
-        availableBuckets.find(
-          (bucket) =>
-            bucket.bucketName.toLowerCase().includes("fhir") ||
-            bucket.bucketName.toLowerCase().includes("health") ||
-            bucket.bucketName.toLowerCase().includes("us-core")
-        ) || availableBuckets[0];
-      setSelectedBucket(fhirBucket.bucketName);
-    }
-  }, [availableBuckets, selectedBucket]);
+  // No need to fetch bucket data - it's handled by parent Buckets.tsx
 
-  // Fetch bucket data on component mount if not already loaded
+  // Fetch FTS indexes when bucket changes and clear selection
   useEffect(() => {
-    const buckets = bucketStore.buckets[connectionId] || [];
-    if (connectionId && buckets.length === 0) {
-      bucketStore.fetchBucketData(connectionId);
-    }
-  }, [connectionId]);
-
-  // Fetch FTS indexes when bucket and scope are selected
-  useEffect(() => {
-    if (connectionId && selectedBucket && selectedScope) {
+    if (connectionId && selectedBucket) {
+      // Clear previous selection when bucket changes
+      setSelectedIndex(null);
+      setSelectedTab(0); // Reset to table view
       ftsIndexStore.fetchIndexes(connectionId, selectedBucket, selectedScope);
     }
-  }, [connectionId, selectedBucket, selectedScope]);
+  }, [connectionId, selectedBucket]);
 
   // Cleanup polling on unmount
   useEffect(() => {
@@ -88,30 +66,16 @@ export default function FTSIndexes() {
     };
   }, []);
 
-  const handleIndexClick = (index: FtsIndexDetails) => {
+  const handleIndexClick = useCallback((index: FtsIndexDetails) => {
     setSelectedIndex(index);
     setSelectedTab(1); // Switch to Tree View tab when index is selected
-  };
+  }, []);
 
-  const handleRefresh = () => {
-    if (connectionId && selectedBucket && selectedScope) {
+  const handleRefresh = useCallback(() => {
+    if (connectionId && selectedBucket) {
       ftsIndexStore.refreshIndexes(connectionId, selectedBucket, selectedScope);
     }
-  };
-
-  const formatBytes = (bytes: number): string => {
-    if (bytes === 0) return "0 B";
-    const k = 1024;
-    const sizes = ["B", "KB", "MB", "GB"];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
-  };
-
-  const formatLatency = (latency: number): string => {
-    if (latency < 1) return `${(latency * 1000).toFixed(2)} μs`;
-    if (latency < 1000) return `${latency.toFixed(2)} ms`;
-    return `${(latency / 1000).toFixed(2)} s`;
-  };
+  }, [connectionId, selectedBucket, selectedScope]);
 
   return (
     <Box
@@ -129,47 +93,16 @@ export default function FTSIndexes() {
           display: "flex",
           justifyContent: "space-between",
           alignItems: "center",
-          borderBottom: 1,
+          px: 1,
+          py: 0,
+          borderBottom: 0.5,
           borderColor: "divider",
-          pb: 2,
-          mb: 2,
         }}
       >
         <Typography variant="h6">FTS Indexes</Typography>
-
-        {/* Controls */}
-        <Box sx={{ display: "flex", gap: 2, alignItems: "center" }}>
-          <FormControl size="small" sx={{ minWidth: 150 }}>
-            <Select
-              value={selectedBucket}
-              onChange={(e) => setSelectedBucket(e.target.value)}
-              displayEmpty
-            >
-              <MenuItem value="">
-                <em>Select Bucket</em>
-              </MenuItem>
-              {availableBuckets.map((bucket) => (
-                <MenuItem key={bucket.bucketName} value={bucket.bucketName}>
-                  {bucket.bucketName}
-                </MenuItem>
-              ))}
-            </Select>
-          </FormControl>
-
-          <FormControl size="small" sx={{ minWidth: 120 }}>
-            <Select
-              value={selectedScope}
-              onChange={(e) => setSelectedScope(e.target.value)}
-            >
-              <MenuItem value="Resources">Resources</MenuItem>
-              <MenuItem value="_default">_default</MenuItem>
-            </Select>
-          </FormControl>
-
-          <IconButton onClick={handleRefresh} disabled={loading}>
-            <RefreshIcon />
-          </IconButton>
-        </Box>
+        <IconButton onClick={handleRefresh} disabled={loading} size="small">
+          <RefreshIcon />
+        </IconButton>
       </Box>
 
       {/* Main Content - Two Boxes */}
@@ -177,7 +110,7 @@ export default function FTSIndexes() {
         sx={{
           flex: 1,
           display: "flex",
-          gap: 2,
+          gap: 1,
           minHeight: 0,
           width: "100%",
         }}
@@ -185,7 +118,7 @@ export default function FTSIndexes() {
         {/* Index Table - 60% */}
         <Box
           sx={{
-            width: "60%",
+            width: "50%",
             height: "100%",
             border: 1,
             borderColor: "divider",
@@ -211,20 +144,14 @@ export default function FTSIndexes() {
             <Table stickyHeader size="small">
               <TableHead>
                 <TableRow>
+                  <TableCell sx={tableHeaderStyle}>Bucket</TableCell>
                   <TableCell sx={tableHeaderStyle}>Index Name</TableCell>
-                  <TableCell sx={tableHeaderStyle}>Status</TableCell>
-                  <TableCell sx={tableHeaderStyle}>Docs</TableCell>
-                  <TableCell sx={tableHeaderStyle}>Last Used</TableCell>
-                  <TableCell sx={tableHeaderStyle}>Latency</TableCell>
-                  <TableCell sx={tableHeaderStyle}>Rate</TableCell>
-                  <TableCell sx={tableHeaderStyle}>Queries</TableCell>
-                  <TableCell sx={tableHeaderStyle}>Size</TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
                 {loading ? (
                   <TableRow>
-                    <TableCell colSpan={8} align="center">
+                    <TableCell colSpan={2} align="center">
                       <Box
                         sx={{ display: "flex", justifyContent: "center", p: 2 }}
                       >
@@ -237,11 +164,11 @@ export default function FTSIndexes() {
                   </TableRow>
                 ) : !indexes || indexes.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={8} align="center">
+                    <TableCell colSpan={2} align="center">
                       <Typography color="textSecondary" variant="body2">
-                        {selectedBucket && selectedScope
+                        {selectedBucket
                           ? `No FTS indexes found for ${selectedBucket}/${selectedScope}`
-                          : "Select a bucket and scope"}
+                          : "Select a bucket"}
                       </Typography>
                     </TableCell>
                   </TableRow>
@@ -260,34 +187,10 @@ export default function FTSIndexes() {
                       }}
                     >
                       <TableCell sx={tableCellStyle}>
+                        {index.bucketName}
+                      </TableCell>
+                      <TableCell sx={tableCellStyle}>
                         {index.indexName}
-                      </TableCell>
-                      <TableCell sx={tableCellStyle}>
-                        <Chip
-                          label={index.status}
-                          size="small"
-                          color={
-                            index.status === "active" ? "success" : "default"
-                          }
-                        />
-                      </TableCell>
-                      <TableCell sx={tableCellStyle} align="right">
-                        {index.docsIndexed.toLocaleString()}
-                      </TableCell>
-                      <TableCell sx={tableCellStyle}>
-                        {index.lastTimeUsed}
-                      </TableCell>
-                      <TableCell sx={tableCellStyle} align="right">
-                        {formatLatency(index.queryLatency)}
-                      </TableCell>
-                      <TableCell sx={tableCellStyle} align="right">
-                        {index.queryRate.toFixed(1)}/s
-                      </TableCell>
-                      <TableCell sx={tableCellStyle} align="right">
-                        {index.totalQueries.toLocaleString()}
-                      </TableCell>
-                      <TableCell sx={tableCellStyle} align="right">
-                        {formatBytes(index.diskSize)}
                       </TableCell>
                     </TableRow>
                   ))
@@ -300,7 +203,7 @@ export default function FTSIndexes() {
         {/* Index Details Box - 40% */}
         <Box
           sx={{
-            width: "40%",
+            width: "50%",
             height: "100%",
             border: 1,
             borderColor: "divider",
