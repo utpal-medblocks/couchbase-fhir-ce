@@ -11,6 +11,7 @@ import {
   MenuItem,
 } from "@mui/material";
 import BucketsMain from "./BucketsMain";
+import FtsIndexes from "./FtsIndexes";
 import Samples from "./Samples";
 import { useConnectionStore } from "../../store/connectionStore";
 import { useBucketStore } from "../../store/bucketStore";
@@ -31,32 +32,9 @@ const Buckets = () => {
   const fhirBuckets = bucketStore.getFhirBuckets(connectionId);
   const activeBucket = bucketStore.getActiveBucket(connectionId);
 
-  // Effect to load initial data and set up refresh interval
-  useEffect(() => {
-    if (!connection.isConnected) {
-      return;
-    }
-
-    // Load initial data
-    handleRefresh();
-
-    // Set up 30-second refresh interval
-    const interval = setInterval(() => {
-      handleRefresh();
-    }, 30000); // 30 seconds
-
-    // Cleanup interval on unmount or connection change
-    return () => clearInterval(interval);
-  }, [connection.isConnected, connectionId]);
-
   // Handle bucket selection
   const handleBucketChange = (bucketName: string) => {
     bucketStore.setActiveBucket(connectionId, bucketName);
-  };
-
-  // Handle scope selection
-  const handleScopeChange = (scopeName: string) => {
-    bucketStore.setActiveScope(connectionId, scopeName);
   };
 
   // Refresh data
@@ -162,7 +140,7 @@ const Buckets = () => {
         {selectedTab === 1 && <Samples />}
         {selectedTab === 2 && <GSIIndexes />}
         {selectedTab === 3 && <SchemaManager />}
-        {selectedTab === 4 && <FTSIndexes />}
+        {selectedTab === 4 && <FtsIndexes />}
       </Box>
     </Box>
   );
@@ -187,13 +165,13 @@ const SchemaManager = () => (
   </Box>
 );
 
-const FTSIndexes = () => (
-  <Box p={2}>
-    <Alert severity="info">
-      <AlertTitle>Full Text Search Indexes</AlertTitle>
-      FTS Indexes management will be implemented here.
-    </Alert>
-  </Box>
-);
+// const FTSIndexes = () => (
+//   <Box p={2}>
+//     <Alert severity="info">
+//       <AlertTitle>Full Text Search Indexes</AlertTitle>
+//       FTS Indexes management will be implemented here.
+//     </Alert>
+//   </Box>
+// );
 
 export default Buckets;
