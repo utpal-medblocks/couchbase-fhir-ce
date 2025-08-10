@@ -26,11 +26,11 @@ public class FtsMetricsRequest {
 
     // Time range enum for frontend
     public enum TimeRange {
-        MINUTE(60, 1, "min"),
-        HOUR(3600, 60, "hour"),
-        DAY(86400, 600, "day"),
-        WEEK(604800, 3600, "week"),
-        MONTH(2592000, 21600, "month");
+        MINUTE(90, 10, "min"),        // 1.5 minutes, 10 second steps = ~9 data points
+        HOUR(5400, 108, "hour"),      // 1.5 hours, 108 second steps = ~50 data points
+        DAY(129600, 2592, "day"),     // 1.5 days, 2592 second steps = ~50 data points
+        WEEK(907200, 18144, "week"),  // 1.5 weeks, 18144 second steps = ~50 data points
+        MONTH(3931200, 78624, "month"); // 1.5 months, 78624 second steps = ~50 data points
 
         private final int timeWindow;
         private final int step;
