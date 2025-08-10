@@ -168,6 +168,8 @@ const BucketMetricsCharts: React.FC<BucketMetricsChartsProps> = ({
         return value.toFixed(1) + "%";
       case "ms":
         return value.toFixed(2) + " ms";
+      case "ns":
+        return (value / 1000000).toFixed(2) + " ms";
       case "req/sec":
         return value.toFixed(1);
       default:
@@ -245,9 +247,9 @@ const BucketMetricsCharts: React.FC<BucketMetricsChartsProps> = ({
     },
     {
       title: "Query Performance",
-      metrics: ["n1ql_avg_req_time", "n1ql_avg_svc_time"],
+      metrics: ["n1ql_request_time", "n1ql_service_time"],
       colors: [chartColors.warning, chartColors.info],
-      unit: "ms",
+      unit: "ns",
     },
     {
       title: "N1QL Reqs/sec",

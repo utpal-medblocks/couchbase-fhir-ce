@@ -33,8 +33,8 @@ public class BucketMetricsService {
         "kv_ops",                      // Total Operations
         "kv_vb_resident_items_ratio",  // Resident Ratio
         "kv_ep_cache_miss_ratio",      // Cache Miss Ratio
-        "n1ql_avg_req_time",           // Query Request Time
-        "n1ql_avg_svc_time",           // Query Execution Time
+        "n1ql_request_time",           // Query Request Time in ns
+        "n1ql_service_time",           // Query Execution Time in ns
         "n1ql_requests"                // N1QL Request Rate
     };
 
@@ -76,8 +76,11 @@ public class BucketMetricsService {
             List<Map<String, String>> metric = new ArrayList<>();
             metric.add(Map.of("label", "name", "value", metricName));
             
-            // Add bucket label for most metrics (kv_ops seems to not include it in response)
-            if (!"kv_ops".equals(metricName)) {
+            // Add bucket label for specific metrics only (not for kv_ops or n1ql metrics based on working Postman payload)
+            if (!"kv_ops".equals(metricName) && 
+                !"n1ql_request_time".equals(metricName) && 
+                !"n1ql_service_time".equals(metricName) && 
+                !"n1ql_requests".equals(metricName)) {
                 metric.add(Map.of("label", "bucket", "value", bucketName));
             }
             
@@ -92,8 +95,12 @@ public class BucketMetricsService {
             if ("kv_ops".equals(metricName) || "n1ql_requests".equals(metricName)) {
                 request.put("nodesAggregation", "sum");
                 request.put("applyFunctions", Arrays.asList("irate", "sum"));
+            } else if ("n1ql_request_time".equals(metricName) || "n1ql_service_time".equals(metricName)) {
+                // For n1ql time metrics, use irate like in working Postman payload
+                request.put("applyFunctions", Arrays.asList("irate"));
+                // No nodesAggregation for n1ql time metrics (matches Postman payload)
             } else {
-                request.put("nodesAggregation", "special");
+                // request.put("nodesAggregation", "special");
                 if ("kv_vb_resident_items_ratio".equals(metricName)) {
                     // No apply functions for resident ratio
                 } else {
@@ -114,37 +121,37 @@ public class BucketMetricsService {
         switch (timeRange.toUpperCase()) {
             case "MINUTE":
                 // 1.5 minutes window, 9 data points, 10 second steps
-                params.put("step", 10);           // 10 seconds
+                params.put("step", 3);           // 3 seconds
                 params.put("timeWindow", 90);     // 1.5 minutes (not used but kept for consistency)
                 params.put("start", -90);         // 1.5 minutes ago
                 break;
             case "HOUR":
                 // 1.5 hours window, 50 data points, 108 second steps
-                params.put("step", 108);          // 108 seconds
+                params.put("step", 60);          // 60 seconds
                 params.put("timeWindow", 5400);   // 1.5 hours (not used but kept for consistency)
                 params.put("start", -5400);       // 1.5 hours ago
                 break;
             case "DAY":
                 // 1.5 days window, 50 data points, 2592 second steps
-                params.put("step", 2592);         // 2592 seconds (43.2 minutes)
+                params.put("step", 1440);         // 1440 seconds (24 minutes)
                 params.put("timeWindow", 129600); // 1.5 days (not used but kept for consistency)
                 params.put("start", -129600);     // 1.5 days ago
                 break;
             case "WEEK":
                 // 1.5 weeks window, 50 data points, 18144 second steps
-                params.put("step", 18144);        // 18144 seconds (5.04 hours)
+                params.put("step", 10080);        // 10080 seconds (2.8 hours)
                 params.put("timeWindow", 907200); // 1.5 weeks (not used but kept for consistency)
                 params.put("start", -907200);     // 1.5 weeks ago
                 break;
             case "MONTH":
                 // 1.5 months window, 50 data points, 78624 second steps
-                params.put("step", 78624);        // 78624 seconds (21.84 hours)
+                params.put("step", 43680);        // 43680 seconds (12.13 hours)
                 params.put("timeWindow", 3931200); // 1.5 months (not used but kept for consistency)
                 params.put("start", -3931200);    // 1.5 months ago
                 break;
             default:
                 // Default to hour
-                params.put("step", 108);
+                params.put("step", 60);
                 params.put("timeWindow", 5400);
                 params.put("start", -5400);
         }
@@ -270,9 +277,9 @@ public class BucketMetricsService {
                 return "Resident Ratio";
             case "kv_ep_cache_miss_ratio":
                 return "Cache Miss Ratio";
-            case "n1ql_avg_req_time":
+            case "n1ql_request_time":
                 return "Query Request Time";
-            case "n1ql_avg_svc_time":
+            case "n1ql_service_time":
                 return "Query Execution Time";
             case "n1ql_requests":
                 return "N1QL Request Rate";
@@ -288,9 +295,9 @@ public class BucketMetricsService {
             case "kv_vb_resident_items_ratio":
             case "kv_ep_cache_miss_ratio":
                 return "ratio";
-            case "n1ql_avg_req_time":
-            case "n1ql_avg_svc_time":
-                return "ms";
+            case "n1ql_request_time":
+            case "n1ql_service_time":
+                return "ns";
             case "n1ql_requests":
                 return "req/sec";
             default:

@@ -299,7 +299,13 @@ const FtsMetricsCharts: React.FC<FtsMetricsChartsProps> = ({
               tickLine={{ stroke: "#e0e0e0" }}
               tickCount={8}
               width={60}
-              domain={unit === "docs" ? [0, "dataMax"] : ["auto", "auto"]}
+              domain={
+                unit === "docs"
+                  ? [0, "dataMax"]
+                  : unit === "ms"
+                  ? [0, "dataMax"]
+                  : ["auto", "auto"]
+              }
               allowDecimals={unit !== "docs"}
             />
             <Tooltip
@@ -384,7 +390,7 @@ const FtsMetricsCharts: React.FC<FtsMetricsChartsProps> = ({
       >
         <Paper sx={{ p: 1 }}>
           <Typography variant="subtitle2" gutterBottom>
-            Total Queries
+            Search Rate (per second)
           </Typography>
           {renderChart(
             "Total Queries",
@@ -396,7 +402,7 @@ const FtsMetricsCharts: React.FC<FtsMetricsChartsProps> = ({
 
         <Paper sx={{ p: 1 }}>
           <Typography variant="subtitle2" gutterBottom>
-            Average Query Latency
+            Average Search Latency (ms)
           </Typography>
           {renderChart(
             "Avg Latency",

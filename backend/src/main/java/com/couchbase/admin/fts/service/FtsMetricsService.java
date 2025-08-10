@@ -85,14 +85,18 @@ public class FtsMetricsService {
             String fullIndexName = bucketName + ".Resources." + indexName;
             metrics.add(new FtsMetricsRequest.MetricFilter("index", fullIndexName));
             
-            FtsMetricsRequest request = new FtsMetricsRequest(
-                timeRange.getStep(),
-                timeRange.getTimeWindow(),
-                -timeRange.getTimeWindow(),
-                metrics,
-                "sum",
-                true
-            );
+            FtsMetricsRequest request = new FtsMetricsRequest();
+            request.setStep(timeRange.getStep());
+            request.setTimeWindow(timeRange.getTimeWindow());
+            request.setStart(-timeRange.getTimeWindow());
+            request.setMetric(metrics);
+            request.setNodesAggregation("sum");
+            request.setAlignTimestamps(true);
+            
+            // Only set applyFunctions if needed (like BucketMetricsService pattern)
+            if ("fts_total_queries".equals(metricName) || "fts_avg_queries_latency".equals(metricName)) {
+                request.setApplyFunctions(Arrays.asList("irate"));
+            }
             
             requests.add(request);
         }
