@@ -1,9 +1,12 @@
 package com.couchbase.fhir.resources.repository;
 import ca.uhn.fhir.context.FhirContext;
+import ca.uhn.fhir.parser.JsonParser;
+import ca.uhn.fhir.parser.LenientErrorHandler;
 import com.couchbase.admin.connections.service.ConnectionService;
 import com.couchbase.client.java.Cluster;
 import com.couchbase.client.java.query.QueryResult;
 import com.couchbase.client.java.json.JsonObject;
+import com.google.common.base.Stopwatch;
 import org.hl7.fhir.instance.model.api.IBaseResource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -12,6 +15,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.TimeUnit;
 
 import static com.couchbase.client.java.query.QueryOptions.queryOptions;
 
@@ -112,7 +116,7 @@ public class FhirResourceDaoImpl<T extends IBaseResource> implements  FhirResour
     public List<T> search(String resourceType , String query) {
         List<T> resources = new ArrayList<>();
         try {
-
+            Stopwatch stopwatch = Stopwatch.createStarted();
             String connectionName = getDefaultConnection();
 
             Cluster cluster = connectionService.getConnection(connectionName);
@@ -120,20 +124,18 @@ public class FhirResourceDaoImpl<T extends IBaseResource> implements  FhirResour
                 throw new RuntimeException("No active connection found: " + connectionName);
             }
 
-
-          //  String query = String.format("SELECT c.* FROM `%s`.`%s`.`%s` c %s LIMIT 50",
-           //         DEFAULT_BUCKET, DEFAULT_SCOPE, resourceType, whereClause);
-
             QueryResult result = cluster.query(query);
-            List<JsonObject> rows = result.rowsAs(JsonObject.class);
 
-            for (JsonObject row : rows) {
-                Map.Entry<String, Object> entry = row.toMap().entrySet().iterator().next();
-                Object value = entry.getValue();
-                JsonObject nestedResource = JsonObject.from((Map<String, Object>) value);
-                T resource = (T) fhirContext.newJsonParser().parseResource(nestedResource.toString());
-                resources.add(resource);
-            }
+            logger.info("Query execution time : " + stopwatch.elapsed(TimeUnit.MILLISECONDS) + " ms");
+
+            List<JsonObject> rows = result.rowsAs(JsonObject.class);
+            JsonParser parser = (JsonParser) fhirContext.newJsonParser();
+            parser.setParserErrorHandler(new LenientErrorHandler().setErrorOnInvalidValue(false));
+            rows.parallelStream()
+                    .map(row -> (T) parser.parseResource(row.toString()))
+                    .forEach(resources::add);
+            logger.info("Execution time after HAPI parsing result: " + stopwatch.elapsed(TimeUnit.MILLISECONDS) + " ms");
+
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
