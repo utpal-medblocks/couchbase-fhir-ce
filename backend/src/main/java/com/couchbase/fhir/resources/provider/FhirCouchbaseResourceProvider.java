@@ -117,7 +117,15 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
         String resourceType = resourceClass.getSimpleName();
         RuntimeResourceDefinition resourceDef = fhirContext.getResourceDefinition(resourceType);
         for (Map.Entry<String, String> entry : searchParams.entrySet()) {
-            String paramName = entry.getKey();
+            String rawParamName = entry.getKey();
+            String paramName = rawParamName;
+            String modifier = null;
+            int colonIndex = rawParamName.indexOf(':');
+
+            if(colonIndex != -1){
+                paramName = rawParamName.substring(0, colonIndex);
+                modifier =  rawParamName.substring(colonIndex + 1);
+            }
             String fhirParamName = QueryBuilder.getActualFieldName(fhirContext , resourceType, paramName);
             String value = entry.getValue();
 
@@ -134,10 +142,7 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
                     //filters.add(TokenSearchHelper.buildTokenWhereClause(fhirContext, resourceType, fhirParamName, value));
                     ftsQueries.add(TokenSearchHelperFTS.buildTokenFTSQuery(fhirContext, resourceType, fhirParamName, value));
                  }else if(searchParam.getParamType() == RestSearchParameterTypeEnum.STRING){
-                    String searchClause = StringSearchHelper.buildStringWhereCluse(fhirContext , resourceType , fhirParamName , value , searchParam);
-                    if(searchClause != null){
-                        filters.add(searchClause);
-                    }
+                    ftsQueries.add(StringSearchHelperFTS.buildStringFTSQuery(fhirContext, resourceType, fhirParamName, value, searchParam , modifier));
                 }else if(searchParam.getParamType() == RestSearchParameterTypeEnum.DATE){
                     //String dateClause = DateSearchHelper.buildDateCondition(fhirContext , resourceType , fhirParamName , value);
 

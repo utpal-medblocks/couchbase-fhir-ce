@@ -126,7 +126,7 @@ public class FhirResourceDaoImpl<T extends IBaseResource> implements  FhirResour
 
             QueryResult result = cluster.query(query);
 
-            System.out.println("Query execution time : " + stopwatch.elapsed(TimeUnit.MILLISECONDS) + " ms");
+            logger.info("Query execution time : " + stopwatch.elapsed(TimeUnit.MILLISECONDS) + " ms");
 
             List<JsonObject> rows = result.rowsAs(JsonObject.class);
             JsonParser parser = (JsonParser) fhirContext.newJsonParser();
@@ -134,19 +134,7 @@ public class FhirResourceDaoImpl<T extends IBaseResource> implements  FhirResour
             rows.parallelStream()
                     .map(row -> (T) parser.parseResource(row.toString()))
                     .forEach(resources::add);
-            /*for (JsonObject row : rows) {
-                String json = row.toString(); // unavoidable if HAPI needs String input
-                @SuppressWarnings("unchecked")
-                T resource = (T) parser.parseResource(json);
-                resources.add(resource);
-
-                           *//*
-                Map.Entry<String, Object> entry = row.toMap().entrySet().iterator().next();
-                Object value = entry.getValue();
-                JsonObject nestedResource = JsonObject.from((Map<String, Object>) value);
-                T resource = (T) fhirContext.newJsonParser().parseResource(nestedResource.toString());
-                resources.add(resource);*//*
-            }*/
+            logger.info("Execution time after HAPI parsing result: " + stopwatch.elapsed(TimeUnit.MILLISECONDS) + " ms");
 
         } catch (Exception e) {
             throw new RuntimeException(e);
