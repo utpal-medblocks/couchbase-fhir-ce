@@ -1,0 +1,64 @@
+version: '3.8'
+
+services:
+  couchbase:
+    image: couchbase:community-7.2.4
+    container_name: couchbase-server
+    ports:
+      - "8091-8096:8091-8096"
+      - "11210:11210"           
+    environment:
+      - COUCHBASE_ADMINISTRATOR_USERNAME=Administrator
+      - COUCHBASE_ADMINISTRATOR_PASSWORD=password
+    volumes:
+      - couchbase_data:/opt/couchbase/var
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8091/ui/index.html"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  fhir-server:
+    build:
+      context: ./backend
+    environment:
+      - SPRING_PROFILES_ACTIVE=prod
+      - JAVA_OPTS=-Xms256m -Xmx1024m
+      - DEPLOYED_ENV=container
+    ports:
+      - "8080:8080"
+    depends_on:
+      couchbase:
+        condition: service_healthy
+    volumes:
+      - ./config.yaml:/config.yaml
+      - haproxy_socket:/tmp/haproxy
+      - /var/run/docker.sock:/var/run/docker.sock
+    restart: unless-stopped
+
+  fhir-admin:
+    build:
+      context: ./frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - fhir-server
+    restart: unless-stopped
+
+  haproxy:
+    image: haproxy:2.9-alpine
+    user: root
+    ports:
+      - "80:80"
+    volumes:
+      - ./haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+      - haproxy_socket:/tmp/haproxy
+    depends_on:
+      - fhir-admin
+      - fhir-server
+    restart: unless-stopped
+    command: sh -c "mkdir -p /tmp/haproxy && exec haproxy -f /usr/local/etc/haproxy/haproxy.cfg"
+
+volumes:
+  couchbase_data: {}
+  haproxy_socket: {}

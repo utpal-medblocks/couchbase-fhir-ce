@@ -17,7 +17,7 @@ const Samples: React.FC = () => {
   const bucketStore = useBucketStore();
   const connectionId = connection.name;
   const activeBucket = bucketStore.getActiveBucket(connectionId);
-  const activeScope = bucketStore.getActiveScope(connectionId);
+  // All buckets use Resources scope only
 
   const handleCardClick = (sampleType: "synthea" | "uscore") => {
     setSelectedSampleType(sampleType);
@@ -39,7 +39,7 @@ const Samples: React.FC = () => {
   };
 
   // Check if we have required selections
-  const hasRequiredSelections = activeBucket && activeScope;
+  const hasRequiredSelections = activeBucket;
   const isConnected = connection.isConnected;
 
   if (!isConnected) {

@@ -57,7 +57,6 @@ public class FhirBundleProcessingService {
     @PostConstruct
     private void init() {
         logger.info("🚀 FHIR Bundle Processing Service initialized");
-
         // Configure parser for optimal performance - critical for bundle processing
         jsonParser.setPrettyPrint(false);                    // ✅ No formatting overhead
         jsonParser.setStripVersionsFromReferences(false);    // Skip processing
@@ -78,7 +77,6 @@ public class FhirBundleProcessingService {
     public Bundle processBundleTransaction(String bundleJson, String connectionName, String bucketName) {
         return processBundleTransaction(bundleJson, connectionName, bucketName, false);
     }
-
     /**
      * Process a FHIR Bundle transaction with configurable validation
      * @param bundleJson Bundle JSON string
@@ -89,7 +87,6 @@ public class FhirBundleProcessingService {
     public Bundle processBundleTransaction(String bundleJson, String connectionName, String bucketName, boolean useLenientValidation) {
         return processBundleTransaction(bundleJson, connectionName, bucketName, useLenientValidation, false);
     }
-
     /**
      * Process a FHIR Bundle transaction with full validation control
      * @param bundleJson Bundle JSON string
@@ -108,7 +105,6 @@ public class FhirBundleProcessingService {
                 validationType = useLenientValidation ? "lenient (basic FHIR R4)" : "strict (US Core 6.1.0)";
             }
             logger.info("🔄 Processing FHIR Bundle transaction with {} validation", validationType);
-
             // Step 1: Parse Bundle
             Bundle bundle = (Bundle) jsonParser.parseResource(bundleJson);
             logger.info("📦 Parsed Bundle with {} entries", bundle.getEntry().size());
@@ -249,12 +245,10 @@ public class FhirBundleProcessingService {
                 String uuidFullUrl = entry.getFullUrl(); // "urn:uuid:org1"
                 actualResourceId = extractIdFromUuid(uuidFullUrl); // "org1"
                 logger.debug("🆔 Extracted ID from UUID: {} → {}", uuidFullUrl, actualResourceId);
-
                 // Map the full urn:uuid to the resource reference
                 String mappedReference = resourceType + "/" + actualResourceId; // "Organization/org1"
                 uuidToIdMapping.put(uuidFullUrl, mappedReference);
                 logger.debug("🔗 UUID mapping: {} → {}", uuidFullUrl, mappedReference);
-
             } else {
                 // Generate ID for resources without urn:uuid
                 actualResourceId = generateResourceId(resourceType);
@@ -275,7 +269,6 @@ public class FhirBundleProcessingService {
     private String extractIdFromUuid(String uuidFullUrl) {
         if (uuidFullUrl.startsWith("urn:uuid:")) {
             String extracted = uuidFullUrl.substring("urn:uuid:".length());
-
             // Validate that it's a reasonable ID (optional)
             if (isValidResourceId(extracted)) {
                 return extracted;
@@ -285,7 +278,6 @@ public class FhirBundleProcessingService {
                 return UUID.randomUUID().toString();
             }
         }
-
         return UUID.randomUUID().toString();
     }
 
@@ -416,7 +408,6 @@ public class FhirBundleProcessingService {
         response.setStatus("201 Created");
         response.setLocation(resourceType + "/" + resource.getIdElement().getIdPart());
         responseEntry.setResponse(response);
-
         return responseEntry;
     }
 
@@ -509,18 +500,15 @@ public class FhirBundleProcessingService {
         errorEntry.setResponse(errorResponse);
         return errorEntry;
     }
-
     /**
      * Create OperationOutcome for error responses
      */
     private OperationOutcome createOperationOutcome(String errorMessage) {
         OperationOutcome outcome = new OperationOutcome();
-
         OperationOutcome.OperationOutcomeIssueComponent issue = new OperationOutcome.OperationOutcomeIssueComponent();
         issue.setSeverity(OperationOutcome.IssueSeverity.ERROR);
         issue.setCode(OperationOutcome.IssueType.PROCESSING);
         issue.setDiagnostics(errorMessage);
-
         outcome.addIssue(issue);
         return outcome;
     }

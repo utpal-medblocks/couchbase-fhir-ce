@@ -11,6 +11,7 @@ import {
   MenuItem,
 } from "@mui/material";
 import BucketsMain from "./BucketsMain";
+import FtsIndexes from "./FtsIndexes";
 import Samples from "./Samples";
 import { useConnectionStore } from "../../store/connectionStore";
 import { useBucketStore } from "../../store/bucketStore";
@@ -30,43 +31,28 @@ const Buckets = () => {
   const bucketStore = useBucketStore();
   const fhirBuckets = bucketStore.getFhirBuckets(connectionId);
   const activeBucket = bucketStore.getActiveBucket(connectionId);
-  const activeScope = bucketStore.getActiveScope(connectionId);
 
   // Handle bucket selection
   const handleBucketChange = (bucketName: string) => {
     bucketStore.setActiveBucket(connectionId, bucketName);
   };
 
-  // Handle scope selection
-  const handleScopeChange = (scopeName: string) => {
-    bucketStore.setActiveScope(connectionId, scopeName);
-  };
-
-  // Refresh data
-  const handleRefresh = async () => {
-    try {
-      await bucketStore.fetchBucketData(connectionId);
-    } catch (error) {
-      console.error("Failed to refresh bucket data:", error);
-    }
-  };
-
-  // Effect to load initial data and set up refresh interval
+  // Load initial bucket data only (no refresh interval)
   useEffect(() => {
     if (!connection.isConnected) {
       return;
     }
 
-    // Load initial data
-    handleRefresh();
+    // Load initial data only once
+    const loadInitialData = async () => {
+      try {
+        await bucketStore.fetchBucketData(connectionId);
+      } catch (error) {
+        console.error("Failed to load initial bucket data:", error);
+      }
+    };
 
-    // Set up 30-second refresh interval
-    const interval = setInterval(() => {
-      handleRefresh();
-    }, 30000); // 30 seconds
-
-    // Cleanup interval on unmount or connection change
-    return () => clearInterval(interval);
+    loadInitialData();
   }, [connection.isConnected, connectionId]);
 
   // Check if we have a valid connection
@@ -106,10 +92,9 @@ const Buckets = () => {
       >
         <Tabs value={selectedTab} onChange={handleChange} sx={{ flexGrow: 1 }}>
           <Tab label="Collections" />
-          <Tab disabled={!activeBucket || !activeScope} label="Samples" />
-          <Tab disabled={!activeBucket || !activeScope} label="GSI Indexes" />
-          <Tab disabled={!activeBucket || !activeScope} label="Schema" />
-          <Tab disabled={!activeBucket || !activeScope} label="FTS Indexes" />
+          <Tab disabled={!activeBucket} label="Samples" />
+          <Tab disabled={!activeBucket} label="GSI Indexes" />
+          <Tab disabled={!activeBucket} label="FTS Indexes" />
         </Tabs>
 
         {/* Bucket and Scope selectors on the right */}
@@ -136,27 +121,6 @@ const Buckets = () => {
               ))}
             </Select>
           </FormControl>
-
-          <Typography variant="body2" sx={{ color: "primary.main" }}>
-            Scope
-          </Typography>
-          <FormControl
-            variant="standard"
-            sx={{
-              minWidth: 150,
-              color: "GrayText",
-            }}
-            size="small"
-          >
-            <Select
-              value={activeScope || ""}
-              onChange={(e) => handleScopeChange(e.target.value)}
-              disabled={!activeBucket}
-            >
-              <MenuItem value="Admin">Admin</MenuItem>
-              <MenuItem value="Resources">Resources</MenuItem>
-            </Select>
-          </FormControl>
         </Box>
       </Box>
 
@@ -165,8 +129,7 @@ const Buckets = () => {
         {selectedTab === 0 && <BucketsMain />}
         {selectedTab === 1 && <Samples />}
         {selectedTab === 2 && <GSIIndexes />}
-        {selectedTab === 3 && <SchemaManager />}
-        {selectedTab === 4 && <FTSIndexes />}
+        {selectedTab === 3 && <FtsIndexes />}
       </Box>
     </Box>
   );
@@ -178,24 +141,6 @@ const GSIIndexes = () => (
     <Alert severity="info">
       <AlertTitle>GSI Indexes</AlertTitle>
       GSI Indexes management will be implemented here.
-    </Alert>
-  </Box>
-);
-
-const SchemaManager = () => (
-  <Box p={2}>
-    <Alert severity="info">
-      <AlertTitle>Schema Management</AlertTitle>
-      Schema management will be implemented here.
-    </Alert>
-  </Box>
-);
-
-const FTSIndexes = () => (
-  <Box p={2}>
-    <Alert severity="info">
-      <AlertTitle>Full Text Search Indexes</AlertTitle>
-      FTS Indexes management will be implemented here.
     </Alert>
   </Box>
 );

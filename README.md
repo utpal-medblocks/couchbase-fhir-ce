@@ -65,3 +65,7 @@ This project is licensed under the terms specified in the LICENSE file.
 ---
 
 **For detailed development information, please refer to [PROJECT_GUIDE.md](./PROJECT_GUIDE.md)**
+
+## Docker Deployment
+
+See [Docker-Deployment.md](./Docker-Deployment.md) for instructions on running this project with Docker and Docker Compose.

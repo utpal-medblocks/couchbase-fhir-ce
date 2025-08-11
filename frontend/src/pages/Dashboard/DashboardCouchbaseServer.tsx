@@ -47,13 +47,13 @@ const DashboardCouchbaseServer: React.FC = () => {
     // Set up polling interval
     const interval = setInterval(() => {
       fetchMetrics();
-    }, 30000); // 30 seconds
+    }, 20000); // 20 seconds
 
     // Cleanup on unmount or connection change
     return () => {
       clearInterval(interval);
     };
-  }, [connection.isConnected, fetchMetrics]);
+  }, [connection.isConnected]);
 
   // Get data with fallbacks for no connection
   const nodes = metrics?.nodes || [];
