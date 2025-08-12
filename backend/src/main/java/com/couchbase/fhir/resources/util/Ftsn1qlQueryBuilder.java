@@ -41,7 +41,7 @@ public class Ftsn1qlQueryBuilder {
                 .put("from", from)
                 .put("query", queryBody);
 
-        String indexName = bucketName+"."+DEFAULT_SCOPE+"."+resourceType;
+        String indexName = bucketName+"."+DEFAULT_SCOPE+".fts"+resourceType;
 
         String n1ql = String.format(
                 "SELECT resource.* " +

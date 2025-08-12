@@ -4,6 +4,7 @@ import ca.uhn.fhir.context.FhirContext;
 import ca.uhn.fhir.rest.server.IResourceProvider;
 import ca.uhn.fhir.rest.server.RestfulServer;
 import ca.uhn.fhir.rest.server.tenant.UrlBaseTenantIdentificationStrategy;
+import com.couchbase.fhir.resources.provider.FhirTransactionProvider;
 import com.couchbase.fhir.resources.provider.USCoreCapabilityProvider;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -33,6 +34,9 @@ public class FhirRestfulServer extends RestfulServer {
     @Autowired
     private List<IResourceProvider> providers;
 
+    @Autowired
+    private FhirTransactionProvider transactionProvider;
+
     @Override
     protected void initialize() {
         setFhirContext(FhirContext.forR4());
@@ -41,5 +45,8 @@ public class FhirRestfulServer extends RestfulServer {
         USCoreCapabilityProvider capabilityProvider = new USCoreCapabilityProvider(this);
         setServerConformanceProvider(capabilityProvider);
         registerProviders(providers);
+        
+        // Register system-level transaction provider
+        registerProvider(transactionProvider);
     }
 }

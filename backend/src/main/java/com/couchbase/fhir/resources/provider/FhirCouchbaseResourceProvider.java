@@ -9,7 +9,6 @@ import ca.uhn.fhir.rest.server.exceptions.InternalErrorException;
 import ca.uhn.fhir.rest.server.exceptions.ResourceNotFoundException;
 import ca.uhn.fhir.rest.server.exceptions.UnprocessableEntityException;
 import ca.uhn.fhir.validation.ValidationResult;
-import com.couchbase.client.java.search.SearchOptions;
 import com.couchbase.client.java.search.SearchQuery;
 import com.couchbase.fhir.resources.config.TenantContextHolder;
 import com.couchbase.fhir.resources.repository.FhirResourceDaoImpl;
@@ -17,14 +16,11 @@ import com.couchbase.fhir.resources.service.FhirAuditService;
 import com.couchbase.fhir.resources.service.UserAuditInfo;
 import com.couchbase.fhir.resources.util.*;
 import com.couchbase.fhir.validation.ValidationUtil;
-import com.google.common.base.Stopwatch;
-import org.apache.jena.base.Sys;
 import org.hl7.fhir.r4.model.*;
 import ca.uhn.fhir.rest.api.RestSearchParameterTypeEnum;
 
 import java.io.IOException;
 import java.util.*;
-import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 /**
@@ -178,73 +174,9 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
         return bundle;
     }
 
-    @Transaction
-    public Bundle transaction(@TransactionParam Bundle bundle) {
-        String bucketName = TenantContextHolder.getTenantId();
-        Bundle responseBundle = new Bundle();
-        responseBundle.setType(Bundle.BundleType.TRANSACTIONRESPONSE);
-
-        BundleProcessor processor = new BundleProcessor();
-        processor.process(bundle);
-
-        for (Bundle.BundleEntryComponent entry : bundle.getEntry()) {
-            Resource resource = entry.getResource();
-            MethodOutcome outcome = null;
-
-            if (entry.getRequest().getMethod() == Bundle.HTTPVerb.POST) {
-                outcome = createResource((T) resource , bucketName);
-                System.out.println( resource.getClass().getSimpleName() +" id - "+ outcome.getId().toUnqualifiedVersionless().getValue());
-            } else if (entry.getRequest().getMethod() == Bundle.HTTPVerb.PUT) {
-               // outcome = updateResource((T) resource);
-                System.out.println("update resource :: PUT method called");
-            } else {
-                throw new UnprocessableEntityException("Unsupported HTTP verb: " + entry.getRequest().getMethod());
-            }
-
-            // Build response entry
-            Bundle.BundleEntryComponent responseEntry = new Bundle.BundleEntryComponent();
-            responseEntry.setResponse(new Bundle.BundleEntryResponseComponent()
-                    .setStatus("201 Created")
-                    .setLocation(outcome.getId().toUnqualifiedVersionless().getValue()));
-            responseEntry.setResource((Resource)outcome.getResource());
-            responseBundle.addEntry(responseEntry);
-        }
-
-        return responseBundle;
-    }
 
 
-    private MethodOutcome createResource(T resource , String bucketName) {
-        try {
 
-
-            if (resource instanceof DomainResource) {
-            //    ((DomainResource) resource).getMeta().addProfile("http://hl7.org/fhir/us/core/StructureDefinition/us-core-" +  resource.getClass().getSimpleName().toLowerCase());
-                ((DomainResource) resource).getMeta().setLastUpdated(new Date());
-            }
-            ValidationUtil validationUtil = new ValidationUtil();
-            ValidationResult result = validationUtil.validate(resource, resourceClass.getSimpleName(), fhirContext);
-            if (!result.isSuccessful()) {
-                StringBuilder issues = new StringBuilder();
-                result.getMessages().forEach(msg -> issues.append(msg.getSeverity())
-                        .append(": ")
-                        .append(msg.getLocationString())
-                        .append(" - ")
-                        .append(msg.getMessage())
-                        .append("\n"));
-
-                throw new UnprocessableEntityException("FHIR Validation failed:\n" + issues.toString());
-            }
-
-            T created = dao.create(resource.getClass().getSimpleName(), resource , bucketName).orElseThrow(() ->
-                    new InternalErrorException("Failed to create resource"));
-            return new MethodOutcome(new IdType(resource.getClass().getSimpleName(), created.getIdElement().getIdPart()))
-                    .setCreated(true)
-                    .setResource(created);
-        } catch (Exception e) {
-            throw new InternalErrorException("Error creating resource: " + e.getMessage(), e);
-        }
-    }
 
 
 
