@@ -1,0 +1,52 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fhir-haproxy
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: fhir-haproxy
+  template:
+    metadata:
+      labels:
+        app: fhir-haproxy
+    spec:
+      volumes:
+        - name: haproxy-socket
+          emptyDir: {}
+        - name: fhir-config
+          configMap:
+            name: fhir-config
+        - name: haproxy-config
+          configMap:
+            name: haproxy-config
+      containers:
+        - name: fhir-server
+          image: fhir-server:latest # Replace with your image repo if needed
+          env:
+            - name: SPRING_PROFILES_ACTIVE
+              value: "prod"
+            - name: JAVA_OPTS
+              value: "-Xms256m -Xmx1024m"
+            - name: DEPLOYED_ENV
+              value: "container"
+          ports:
+            - containerPort: 8080
+          volumeMounts:
+            - name: fhir-config
+              mountPath: /config.yaml
+              subPath: config.yaml
+            - name: haproxy-socket
+              mountPath: /tmp/haproxy
+        - name: haproxy
+          image: haproxy:2.9-alpine
+          ports:
+            - containerPort: 80
+          command: ["sh", "-c", "mkdir -p /tmp/haproxy && exec haproxy -f /usr/local/etc/haproxy/haproxy.cfg"]
+          volumeMounts:
+            - name: haproxy-config
+              mountPath: /usr/local/etc/haproxy/haproxy.cfg
+              subPath: haproxy.cfg
+            - name: haproxy-socket
+              mountPath: /tmp/haproxy
