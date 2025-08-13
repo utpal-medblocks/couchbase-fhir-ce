@@ -4,23 +4,30 @@ import ca.uhn.fhir.context.*;
 import ca.uhn.fhir.rest.annotation.*;
 import ca.uhn.fhir.rest.api.MethodOutcome;
 import ca.uhn.fhir.rest.api.server.RequestDetails;
+import ca.uhn.fhir.rest.param.DateParam;
+import ca.uhn.fhir.rest.param.StringParam;
 import ca.uhn.fhir.rest.server.IResourceProvider;
 import ca.uhn.fhir.rest.server.exceptions.InternalErrorException;
 import ca.uhn.fhir.rest.server.exceptions.ResourceNotFoundException;
 import ca.uhn.fhir.rest.server.exceptions.UnprocessableEntityException;
 import ca.uhn.fhir.validation.ValidationResult;
+import com.couchbase.client.java.json.JsonObject;
 import com.couchbase.client.java.search.SearchQuery;
 import com.couchbase.fhir.resources.config.TenantContextHolder;
 import com.couchbase.fhir.resources.repository.FhirResourceDaoImpl;
 import com.couchbase.fhir.resources.service.FhirAuditService;
 import com.couchbase.fhir.resources.service.UserAuditInfo;
 import com.couchbase.fhir.resources.util.*;
+import com.couchbase.fhir.search.model.TokenParam;
 import com.couchbase.fhir.validation.ValidationUtil;
+import com.google.common.base.Stopwatch;
+import org.hl7.fhir.instance.model.api.IBaseResource;
 import org.hl7.fhir.r4.model.*;
 import ca.uhn.fhir.rest.api.RestSearchParameterTypeEnum;
 
 import java.io.IOException;
 import java.util.*;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 /**
@@ -49,10 +56,14 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
     }
 
     @Read
-    public T read(@IdParam IdType theId) {
+    public IBaseResource read(@IdParam IdType theId, RequestDetails requestDetails) {
+        String summaryParam = requestDetails.getParameters().get("_summary") != null
+                ? requestDetails.getParameters().get("_summary")[0]
+                : null;
         String bucketName = TenantContextHolder.getTenantId();
-        return dao.read(resourceClass.getSimpleName(), theId.getIdPart() , bucketName).orElseThrow(() ->
-                new ResourceNotFoundException(theId));
+        JsonObject jsonObject =  dao.read(resourceClass.getSimpleName(), theId.getIdPart() , bucketName);
+        return SummaryHelper.applySummary(jsonObject, summaryParam , fhirContext);
+
     }
 
     @Create
@@ -112,6 +123,11 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
 
         String resourceType = resourceClass.getSimpleName();
         RuntimeResourceDefinition resourceDef = fhirContext.getResourceDefinition(resourceType);
+
+        ValidationUtil validationUtil = new ValidationUtil();
+        validationUtil.validateDateParams(rawParams, resourceDef);
+
+
         for (Map.Entry<String, String> entry : searchParams.entrySet()) {
             String rawParamName = entry.getKey();
             String paramName = rawParamName;
@@ -134,11 +150,15 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
 
                 if (searchParam == null) continue;
 
+
                 if (searchParam.getParamType() == RestSearchParameterTypeEnum.TOKEN) {
+                    new TokenParam(value);
                     ftsQueries.add(TokenSearchHelperFTS.buildTokenFTSQuery(fhirContext, resourceType, fhirParamName, value));
                 }else if(searchParam.getParamType() == RestSearchParameterTypeEnum.STRING){
+                    new StringParam(value);
                     ftsQueries.add(StringSearchHelperFTS.buildStringFTSQuery(fhirContext, resourceType, fhirParamName, value, searchParam , modifier));
                 }else if(searchParam.getParamType() == RestSearchParameterTypeEnum.DATE){
+                    new DateParam(value);
                     ftsQueries.add(DateSearchHelperFTS.buildDateFTS(fhirContext, resourceType, fhirParamName, value));
                 }else if(searchParam.getParamType() == RestSearchParameterTypeEnum.REFERENCE){
                     ftsQueries.add(ReferenceSearchHelper.buildReferenceFtsCluse(fhirContext , resourceType , fhirParamName , value , searchParam));
@@ -151,6 +171,7 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
         String query = ftsn1qlQueryBuilder.build(ftsQueries , null , resourceType , 0 , 50);
 
         List<T> results = dao.search(resourceType,query);
+
 
         // Construct a FHIR Bundle response
         Bundle bundle = new Bundle();

@@ -42,7 +42,7 @@ public class FhirResourceDaoImpl<T extends IBaseResource> implements  FhirResour
 
 
     @Override
-    public Optional<T> read(String resourceType, String id , String bucketName) {
+    public JsonObject read(String resourceType, String id , String bucketName) {
 
         try{
             String connectionName =  getDefaultConnection();
@@ -64,12 +64,13 @@ public class FhirResourceDaoImpl<T extends IBaseResource> implements  FhirResour
             QueryResult result = cluster.query(query, queryOptions()
                     .parameters(JsonObject.create().put("key", documentKey)));
 
-            if (result.rowsAsObject().isEmpty()) return Optional.empty();
+            if (result.rowsAsObject().isEmpty()) return JsonObject.create();
 
             JsonObject json = result.rowsAsObject().get(0);
-            @SuppressWarnings("unchecked")
+            return json;
+            /*@SuppressWarnings("unchecked")
             T resource = (T) fhirContext.newJsonParser().parseResource(json.toString());
-            return Optional.of(resource);
+            return Optional.of(resource);*/
 
         } catch (Exception e) {
             logger.error("Failed to get {}/{}: {}", resourceType, id, e.getMessage());
