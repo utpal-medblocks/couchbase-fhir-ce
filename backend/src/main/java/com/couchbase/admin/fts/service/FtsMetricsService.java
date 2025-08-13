@@ -71,8 +71,8 @@ public class FtsMetricsService {
         
         // Create separate request for each metric
         String[] metricNames = {
-            "fts_total_queries",
-            "fts_avg_queries_latency", 
+            "fts_total_grpc_queries",
+            "fts_avg_grpc_queries_latency", 
             "fts_doc_count",
             "fts_num_bytes_used_disk"
         };
@@ -94,7 +94,7 @@ public class FtsMetricsService {
             request.setAlignTimestamps(true);
             
             // Only set applyFunctions if needed (like BucketMetricsService pattern)
-            if ("fts_total_queries".equals(metricName) || "fts_avg_queries_latency".equals(metricName)) {
+            if ("fts_total_grpc_queries".equals(metricName) || "fts_avg_grpc_queries_latency".equals(metricName)) {
                 request.setApplyFunctions(Arrays.asList("irate"));
             }
             
@@ -247,8 +247,8 @@ public class FtsMetricsService {
      */
     private String getMetricLabel(String metricName) {
         switch (metricName) {
-            case "fts_total_queries": return "Total Queries";
-            case "fts_avg_queries_latency": return "Avg Query Latency";
+            case "fts_total_grpc_queries": return "Total Queries";
+            case "fts_avg_grpc_queries_latency": return "Avg Query Latency";
             case "fts_doc_count": return "Document Count";
             case "fts_num_bytes_used_disk": return "Disk Usage";
             default: return metricName;
@@ -260,8 +260,8 @@ public class FtsMetricsService {
      */
     private String getMetricUnit(String metricName) {
         switch (metricName) {
-            case "fts_total_queries": return "queries";
-            case "fts_avg_queries_latency": return "ms";
+            case "fts_total_grpc_queries": return "queries";
+            case "fts_avg_grpc_queries_latency": return "ms";
             case "fts_doc_count": return "docs";
             case "fts_num_bytes_used_disk": return "bytes";
             default: return "";

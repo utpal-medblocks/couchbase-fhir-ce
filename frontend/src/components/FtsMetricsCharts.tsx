@@ -394,7 +394,7 @@ const FtsMetricsCharts: React.FC<FtsMetricsChartsProps> = ({
           </Typography>
           {renderChart(
             "Total Queries",
-            ["fts_total_queries"],
+            ["fts_total_grpc_queries"],
             chartColors.primary,
             "queries"
           )}
@@ -406,7 +406,7 @@ const FtsMetricsCharts: React.FC<FtsMetricsChartsProps> = ({
           </Typography>
           {renderChart(
             "Avg Latency",
-            ["fts_avg_queries_latency"],
+            ["fts_avg_grpc_queries_latency"],
             chartColors.secondary,
             "ms"
           )}
