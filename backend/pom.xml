@@ -72,6 +72,11 @@
 			<artifactId>spring-boot-starter-test</artifactId>
 			<scope>test</scope>
 		</dependency>
+		<dependency>
+			<groupId>com.google.guava</groupId>
+			<artifactId>guava</artifactId>
+			<version>33.4.4-jre</version>
+		</dependency>
 				<!-- HAPI FHIR Dependencies -->
 		<!-- HAPI FHIR Dependencies -->
 		<dependency>

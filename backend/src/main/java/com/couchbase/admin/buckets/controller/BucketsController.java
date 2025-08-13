@@ -29,7 +29,7 @@ public class BucketsController {
     @GetMapping("/fhir/names")
     public ResponseEntity<List<String>> getFhirBucketNames(@RequestParam String connectionName) {
         try {
-            logger.info("Getting FHIR bucket names for connection: {}", connectionName);
+            // logger.info("Getting FHIR bucket names for connection: {}", connectionName);
             List<String> bucketNames = bucketsService.getFhirBucketNames(connectionName);
             return ResponseEntity.ok(bucketNames);
         } catch (Exception e) {
@@ -44,7 +44,7 @@ public class BucketsController {
     @GetMapping("/fhir/details")
     public ResponseEntity<List<BucketDetails>> getFhirBucketDetails(@RequestParam String connectionName) {
         try {
-            logger.info("Getting FHIR bucket details for connection: {}", connectionName);
+            // logger.info("Getting FHIR bucket details for connection: {}", connectionName);
             List<BucketDetails> bucketDetails = bucketsService.getFhirBucketDetails(connectionName);
             return ResponseEntity.ok(bucketDetails);
         } catch (Exception e) {
@@ -61,7 +61,7 @@ public class BucketsController {
             @RequestParam String bucketName,
             @RequestParam String connectionName) {
         try {
-            logger.info("Checking if bucket {} is FHIR-enabled for connection: {}", bucketName, connectionName);
+            // logger.info("Checking if bucket {} is FHIR-enabled for connection: {}", bucketName, connectionName);
             boolean isFhir = bucketsService.isFhirBucket(bucketName, connectionName);
             return ResponseEntity.ok(isFhir);
         } catch (Exception e) {

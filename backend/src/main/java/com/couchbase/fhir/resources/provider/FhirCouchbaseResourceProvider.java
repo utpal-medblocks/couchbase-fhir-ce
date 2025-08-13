@@ -9,16 +9,15 @@ import ca.uhn.fhir.rest.server.exceptions.InternalErrorException;
 import ca.uhn.fhir.rest.server.exceptions.ResourceNotFoundException;
 import ca.uhn.fhir.rest.server.exceptions.UnprocessableEntityException;
 import ca.uhn.fhir.validation.ValidationResult;
+import com.couchbase.client.java.search.SearchQuery;
+import com.couchbase.fhir.resources.config.TenantContextHolder;
 import com.couchbase.fhir.resources.repository.FhirResourceDaoImpl;
 import com.couchbase.fhir.resources.service.FhirAuditService;
 import com.couchbase.fhir.resources.service.UserAuditInfo;
 import com.couchbase.fhir.resources.util.*;
 import com.couchbase.fhir.validation.ValidationUtil;
-import org.apache.jena.base.Sys;
-import org.hl7.fhir.instance.model.api.IBase;
 import org.hl7.fhir.r4.model.*;
 import ca.uhn.fhir.rest.api.RestSearchParameterTypeEnum;
-import org.springframework.boot.actuate.autoconfigure.metrics.MetricsProperties;
 
 import java.io.IOException;
 import java.util.*;
@@ -51,12 +50,15 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
 
     @Read
     public T read(@IdParam IdType theId) {
-        return dao.read(resourceClass.getSimpleName(), theId.getIdPart()).orElseThrow(() ->
+        String bucketName = TenantContextHolder.getTenantId();
+        return dao.read(resourceClass.getSimpleName(), theId.getIdPart() , bucketName).orElseThrow(() ->
                 new ResourceNotFoundException(theId));
     }
 
     @Create
     public MethodOutcome create(@ResourceParam T resource) throws IOException {
+        String bucketName = TenantContextHolder.getTenantId();
+
         if (resource.getIdElement().isEmpty()) {
             resource.setId(UUID.randomUUID().toString());
         }
@@ -85,7 +87,7 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
         }
 
 
-        T created =  dao.create( resource.getClass().getSimpleName() , resource).orElseThrow(() ->
+        T created =  dao.create( resource.getClass().getSimpleName() , resource , bucketName).orElseThrow(() ->
                 new InternalErrorException("Failed to create resource"));
         MethodOutcome outcome = new MethodOutcome();
         outcome.setCreated(true);
@@ -96,8 +98,8 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
 
     @Search(allowUnknownParams = true)
     public Bundle search(RequestDetails requestDetails) {
-
         List<String> filters = new ArrayList<>();
+        List<SearchQuery> ftsQueries = new ArrayList<>();
         List<String> revIncludes = new ArrayList<>();
         Map<String, String[]> rawParams = requestDetails.getParameters();
         // Flatten and convert to Map<String, String>
@@ -111,7 +113,15 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
         String resourceType = resourceClass.getSimpleName();
         RuntimeResourceDefinition resourceDef = fhirContext.getResourceDefinition(resourceType);
         for (Map.Entry<String, String> entry : searchParams.entrySet()) {
-            String paramName = entry.getKey();
+            String rawParamName = entry.getKey();
+            String paramName = rawParamName;
+            String modifier = null;
+            int colonIndex = rawParamName.indexOf(':');
+
+            if(colonIndex != -1){
+                paramName = rawParamName.substring(0, colonIndex);
+                modifier =  rawParamName.substring(colonIndex + 1);
+            }
             String fhirParamName = QueryBuilder.getActualFieldName(fhirContext , resourceType, paramName);
             String value = entry.getValue();
 
@@ -125,15 +135,15 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
                 if (searchParam == null) continue;
 
                 if (searchParam.getParamType() == RestSearchParameterTypeEnum.TOKEN) {
-                    filters.add(TokenSearchHelper.buildTokenWhereClause(fhirContext, resourceType, fhirParamName, value));
-                }else if(searchParam.getParamType() == RestSearchParameterTypeEnum.STRING){
-                    String searchClause = StringSearchHelper.buildStringWhereCluse(fhirContext , resourceType , fhirParamName , value , searchParam);
-                    if(searchClause != null){
-                        filters.add(searchClause);
-                    }
+                    //filters.add(TokenSearchHelper.buildTokenWhereClause(fhirContext, resourceType, fhirParamName, value));
+                    ftsQueries.add(TokenSearchHelperFTS.buildTokenFTSQuery(fhirContext, resourceType, fhirParamName, value));
+                 }else if(searchParam.getParamType() == RestSearchParameterTypeEnum.STRING){
+                    ftsQueries.add(StringSearchHelperFTS.buildStringFTSQuery(fhirContext, resourceType, fhirParamName, value, searchParam , modifier));
                 }else if(searchParam.getParamType() == RestSearchParameterTypeEnum.DATE){
-                    String dateClause = DateSearchHelper.buildDateCondition(fhirContext , resourceType , fhirParamName , value);
-                    filters.add(dateClause);
+                    //String dateClause = DateSearchHelper.buildDateCondition(fhirContext , resourceType , fhirParamName , value);
+
+                    ftsQueries.add(DateSearchHelperFTS.buildDateFTS(fhirContext, resourceType, fhirParamName, value));
+
                 }else if(searchParam.getParamType() == RestSearchParameterTypeEnum.REFERENCE){
                     String referenceClause = ReferenceSearchHelper.buildReferenceWhereCluse(fhirContext , resourceType , fhirParamName , value , searchParam);
                     filters.add(referenceClause);
@@ -142,8 +152,12 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
         }
 
 
-        QueryBuilder queryBuilder = new QueryBuilder();
-        List<T> results = dao.search(resourceType, queryBuilder.buildQuery(filters , revIncludes , resourceType));
+        Ftsn1qlQueryBuilder ftsn1qlQueryBuilder = new Ftsn1qlQueryBuilder();
+        String query = ftsn1qlQueryBuilder.build(ftsQueries , null , resourceType , 0 , 50);
+
+ //      QueryBuilder queryBuilder = new QueryBuilder();
+//        List<T> results = dao.search(resourceType, queryBuilder.buildQuery(filters , revIncludes , resourceType , bucketName));
+        List<T> results = dao.search(resourceType,query);
 
         // Construct a FHIR Bundle response
         Bundle bundle = new Bundle();
@@ -156,75 +170,13 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
                     .setFullUrl(resourceType + "/" + resource.getIdElement().getIdPart());
         }
 
+
         return bundle;
     }
 
-    @Transaction
-    public Bundle transaction(@TransactionParam Bundle bundle) {
-        Bundle responseBundle = new Bundle();
-        responseBundle.setType(Bundle.BundleType.TRANSACTIONRESPONSE);
-
-        BundleProcessor processor = new BundleProcessor();
-        processor.process(bundle);
-
-        for (Bundle.BundleEntryComponent entry : bundle.getEntry()) {
-            Resource resource = entry.getResource();
-            MethodOutcome outcome = null;
-
-            if (entry.getRequest().getMethod() == Bundle.HTTPVerb.POST) {
-                outcome = createResource((T) resource);
-                System.out.println( resource.getClass().getSimpleName() +" id - "+ outcome.getId().toUnqualifiedVersionless().getValue());
-            } else if (entry.getRequest().getMethod() == Bundle.HTTPVerb.PUT) {
-               // outcome = updateResource((T) resource);
-                System.out.println("update resource :: PUT method called");
-            } else {
-                throw new UnprocessableEntityException("Unsupported HTTP verb: " + entry.getRequest().getMethod());
-            }
-
-            // Build response entry
-            Bundle.BundleEntryComponent responseEntry = new Bundle.BundleEntryComponent();
-            responseEntry.setResponse(new Bundle.BundleEntryResponseComponent()
-                    .setStatus("201 Created")
-                    .setLocation(outcome.getId().toUnqualifiedVersionless().getValue()));
-            responseEntry.setResource((Resource)outcome.getResource());
-            responseBundle.addEntry(responseEntry);
-        }
-
-        return responseBundle;
-    }
 
 
-    private MethodOutcome createResource(T resource) {
-        try {
 
-
-            if (resource instanceof DomainResource) {
-            //    ((DomainResource) resource).getMeta().addProfile("http://hl7.org/fhir/us/core/StructureDefinition/us-core-" +  resource.getClass().getSimpleName().toLowerCase());
-                ((DomainResource) resource).getMeta().setLastUpdated(new Date());
-            }
-            ValidationUtil validationUtil = new ValidationUtil();
-            ValidationResult result = validationUtil.validate(resource, resourceClass.getSimpleName(), fhirContext);
-            if (!result.isSuccessful()) {
-                StringBuilder issues = new StringBuilder();
-                result.getMessages().forEach(msg -> issues.append(msg.getSeverity())
-                        .append(": ")
-                        .append(msg.getLocationString())
-                        .append(" - ")
-                        .append(msg.getMessage())
-                        .append("\n"));
-
-                throw new UnprocessableEntityException("FHIR Validation failed:\n" + issues.toString());
-            }
-
-            T created = dao.create(resource.getClass().getSimpleName(), resource).orElseThrow(() ->
-                    new InternalErrorException("Failed to create resource"));
-            return new MethodOutcome(new IdType(resource.getClass().getSimpleName(), created.getIdElement().getIdPart()))
-                    .setCreated(true)
-                    .setResource(created);
-        } catch (Exception e) {
-            throw new InternalErrorException("Error creating resource: " + e.getMessage(), e);
-        }
-    }
 
 
 

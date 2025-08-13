@@ -10,15 +10,19 @@ import java.util.List;
 
 public class QueryBuilder {
 
-    public String buildQuery(List<String> filters , List<String> revIncludes , String resourceType){
+    private static final String DEFAULT_BUCKET = "fhir";
+    private static final String DEFAULT_SCOPE = "Resources";
 
+    public String buildQuery(List<String> filters , List<String> revIncludes , String resourceType , String bucketName){
+
+        bucketName = bucketName != null ? bucketName : DEFAULT_BUCKET;
         String finalQuery = "";
         List<String> revQuery = new ArrayList<String>();
 
         //Building first query
         String whereClause = filters.isEmpty() ? "" : "WHERE " + String.join(" AND ", filters);
         String topLevelQuery =  String.format(Queries.SEARCH_QUERY_TOP_LEVEL,
-                "fhir", "Resources", resourceType, whereClause);
+                bucketName, DEFAULT_SCOPE, resourceType, whereClause);
 
         if(!revIncludes.isEmpty()){
             for(String revInclude : revIncludes){

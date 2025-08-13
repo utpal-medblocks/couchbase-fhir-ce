@@ -1,21 +1,21 @@
 package com.couchbase.fhir.resources.repository;
 import ca.uhn.fhir.context.FhirContext;
+import ca.uhn.fhir.parser.JsonParser;
+import ca.uhn.fhir.parser.LenientErrorHandler;
 import com.couchbase.admin.connections.service.ConnectionService;
 import com.couchbase.client.java.Cluster;
 import com.couchbase.client.java.query.QueryResult;
 import com.couchbase.client.java.json.JsonObject;
-import com.google.gson.JsonElement;
-import org.apache.jena.base.Sys;
+import com.google.common.base.Stopwatch;
 import org.hl7.fhir.instance.model.api.IBaseResource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.stereotype.Repository;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.TimeUnit;
 
 import static com.couchbase.client.java.query.QueryOptions.queryOptions;
 
@@ -42,12 +42,11 @@ public class FhirResourceDaoImpl<T extends IBaseResource> implements  FhirResour
 
 
     @Override
-    public Optional<T> read(String resourceType, String id) {
+    public Optional<T> read(String resourceType, String id , String bucketName) {
 
         try{
             String connectionName =  getDefaultConnection();
-            String bucketName = DEFAULT_BUCKET;
-
+            bucketName = bucketName != null ? bucketName : DEFAULT_BUCKET;
 
             Cluster cluster = connectionService.getConnection(connectionName);
             if (cluster == null) {
@@ -79,11 +78,11 @@ public class FhirResourceDaoImpl<T extends IBaseResource> implements  FhirResour
     }
 
     @Override
-    public Optional<T> create(String resourceType , T resource) {
+    public Optional<T> create(String resourceType , T resource , String bucketName) {
 
         try{
             String connectionName =  getDefaultConnection();
-            String bucketName = DEFAULT_BUCKET;
+            bucketName = bucketName != null ? bucketName : DEFAULT_BUCKET;
 
             Cluster cluster = connectionService.getConnection(connectionName);
             if (cluster == null) {
@@ -114,70 +113,29 @@ public class FhirResourceDaoImpl<T extends IBaseResource> implements  FhirResour
         }
     }
 
-/*
-    public List<T> search(String resourceType, Map<String, String> searchParams) {
+    public List<T> search(String resourceType , String query) {
         List<T> resources = new ArrayList<>();
         try {
-
+            Stopwatch stopwatch = Stopwatch.createStarted();
             String connectionName = getDefaultConnection();
-            String bucketName = DEFAULT_BUCKET;
 
             Cluster cluster = connectionService.getConnection(connectionName);
             if (cluster == null) {
                 throw new RuntimeException("No active connection found: " + connectionName);
             }
 
-            // Build N1QL based on searchParams
-            StringBuilder whereClause = new StringBuilder("WHERE c.resourceType = '" + resourceType + "'");
-            for (Map.Entry<String, String> entry : searchParams.entrySet()) {
-                whereClause.append(" AND c.`").append(entry.getKey()).append("` = '").append(entry.getValue()).append("'");
-            }
-
-            String query = String.format("SELECT c.* FROM `%s`.`%s`.`%s` c %s LIMIT 50",
-                    DEFAULT_BUCKET, DEFAULT_SCOPE, resourceType, whereClause);
-
             QueryResult result = cluster.query(query);
+
+            logger.info("Query execution time : " + stopwatch.elapsed(TimeUnit.MILLISECONDS) + " ms");
+
             List<JsonObject> rows = result.rowsAs(JsonObject.class);
+            JsonParser parser = (JsonParser) fhirContext.newJsonParser();
+            parser.setParserErrorHandler(new LenientErrorHandler().setErrorOnInvalidValue(false));
+            rows.parallelStream()
+                    .map(row -> (T) parser.parseResource(row.toString()))
+                    .forEach(resources::add);
+            logger.info("Execution time after HAPI parsing result: " + stopwatch.elapsed(TimeUnit.MILLISECONDS) + " ms");
 
-            for (JsonObject row : rows) {
-                T resource = (T) fhirContext.newJsonParser().parseResource(row.toString());
-                resources.add(resource);
-            }
-        } catch (Exception e) {
-            throw new RuntimeException(e);
-        }
-
-        return resources;
-    }
- */
-
-
-    public List<T> search(String resourceType, String query) {
-        List<T> resources = new ArrayList<>();
-        try {
-
-            String connectionName = getDefaultConnection();
-            String bucketName = DEFAULT_BUCKET;
-
-            Cluster cluster = connectionService.getConnection(connectionName);
-            if (cluster == null) {
-                throw new RuntimeException("No active connection found: " + connectionName);
-            }
-
-
-          //  String query = String.format("SELECT c.* FROM `%s`.`%s`.`%s` c %s LIMIT 50",
-           //         DEFAULT_BUCKET, DEFAULT_SCOPE, resourceType, whereClause);
-
-            QueryResult result = cluster.query(query);
-            List<JsonObject> rows = result.rowsAs(JsonObject.class);
-
-            for (JsonObject row : rows) {
-                Map.Entry<String, Object> entry = row.toMap().entrySet().iterator().next();
-                Object value = entry.getValue();
-                JsonObject nestedResource = JsonObject.from((Map<String, Object>) value);
-                T resource = (T) fhirContext.newJsonParser().parseResource(nestedResource.toString());
-                resources.add(resource);
-            }
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
