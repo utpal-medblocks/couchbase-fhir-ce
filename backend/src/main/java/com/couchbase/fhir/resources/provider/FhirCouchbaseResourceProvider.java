@@ -135,18 +135,13 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
                 if (searchParam == null) continue;
 
                 if (searchParam.getParamType() == RestSearchParameterTypeEnum.TOKEN) {
-                    //filters.add(TokenSearchHelper.buildTokenWhereClause(fhirContext, resourceType, fhirParamName, value));
                     ftsQueries.add(TokenSearchHelperFTS.buildTokenFTSQuery(fhirContext, resourceType, fhirParamName, value));
-                 }else if(searchParam.getParamType() == RestSearchParameterTypeEnum.STRING){
+                }else if(searchParam.getParamType() == RestSearchParameterTypeEnum.STRING){
                     ftsQueries.add(StringSearchHelperFTS.buildStringFTSQuery(fhirContext, resourceType, fhirParamName, value, searchParam , modifier));
                 }else if(searchParam.getParamType() == RestSearchParameterTypeEnum.DATE){
-                    //String dateClause = DateSearchHelper.buildDateCondition(fhirContext , resourceType , fhirParamName , value);
-
                     ftsQueries.add(DateSearchHelperFTS.buildDateFTS(fhirContext, resourceType, fhirParamName, value));
-
                 }else if(searchParam.getParamType() == RestSearchParameterTypeEnum.REFERENCE){
-                    String referenceClause = ReferenceSearchHelper.buildReferenceWhereCluse(fhirContext , resourceType , fhirParamName , value , searchParam);
-                    filters.add(referenceClause);
+                    ftsQueries.add(ReferenceSearchHelper.buildReferenceFtsCluse(fhirContext , resourceType , fhirParamName , value , searchParam));
                 }
             }
         }
@@ -155,8 +150,6 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
         Ftsn1qlQueryBuilder ftsn1qlQueryBuilder = new Ftsn1qlQueryBuilder();
         String query = ftsn1qlQueryBuilder.build(ftsQueries , null , resourceType , 0 , 50);
 
- //      QueryBuilder queryBuilder = new QueryBuilder();
-//        List<T> results = dao.search(resourceType, queryBuilder.buildQuery(filters , revIncludes , resourceType , bucketName));
         List<T> results = dao.search(resourceType,query);
 
         // Construct a FHIR Bundle response
@@ -170,12 +163,8 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
                     .setFullUrl(resourceType + "/" + resource.getIdElement().getIdPart());
         }
 
-
         return bundle;
     }
-
-
-
 
 
 

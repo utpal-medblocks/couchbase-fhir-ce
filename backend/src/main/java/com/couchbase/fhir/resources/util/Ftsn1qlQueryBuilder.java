@@ -4,7 +4,9 @@ package com.couchbase.fhir.resources.util;
 import com.couchbase.client.java.json.JsonObject;
 import com.couchbase.client.java.search.SearchQuery;
 import com.couchbase.fhir.resources.config.TenantContextHolder;
+import com.couchbase.fhir.resources.queries.Queries;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -56,4 +58,27 @@ public class Ftsn1qlQueryBuilder {
         return n1ql;
     }
 
+
+    public List<String> buildRevIncludes(
+            List<String> revIncludes,
+            List<SearchQuery> mustQueries,
+            List<SearchQuery> mustNotQueries,
+            String resourceType,
+            int from,
+            int size
+    ) {
+        List<String> revQuery = new ArrayList<>();
+        if(!revIncludes.isEmpty()){
+            for(String revInclude : revIncludes){
+                String[] revParts = revInclude.split(":");
+                String sourceResource = revParts[0];
+                String referenceField = revParts[1];
+
+
+             //   String queryPart = String.format( Queries.SEARCH_QUERY_REV_INCLUDE ,sourceResource ,sourceResource, referenceField ,resourceType  , resourceType, String.join(" AND ", filters) );
+              //  revQuery.add(queryPart);
+            }
+        }
+        return null;
+    }
 }

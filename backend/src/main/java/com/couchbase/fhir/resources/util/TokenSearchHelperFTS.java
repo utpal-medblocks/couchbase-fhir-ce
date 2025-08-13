@@ -60,11 +60,11 @@ public class TokenSearchHelperFTS {
         // For FTS index: field might be like "name.coding.code" and "name.coding.system"
         if (token.system != null) {
             return SearchQuery.conjuncts(
-                    SearchQuery.match(token.system).field(ftsFieldPath + ".system"),
-                    SearchQuery.match(token.code).field(ftsFieldPath + ".code")
+                    SearchQuery.match(token.system).field(ftsFieldPath + ".coding.system"),
+                    SearchQuery.match(token.code).field(ftsFieldPath + ".coding.code")
             );
         } else {
-            return SearchQuery.match(token.code).field(ftsFieldPath + ".code");
+            return SearchQuery.match(token.code).field(ftsFieldPath + ".coding.code");
         }
     }
 
