@@ -55,9 +55,9 @@ const Buckets = () => {
   };
 
   // Handle scope selection
-  const handleScopeChange = (scopeName: string) => {
-    bucketStore.setActiveScope(connectionId, scopeName);
-  };
+  // const handleScopeChange = (scopeName: string) => {
+  //   bucketStore.setActiveScope(connectionId, scopeName);
+  // };
 
   // Refresh data
   const handleRefresh = async () => {

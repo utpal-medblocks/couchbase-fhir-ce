@@ -1,0 +1,31 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fhir-admin
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: fhir-admin
+  template:
+    metadata:
+      labels:
+        app: fhir-admin
+    spec:
+      containers:
+        - name: fhir-admin
+          image: fhir-admin:latest # Replace with your image repo if needed
+          ports:
+            - containerPort: 80
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: fhir-admin
+spec:
+  selector:
+    app: fhir-admin
+  ports:
+    - port: 80
+      targetPort: 80
+      protocol: TCP

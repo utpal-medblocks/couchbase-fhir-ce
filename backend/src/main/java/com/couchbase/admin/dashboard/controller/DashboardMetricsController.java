@@ -6,13 +6,28 @@ import com.couchbase.admin.connections.service.ClusterMetricsService;
 import com.couchbase.admin.connections.service.ConnectionService;
 import com.couchbase.admin.connections.model.ClusterMetrics;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.cache.annotation.Cacheable;
+import org.springframework.core.env.Environment;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.*;
 
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.nio.file.Files;
+import java.nio.file.Paths;
 import java.util.HashMap;
-import java.util.Map;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.stream.Collectors;
+
+// Add Docker and HAProxy client dependencies
+// (You must add these to your pom.xml)
+// Docker Java: com.github.docker-java:docker-java:3.2.13
+// HAProxy Client: com.github.mjeanroy:haproxy-client:2.6.0
 
 @RestController
 @RequestMapping("/api/dashboard")
@@ -27,6 +42,12 @@ public class DashboardMetricsController {
     
     @Autowired
     private ConnectionService connectionService;
+
+    @Value("${DEPLOYED_ENV:}")
+    private String deployedEnv;
+
+    @Autowired
+    private Environment env;
 
     @GetMapping("/metrics")
     // @Cacheable(value = "dashboardMetrics", unless = "#result.body == null") // Temporarily disabled to test bucket discovery
@@ -155,20 +176,25 @@ public class DashboardMetricsController {
         }
     }
 
+    private boolean isRunningInContainer() {
+        // Check both env and file system for container clues
+        String envValue = Optional.ofNullable(System.getenv("DEPLOYED_ENV")).orElse("");
+        if ("container".equalsIgnoreCase(envValue)) return true;
+        if (Files.exists(Paths.get("/.dockerenv"))) return true;
+        return false;
+    }
+
     @GetMapping("/fhir-metrics")
     public ResponseEntity<DashboardMetrics> getFhirMetrics() {
         try {
-            // System.out.println("🚀 DashboardMetricsController: Getting FHIR application metrics");
             DashboardMetrics metrics = actuatorAggregatorService.getAggregatedMetrics();
-            // System.out.println("✅ FHIR application metrics retrieved successfully");
             return ResponseEntity.ok(metrics);
         } catch (Exception e) {
-            // System.out.println("❌ Failed to get FHIR metrics: " + e.getMessage());
             DashboardMetrics errorMetrics = new DashboardMetrics();
             Map<String, Object> errorInfo = new HashMap<>();
             errorInfo.put("error", "Failed to fetch FHIR metrics: " + e.getMessage());
             errorMetrics.setApplicationInfo(errorInfo);
-            return ResponseEntity.ok(errorMetrics);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(errorMetrics);
         }
     }
 }

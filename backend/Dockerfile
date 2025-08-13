@@ -13,6 +13,6 @@ COPY --from=builder /app/target/*.jar app.jar
 # Install Docker CLI
 USER root
 RUN apk add --no-cache docker-cli
-USER appuser
+# USER appuser
 EXPOSE 8080
 ENTRYPOINT ["java","-jar","app.jar"]

@@ -10,14 +10,30 @@ import org.springframework.boot.actuate.info.InfoEndpoint;
 import org.springframework.boot.actuate.metrics.MetricsEndpoint;
 import org.springframework.stereotype.Service;
 
+
+import org.newsclub.net.unix.AFUNIXSocket;
+import org.newsclub.net.unix.AFUNIXSocketAddress;
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.io.OutputStreamWriter;
+import java.io.Writer;
+import java.io.File;
+
 import java.lang.management.ManagementFactory;
 import java.lang.management.MemoryMXBean;
 import java.lang.management.RuntimeMXBean;
 import java.util.HashMap;
 import java.util.Map;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.util.regex.Pattern;
+import java.util.regex.Matcher;
 
 @Service
 public class ActuatorAggregatorService {
+
+    private static final Logger log = LoggerFactory.getLogger(ActuatorAggregatorService.class);
 
     @Autowired
     private HealthEndpoint healthEndpoint;
@@ -34,7 +50,37 @@ public class ActuatorAggregatorService {
     private final RuntimeMXBean runtimeMXBean = ManagementFactory.getRuntimeMXBean();
     private final MemoryMXBean memoryMXBean = ManagementFactory.getMemoryMXBean();
 
+    /**
+     * Returns a DashboardMetrics object with system, JVM, application, and FHIR metrics.
+     *
+     * If running inside a Docker container, merges Docker container stats and HAProxy stats
+     * with actuator metrics for a complete and consistent view. Otherwise, returns only actuator metrics.
+     *
+     * - Docker stats: CPU/memory usage for all fhir-server containers (single snapshot, no streaming)
+     * - HAProxy stats: status, totalOperations, currentOpsPerSec for fhir-server backend
+     * - All other fields: from actuator metrics
+     */
     public DashboardMetrics getAggregatedMetrics() {
+        if (isRunningInContainer()) {
+            log.info("Detected running inside a container environment");
+            return getMergedContainerAndActuatorMetrics();
+        } else {
+            log.info("Detected running outside container (VM or bare metal)");
+            return getActuatorOnlyMetrics();
+        }
+    }
+
+    private boolean isRunningInContainer() {
+        // Check both the environment variable and /.dockerenv file for robust detection
+        String envValue = System.getenv("DEPLOYED_ENV");
+        if (envValue != null && "container".equalsIgnoreCase(envValue.trim())) return true;
+        try {
+            if (java.nio.file.Files.exists(java.nio.file.Paths.get("/.dockerenv"))) return true;
+        } catch (Exception ignored) {}
+        return false;
+    }
+
+    private DashboardMetrics getActuatorOnlyMetrics() {
         DashboardMetrics metrics = new DashboardMetrics();
 
         // Health Status
@@ -66,6 +112,221 @@ public class ActuatorAggregatorService {
         metrics.setUptime(getUptime());
 
         return metrics;
+    }
+
+    /**
+     * Merges Docker and HAProxy stats with actuator metrics for a consistent response structure.
+     */
+    private DashboardMetrics getMergedContainerAndActuatorMetrics() {
+        log.info("Merging Docker, HAProxy, and actuator metrics");
+        DashboardMetrics metrics = getActuatorOnlyMetrics();
+        Map<String, Object> systemMetrics = new HashMap<>(metrics.getSystemMetrics() != null ? metrics.getSystemMetrics() : Map.of());
+        // Collect Docker stats
+        log.info("Fetching Docker stats for fhir-server containers");
+        DockerStatsResult dockerStats = collectDockerStats();
+        log.info("Fetched Docker stats: {}", dockerStats.statsMap);
+        if (dockerStats.dockerStatsFound) {
+            systemMetrics.putAll(dockerStats.statsMap);
+        }
+        metrics.setSystemMetrics(systemMetrics);
+        // Collect HAProxy stats and merge with FHIR metrics
+        log.info("Fetching HAProxy stats from admin socket");
+        Map<String, Object> fhirMetrics = new HashMap<>(metrics.getFhirMetrics() != null ? metrics.getFhirMetrics() : Map.of());
+        Map<String, Object> server = new HashMap<>();
+        if (fhirMetrics.get("server") instanceof Map) {
+            server.putAll((Map<String, Object>) fhirMetrics.get("server"));
+        }
+        server.put("cpuUsage", dockerStats.totalCpu > 0 ? dockerStats.totalCpu : server.getOrDefault("cpuUsage", 0));
+        server.put("memoryUsage", dockerStats.totalMem > 0 ? dockerStats.totalMem : server.getOrDefault("memoryUsage", 0));
+        server.put("jvmThreads", server.getOrDefault("jvmThreads", 0));
+        HaproxyStatsResult haproxyStats = collectHaproxyStats();
+        log.info("Fetched HAProxy stats: status={}, totalOps={}, currentOpsPerSec={}, error={}", haproxyStats.status, haproxyStats.totalOperations, haproxyStats.currentOpsPerSec, haproxyStats.error);
+        if (haproxyStats.status != null) {
+            server.put("status", haproxyStats.status);
+        }
+        Map<String, Object> overall = fhirMetrics.containsKey("overall") ? (Map<String, Object>) fhirMetrics.get("overall") : new HashMap<>();
+        if (haproxyStats.totalOperations != null) {
+            overall.put("totalOperations", haproxyStats.totalOperations);
+        }
+        if (haproxyStats.currentOpsPerSec != null) {
+            overall.put("currentOpsPerSec", haproxyStats.currentOpsPerSec);
+        }
+        if (haproxyStats.error != null) {
+            server.put("haproxyError", haproxyStats.error);
+        }
+        fhirMetrics.put("server", server);
+        fhirMetrics.put("overall", overall);
+        metrics.setFhirMetrics(fhirMetrics);
+        return metrics;
+    }
+
+    /**
+     * Helper to collect Docker stats for all fhir-server containers.
+     * Uses the Docker CLI instead of the Java client.
+     * Returns a DockerStatsResult with total CPU, total memory, and per-container stats.
+     */
+    private DockerStatsResult collectDockerStats() {
+        Map<String, Object> statsMap = new HashMap<>();
+        double totalCpu = 0;
+        double totalMem = 0;
+        boolean dockerStatsFound = false;
+        try {
+            // Get container IDs/names for fhir-server containers
+            Process psProc = new ProcessBuilder("docker", "ps", "--format", "{{.ID}} {{.Names}}").start();
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(psProc.getInputStream()))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    String[] parts = line.trim().split("\\s+", 2);
+                    if (parts.length < 2) continue;
+                    String id = parts[0];
+                    String name = parts[1];
+                    if (!name.startsWith("fhir-server")) continue;
+
+                    // Get stats for this container
+                    Process statsProc = new ProcessBuilder(
+                        "docker", "stats", "--no-stream", "--format",
+                        "{{.CPUPerc}} {{.MemUsage}}", id
+                    ).start();
+                    try (BufferedReader statsReader = new BufferedReader(new InputStreamReader(statsProc.getInputStream()))) {
+                        String statsLine = statsReader.readLine();
+                        if (statsLine != null) {
+                            dockerStatsFound = true;
+                            String[] statsParts = statsLine.trim().split("\\s+", 2);
+                            // CPU: e.g. "0.05%"
+                            String cpuStr = statsParts[0].replace("%", "");
+                            double cpu = parseDoubleSafe(cpuStr);
+                            statsMap.put(id + ".cpu", cpu);
+                            totalCpu += cpu;
+
+                            // Memory: e.g. "12.34MiB / 1GiB"
+                            String memUsage = statsParts.length > 1 ? statsParts[1] : "";
+                            String[] memParts = memUsage.split("/");
+                            if (memParts.length > 0) {
+                                double mem = parseMemory(memParts[0].trim());
+                                statsMap.put(id + ".memory", mem);
+                                totalMem += mem;
+                            }
+                        }
+                    } catch (Exception ex) {
+                        log.error("Error reading docker stats for container {}: {}", id, ex.getMessage(), ex);
+                        statsMap.put(id + ".error", ex.getMessage());
+                    }
+                }
+            }
+        } catch (Exception ex) {
+            log.error("Error fetching Docker stats via CLI: {}", ex.getMessage(), ex);
+            statsMap.put("docker.error", ex.getMessage());
+        }
+        return new DockerStatsResult(statsMap, totalCpu, totalMem, dockerStatsFound);
+    }
+
+    // Helper to parse memory strings like "12.34MiB", "1.2GiB", "512KiB"
+    private double parseMemory(String memStr) {
+        Pattern pattern = Pattern.compile("([\\d.]+)([KMG]iB|B)");
+        Matcher matcher = pattern.matcher(memStr);
+        if (matcher.find()) {
+            double value = Double.parseDouble(matcher.group(1));
+            String unit = matcher.group(2);
+            switch (unit) {
+                case "GiB": return value * 1024 * 1024 * 1024;
+                case "MiB": return value * 1024 * 1024;
+                case "KiB": return value * 1024;
+                case "B":   return value;
+            }
+        }
+        return 0;
+    }
+
+    private double parseDoubleSafe(String s) {
+        try { return Double.parseDouble(s); } catch (Exception e) { return 0; }
+    }
+
+    /**
+     * Helper to collect HAProxy stats for the fhir-server backend.
+     * Returns a HaproxyStatsResult with status, totalOperations, currentOpsPerSec, and error if any.
+     * Uses junixsocket to query the HAProxy admin socket directly.
+     */
+    private HaproxyStatsResult collectHaproxyStats() {
+        String status = null;
+        Long totalOperations = null;
+        Long currentOpsPerSec = null;
+        String error = null;
+        AFUNIXSocket socket = null;
+        try {
+            File socketFile = new File("/tmp/haproxy/haproxy.sock");
+            socket = AFUNIXSocket.newInstance();
+            socket.connect(new AFUNIXSocketAddress(socketFile));
+            Writer writer = new OutputStreamWriter(socket.getOutputStream());
+            writer.write("show stat\n");
+            writer.flush();
+            BufferedReader reader = new BufferedReader(new InputStreamReader(socket.getInputStream()));
+            String headerLine = reader.readLine(); // CSV header
+            if (headerLine == null) throw new Exception("No data from HAProxy socket");
+            String[] headers = headerLine.split(",");
+            int pxnameIdx = -1, svnameIdx = -1, statusIdx = -1, stotIdx = -1, rateIdx = -1;
+            for (int i = 0; i < headers.length; i++) {
+                if ("# pxname".equals(headers[i])) pxnameIdx = i;
+                else if ("svname".equals(headers[i])) svnameIdx = i;
+                else if ("status".equals(headers[i])) statusIdx = i;
+                else if ("stot".equals(headers[i])) stotIdx = i;
+                else if ("rate".equals(headers[i])) rateIdx = i;
+            }
+            String line;
+            while ((line = reader.readLine()) != null) {
+                String[] fields = line.split(",");
+                if (fields.length <= Math.max(Math.max(pxnameIdx, svnameIdx), Math.max(statusIdx, Math.max(stotIdx, rateIdx)))) continue;
+                if ("backend-fhir-server".equals(fields[pxnameIdx]) && "BACKEND".equals(fields[svnameIdx])) {
+                    status = statusIdx >= 0 ? fields[statusIdx] : null;
+                    totalOperations = stotIdx >= 0 ? parseLongSafe(fields[stotIdx]) : null;
+                    currentOpsPerSec = rateIdx >= 0 ? parseLongSafe(fields[rateIdx]) : null;
+                    break;
+                }
+            }
+        } catch (Exception ex) {
+            log.error("Error fetching HAProxy stats: {}", ex.getMessage(), ex);
+            error = ex.getMessage();
+        } finally {
+            if (socket != null && !socket.isClosed()) {
+                try { socket.close(); } catch (Exception ignore) {}
+            }
+        }
+        return new HaproxyStatsResult(status, totalOperations, currentOpsPerSec, error);
+    }
+
+    private Long parseLongSafe(String s) {
+        try { return Long.parseLong(s); } catch (Exception e) { return null; }
+    }
+
+    /**
+     * Simple DTO for Docker stats aggregation.
+     */
+    private static class DockerStatsResult {
+        final Map<String, Object> statsMap;
+        final double totalCpu;
+        final double totalMem;
+        final boolean dockerStatsFound;
+        DockerStatsResult(Map<String, Object> statsMap, double totalCpu, double totalMem, boolean dockerStatsFound) {
+            this.statsMap = statsMap;
+            this.totalCpu = totalCpu;
+            this.totalMem = totalMem;
+            this.dockerStatsFound = dockerStatsFound;
+        }
+    }
+
+    /**
+     * Simple DTO for HAProxy stats aggregation.
+     */
+    private static class HaproxyStatsResult {
+        final String status;
+        final Long totalOperations;
+        final Long currentOpsPerSec;
+        final String error;
+        HaproxyStatsResult(String status, Long totalOperations, Long currentOpsPerSec, String error) {
+            this.status = status;
+            this.totalOperations = totalOperations;
+            this.currentOpsPerSec = currentOpsPerSec;
+            this.error = error;
+        }
     }
 
     private Map<String, Object> getSystemMetrics() {
