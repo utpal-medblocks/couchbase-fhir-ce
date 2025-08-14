@@ -15,6 +15,8 @@ import com.couchbase.fhir.resources.repository.FhirResourceDaoImpl;
 import com.couchbase.fhir.resources.service.FhirAuditService;
 import com.couchbase.fhir.resources.service.UserAuditInfo;
 import com.couchbase.fhir.resources.util.*;
+import com.couchbase.fhir.resources.search.validation.FhirSearchParameterPreprocessor;
+import com.couchbase.fhir.resources.search.validation.FhirSearchValidationException;
 import com.couchbase.fhir.validation.ValidationUtil;
 import org.hl7.fhir.r4.model.*;
 import ca.uhn.fhir.rest.api.RestSearchParameterTypeEnum;
@@ -40,12 +42,14 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
     private final Class<T> resourceClass;
     private final FhirResourceDaoImpl<T> dao;
     private final FhirContext fhirContext;
+    private final FhirSearchParameterPreprocessor searchPreprocessor;
 
 
-    public FhirCouchbaseResourceProvider(Class<T> resourceClass, FhirResourceDaoImpl<T> dao , FhirContext fhirContext) {
+    public FhirCouchbaseResourceProvider(Class<T> resourceClass, FhirResourceDaoImpl<T> dao , FhirContext fhirContext, FhirSearchParameterPreprocessor searchPreprocessor) {
         this.resourceClass = resourceClass;
         this.dao = dao;
         this.fhirContext = fhirContext;
+        this.searchPreprocessor = searchPreprocessor;
     }
 
     @Read
@@ -102,7 +106,25 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
         List<SearchQuery> ftsQueries = new ArrayList<>();
         List<String> revIncludes = new ArrayList<>();
         Map<String, String[]> rawParams = requestDetails.getParameters();
-        // Flatten and convert to Map<String, String>
+        
+        // Convert to Map<String, List<String>> for validation
+        Map<String, List<String>> allParams = rawParams.entrySet().stream()
+                .filter(e -> e.getValue() != null && e.getValue().length > 0)
+                .collect(Collectors.toMap(
+                        Map.Entry::getKey,
+                        e -> Arrays.asList(e.getValue())
+                ));
+        
+        String resourceType = resourceClass.getSimpleName();
+        
+        // STEP 1: Validate search parameters BEFORE query execution
+        try {
+            searchPreprocessor.validateSearchParameters(resourceType, allParams);
+        } catch (FhirSearchValidationException e) {
+            throw new ca.uhn.fhir.rest.server.exceptions.InvalidRequestException(e.getUserFriendlyMessage());
+        }
+        
+        // Flatten to Map<String, String> for existing logic
         Map<String, String> searchParams = rawParams.entrySet().stream()
                 .filter(e -> e.getValue() != null && e.getValue().length > 0)
                 .collect(Collectors.toMap(
@@ -110,7 +132,6 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
                         e -> e.getValue()[0]
                 ));
 
-        String resourceType = resourceClass.getSimpleName();
         RuntimeResourceDefinition resourceDef = fhirContext.getResourceDefinition(resourceType);
         for (Map.Entry<String, String> entry : searchParams.entrySet()) {
             String rawParamName = entry.getKey();
@@ -152,8 +173,12 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
         }
 
 
+        // Add must_not query to exclude deleted resources
+        List<SearchQuery> mustNotQueries = new ArrayList<>();
+        mustNotQueries.add(SearchQuery.booleanField(true).field("deleted"));
+
         Ftsn1qlQueryBuilder ftsn1qlQueryBuilder = new Ftsn1qlQueryBuilder();
-        String query = ftsn1qlQueryBuilder.build(ftsQueries , null , resourceType , 0 , 50);
+        String query = ftsn1qlQueryBuilder.build(ftsQueries , mustNotQueries , resourceType , 0 , 50);
 
  //      QueryBuilder queryBuilder = new QueryBuilder();
 //        List<T> results = dao.search(resourceType, queryBuilder.buildQuery(filters , revIncludes , resourceType , bucketName));

@@ -1,0 +1,237 @@
+{
+  "type": "fulltext-index",
+  "name": "",
+  "uuid": "",
+  "sourceType": "gocbcore",
+  "sourceName": "",
+  "sourceUUID": "",
+  "planParams": {
+    "maxPartitionsPerPIndex": 1024,
+    "indexPartitions": 1
+  },
+  "params": {
+    "doc_config": {
+      "docid_prefix_delim": "",
+      "docid_regexp": "",
+      "mode": "scope.collection.type_field",
+      "type_field": "type"
+    },
+    "mapping": {
+      "analysis": {},
+      "default_analyzer": "keyword",
+      "default_datetime_parser": "dateTimeOptional",
+      "default_field": "_all",
+      "default_mapping": {
+        "dynamic": false,
+        "enabled": false
+      },
+      "default_type": "_default",
+      "docvalues_dynamic": false,
+      "index_dynamic": true,
+      "store_dynamic": false,
+      "type_field": "_type",
+      "types": {
+        "Resources.ServiceRequest": {
+          "dynamic": false,
+          "enabled": true,
+          "properties": {
+            "authoredOn": {
+              "dynamic": false,
+              "enabled": true,
+              "fields": [
+                {
+                  "docvalues": true,
+                  "index": true,
+                  "name": "authoredOn",
+                  "type": "datetime"
+                }
+              ]
+            },
+            "basedOn": {
+              "dynamic": true,
+              "enabled": true
+            },
+            "bodySite": {
+              "dynamic": true,
+              "enabled": true
+            },
+            "category": {
+              "dynamic": true,
+              "enabled": true
+            },
+            "code": {
+              "dynamic": true,
+              "enabled": true
+            },
+            "deleted": {
+              "dynamic": false,
+              "enabled": true,
+              "fields": [
+                {
+                  "index": true,
+                  "name": "deleted",
+                  "type": "boolean"
+                }
+              ]
+            },
+            "encounter": {
+              "dynamic": true,
+              "enabled": true
+            },
+            "id": {
+              "dynamic": false,
+              "enabled": true,
+              "fields": [
+                {
+                  "analyzer": "keyword",
+                  "index": true,
+                  "name": "id",
+                  "type": "text"
+                }
+              ]
+            },
+            "identifier": {
+              "dynamic": true,
+              "enabled": true
+            },
+            "instantiatesCanonical": {
+              "dynamic": true,
+              "enabled": true
+            },
+            "instantiatesUri": {
+              "dynamic": false,
+              "enabled": true,
+              "fields": [
+                {
+                  "index": true,
+                  "name": "instantiatesUri",
+                  "type": "text"
+                }
+              ]
+            },
+            "intent": {
+              "dynamic": false,
+              "enabled": true,
+              "fields": [
+                {
+                  "index": true,
+                  "name": "intent",
+                  "type": "text"
+                }
+              ]
+            },
+            "meta": {
+              "dynamic": false,
+              "enabled": true,
+              "properties": {
+                "lastUpdated": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "docvalues": true,
+                      "index": true,
+                      "name": "lastUpdated",
+                      "type": "datetime"
+                    }
+                  ]
+                },
+                "versionId": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "index": true,
+                      "name": "versionId",
+                      "type": "text"
+                    }
+                  ]
+                }
+              }
+            },
+            "occurrence": {
+              "dynamic": false,
+              "enabled": true,
+              "fields": [
+                {
+                  "docvalues": true,
+                  "index": true,
+                  "name": "occurrence",
+                  "type": "datetime"
+                }
+              ]
+            },
+            "performer": {
+              "dynamic": true,
+              "enabled": true
+            },
+            "performerType": {
+              "dynamic": true,
+              "enabled": true
+            },
+            "priority": {
+              "dynamic": false,
+              "enabled": true,
+              "fields": [
+                {
+                  "index": true,
+                  "name": "priority",
+                  "type": "text"
+                }
+              ]
+            },
+            "replaces": {
+              "dynamic": true,
+              "enabled": true
+            },
+            "requester": {
+              "dynamic": true,
+              "enabled": true
+            },
+            "requisition": {
+              "dynamic": true,
+              "enabled": true
+            },
+            "specimen": {
+              "dynamic": true,
+              "enabled": true
+            },
+            "status": {
+              "dynamic": false,
+              "enabled": true,
+              "fields": [
+                {
+                  "index": true,
+                  "name": "status",
+                  "type": "text"
+                }
+              ]
+            },
+            "subject": {
+              "dynamic": false,
+              "enabled": true,
+              "properties": {
+                "reference": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "index": true,
+                      "name": "reference",
+                      "type": "text"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "store": {
+      "indexType": "scorch",
+      "segmentVersion": 15
+    }
+  },
+  "sourceParams": {}
+}

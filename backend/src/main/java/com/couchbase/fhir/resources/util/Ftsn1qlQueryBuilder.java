@@ -28,13 +28,17 @@ public class Ftsn1qlQueryBuilder {
                 mustQueries.stream().map(SearchQuery::export).collect(Collectors.toList())
         );
 
-  /*      JsonObject mustNotPart = JsonObject.create().put(
-                "disjuncts",
-                mustNotQueries.stream().map(SearchQuery::export).collect(Collectors.toList())
-        ); */
-
         JsonObject queryBody = JsonObject.create()
                 .put("must", mustPart);
+
+        // Add must_not clause for deleted resources
+        if (mustNotQueries != null && !mustNotQueries.isEmpty()) {
+            JsonObject mustNotPart = JsonObject.create().put(
+                    "disjuncts",
+                    mustNotQueries.stream().map(SearchQuery::export).collect(Collectors.toList())
+            );
+            queryBody.put("must_not", mustNotPart);
+        }
 
         JsonObject ftsDsl = JsonObject.create()
                 .put("size", size)

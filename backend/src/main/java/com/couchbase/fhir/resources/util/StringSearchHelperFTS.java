@@ -47,10 +47,9 @@ public class StringSearchHelperFTS {
         }
 
         DisjunctionQuery disjunction = SearchQuery.disjuncts(fieldQueries.toArray(new SearchQuery[0]));
-        ConjunctionQuery conjunction = SearchQuery.conjuncts(disjunction);
-
-        // Wrap in a must clause
-        return SearchQuery.conjuncts(conjunction);
+        
+        // Return the disjunction directly - no need for nested conjunctions
+        return disjunction;
     }
 
 
