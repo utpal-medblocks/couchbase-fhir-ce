@@ -20,6 +20,12 @@ import com.couchbase.fhir.resources.search.validation.FhirSearchValidationExcept
 import com.couchbase.fhir.validation.ValidationUtil;
 import org.hl7.fhir.r4.model.*;
 import ca.uhn.fhir.rest.api.RestSearchParameterTypeEnum;
+import ca.uhn.fhir.rest.api.SummaryEnum;
+import ca.uhn.fhir.parser.IParser;
+import ca.uhn.fhir.validation.FhirValidator;
+import ca.uhn.fhir.validation.ValidationResult;
+import ca.uhn.fhir.rest.annotation.Operation;
+import ca.uhn.fhir.rest.annotation.ResourceParam;
 
 import java.io.IOException;
 import java.util.*;
@@ -132,6 +138,14 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
                         e -> e.getValue()[0]
                 ));
 
+        // STEP 2: Parse _summary and _elements parameters (FHIR standard)
+        SummaryEnum summaryMode = parseSummaryParameter(searchParams);
+        Set<String> elements = parseElementsParameter(searchParams);
+        
+        // Remove these parameters from the search params so they don't interfere with FTS queries
+        searchParams.remove("_summary");
+        searchParams.remove("_elements");
+
         RuntimeResourceDefinition resourceDef = fhirContext.getResourceDefinition(resourceType);
         for (Map.Entry<String, String> entry : searchParams.entrySet()) {
             String rawParamName = entry.getKey();
@@ -184,17 +198,18 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
 //        List<T> results = dao.search(resourceType, queryBuilder.buildQuery(filters , revIncludes , resourceType , bucketName));
         List<T> results = dao.search(resourceType,query);
 
-        // Construct a FHIR Bundle response
+        // Construct a FHIR Bundle response with _summary and _elements support
         Bundle bundle = new Bundle();
         bundle.setType(Bundle.BundleType.SEARCHSET);
         bundle.setTotal(results.size());
 
         for (T resource : results) {
+            // Apply filtering to the resource based on _summary and _elements parameters
+            T filteredResource = applyResourceFiltering(resource, summaryMode, elements);
             bundle.addEntry()
-                    .setResource(resource)
-                    .setFullUrl(resourceType + "/" + resource.getIdElement().getIdPart());
+                    .setResource(filteredResource)
+                    .setFullUrl(resourceType + "/" + filteredResource.getIdElement().getIdPart());
         }
-
 
         return bundle;
     }
@@ -205,9 +220,199 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
 
 
 
+    /**
+     * FHIR $validate Operation - Validates a resource without storing it
+     * POST /fhir/{bucket}/{ResourceType}/$validate
+     */
+    @Operation(name = "$validate", idempotent = false)
+    public OperationOutcome validateResource(@ResourceParam T resource) {
+        try {
+            // Create a FHIR validator
+            FhirValidator validator = fhirContext.newValidator();
+            
+            // Validate the resource
+            ValidationResult result = validator.validateWithResult(resource);
+            
+            // Create OperationOutcome based on validation result
+            OperationOutcome outcome = new OperationOutcome();
+            
+            if (result.isSuccessful()) {
+                // Validation passed
+                outcome.addIssue()
+                    .setSeverity(OperationOutcome.IssueSeverity.INFORMATION)
+                    .setCode(OperationOutcome.IssueType.INFORMATIONAL)
+                    .setDiagnostics("Resource validation successful");
+                    
+            } else {
+                // Validation failed - add all issues
+                for (var issue : result.getMessages()) {
+                    OperationOutcome.OperationOutcomeIssueComponent outcomeIssue = outcome.addIssue();
+                    
+                    // Map severity
+                    switch (issue.getSeverity()) {
+                        case ERROR:
+                            outcomeIssue.setSeverity(OperationOutcome.IssueSeverity.ERROR);
+                            break;
+                        case WARNING:
+                            outcomeIssue.setSeverity(OperationOutcome.IssueSeverity.WARNING);
+                            break;
+                        case INFORMATION:
+                            outcomeIssue.setSeverity(OperationOutcome.IssueSeverity.INFORMATION);
+                            break;
+                        default:
+                            outcomeIssue.setSeverity(OperationOutcome.IssueSeverity.ERROR);
+                    }
+                    
+                    // Set issue type and message
+                    outcomeIssue.setCode(OperationOutcome.IssueType.INVALID);
+                    outcomeIssue.setDiagnostics(issue.getMessage());
+                    
+                    // Add location if available
+                    if (issue.getLocationString() != null) {
+                        outcomeIssue.addLocation(issue.getLocationString());
+                    }
+                }
+            }
+            
+            return outcome;
+            
+        } catch (Exception e) {
+            // Handle validation errors
+            OperationOutcome errorOutcome = new OperationOutcome();
+            errorOutcome.addIssue()
+                .setSeverity(OperationOutcome.IssueSeverity.ERROR)
+                .setCode(OperationOutcome.IssueType.EXCEPTION)
+                .setDiagnostics("Validation failed: " + e.getMessage());
+            
+            return errorOutcome;
+        }
+    }
+
     @Override
     public Class<T> getResourceType() {
         return resourceClass;
+    }
+
+    // ========== _summary and _elements Support Methods ==========
+    
+    /**
+     * Parse _summary parameter from search parameters (FHIR standard)
+     */
+    private SummaryEnum parseSummaryParameter(Map<String, String> searchParams) {
+        String summaryValue = searchParams.get("_summary");
+        if (summaryValue == null || summaryValue.isEmpty()) {
+            return null;
+        }
+        
+        try {
+            switch (summaryValue.toLowerCase()) {
+                case "true":
+                    return SummaryEnum.TRUE;
+                case "false":
+                    return SummaryEnum.FALSE;
+                case "text":
+                    return SummaryEnum.TEXT;
+                case "data":
+                    return SummaryEnum.DATA;
+                case "count":
+                    return SummaryEnum.COUNT;
+                default:
+                    return SummaryEnum.FALSE;
+            }
+        } catch (Exception e) {
+            return SummaryEnum.FALSE;
+        }
+    }
+    
+    /**
+     * Parse _elements parameter from search parameters (FHIR standard)
+     */
+    private Set<String> parseElementsParameter(Map<String, String> searchParams) {
+        String elementsValue = searchParams.get("_elements");
+        if (elementsValue == null || elementsValue.isEmpty()) {
+            return null;
+        }
+        
+        try {
+            Set<String> elements = new HashSet<>();
+            String[] elementArray = elementsValue.split(",");
+            
+            for (String element : elementArray) {
+                String trimmedElement = element.trim();
+                if (!trimmedElement.isEmpty() && !trimmedElement.equals("*")) {
+                    elements.add(trimmedElement);
+                }
+            }
+            
+            return elements.isEmpty() ? null : elements;
+            
+        } catch (Exception e) {
+            return null;
+        }
+    }
+    
+    /**
+     * Apply resource filtering based on _summary and _elements parameters
+     */
+    @SuppressWarnings("unchecked")
+    private T applyResourceFiltering(T resource, SummaryEnum summaryMode, Set<String> elements) {
+        if (summaryMode == null && elements == null) {
+            return resource; // No filtering needed
+        }
+        
+        try {
+            IParser parser = fhirContext.newJsonParser();
+            
+            // Apply summary mode
+            if (summaryMode != null) {
+                switch (summaryMode) {
+                    case TRUE:
+                        parser.setSummaryMode(true);
+                        break;
+                    case COUNT:
+                        // For count mode, return minimal resource (just id and resourceType)
+                        parser.setEncodeElements(Set.of("id", "resourceType"));
+                        break;
+                    case TEXT:
+                        parser.setEncodeElements(Set.of("id", "resourceType", "text", "meta"));
+                        break;
+                    case DATA:
+                        parser.setOmitResourceId(false);
+                        parser.setSummaryMode(false);
+                        break;
+                    case FALSE:
+                    default:
+                        // No summary mode
+                        break;
+                }
+            }
+            
+            // Apply elements filter
+            if (elements != null && !elements.isEmpty()) {
+                Set<String> encodeElements = new HashSet<>();
+                
+                // Always include mandatory fields
+                encodeElements.add("id");
+                encodeElements.add("resourceType");
+                encodeElements.add("meta");
+                
+                // Add requested elements with resource type prefix (HAPI requirement)
+                String resourceType = resource.getClass().getSimpleName();
+                for (String element : elements) {
+                    encodeElements.add(resourceType + "." + element);
+                }
+                
+                parser.setEncodeElements(encodeElements);
+            }
+            
+            // Serialize and deserialize to apply filtering
+            String filteredJson = parser.encodeResourceToString(resource);
+            return (T) parser.parseResource(resourceClass, filteredJson);
+            
+        } catch (Exception e) {
+            // If filtering fails, return original resource
+            return resource;
+        }
     }
 
 }
