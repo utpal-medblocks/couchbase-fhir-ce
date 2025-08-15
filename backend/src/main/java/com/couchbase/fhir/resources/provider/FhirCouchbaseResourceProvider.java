@@ -15,8 +15,11 @@ import com.couchbase.fhir.resources.repository.FhirResourceDaoImpl;
 import com.couchbase.fhir.resources.service.FhirAuditService;
 import com.couchbase.fhir.resources.service.UserAuditInfo;
 import com.couchbase.fhir.resources.util.*;
+import com.couchbase.fhir.resources.util.Ftsn1qlQueryBuilder.SortField;
 import com.couchbase.fhir.resources.search.validation.FhirSearchParameterPreprocessor;
 import com.couchbase.fhir.resources.search.validation.FhirSearchValidationException;
+import com.couchbase.fhir.resources.validation.FhirBucketValidator;
+import com.couchbase.fhir.resources.validation.FhirBucketValidationException;
 import com.couchbase.fhir.validation.ValidationUtil;
 import org.hl7.fhir.r4.model.*;
 import ca.uhn.fhir.rest.api.RestSearchParameterTypeEnum;
@@ -49,18 +52,28 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
     private final FhirResourceDaoImpl<T> dao;
     private final FhirContext fhirContext;
     private final FhirSearchParameterPreprocessor searchPreprocessor;
+    private final FhirBucketValidator bucketValidator;
 
 
-    public FhirCouchbaseResourceProvider(Class<T> resourceClass, FhirResourceDaoImpl<T> dao , FhirContext fhirContext, FhirSearchParameterPreprocessor searchPreprocessor) {
+    public FhirCouchbaseResourceProvider(Class<T> resourceClass, FhirResourceDaoImpl<T> dao , FhirContext fhirContext, FhirSearchParameterPreprocessor searchPreprocessor, FhirBucketValidator bucketValidator) {
         this.resourceClass = resourceClass;
         this.dao = dao;
         this.fhirContext = fhirContext;
         this.searchPreprocessor = searchPreprocessor;
+        this.bucketValidator = bucketValidator;
     }
 
     @Read
     public T read(@IdParam IdType theId) {
         String bucketName = TenantContextHolder.getTenantId();
+        
+        // Validate FHIR bucket before proceeding
+        try {
+            bucketValidator.validateFhirBucketOrThrow(bucketName, "default");
+        } catch (FhirBucketValidationException e) {
+            throw new ca.uhn.fhir.rest.server.exceptions.InvalidRequestException(e.getMessage());
+        }
+        
         return dao.read(resourceClass.getSimpleName(), theId.getIdPart() , bucketName).orElseThrow(() ->
                 new ResourceNotFoundException(theId));
     }
@@ -68,6 +81,13 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
     @Create
     public MethodOutcome create(@ResourceParam T resource) throws IOException {
         String bucketName = TenantContextHolder.getTenantId();
+        
+        // Validate FHIR bucket before proceeding
+        try {
+            bucketValidator.validateFhirBucketOrThrow(bucketName, "default");
+        } catch (FhirBucketValidationException e) {
+            throw new ca.uhn.fhir.rest.server.exceptions.InvalidRequestException(e.getMessage());
+        }
 
         if (resource.getIdElement().isEmpty()) {
             resource.setId(UUID.randomUUID().toString());
@@ -122,6 +142,14 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
                 ));
         
         String resourceType = resourceClass.getSimpleName();
+        String bucketName = TenantContextHolder.getTenantId();
+        
+        // STEP 0: Validate that this is a FHIR bucket before proceeding
+        try {
+            bucketValidator.validateFhirBucketOrThrow(bucketName, "default");
+        } catch (FhirBucketValidationException e) {
+            throw new ca.uhn.fhir.rest.server.exceptions.InvalidRequestException(e.getMessage());
+        }
         
         // STEP 1: Validate search parameters BEFORE query execution
         try {
@@ -138,13 +166,17 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
                         e -> e.getValue()[0]
                 ));
 
-        // STEP 2: Parse _summary and _elements parameters (FHIR standard)
+        // STEP 2: Parse _summary, _elements, _count, and _sort parameters (FHIR standard)
         SummaryEnum summaryMode = parseSummaryParameter(searchParams);
         Set<String> elements = parseElementsParameter(searchParams);
+        int count = parseCountParameter(searchParams);
+        List<SortField> sortFields = parseSortParameter(searchParams);
         
         // Remove these parameters from the search params so they don't interfere with FTS queries
         searchParams.remove("_summary");
         searchParams.remove("_elements");
+        searchParams.remove("_count");
+        searchParams.remove("_sort");
 
         RuntimeResourceDefinition resourceDef = fhirContext.getResourceDefinition(resourceType);
         for (Map.Entry<String, String> entry : searchParams.entrySet()) {
@@ -192,7 +224,7 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
         mustNotQueries.add(SearchQuery.booleanField(true).field("deleted"));
 
         Ftsn1qlQueryBuilder ftsn1qlQueryBuilder = new Ftsn1qlQueryBuilder();
-        String query = ftsn1qlQueryBuilder.build(ftsQueries , mustNotQueries , resourceType , 0 , 50);
+        String query = ftsn1qlQueryBuilder.build(ftsQueries, mustNotQueries, resourceType, 0, count, sortFields);
 
  //      QueryBuilder queryBuilder = new QueryBuilder();
 //        List<T> results = dao.search(resourceType, queryBuilder.buildQuery(filters , revIncludes , resourceType , bucketName));
@@ -348,6 +380,112 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
             
         } catch (Exception e) {
             return null;
+        }
+    }
+    
+    /**
+     * Parse _count parameter from search parameters (FHIR standard)
+     * Default is 20, maximum is 100 for performance
+     */
+    private int parseCountParameter(Map<String, String> searchParams) {
+        String countValue = searchParams.get("_count");
+        if (countValue == null || countValue.isEmpty()) {
+            return 20; // Default count reduced from 50 to 20
+        }
+        
+        try {
+            int count = Integer.parseInt(countValue);
+            // Limit to reasonable bounds
+            if (count <= 0) return 20;
+            if (count > 100) return 100; // Maximum limit for performance
+            return count;
+        } catch (NumberFormatException e) {
+            return 20; // Default on parse error
+        }
+    }
+    
+    /**
+     * Parse _sort parameter from search parameters (FHIR standard)
+     * Supports: _sort=field (ascending), _sort=-field (descending), _sort=field1,field2,-field3
+     * Maps FHIR field names to proper FTS paths
+     */
+    private List<SortField> parseSortParameter(Map<String, String> searchParams) {
+        String sortValue = searchParams.get("_sort");
+        if (sortValue == null || sortValue.isEmpty()) {
+            return new ArrayList<>();
+        }
+        
+        List<SortField> sortFields = new ArrayList<>();
+        String[] fields = sortValue.split(",");
+        
+        for (String field : fields) {
+            field = field.trim();
+            if (field.isEmpty()) continue;
+            
+            // Check for descending order prefix
+            boolean isDescending = field.startsWith("-");
+            String fieldName = isDescending ? field.substring(1).trim() : field;
+            
+            // Only allow alphanumeric, dots, and underscores for security
+            if (!fieldName.matches("^[a-zA-Z0-9._]+$")) {
+                continue; // Skip invalid sort field
+            }
+            
+            // Map FHIR field names to proper FTS paths
+            String mappedField = mapFhirFieldToFtsPath(fieldName, resourceClass.getSimpleName());
+            sortFields.add(new SortField(mappedField, isDescending));
+        }
+        
+        return sortFields;
+    }
+    
+
+    
+    /**
+     * Map FHIR field names to proper FTS index paths
+     */
+    private String mapFhirFieldToFtsPath(String fhirField, String resourceType) {
+        // Handle common FHIR field mappings by resource type
+        switch (resourceType) {
+            case "Patient":
+                switch (fhirField) {
+                    case "family": return "name.family";  // Let query builder add .keyword
+                    case "given": return "name.given";    // Let query builder add .keyword
+                    case "birthdate": return "birthDate"; // Datetime - no .keyword needed
+                    case "birthDate": return "birthDate"; // Datetime - no .keyword needed
+                    case "gender": return "gender";       // Let query builder add .keyword
+                    case "active": return "active";       // Boolean - no .keyword needed
+                    default: break;
+                }
+                break;
+                
+            case "Observation":
+                switch (fhirField) {
+                    case "date": return "effectiveDateTime";
+                    case "code": return "code.coding.code";
+                    case "status": return "status";
+                    default: break;
+                }
+                break;
+                
+            case "Encounter":
+                switch (fhirField) {
+                    case "date": return "period.start";
+                    case "status": return "status";
+                    case "class": return "class.code";
+                    default: break;
+                }
+                break;
+                
+            // Add more resource-specific mappings as needed
+        }
+        
+        // Handle common fields across all resources
+        switch (fhirField) {
+            case "_lastUpdated": return "meta.lastUpdated";
+            case "lastUpdated": return "meta.lastUpdated";
+            case "_id": return "id";
+            default: return fhirField; // Use as-is if no mapping found
         }
     }
     

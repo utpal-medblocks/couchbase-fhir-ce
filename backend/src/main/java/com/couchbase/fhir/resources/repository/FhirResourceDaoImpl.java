@@ -131,7 +131,7 @@ public class FhirResourceDaoImpl<T extends IBaseResource> implements  FhirResour
             List<JsonObject> rows = result.rowsAs(JsonObject.class);
             JsonParser parser = (JsonParser) fhirContext.newJsonParser();
             parser.setParserErrorHandler(new LenientErrorHandler().setErrorOnInvalidValue(false));
-            rows.parallelStream()
+            rows.stream()  // Use sequential stream to preserve FTS sort order
                     .map(row -> (T) parser.parseResource(row.toString()))
                     .forEach(resources::add);
             logger.info("Execution time after HAPI parsing result: " + stopwatch.elapsed(TimeUnit.MILLISECONDS) + " ms");

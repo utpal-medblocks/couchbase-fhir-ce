@@ -5,6 +5,7 @@ import ca.uhn.fhir.rest.server.IResourceProvider;
 import com.couchbase.fhir.resources.provider.FhirCouchbaseResourceProvider;
 import com.couchbase.fhir.resources.search.validation.FhirSearchParameterPreprocessor;
 import com.couchbase.fhir.resources.service.FHIRResourceService;
+import com.couchbase.fhir.resources.validation.FhirBucketValidator;
 import org.hl7.fhir.r4.model.Resource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Bean;
@@ -38,6 +39,9 @@ public class ResourceProviderAutoConfig {
     
     @Autowired
     private FhirSearchParameterPreprocessor searchPreprocessor;
+    
+    @Autowired
+    private FhirBucketValidator bucketValidator;
 
     @SuppressWarnings("unchecked")
     @Bean
@@ -48,7 +52,7 @@ public class ResourceProviderAutoConfig {
                 .map(fhirContext::getResourceDefinition)
                 .map(rd -> (Class<? extends Resource>) rd.getImplementingClass())
                 .distinct()
-                .map(clazz -> new FhirCouchbaseResourceProvider<>(clazz, serviceFactory.getService(clazz) , fhirContext, searchPreprocessor))
+                .map(clazz -> new FhirCouchbaseResourceProvider<>(clazz, serviceFactory.getService(clazz) , fhirContext, searchPreprocessor, bucketValidator))
                 .collect(Collectors.toList());
 
     }
