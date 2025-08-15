@@ -142,6 +142,45 @@ public class FhirResourceDaoImpl<T extends IBaseResource> implements  FhirResour
 
         return resources;
     }
+    
+    /**
+     * Execute count query for _total=accurate operations
+     */
+    public int getCount(String resourceType, String countQuery) {
+        try {
+            Stopwatch stopwatch = Stopwatch.createStarted();
+            String connectionName = getDefaultConnection();
+
+            Cluster cluster = connectionService.getConnection(connectionName);
+            if (cluster == null) {
+                throw new RuntimeException("No active connection found: " + connectionName);
+            }
+
+            QueryResult result = cluster.query(countQuery);
+            logger.info("Count query execution time: " + stopwatch.elapsed(TimeUnit.MILLISECONDS) + " ms");
+
+            List<JsonObject> rows = result.rowsAs(JsonObject.class);
+            if (rows.isEmpty()) {
+                return 0;
+            }
+            
+            // Extract count from first row
+            JsonObject firstRow = rows.get(0);
+            Object totalObj = firstRow.get("total");
+            
+            if (totalObj instanceof Number) {
+                return ((Number) totalObj).intValue();
+            } else if (totalObj instanceof String) {
+                return Integer.parseInt((String) totalObj);
+            }
+            
+            return 0;
+
+        } catch (Exception e) {
+            logger.error("Failed to execute count query: {}", e.getMessage());
+            return 0;
+        }
+    }
 
     private String getDefaultConnection() {
         List<String> connections = connectionService.getActiveConnections();

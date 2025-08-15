@@ -166,17 +166,19 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
                         e -> e.getValue()[0]
                 ));
 
-        // STEP 2: Parse _summary, _elements, _count, and _sort parameters (FHIR standard)
+        // STEP 2: Parse _summary, _elements, _count, _sort, and _total parameters (FHIR standard)
         SummaryEnum summaryMode = parseSummaryParameter(searchParams);
         Set<String> elements = parseElementsParameter(searchParams);
         int count = parseCountParameter(searchParams);
         List<SortField> sortFields = parseSortParameter(searchParams);
+        String totalMode = parseTotalParameter(searchParams);
         
         // Remove these parameters from the search params so they don't interfere with FTS queries
         searchParams.remove("_summary");
         searchParams.remove("_elements");
         searchParams.remove("_count");
         searchParams.remove("_sort");
+        searchParams.remove("_total");
 
         RuntimeResourceDefinition resourceDef = fhirContext.getResourceDefinition(resourceType);
         for (Map.Entry<String, String> entry : searchParams.entrySet()) {
@@ -223,17 +225,28 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
         List<SearchQuery> mustNotQueries = new ArrayList<>();
         mustNotQueries.add(SearchQuery.booleanField(true).field("deleted"));
 
+        // Handle count-only queries (_total=accurate with _count=0)
+        if ("accurate".equals(totalMode) && count == 0) {
+            return handleCountOnlyQuery(ftsQueries, mustNotQueries, resourceType, bucketName);
+        }
+
+        // Regular query with results
         Ftsn1qlQueryBuilder ftsn1qlQueryBuilder = new Ftsn1qlQueryBuilder();
         String query = ftsn1qlQueryBuilder.build(ftsQueries, mustNotQueries, resourceType, 0, count, sortFields);
 
- //      QueryBuilder queryBuilder = new QueryBuilder();
-//        List<T> results = dao.search(resourceType, queryBuilder.buildQuery(filters , revIncludes , resourceType , bucketName));
-        List<T> results = dao.search(resourceType,query);
+        List<T> results = dao.search(resourceType, query);
 
         // Construct a FHIR Bundle response with _summary and _elements support
         Bundle bundle = new Bundle();
         bundle.setType(Bundle.BundleType.SEARCHSET);
-        bundle.setTotal(results.size());
+        
+        // Set accurate total count if requested
+        if ("accurate".equals(totalMode)) {
+            int accurateTotal = getAccurateCount(ftsQueries, mustNotQueries, resourceType, bucketName);
+            bundle.setTotal(accurateTotal);
+        } else {
+            bundle.setTotal(results.size());
+        }
 
         for (T resource : results) {
             // Apply filtering to the resource based on _summary and _elements parameters
@@ -436,11 +449,63 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
             sortFields.add(new SortField(mappedField, isDescending));
         }
         
-        return sortFields;
+                return sortFields;
     }
     
-
+    /**
+     * Parse _total parameter from search parameters (FHIR standard)
+     * Supports: _total=none (default), _total=estimate, _total=accurate
+     */
+    private String parseTotalParameter(Map<String, String> searchParams) {
+        String totalValue = searchParams.get("_total");
+        if (totalValue == null || totalValue.isEmpty()) {
+            return "none"; // Default
+        }
+        
+        switch (totalValue.toLowerCase()) {
+            case "none":
+            case "estimate":
+            case "accurate":
+                return totalValue.toLowerCase();
+            default:
+                return "none"; // Invalid value defaults to none
+        }
+    }
     
+    /**
+     * Handle count-only queries (_total=accurate with _count=0)
+     */
+    private Bundle handleCountOnlyQuery(List<SearchQuery> ftsQueries, List<SearchQuery> mustNotQueries, 
+                                       String resourceType, String bucketName) {
+        int totalCount = getAccurateCount(ftsQueries, mustNotQueries, resourceType, bucketName);
+        
+        Bundle bundle = new Bundle();
+        bundle.setType(Bundle.BundleType.SEARCHSET);
+        bundle.setTotal(totalCount);
+        // No entries - just the count
+        
+        return bundle;
+    }
+    
+    /**
+     * Get accurate count using FTS COUNT query
+     */
+    private int getAccurateCount(List<SearchQuery> ftsQueries, List<SearchQuery> mustNotQueries, 
+                                String resourceType, String bucketName) {
+        try {
+            Ftsn1qlQueryBuilder ftsn1qlQueryBuilder = new Ftsn1qlQueryBuilder();
+            String countQuery = ftsn1qlQueryBuilder.buildCountQuery(ftsQueries, mustNotQueries, resourceType);
+            
+            // Execute count query via DAO
+            int count = dao.getCount(resourceType, countQuery);
+            return count;
+            
+        } catch (Exception e) {
+            // Fallback to estimated count or 0
+            return 0;
+        }
+    }
+
     /**
      * Map FHIR field names to proper FTS index paths
      */

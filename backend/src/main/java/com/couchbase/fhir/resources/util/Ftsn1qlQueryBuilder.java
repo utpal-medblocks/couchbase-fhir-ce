@@ -92,6 +92,53 @@ public class Ftsn1qlQueryBuilder {
     }
     
     /**
+     * Build COUNT query for _total=accurate operations
+     */
+    public String buildCountQuery(
+            List<SearchQuery> mustQueries,
+            List<SearchQuery> mustNotQueries,
+            String resourceType
+    ) {
+        String bucketName = TenantContextHolder.getTenantId();
+
+        JsonObject mustPart = JsonObject.create().put(
+                "conjuncts",
+                mustQueries.stream().map(SearchQuery::export).collect(Collectors.toList())
+        );
+
+        JsonObject queryBody = JsonObject.create()
+                .put("must", mustPart);
+
+        // Add must_not clause for deleted resources
+        if (mustNotQueries != null && !mustNotQueries.isEmpty()) {
+            JsonObject mustNotPart = JsonObject.create().put(
+                    "disjuncts",
+                    mustNotQueries.stream().map(SearchQuery::export).collect(Collectors.toList())
+            );
+            queryBody.put("must_not", mustNotPart);
+        }
+
+        JsonObject ftsDsl = JsonObject.create()
+                .put("size", 0)  // Don't return documents, just count
+                .put("from", 0)
+                .put("query", queryBody);
+
+        String indexName = bucketName + "." + DEFAULT_SCOPE + ".fts" + resourceType;
+
+        String n1ql = String.format(
+                "SELECT COUNT(*) as total " +
+                        "FROM `%s`.`%s`.`%s` resource " +
+                        "WHERE SEARCH(resource, %s, {\"index\":\"%s\"})",
+                bucketName, DEFAULT_SCOPE, resourceType,
+                ftsDsl.toString(),
+                indexName
+        );
+
+        System.out.println("count query " + n1ql);
+        return n1ql;
+    }
+    
+    /**
      * Simple class to hold sort field information
      */
     public static class SortField {
