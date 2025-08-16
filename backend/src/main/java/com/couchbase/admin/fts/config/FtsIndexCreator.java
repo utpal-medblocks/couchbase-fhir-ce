@@ -47,6 +47,11 @@ public class FtsIndexCreator {
     @Autowired
     private ConnectionService connectionService;
     
+    /*
+     * @Bean - Commented out to prevent auto-creation on startup
+     * Uncomment if you want indexes created automatically on app start
+     */
+    /*
     @Bean
     public ApplicationRunner createFtsIndexes() {
         return args -> {
@@ -81,6 +86,7 @@ public class FtsIndexCreator {
             }
         };
     }
+    */
     
     private void processFtsIndexFile(Resource resource) throws Exception {
         String filename = resource.getFilename();
