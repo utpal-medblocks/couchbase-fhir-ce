@@ -3,6 +3,7 @@ package com.couchbase.admin.fhirBucket.service;
 import com.couchbase.admin.fhirBucket.model.*;
 import com.couchbase.admin.fhirBucket.config.FhirBucketProperties;
 import com.couchbase.admin.connections.service.ConnectionService;
+import com.couchbase.admin.fts.config.FtsIndexCreator;
 import com.couchbase.client.java.Cluster;
 import com.couchbase.client.java.manager.collection.CollectionManager;
 
@@ -29,6 +30,9 @@ public class FhirBucketService {
     
     @Autowired
     private FhirBucketProperties fhirProperties;
+    
+    @Autowired
+    private FtsIndexCreator ftsIndexCreator;
     
     // Store operation status
     private final Map<String, FhirConversionStatusDetail> operationStatus = new ConcurrentHashMap<>();
@@ -102,8 +106,8 @@ public class FhirBucketService {
             createCollections(collectionManager, "Resources", fhirProperties.getScopes().get("resources"));
             status.setCompletedSteps(4);
             
-            // Step 5: Create indexes
-            updateStatus(status, "create_indexes", "Creating indexes for collections");
+            // Step 5: Create primary indexes
+            updateStatus(status, "create_indexes", "Creating primary indexes for collections");
             createIndexes(cluster, bucketName);
             status.setCompletedSteps(5);
             
@@ -112,10 +116,15 @@ public class FhirBucketService {
             buildDeferredIndexes(cluster, bucketName);
             status.setCompletedSteps(6);
             
-            // Step 7: Mark as FHIR bucket
+            // Step 7: Create FTS indexes
+            updateStatus(status, "create_fts_indexes", "Creating FTS indexes for collections");
+            createFtsIndexes(connectionName, bucketName);
+            status.setCompletedSteps(7);
+            
+            // Step 8: Mark as FHIR bucket
             updateStatus(status, "mark_as_fhir", "Marking bucket as FHIR-enabled");
             markAsFhirBucket(bucketName, connectionName);
-            status.setCompletedSteps(7);
+            status.setCompletedSteps(8);
             
             // Completion
             status.setStatus(FhirConversionStatus.COMPLETED);
@@ -236,6 +245,23 @@ public class FhirBucketService {
             }
         } else {
             // logger.info("No build commands found in configuration");
+        }
+    }
+    
+    private void createFtsIndexes(String connectionName, String bucketName) throws Exception {
+        try {
+            logger.info("🔍 Starting FTS index creation for bucket: {}", bucketName);
+            
+            // Use the FtsIndexCreator to create all FTS indexes via REST API
+            ftsIndexCreator.createAllFtsIndexesForBucket(connectionName, bucketName);
+            
+            logger.info("✅ FTS index creation completed for bucket: {}", bucketName);
+            
+        } catch (Exception e) {
+            logger.error("❌ Failed to create FTS indexes for bucket: {}", bucketName, e);
+            // Don't throw the exception - FTS indexes are optional
+            // The bucket creation should continue even if FTS fails
+            logger.warn("⚠️ Continuing bucket creation without FTS indexes");
         }
     }
     

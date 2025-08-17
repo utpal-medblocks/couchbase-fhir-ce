@@ -70,3 +70,7 @@ lerna-debug.log*
 config.yaml
 config*.yaml
 *.config.yaml
+
+# Copilot Instructions
+copilot-instructions.md
+k8s-deployment-plan.md

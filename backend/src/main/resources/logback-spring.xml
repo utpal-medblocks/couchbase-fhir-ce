@@ -1,16 +1,18 @@
 <configuration>
+    <!-- Remove the status listener now that we've diagnosed -->
+    <!-- <statusListener class="ch.qos.logback.core.status.OnConsoleStatusListener" /> -->
+    
     <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
         <encoder>
             <pattern>%d{HH:mm:ss.SSS} %-5level %logger{36} - %msg%n</pattern>
         </encoder>
     </appender>
 
-    <!-- Keep normal application logging at INFO level -->
     <root level="INFO">
         <appender-ref ref="STDOUT"/>
     </root>
 
-    <!-- Suppress Couchbase Java SDK - only show ERROR level -->
+    <!-- Your Couchbase loggers -->
     <logger name="com.couchbase" level="ERROR"/>
     <logger name="com.couchbase.client" level="ERROR"/>
     <logger name="com.couchbase.core" level="ERROR"/>
@@ -19,8 +21,7 @@
     <logger name="com.couchbase.node" level="ERROR"/>
     <logger name="com.couchbase.transactions" level="ERROR"/>
     
-    <!-- Keep your application logs visible -->
-    <logger name="com.couchbase.admin" level="INFO"/>
-    <logger name="com.couchbase.fhir" level="INFO"/>
-    <logger name="com.couchbase.common" level="INFO"/>
+    <logger name="com.couchbase.admin" level="WARN"/>
+    <logger name="com.couchbase.fhir" level="WARN"/>
+    <logger name="com.couchbase.common" level="WARN"/>
 </configuration>

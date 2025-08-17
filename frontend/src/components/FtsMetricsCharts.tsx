@@ -16,6 +16,8 @@ import type { SelectChangeEvent } from "@mui/material";
 import {
   LineChart,
   Line,
+  BarChart,
+  Bar,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -31,6 +33,7 @@ import type {
   TimeRange,
   FtsMetricData,
 } from "../services/ftsMetricsService";
+import { getStoredTimeRange, storeTimeRange } from "../utils/sessionStorage";
 
 interface FtsMetricsChartsProps {
   connectionName: string;
@@ -50,7 +53,9 @@ const FtsMetricsCharts: React.FC<FtsMetricsChartsProps> = ({
   indexName,
 }) => {
   const theme = useTheme();
-  const [timeRange, setTimeRange] = useState<TimeRange>("HOUR");
+  const [timeRange, setTimeRange] = useState<TimeRange>(() =>
+    getStoredTimeRange("HOUR")
+  );
   const [metrics, setMetrics] = useState<FtsMetricsResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -113,7 +118,9 @@ const FtsMetricsCharts: React.FC<FtsMetricsChartsProps> = ({
   }, [fetchMetrics]);
 
   const handleTimeRangeChange = (event: SelectChangeEvent) => {
-    setTimeRange(event.target.value as TimeRange);
+    const newTimeRange = event.target.value as TimeRange;
+    setTimeRange(newTimeRange);
+    storeTimeRange(newTimeRange);
   };
 
   const formatTimestamp = (timestamp: number, timeRange: TimeRange): string => {
@@ -238,7 +245,13 @@ const FtsMetricsCharts: React.FC<FtsMetricsChartsProps> = ({
   };
 
   const renderChart = useCallback(
-    (title: string, metricNames: string[], color: string, unit: string) => {
+    (
+      title: string,
+      metricNames: string[],
+      color: string,
+      unit: string,
+      chartType: "line" | "bar" = "line"
+    ) => {
       if (!metrics || !metrics.data.length) {
         return (
           <Box
@@ -259,81 +272,157 @@ const FtsMetricsCharts: React.FC<FtsMetricsChartsProps> = ({
 
       return (
         <ResponsiveContainer width="100%" height={180}>
-          <LineChart
-            data={chartData}
-            margin={{ top: 5, right: 10, left: 10, bottom: 5 }}
-          >
-            <CartesianGrid strokeDasharray="3 3" stroke="#e0e0e0" />
-            <XAxis
-              dataKey="time"
-              tick={{ fontSize: 12, fill: "currentColor" }}
-              interval={getTickInterval(timeRange, chartData.length)}
-              angle={
-                timeRange === "DAY" ||
-                timeRange === "WEEK" ||
-                timeRange === "MONTH"
-                  ? -45
-                  : 0
-              }
-              textAnchor={
-                timeRange === "DAY" ||
-                timeRange === "WEEK" ||
-                timeRange === "MONTH"
-                  ? "end"
-                  : "middle"
-              }
-              height={
-                timeRange === "DAY" ||
-                timeRange === "WEEK" ||
-                timeRange === "MONTH"
-                  ? 80
-                  : 60
-              }
-              axisLine={{ stroke: "#e0e0e0" }}
-              tickLine={{ stroke: "#e0e0e0" }}
-            />
-            <YAxis
-              tick={{ fontSize: 12, fill: "currentColor" }}
-              tickFormatter={(value) => formatValue(value, unit)}
-              axisLine={{ stroke: "#e0e0e0" }}
-              tickLine={{ stroke: "#e0e0e0" }}
-              tickCount={8}
-              width={60}
-              domain={
-                unit === "docs"
-                  ? [0, "dataMax"]
-                  : unit === "ms"
-                  ? [0, "dataMax"]
-                  : ["auto", "auto"]
-              }
-              allowDecimals={unit !== "docs"}
-            />
-            <Tooltip
-              contentStyle={{
-                backgroundColor: tooltipBackground,
-                border: "1px solid #e0e0e0",
-                borderRadius: "4px",
-                color: tooltipTextColor,
-                fontSize: "12px",
-                padding: "4px 6px",
-              }}
-              formatter={(value: number) => [formatValue(value, unit), title]}
-              labelFormatter={(label) => `${label}`}
-              labelStyle={{ color: tooltipTextColor, fontSize: "12px" }}
-            />
-            {relevantMetrics.map((metric) => (
-              <Line
-                key={metric.name}
-                type="monotone"
-                dataKey={metric.name}
-                stroke={color}
-                strokeWidth={2.5}
-                dot={false}
-                name={metric.label}
-                activeDot={{ r: 4, fill: color }}
+          {chartType === "bar" ? (
+            <BarChart
+              data={chartData}
+              margin={{ top: 5, right: 10, left: 10, bottom: 5 }}
+            >
+              <CartesianGrid strokeDasharray="3 3" stroke="#e0e0e0" />
+              <XAxis
+                dataKey="time"
+                tick={{ fontSize: 12, fill: "currentColor" }}
+                interval={getTickInterval(timeRange, chartData.length)}
+                angle={
+                  timeRange === "DAY" ||
+                  timeRange === "WEEK" ||
+                  timeRange === "MONTH"
+                    ? -45
+                    : 0
+                }
+                textAnchor={
+                  timeRange === "DAY" ||
+                  timeRange === "WEEK" ||
+                  timeRange === "MONTH"
+                    ? "end"
+                    : "middle"
+                }
+                height={
+                  timeRange === "DAY" ||
+                  timeRange === "WEEK" ||
+                  timeRange === "MONTH"
+                    ? 80
+                    : 60
+                }
+                axisLine={{ stroke: "#e0e0e0" }}
+                tickLine={{ stroke: "#e0e0e0" }}
               />
-            ))}
-          </LineChart>
+              <YAxis
+                tick={{ fontSize: 12, fill: "currentColor" }}
+                tickFormatter={(value) => formatValue(value, unit)}
+                axisLine={{ stroke: "#e0e0e0" }}
+                tickLine={{ stroke: "#e0e0e0" }}
+                tickCount={8}
+                width={60}
+                domain={
+                  unit === "docs"
+                    ? [0, "dataMax"]
+                    : unit === "ms"
+                    ? [0, "dataMax"]
+                    : ["auto", "auto"]
+                }
+                allowDecimals={unit !== "docs"}
+              />
+              <Tooltip
+                contentStyle={{
+                  backgroundColor: tooltipBackground,
+                  border: "1px solid #e0e0e0",
+                  borderRadius: "4px",
+                  color: tooltipTextColor,
+                  fontSize: "12px",
+                  padding: "4px 6px",
+                }}
+                formatter={(value: number) => [formatValue(value, unit), title]}
+                labelFormatter={(label) => `${label}`}
+                labelStyle={{ color: tooltipTextColor, fontSize: "12px" }}
+              />
+              {relevantMetrics.map((metric) => (
+                <Bar
+                  key={metric.name}
+                  dataKey={metric.name}
+                  fill={color}
+                  name={metric.label}
+                  isAnimationActive={false}
+                />
+              ))}
+            </BarChart>
+          ) : (
+            <LineChart
+              data={chartData}
+              margin={{ top: 5, right: 10, left: 10, bottom: 5 }}
+            >
+              <CartesianGrid strokeDasharray="3 3" stroke="#e0e0e0" />
+              <XAxis
+                dataKey="time"
+                tick={{ fontSize: 12, fill: "currentColor" }}
+                interval={getTickInterval(timeRange, chartData.length)}
+                angle={
+                  timeRange === "DAY" ||
+                  timeRange === "WEEK" ||
+                  timeRange === "MONTH"
+                    ? -45
+                    : 0
+                }
+                textAnchor={
+                  timeRange === "DAY" ||
+                  timeRange === "WEEK" ||
+                  timeRange === "MONTH"
+                    ? "end"
+                    : "middle"
+                }
+                height={
+                  timeRange === "DAY" ||
+                  timeRange === "WEEK" ||
+                  timeRange === "MONTH"
+                    ? 80
+                    : 60
+                }
+                axisLine={{ stroke: "#e0e0e0" }}
+                tickLine={{ stroke: "#e0e0e0" }}
+              />
+              <YAxis
+                tick={{ fontSize: 12, fill: "currentColor" }}
+                tickFormatter={(value) => formatValue(value, unit)}
+                axisLine={{ stroke: "#e0e0e0" }}
+                tickLine={{ stroke: "#e0e0e0" }}
+                tickCount={8}
+                width={60}
+                domain={
+                  unit === "docs"
+                    ? [0, "dataMax"]
+                    : unit === "ms"
+                    ? [0, "dataMax"]
+                    : ["auto", "auto"]
+                }
+                allowDecimals={unit !== "docs"}
+              />
+              <Tooltip
+                contentStyle={{
+                  backgroundColor: tooltipBackground,
+                  border: "1px solid #e0e0e0",
+                  borderRadius: "4px",
+                  color: tooltipTextColor,
+                  fontSize: "12px",
+                  padding: "4px 6px",
+                }}
+                formatter={(value: number) => [formatValue(value, unit), title]}
+                labelFormatter={(label) => `${label}`}
+                labelStyle={{ color: tooltipTextColor, fontSize: "12px" }}
+              />
+              {relevantMetrics.map((metric) => (
+                <Line
+                  key={metric.name}
+                  type="monotone"
+                  dataKey={metric.name}
+                  stroke={color}
+                  strokeWidth={2.5}
+                  dot={false}
+                  name={metric.label}
+                  activeDot={{ r: 4, fill: color }}
+                  isAnimationActive={false}
+                />
+              ))}
+            </LineChart>
+          )}
         </ResponsiveContainer>
       );
     },
@@ -396,7 +485,8 @@ const FtsMetricsCharts: React.FC<FtsMetricsChartsProps> = ({
             "Total Queries",
             ["fts_total_grpc_queries"],
             chartColors.primary,
-            "queries"
+            "queries",
+            "bar"
           )}
         </Paper>
 
@@ -408,7 +498,8 @@ const FtsMetricsCharts: React.FC<FtsMetricsChartsProps> = ({
             "Avg Latency",
             ["fts_avg_grpc_queries_latency"],
             chartColors.secondary,
-            "ms"
+            "ms",
+            "bar"
           )}
         </Paper>
 
@@ -420,7 +511,8 @@ const FtsMetricsCharts: React.FC<FtsMetricsChartsProps> = ({
             "Document Count",
             ["fts_doc_count"],
             chartColors.success,
-            "docs"
+            "docs",
+            "line"
           )}
         </Paper>
 
@@ -432,7 +524,8 @@ const FtsMetricsCharts: React.FC<FtsMetricsChartsProps> = ({
             "Disk Usage",
             ["fts_num_bytes_used_disk"],
             chartColors.info,
-            "bytes"
+            "bytes",
+            "line"
           )}
         </Paper>
       </Box>

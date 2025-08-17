@@ -1,0 +1,203 @@
+{
+  "type": "fulltext-index",
+  "name": "",
+  "uuid": "",
+  "sourceType": "gocbcore",
+  "sourceName": "",
+  "sourceUUID": "",
+  "planParams": {
+    "maxPartitionsPerPIndex": 1024,
+    "indexPartitions": 1
+  },
+  "params": {
+    "doc_config": {
+      "docid_prefix_delim": "",
+      "docid_regexp": "",
+      "mode": "scope.collection.type_field",
+      "type_field": "type"
+    },
+    "mapping": {
+      "analysis": {},
+      "default_analyzer": "keyword",
+      "default_datetime_parser": "dateTimeOptional",
+      "default_field": "_all",
+      "default_mapping": {
+        "dynamic": false,
+        "enabled": false
+      },
+      "default_type": "_default",
+      "docvalues_dynamic": false,
+      "index_dynamic": true,
+      "store_dynamic": false,
+      "type_field": "_type",
+      "types": {
+        "Resources.MedicationDispense": {
+          "dynamic": false,
+          "enabled": true,
+          "properties": {
+            "authorizingPrescription": {
+              "dynamic": true,
+              "enabled": true
+            },
+            "context": {
+              "dynamic": true,
+              "enabled": true
+            },
+            "deleted": {
+              "dynamic": false,
+              "enabled": true,
+              "fields": [
+                {
+                  "index": true,
+                  "name": "deleted",
+                  "type": "boolean"
+                }
+              ]
+            },
+            "destination": {
+              "dynamic": true,
+              "enabled": true
+            },
+            "id": {
+              "dynamic": false,
+              "enabled": true,
+              "fields": [
+                {
+                  "analyzer": "keyword",
+                  "index": true,
+                  "name": "id",
+                  "type": "text"
+                }
+              ]
+            },
+            "identifier": {
+              "dynamic": true,
+              "enabled": true
+            },
+            "medication": {
+              "dynamic": true,
+              "enabled": true
+            },
+            "medicationCodeableConcept": {
+              "dynamic": true,
+              "enabled": true
+            },
+            "meta": {
+              "dynamic": false,
+              "enabled": true,
+              "properties": {
+                "lastUpdated": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "docvalues": true,
+                      "index": true,
+                      "name": "lastUpdated",
+                      "type": "datetime"
+                    }
+                  ]
+                },
+                "versionId": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "index": true,
+                      "name": "versionId",
+                      "type": "text"
+                    }
+                  ]
+                }
+              }
+            },
+            "performer": {
+              "dynamic": false,
+              "enabled": true,
+              "properties": {
+                "actor": {
+                  "dynamic": true,
+                  "enabled": true
+                }
+              }
+            },
+            "receiver": {
+              "dynamic": true,
+              "enabled": true
+            },
+            "status": {
+              "dynamic": false,
+              "enabled": true,
+              "fields": [
+                {
+                  "index": true,
+                  "name": "status",
+                  "type": "text"
+                }
+              ]
+            },
+            "subject": {
+              "dynamic": false,
+              "enabled": true,
+              "properties": {
+                "reference": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "index": true,
+                      "name": "reference",
+                      "type": "text"
+                    }
+                  ]
+                }
+              }
+            },
+            "substitution": {
+              "dynamic": false,
+              "enabled": true,
+              "properties": {
+                "responsibleparty": {
+                  "dynamic": true,
+                  "enabled": true
+                }
+              }
+            },
+            "type": {
+              "dynamic": true,
+              "enabled": true
+            },
+            "whenHandedOver": {
+              "dynamic": false,
+              "enabled": true,
+              "fields": [
+                {
+                  "docvalues": true,
+                  "index": true,
+                  "name": "whenHandedOver",
+                  "type": "datetime"
+                }
+              ]
+            },
+            "whenprepared": {
+              "dynamic": false,
+              "enabled": true,
+              "fields": [
+                {
+                  "index": true,
+                  "name": "whenprepared",
+                  "type": "datetime"
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    "store": {
+      "indexType": "scorch",
+      "segmentVersion": 15
+    }
+  },
+  "sourceParams": {}
+}

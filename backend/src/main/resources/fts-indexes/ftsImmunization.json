@@ -1,0 +1,232 @@
+{
+  "type": "fulltext-index",
+  "name": "",
+  "uuid": "",
+  "sourceType": "gocbcore",
+  "sourceName": "",
+  "sourceUUID": "",
+  "planParams": {
+    "maxPartitionsPerPIndex": 1024,
+    "indexPartitions": 1
+  },
+  "params": {
+    "doc_config": {
+      "docid_prefix_delim": "",
+      "docid_regexp": "",
+      "mode": "scope.collection.type_field",
+      "type_field": "type"
+    },
+    "mapping": {
+      "analysis": {},
+      "default_analyzer": "keyword",
+      "default_datetime_parser": "dateTimeOptional",
+      "default_field": "_all",
+      "default_mapping": {
+        "dynamic": false,
+        "enabled": false
+      },
+      "default_type": "_default",
+      "docvalues_dynamic": false,
+      "index_dynamic": true,
+      "store_dynamic": false,
+      "type_field": "_type",
+      "types": {
+        "Resources.Immunization": {
+          "dynamic": false,
+          "enabled": true,
+          "properties": {
+            "deleted": {
+              "dynamic": false,
+              "enabled": true,
+              "fields": [
+                {
+                  "index": true,
+                  "name": "deleted",
+                  "type": "boolean"
+                }
+              ]
+            },
+            "id": {
+              "dynamic": false,
+              "enabled": true,
+              "fields": [
+                {
+                  "analyzer": "keyword",
+                  "index": true,
+                  "name": "id",
+                  "type": "text"
+                }
+              ]
+            },
+            "identifier": {
+              "dynamic": true,
+              "enabled": true
+            },
+            "location": {
+              "dynamic": true,
+              "enabled": true
+            },
+            "lotNumber": {
+              "dynamic": false,
+              "enabled": true,
+              "fields": [
+                {
+                  "index": true,
+                  "name": "lotNumber",
+                  "type": "text"
+                }
+              ]
+            },
+            "manufacturer": {
+              "dynamic": true,
+              "enabled": true
+            },
+            "meta": {
+              "dynamic": false,
+              "enabled": true,
+              "properties": {
+                "lastUpdated": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "docvalues": true,
+                      "index": true,
+                      "name": "lastUpdated",
+                      "type": "datetime"
+                    }
+                  ]
+                },
+                "versionId": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "index": true,
+                      "name": "versionId",
+                      "type": "text"
+                    }
+                  ]
+                }
+              }
+            },
+            "occurrenceDateTime": {
+              "dynamic": false,
+              "enabled": true,
+              "fields": [
+                {
+                  "docvalues": true,
+                  "index": true,
+                  "name": "occurrenceDateTime",
+                  "type": "datetime"
+                }
+              ]
+            },
+            "patient": {
+              "dynamic": false,
+              "enabled": true,
+              "properties": {
+                "reference": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "index": true,
+                      "name": "reference",
+                      "type": "text"
+                    }
+                  ]
+                }
+              }
+            },
+            "performer": {
+              "dynamic": false,
+              "enabled": true,
+              "properties": {
+                "actor": {
+                  "dynamic": true,
+                  "enabled": true
+                }
+              }
+            },
+            "protocolApplied": {
+              "dynamic": false,
+              "enabled": true,
+              "properties": {
+                "series": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "index": true,
+                      "name": "series",
+                      "type": "text"
+                    }
+                  ]
+                },
+                "targetDisease": {
+                  "dynamic": true,
+                  "enabled": true
+                }
+              }
+            },
+            "reaction": {
+              "dynamic": false,
+              "enabled": true,
+              "properties": {
+                "date": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "docvalues": true,
+                      "index": true,
+                      "name": "date",
+                      "type": "datetime"
+                    }
+                  ]
+                },
+                "detail": {
+                  "dynamic": true,
+                  "enabled": true
+                }
+              }
+            },
+            "reasonCode": {
+              "dynamic": true,
+              "enabled": true
+            },
+            "reasonReference": {
+              "dynamic": true,
+              "enabled": true
+            },
+            "status": {
+              "dynamic": false,
+              "enabled": true,
+              "fields": [
+                {
+                  "index": true,
+                  "name": "status",
+                  "type": "text"
+                }
+              ]
+            },
+            "statusReason": {
+              "dynamic": true,
+              "enabled": true
+            },
+            "vaccineCode": {
+              "dynamic": true,
+              "enabled": true
+            }
+          }
+        }
+      }
+    },
+    "store": {
+      "indexType": "scorch",
+      "segmentVersion": 15
+    }
+  },
+  "sourceParams": {}
+}

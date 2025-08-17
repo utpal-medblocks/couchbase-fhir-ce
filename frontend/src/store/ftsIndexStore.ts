@@ -1,4 +1,8 @@
 import { create } from "zustand";
+import {
+  getFtsProgress,
+  type FtsProgressData,
+} from "../services/ftsProgressService";
 
 // FTS Index Types matching backend models
 export interface FtsIndex {
@@ -23,6 +27,15 @@ export interface FtsIndexDetails {
   bucketName: string;
   indexDefinition: FtsIndex;
 
+  // Progress data from CB console API
+  progress?: {
+    doc_count: number;
+    ingest_status: string;
+    tot_seq_received: number;
+    num_mutations_to_index: number;
+    error?: string;
+  };
+
   // Note: All metrics (queryLatency, queryRate, totalQueries, diskSize, etc.)
   // are now handled by the dedicated metrics endpoint
 }
@@ -32,6 +45,7 @@ interface FtsIndexState {
   error: string | null;
   retrievedAt: Date | null;
   loading: boolean;
+  progressLoading: boolean;
 
   // Actions
   fetchIndexes: (
@@ -43,6 +57,11 @@ interface FtsIndexState {
     connectionName: string,
     bucketName: string,
     scopeName: string
+  ) => Promise<void>;
+  fetchProgress: (
+    connectionName: string,
+    bucketName: string,
+    scopeName?: string
   ) => Promise<void>;
   clearError: () => void;
   clearIndexes: () => void;
@@ -57,6 +76,7 @@ export const useFtsIndexStore = create<FtsIndexState>((set, get) => {
     error: null,
     retrievedAt: null,
     loading: false,
+    progressLoading: false,
 
     fetchIndexes: async (
       connectionName: string,
@@ -66,11 +86,11 @@ export const useFtsIndexStore = create<FtsIndexState>((set, get) => {
       try {
         set({ loading: true, error: null });
 
-        console.log("🔍 ftsIndexStore: Fetching FTS indexes...", {
-          connectionName,
-          bucketName,
-          scopeName,
-        });
+        // console.log("🔍 ftsIndexStore: Fetching FTS indexes...", {
+        //   connectionName,
+        //   bucketName,
+        //   scopeName,
+        // });
 
         const response = await fetch(
           `/api/fts/indexes?connectionName=${encodeURIComponent(
@@ -91,7 +111,7 @@ export const useFtsIndexStore = create<FtsIndexState>((set, get) => {
         }
 
         const data: FtsIndexDetails[] = await response.json();
-        console.log("✅ ftsIndexStore: FTS indexes received:", data);
+        // console.log("✅ ftsIndexStore: FTS indexes received:", data);
 
         set({
           indexes: data,
@@ -121,6 +141,65 @@ export const useFtsIndexStore = create<FtsIndexState>((set, get) => {
       scopeName: string
     ) => {
       await get().fetchIndexes(connectionName, bucketName, scopeName);
+    },
+
+    fetchProgress: async (
+      connectionName: string,
+      bucketName: string,
+      scopeName: string = "Resources"
+    ) => {
+      const { indexes, progressLoading } = get();
+
+      if (!indexes || !indexes.length) {
+        return;
+      }
+
+      try {
+        // Only set loading to true if no progress data exists yet (initial load)
+        const hasProgressData = indexes.some((idx) => idx.progress);
+        if (!hasProgressData) {
+          set({ progressLoading: true });
+        }
+
+        const indexNames = indexes.map((idx) => idx.indexName);
+        const progressData = await getFtsProgress(
+          connectionName,
+          indexNames,
+          bucketName,
+          scopeName
+        );
+
+        // Update indexes with progress data
+        const updatedIndexes = indexes.map((index) => {
+          const progress = progressData.results.find(
+            (p) => p.indexName === index.indexName
+          );
+
+          if (progress) {
+            return {
+              ...index,
+              progress: {
+                doc_count: progress.doc_count,
+                ingest_status: progress.ingest_status,
+                tot_seq_received: progress.tot_seq_received,
+                num_mutations_to_index: progress.num_mutations_to_index,
+                error: progress.error,
+              },
+            };
+          }
+
+          return index;
+        });
+
+        set({
+          indexes: updatedIndexes,
+          progressLoading: false,
+        });
+      } catch (err: any) {
+        console.error("FTS progress fetch error:", err.message);
+        set({ progressLoading: false });
+        // Don't set error state for progress failures - allows table to still show index names
+      }
     },
 
     clearError: () => {
