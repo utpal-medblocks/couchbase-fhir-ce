@@ -366,18 +366,21 @@ export const useBucketStore = create<BucketStore>()((set, get) => ({
                 Object.entries(collections).forEach(
                   ([collectionName, metrics]) => {
                     if (metrics && typeof metrics === "object") {
-                      const collectionDetail: CollectionDetails = {
-                        collectionName,
-                        scopeName,
-                        bucketName: bucket.bucketName,
-                        items: Number(metrics["items"]) || 0,
-                        diskSize: Number(metrics["diskSize"]) || 0,
-                        memUsed: Number(metrics["memUsed"]) || 0,
-                        ops: Number(metrics["ops"]) || 0,
-                        indexes: Number(metrics["indexes"]) || 0, // This might not be in the data yet
-                        maxTTL: Number(metrics["maxTTL"]) || 0,
-                      };
-                      allCollections.push(collectionDetail);
+                      // Skip Versions collection as it's for internal use only
+                      if (collectionName !== "Versions") {
+                        const collectionDetail: CollectionDetails = {
+                          collectionName,
+                          scopeName,
+                          bucketName: bucket.bucketName,
+                          items: Number(metrics["items"]) || 0,
+                          diskSize: Number(metrics["diskSize"]) || 0,
+                          memUsed: Number(metrics["memUsed"]) || 0,
+                          ops: Number(metrics["ops"]) || 0,
+                          indexes: Number(metrics["indexes"]) || 0, // This might not be in the data yet
+                          maxTTL: Number(metrics["maxTTL"]) || 0,
+                        };
+                        allCollections.push(collectionDetail);
+                      }
                       // console.log(
                       //   `📦 Added collection: ${scopeName}.${collectionName}`,
                       //   collectionDetail
