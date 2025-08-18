@@ -354,7 +354,15 @@ export default function FhirResources() {
             flexDirection: "column",
           }}
         >
-          <TableContainer sx={{ height: "100%" }}>
+          <TableContainer
+            sx={{
+              height: "100%",
+              overflowY: "auto",
+              scrollbarWidth: "none", // Firefox
+              msOverflowStyle: "none", // IE/Edge
+              "&::-webkit-scrollbar": { display: "none" }, // Chrome/Safari
+            }}
+          >
             <Table stickyHeader size="small">
               <TableHead>
                 <TableRow>
@@ -539,7 +547,7 @@ export default function FhirResources() {
                 sx={{
                   margin: 0,
                 }}
-                label="Timeline"
+                label="Versions"
               />
               <Tab
                 sx={{

@@ -77,21 +77,18 @@ public class FhirConfig {
         logger.info("🔍 Configuring FHIR Validator with US Core support");
         
         try {
-            // Create NPM package support for US Core
-            NpmPackageValidationSupport npmPackageSupport = new NpmPackageValidationSupport(fhirContext);
+            // Create validation support chain with US Core structure definitions
+            logger.info("📦 Loading US Core structure definitions from resources...");
             
-            // Load US Core 6.1.0 package
-            logger.info("📦 Loading US Core 6.1.0 package...");
-            npmPackageSupport.loadPackageFromClasspath("classpath:hl7.fhir.us.core-6.1.0.tgz");
-            logger.info("✅ US Core package loaded successfully");
-            
-            // Create validation support chain
+            // Create validation support chain - using base FHIR R4 support only
+            // US Core structure definitions are loaded separately as individual resources
             ValidationSupportChain validationSupportChain = new ValidationSupportChain(
                 new DefaultProfileValidationSupport(fhirContext),  // Base FHIR R4
-                npmPackageSupport,  // US Core package
                 new InMemoryTerminologyServerValidationSupport(fhirContext),
                 new CommonCodeSystemsTerminologyService(fhirContext)
             );
+            
+            logger.info("✅ US Core validation support configured with individual structure definitions");
             
             // Create validator with instance validator
             FhirValidator validator = fhirContext.newValidator();

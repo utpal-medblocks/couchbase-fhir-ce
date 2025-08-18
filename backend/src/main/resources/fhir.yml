@@ -158,6 +158,10 @@ fhir:
           description: "FHIR Location resources"
           indexes:
 
+        - name: "Versions"
+          description: "FHIR Versions resources"
+          indexes:
+
   build_commands:
     - name: "Build Deferred Indexes"
       description: "Finds all deferred indexes and generates BUILD INDEX statements to run."
