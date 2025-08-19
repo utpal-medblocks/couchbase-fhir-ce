@@ -4,9 +4,15 @@ import ca.uhn.fhir.context.FhirContext;
 import ca.uhn.fhir.rest.server.IResourceProvider;
 import ca.uhn.fhir.rest.server.RestfulServer;
 import ca.uhn.fhir.rest.server.tenant.UrlBaseTenantIdentificationStrategy;
+
+import com.couchbase.common.config.FhirConfig;
 import com.couchbase.fhir.resources.provider.FhirTransactionProvider;
 import com.couchbase.fhir.resources.provider.USCoreCapabilityProvider;
 import lombok.RequiredArgsConstructor;
+import net.sf.saxon.lib.Logger;
+
+import org.slf4j.LoggerFactory;
+
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
@@ -30,22 +36,27 @@ import java.util.List;
 @RequiredArgsConstructor
 @Component
 public class FhirRestfulServer extends RestfulServer {
+    private static final org.slf4j.Logger logger = org.slf4j.LoggerFactory.getLogger(FhirRestfulServer.class);
+
 
     @Autowired
     private List<IResourceProvider> providers;
 
     @Autowired
     private FhirTransactionProvider transactionProvider;
+    
+    @Autowired
+    private FhirContext fhirContext; // ← Inject your configured context
 
     @Override
     protected void initialize() {
-        setFhirContext(FhirContext.forR4());
+        logger.info("🚀 Initializing FhirRestfulServer");
+        setFhirContext(fhirContext); // Use the injected context
         setTenantIdentificationStrategy(new UrlBaseTenantIdentificationStrategy());
         registerInterceptor(new MultiTenantInterceptor());
         USCoreCapabilityProvider capabilityProvider = new USCoreCapabilityProvider(this);
         setServerConformanceProvider(capabilityProvider);
         registerProviders(providers);
-        
         // Register system-level transaction provider
         registerProvider(transactionProvider);
     }

@@ -33,6 +33,11 @@ import java.util.stream.Collectors;
 
 @Component
 public class ResourceProviderAutoConfig {
+    private static final org.slf4j.Logger logger = org.slf4j.LoggerFactory.getLogger(ResourceProviderAutoConfig.class);
+
+    public ResourceProviderAutoConfig() {
+        logger.info("🚀 ResourceProviderAutoConfig: Constructor called, bean is being instantiated");
+    }
 
     @Autowired
     private FHIRResourceService serviceFactory;
@@ -43,11 +48,13 @@ public class ResourceProviderAutoConfig {
     @Autowired
     private FhirBucketValidator bucketValidator;
 
+    @Autowired
+    private FhirContext fhirContext; // Inject singleton FhirContext bean
+
     @SuppressWarnings("unchecked")
     @Bean
     public List<IResourceProvider> dynamicProviders() {
-        List<IResourceProvider> providers = new ArrayList<>();
-        FhirContext fhirContext = FhirContext.forR4();
+    logger.info("🚀 ResourceProviderAutoConfig: Using injected singleton FhirContext");
         return fhirContext.getResourceTypes().stream()
                 .map(fhirContext::getResourceDefinition)
                 .map(rd -> (Class<? extends Resource>) rd.getImplementingClass())
