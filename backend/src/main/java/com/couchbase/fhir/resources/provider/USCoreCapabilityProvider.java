@@ -27,7 +27,6 @@ import static com.couchbase.fhir.resources.constants.USCoreProfiles.US_CORE_BASE
  * Register this bean in your Spring Boot or HAPI FHIR server configuration
  * to override the default CapabilityStatement generation logic.
  *
- * @author Utpal Sarmah
  */
 public class USCoreCapabilityProvider extends ServerCapabilityStatementProvider {
 

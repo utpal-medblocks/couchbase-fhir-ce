@@ -3,6 +3,8 @@ package com.couchbase.common.config;
 import ca.uhn.fhir.context.FhirContext;
 import ca.uhn.fhir.parser.IParser;
 import ca.uhn.fhir.validation.FhirValidator;
+import org.springframework.core.io.Resource;
+import org.springframework.core.io.support.PathMatchingResourcePatternResolver;
 
 // US Core validation support imports
 import ca.uhn.fhir.context.support.DefaultProfileValidationSupport;
@@ -11,6 +13,8 @@ import org.hl7.fhir.common.hapi.validation.validator.FhirInstanceValidator;
 import org.hl7.fhir.common.hapi.validation.support.NpmPackageValidationSupport;
 import org.hl7.fhir.common.hapi.validation.support.InMemoryTerminologyServerValidationSupport;
 import org.hl7.fhir.common.hapi.validation.support.CommonCodeSystemsTerminologyService;
+import org.hl7.fhir.common.hapi.validation.support.PrePopulatedValidationSupport;
+import org.hl7.fhir.r4.model.StructureDefinition;
 import org.hl7.fhir.r5.utils.validation.constants.BestPracticeWarningLevel;
 import org.hl7.fhir.utilities.validation.ValidationMessage;
 
@@ -104,29 +108,51 @@ public class FhirConfig {
             // Create validation support chain with US Core structure definitions
             logger.info("📦 Loading US Core structure definitions from resources...");
             
-            // Create validation support chain - using base FHIR R4 support only
-            // US Core structure definitions are loaded separately as individual resources
+            // Load US Core structure definitions from classpath
+            PrePopulatedValidationSupport usCoreSupport = new PrePopulatedValidationSupport(fhirContext);
+            PathMatchingResourcePatternResolver resolver = new PathMatchingResourcePatternResolver();
+            Resource[] usCoreResources = resolver.getResources("classpath:us_core/StructureDefinition-*.json");
+            
+            logger.info("🔍 Found {} US Core structure definition files", usCoreResources.length);
+            
+            int loadedCount = 0;
+            for (Resource resource : usCoreResources) {
+                try {
+                    String json = new String(resource.getInputStream().readAllBytes());
+                    StructureDefinition structureDefinition = fhirContext.newJsonParser().parseResource(StructureDefinition.class, json);
+                    usCoreSupport.addStructureDefinition(structureDefinition);
+                    loadedCount++;
+                    logger.debug("✅ Loaded US Core profile: {}", structureDefinition.getUrl());
+                } catch (Exception e) {
+                    logger.warn("⚠️  Failed to load US Core resource {}: {}", resource.getFilename(), e.getMessage());
+                }
+            }
+            
+            logger.info("✅ Successfully loaded {} US Core structure definitions", loadedCount);
+            
+            // Create validation support chain with US Core profiles
             ValidationSupportChain validationSupportChain = new ValidationSupportChain(
                 new DefaultProfileValidationSupport(fhirContext),  // Base FHIR R4
+                usCoreSupport,  // US Core profiles
                 new InMemoryTerminologyServerValidationSupport(fhirContext),
                 new CommonCodeSystemsTerminologyService(fhirContext)
             );
             
-            logger.info("✅ US Core validation support configured with individual structure definitions");
+            logger.info("✅ US Core validation support configured with {} structure definitions", loadedCount);
             
             // Create validator with instance validator
             FhirValidator validator = fhirContext.newValidator();
             FhirInstanceValidator instanceValidator = new FhirInstanceValidator(validationSupportChain);
             
-            // Configure to be permissive for development use
-            instanceValidator.setErrorForUnknownProfiles(false);
-            instanceValidator.setAnyExtensionsAllowed(true);
-            instanceValidator.setNoTerminologyChecks(true);
-            instanceValidator.setBestPracticeWarningLevel(BestPracticeWarningLevel.Ignore);
-            instanceValidator.setNoExtensibleWarnings(true);  // Add this for extension warnings
+            // Configure for strict US Core validation
+            instanceValidator.setErrorForUnknownProfiles(true);  // Require known profiles
+            instanceValidator.setAnyExtensionsAllowed(false);    // Validate extensions
+            instanceValidator.setNoTerminologyChecks(false);     // Enable terminology validation
+            instanceValidator.setBestPracticeWarningLevel(BestPracticeWarningLevel.Warning);
+            instanceValidator.setNoExtensibleWarnings(false);    // Show extension warnings
             validator.registerValidatorModule(instanceValidator);
 
-            logger.info("✅ FHIR Validator with US Core support configured");
+            logger.info("✅ FHIR Validator with US Core support configured (strict mode)");
             return validator;
             
         } catch (Exception e) {

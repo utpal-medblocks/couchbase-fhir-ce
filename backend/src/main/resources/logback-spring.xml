@@ -29,5 +29,5 @@
     <logger name="ca.uhn.fhir.parser.LenientErrorHandler" level="ERROR"/>
     
     <!-- Suppress verbose HAPI FHIR profile loading messages -->
-    <logger name="ca.uhn.fhir.context.support.DefaultProfileValidationSupport" level="WARN"/>
+    <logger name="ca.uhn.fhir.context.support.DefaultProfileValidationSupport" level="INFO"/>
 </configuration>

@@ -104,17 +104,24 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
             resource.setId(UUID.randomUUID().toString());
         }
 
+        // Get bucket-specific validation configuration first
+        FhirBucketConfigService.FhirBucketConfig bucketConfig = configService.getFhirBucketConfig(bucketName);
+
         FhirAuditService auditService = new FhirAuditService();
         UserAuditInfo auditInfo = auditService.getCurrentUserAuditInfo();
         auditService.addAuditInfoToMeta(resource, auditInfo, "CREATE");
 
-       /* if (resource instanceof DomainResource) {
-         //   ((DomainResource) resource).getMeta().addProfile("http://hl7.org/fhir/us/core/StructureDefinition/us-core-" +  resource.getClass().getSimpleName().toLowerCase());
-            ((DomainResource) resource).getMeta().setLastUpdated(new Date());
-        }*/
-
-        // Get bucket-specific validation configuration
-        FhirBucketConfigService.FhirBucketConfig bucketConfig = configService.getFhirBucketConfig(bucketName);
+        // Add US Core profile for strict validation buckets
+        if (resource instanceof DomainResource && bucketConfig.isEnforceUSCore()) {
+            String profileUrl = "http://hl7.org/fhir/us/core/StructureDefinition/us-core-" + 
+                                resource.getClass().getSimpleName().toLowerCase();
+            ((DomainResource) resource).getMeta().addProfile(profileUrl);
+            logger.info("🔍 ResourceProvider: Added US Core profile: {}", profileUrl);
+        }
+        
+        logger.info("🔍 ResourceProvider: Processing {} for bucket: {}", resourceClass.getSimpleName(), bucketName);
+        logger.info("🔍 ResourceProvider: Bucket config - strict: {}, enforceUSCore: {}, validationDisabled: {}", 
+            bucketConfig.isStrictValidation(), bucketConfig.isEnforceUSCore(), bucketConfig.isValidationDisabled());
         
         // Perform validation based on bucket configuration
         if (!bucketConfig.isValidationDisabled()) {
@@ -130,11 +137,20 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
                 validationMode = "lenient (basic FHIR R4)";
             }
             
-            logger.debug("Using {} validation for bucket: {}", validationMode, bucketName);
+            logger.info("🔍 ResourceProvider: Using {} validation for bucket: {}", validationMode, bucketName);
+            logger.info("🔍 ResourceProvider: About to validate resource with validator: {}", validator.getClass().getSimpleName());
             
             ValidationResult result = validator.validateWithResult(resource);
             
+            logger.info("🔍 ResourceProvider: Validation result - isSuccessful: {}, messageCount: {}", 
+                result.isSuccessful(), result.getMessages().size());
+            
             if (!result.isSuccessful()) {
+                logger.info("🔍 ResourceProvider: Validation FAILED - messages:");
+                result.getMessages().forEach(msg -> 
+                    logger.info("🔍   {}: {} - {}", msg.getSeverity(), msg.getLocationString(), msg.getMessage())
+                );
+                
                 if (bucketConfig.isStrictValidation()) {
                     // Strict mode: reject any validation errors
                     StringBuilder issues = new StringBuilder();
@@ -144,6 +160,7 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
                             .append(" - ")
                             .append(msg.getMessage())
                             .append("\n"));
+                    logger.error("🔍 ResourceProvider: Throwing UnprocessableEntityException for strict validation failure");
                     throw new UnprocessableEntityException("FHIR Validation failed (strict mode):\n" + issues.toString());
                 } else if (bucketConfig.isLenientValidation()) {
                     // Lenient mode: log warnings but continue
@@ -153,10 +170,10 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
                     );
                 }
             } else {
-                logger.debug("FHIR validation passed for {} in bucket {}", resourceClass.getSimpleName(), bucketName);
+                logger.info("🔍 ResourceProvider: ✅ FHIR validation PASSED for {} in bucket {}", resourceClass.getSimpleName(), bucketName);
             }
         } else {
-            logger.debug("FHIR Validation disabled for bucket: {}", bucketName);
+            logger.info("🔍 ResourceProvider: FHIR Validation DISABLED for bucket: {}", bucketName);
         }
 
 
