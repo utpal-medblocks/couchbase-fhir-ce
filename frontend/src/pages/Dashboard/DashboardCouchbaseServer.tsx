@@ -10,24 +10,33 @@ import {
   Typography,
   Button,
   Alert,
+  Card,
+  CardContent,
 } from "@mui/material";
 
 // Hooks and services
 import { useConnectionStore } from "../../store/connectionStore";
+import { useBucketStore } from "../../store/bucketStore";
 import { tableHeaderStyle, tableCellStyle } from "../../styles/styles";
 import { useTheme } from "@mui/material/styles";
 import { blueGrey } from "@mui/material/colors";
 import LinearProgressWithLabel from "../../components/LinearProgressWithLabel";
 import ChipsArray from "../../components/ChipsArray";
 import AddFhirBucketDialog from "./AddFhirBucketDialog";
+import type { FhirConfiguration } from "../../store/bucketStore";
 
 const DashboardCouchbaseServer: React.FC = () => {
   const { connection, metrics, metricsError, fetchMetrics } =
     useConnectionStore();
+  const { fetchFhirConfig } = useBucketStore();
 
   // Dialog state
   const [dialogOpen, setDialogOpen] = useState(false);
   const [selectedBucketName, setSelectedBucketName] = useState("");
+
+  // Selected bucket and FHIR config state
+  const [selectedBucket, setSelectedBucket] = useState<string | null>(null);
+  const [fhirConfig, setFhirConfig] = useState<FhirConfiguration | null>(null);
 
   // Define borderStyle for use in Table sx prop
   const theme = useTheme();
@@ -81,6 +90,27 @@ const DashboardCouchbaseServer: React.FC = () => {
   const handleDialogClose = () => {
     setDialogOpen(false);
     setSelectedBucketName("");
+  };
+
+  // Handle bucket row click
+  const handleBucketClick = async (
+    bucketName: string,
+    isFhirBucket: boolean
+  ) => {
+    setSelectedBucket(bucketName);
+
+    if (isFhirBucket && connection.name) {
+      try {
+        // Fetch FHIR config from API
+        const config = await fetchFhirConfig(connection.name, bucketName);
+        setFhirConfig(config);
+      } catch (error) {
+        console.error(`Failed to fetch FHIR config for ${bucketName}:`, error);
+        setFhirConfig(null);
+      }
+    } else {
+      setFhirConfig(null);
+    }
   };
 
   return (
@@ -226,7 +256,20 @@ const DashboardCouchbaseServer: React.FC = () => {
           <TableBody>
             {buckets.length > 0 ? (
               buckets.map((bucket, index) => (
-                <TableRow key={index}>
+                <TableRow
+                  key={index}
+                  hover
+                  onClick={() =>
+                    handleBucketClick(bucket.name, bucket.isFhirBucket || false)
+                  }
+                  sx={{
+                    cursor: "pointer",
+                    backgroundColor:
+                      selectedBucket === bucket.name
+                        ? "action.selected"
+                        : "inherit",
+                  }}
+                >
                   <TableCell sx={tableCellStyle}>{bucket.name}</TableCell>
                   <TableCell sx={tableCellStyle}>
                     {bucket.ramUsed} MB / {bucket.ramQuota} MB
@@ -280,7 +323,10 @@ const DashboardCouchbaseServer: React.FC = () => {
                           padding: "0px 10px !important",
                           marginX: "2px !important",
                         }}
-                        onClick={() => handleToggleFhir(bucket.name)}
+                        onClick={(e) => {
+                          e.stopPropagation(); // Prevent row click
+                          handleToggleFhir(bucket.name);
+                        }}
                       >
                         Add FHIR
                       </Button>
@@ -299,12 +345,130 @@ const DashboardCouchbaseServer: React.FC = () => {
         </Table>
       </TableContainer>
 
-      {/* Metrics Timestamp */}
-      {metrics?.retrievedAt && (
-        <Box sx={{ mt: 2, textAlign: "center" }}>
-          <Typography variant="caption" color="text.secondary">
-            Last updated: {new Date(metrics.retrievedAt).toLocaleString()}
+      {/* FHIR Configuration Display */}
+      {selectedBucket && (
+        <Box sx={{ mt: 2 }}>
+          <Typography variant="subtitle1" gutterBottom>
+            FHIR Configuration for "{selectedBucket}"
           </Typography>
+
+          {fhirConfig ? (
+            <Box sx={{ display: "flex", gap: 2, flexWrap: "wrap" }}>
+              {/* Left Box - Basic Configuration */}
+              <Box sx={{ flex: 1, minWidth: "300px" }}>
+                <Card variant="outlined" sx={{ height: "100%" }}>
+                  <CardContent>
+                    <Typography variant="h6" gutterBottom>
+                      Basic Configuration
+                    </Typography>
+
+                    <Typography variant="body2" sx={{ mb: 1 }}>
+                      <strong>FHIR Release:</strong> {fhirConfig.fhirRelease}
+                    </Typography>
+
+                    <Typography variant="body2" sx={{ mb: 1 }}>
+                      <strong>Profiles:</strong>
+                    </Typography>
+                    <Box sx={{ ml: 2, mb: 2 }}>
+                      {fhirConfig.profiles.map((profile, idx) => (
+                        <Typography
+                          key={idx}
+                          variant="body2"
+                          color="text.secondary"
+                        >
+                          • {profile.profile}{" "}
+                          {profile.version && `(v${profile.version})`}
+                        </Typography>
+                      ))}
+                    </Box>
+
+                    <Typography variant="body2" sx={{ mb: 1 }}>
+                      <strong>Validation:</strong>
+                    </Typography>
+                    <Box sx={{ ml: 2 }}>
+                      <Typography variant="body2" color="text.secondary">
+                        • Mode: {fhirConfig.validation.mode}
+                      </Typography>
+                      <Typography variant="body2" color="text.secondary">
+                        • Enforce US Core:{" "}
+                        {fhirConfig.validation.enforceUSCore
+                          ? "Enabled"
+                          : "Disabled"}
+                      </Typography>
+                      <Typography variant="body2" color="text.secondary">
+                        • Allow Unknown Elements:{" "}
+                        {fhirConfig.validation.allowUnknownElements
+                          ? "Enabled"
+                          : "Disabled"}
+                      </Typography>
+                      <Typography variant="body2" color="text.secondary">
+                        • Terminology Checks:{" "}
+                        {fhirConfig.validation.terminologyChecks
+                          ? "Enabled"
+                          : "Disabled"}
+                      </Typography>
+                    </Box>
+                  </CardContent>
+                </Card>
+              </Box>
+
+              {/* Right Box - Logs Configuration */}
+              <Box sx={{ flex: 1, minWidth: "300px" }}>
+                <Card variant="outlined" sx={{ height: "100%" }}>
+                  <CardContent>
+                    <Typography variant="h6" gutterBottom>
+                      Logs Configuration
+                    </Typography>
+
+                    <Typography variant="body2" sx={{ mb: 1 }}>
+                      <strong>Logs:</strong>
+                    </Typography>
+                    <Box sx={{ ml: 2 }}>
+                      <Typography variant="body2" color="text.secondary">
+                        • Enable System Logs:{" "}
+                        {fhirConfig.logs.enableSystem ? "Enabled" : "Disabled"}
+                      </Typography>
+                      <Typography variant="body2" color="text.secondary">
+                        • Enable CRUD Audit:{" "}
+                        {fhirConfig.logs.enableCRUDAudit
+                          ? "Enabled"
+                          : "Disabled"}
+                      </Typography>
+                      <Typography variant="body2" color="text.secondary">
+                        • Enable Search Audit:{" "}
+                        {fhirConfig.logs.enableSearchAudit
+                          ? "Enabled"
+                          : "Disabled"}
+                      </Typography>
+                      <Typography variant="body2" color="text.secondary">
+                        • Rotation By: {fhirConfig.logs.rotationBy}
+                      </Typography>
+                      <Typography variant="body2" color="text.secondary">
+                        • Number: {fhirConfig.logs.number}
+                      </Typography>
+                      <Typography variant="body2" color="text.secondary">
+                        • S3 Endpoint: {fhirConfig.logs.s3Endpoint || "(none)"}
+                      </Typography>
+                    </Box>
+                  </CardContent>
+                </Card>
+              </Box>
+            </Box>
+          ) : (
+            <Card variant="outlined">
+              <CardContent>
+                <Typography
+                  variant="body2"
+                  color="text.secondary"
+                  align="center"
+                >
+                  {buckets.find((b) => b.name === selectedBucket)?.isFhirBucket
+                    ? "Loading FHIR configuration..."
+                    : "This bucket is not FHIR-enabled. Click 'Add FHIR' to configure it."}
+                </Typography>
+              </CardContent>
+            </Card>
+          )}
         </Box>
       )}
 

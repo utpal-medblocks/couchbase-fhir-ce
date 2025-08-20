@@ -328,9 +328,64 @@ export const useBucketStore = create<BucketStore>()((set, get) => ({
         throw new Error(`HTTP error! status: ${response.status}`);
       }
 
-      const config: FhirConfiguration = await response.json();
+      // Backend returns flat structure
+      const backendConfig: {
+        fhirRelease?: string;
+        profiles?: Array<{ profile: string; version: string }>;
+        validationMode?: string;
+        enforceUSCore?: boolean;
+        allowUnknownElements?: boolean;
+        terminologyChecks?: boolean;
+        logs?: {
+          enableSystem: boolean;
+          enableCRUDAudit: boolean;
+          enableSearchAudit: boolean;
+          rotationBy: string;
+          number: number;
+          s3Endpoint: string;
+        };
+      } = await response.json();
 
-      // Update the store with the fetched configuration
+      // Transform flat backend structure to nested frontend structure
+      const config: FhirConfiguration = {
+        fhirRelease: backendConfig.fhirRelease || "Release 4",
+        profiles: backendConfig.profiles || [
+          { profile: "US Core", version: "6.1.0" },
+        ],
+        validation: {
+          mode:
+            (backendConfig.validationMode as
+              | "strict"
+              | "lenient"
+              | "disabled") || "lenient",
+          enforceUSCore: backendConfig.enforceUSCore || false,
+          allowUnknownElements:
+            backendConfig.allowUnknownElements !== undefined
+              ? backendConfig.allowUnknownElements
+              : true,
+          terminologyChecks: backendConfig.terminologyChecks || false,
+        },
+        logs: backendConfig.logs
+          ? {
+              enableSystem: backendConfig.logs.enableSystem || false,
+              enableCRUDAudit: backendConfig.logs.enableCRUDAudit || false,
+              enableSearchAudit: backendConfig.logs.enableSearchAudit || false,
+              rotationBy:
+                (backendConfig.logs.rotationBy as "size" | "days") || "size",
+              number: backendConfig.logs.number || 30,
+              s3Endpoint: backendConfig.logs.s3Endpoint || "",
+            }
+          : {
+              enableSystem: false,
+              enableCRUDAudit: false,
+              enableSearchAudit: false,
+              rotationBy: "size" as "size" | "days",
+              number: 30,
+              s3Endpoint: "",
+            },
+      };
+
+      // Update the store with the transformed configuration
       get().setFhirConfig(connectionId, bucketName, config);
 
       return config;

@@ -75,38 +75,45 @@ const FhirConfigurationForm: React.FC<FhirConfigurationFormProps> = ({
   return (
     <Box sx={{ mt: 2 }}>
       {/* Basic FHIR Configuration */}
-      <Card variant="outlined" sx={{ mb: 2 }}>
+      <Card variant="outlined" sx={{ mb: 1 }}>
         <CardContent>
           <Typography variant="h6" gutterBottom>
             FHIR Configuration
           </Typography>
 
-          <Box sx={{ display: "flex", gap: 2, mb: 2 }}>
+          <Box sx={{ display: "flex", gap: 2, mb: 1 }}>
             <FormControl fullWidth disabled={disabled}>
               <InputLabel>FHIR Release</InputLabel>
               <Select
+                disabled={true}
                 value={config.fhirRelease}
                 label="FHIR Release"
                 onChange={(e) => updateConfig({ fhirRelease: e.target.value })}
               >
                 <MenuItem value="Release 4">FHIR R4</MenuItem>
-                <MenuItem value="Release 5">FHIR R5</MenuItem>
               </Select>
             </FormControl>
 
-            <TextField
-              fullWidth
-              label="Profile"
-              value={config.profiles[0]?.profile || "US Core"}
-              disabled={true} // For now, US Core is default
-              helperText="US Core 6.1.0 (default)"
-            />
+            <FormControl fullWidth disabled={true}>
+              <InputLabel>US Core Profile</InputLabel>
+              <Select
+                value={config.profiles[0]?.profile || "US Core 6.1.0"}
+                label="US Core Profile"
+                disabled={true}
+              >
+                <MenuItem
+                  value={config.profiles[0]?.profile || "US Core 6.1.0"}
+                >
+                  US Core 6.1.0
+                </MenuItem>
+              </Select>
+            </FormControl>
           </Box>
         </CardContent>
       </Card>
 
       {/* Validation Configuration */}
-      <Card variant="outlined" sx={{ mb: 2 }}>
+      <Card variant="outlined" sx={{ mb: 1 }}>
         <CardContent>
           <Typography variant="h6" gutterBottom>
             Validation Settings
@@ -119,7 +126,7 @@ const FhirConfigurationForm: React.FC<FhirConfigurationFormProps> = ({
               onChange={(e) =>
                 updateValidation({ mode: e.target.value as any })
               }
-              sx={{ mb: 2 }}
+              sx={{ mb: 1 }}
             >
               <FormControlLabel
                 value="strict"
@@ -168,10 +175,11 @@ const FhirConfigurationForm: React.FC<FhirConfigurationFormProps> = ({
           </FormControl>
 
           {config.validation.mode !== "disabled" && (
-            <Box sx={{ mt: 2 }}>
+            <Box sx={{ mt: 1 }}>
               <FormControlLabel
                 control={
                   <Switch
+                    size="small"
                     checked={config.validation.enforceUSCore}
                     onChange={(e) =>
                       updateValidation({ enforceUSCore: e.target.checked })
@@ -185,6 +193,7 @@ const FhirConfigurationForm: React.FC<FhirConfigurationFormProps> = ({
               <FormControlLabel
                 control={
                   <Switch
+                    size="small"
                     checked={config.validation.allowUnknownElements}
                     onChange={(e) =>
                       updateValidation({
@@ -200,6 +209,7 @@ const FhirConfigurationForm: React.FC<FhirConfigurationFormProps> = ({
               <FormControlLabel
                 control={
                   <Switch
+                    size="small"
                     checked={config.validation.terminologyChecks}
                     onChange={(e) =>
                       updateValidation({ terminologyChecks: e.target.checked })
@@ -225,10 +235,11 @@ const FhirConfigurationForm: React.FC<FhirConfigurationFormProps> = ({
             Audit & Logging
           </Typography>
 
-          <Box sx={{ mb: 2 }}>
+          <Box sx={{ mb: 1 }}>
             <FormControlLabel
               control={
                 <Switch
+                  size="small"
                   checked={config.logs.enableCRUDAudit}
                   onChange={(e) =>
                     updateLogs({ enableCRUDAudit: e.target.checked })
@@ -242,6 +253,7 @@ const FhirConfigurationForm: React.FC<FhirConfigurationFormProps> = ({
             <FormControlLabel
               control={
                 <Switch
+                  size="small"
                   checked={config.logs.enableSearchAudit}
                   onChange={(e) =>
                     updateLogs({ enableSearchAudit: e.target.checked })
@@ -255,6 +267,7 @@ const FhirConfigurationForm: React.FC<FhirConfigurationFormProps> = ({
             <FormControlLabel
               control={
                 <Switch
+                  size="small"
                   checked={config.logs.enableSystem}
                   onChange={(e) =>
                     updateLogs({ enableSystem: e.target.checked })
@@ -266,14 +279,14 @@ const FhirConfigurationForm: React.FC<FhirConfigurationFormProps> = ({
             />
           </Box>
 
-          <Divider sx={{ my: 2 }} />
+          <Divider sx={{ my: 1 }} />
 
           {/* Log Rotation Settings */}
           <Typography variant="subtitle1" gutterBottom>
             Log Rotation (Future Feature)
           </Typography>
 
-          <Box sx={{ display: "flex", gap: 2, mb: 2 }}>
+          <Box sx={{ display: "flex", gap: 2, mb: 1 }}>
             <FormControl sx={{ minWidth: 120 }} disabled={true}>
               <InputLabel>Rotate by</InputLabel>
               <Select
@@ -307,7 +320,7 @@ const FhirConfigurationForm: React.FC<FhirConfigurationFormProps> = ({
             onChange={(e) => updateLogs({ s3Endpoint: e.target.value })}
             disabled={true}
             helperText="Future feature for log archival"
-            sx={{ mb: 2 }}
+            sx={{ mb: 1 }}
           />
         </AccordionDetails>
       </Accordion>

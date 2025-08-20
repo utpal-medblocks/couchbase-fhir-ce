@@ -39,20 +39,16 @@ public class FhirBucketController {
             @PathVariable String bucketName,
             @RequestParam String connectionName,
             @RequestBody(required = false) FhirConversionRequest request) {
-        
         try {
             logger.info("Starting FHIR conversion for bucket: {} using connection: {}", bucketName, connectionName);
-            
-            FhirConversionResponse response = fhirBucketService.startConversion(bucketName, connectionName);
-            
+            FhirConversionResponse response = fhirBucketService.startConversion(bucketName, connectionName, request);
             return ResponseEntity.ok(response);
-            
         } catch (Exception e) {
             logger.error("Failed to start FHIR conversion for bucket: {}", bucketName, e);
             FhirConversionResponse errorResponse = new FhirConversionResponse(
-                null, 
-                bucketName, 
-                com.couchbase.admin.fhirBucket.model.FhirConversionStatus.FAILED, 
+                null,
+                bucketName,
+                com.couchbase.admin.fhirBucket.model.FhirConversionStatus.FAILED,
                 "Failed to start conversion: " + e.getMessage()
             );
             return ResponseEntity.badRequest().body(errorResponse);

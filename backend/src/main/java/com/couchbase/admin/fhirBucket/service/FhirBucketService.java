@@ -42,17 +42,17 @@ public class FhirBucketService {
     }
     
     /**
-     * Start FHIR bucket conversion process
+     * Start FHIR bucket conversion process with custom configuration
      */
-    public FhirConversionResponse startConversion(String bucketName, String connectionName) {
+    public FhirConversionResponse startConversion(String bucketName, String connectionName, FhirConversionRequest request) {
         String operationId = UUID.randomUUID().toString();
         
         // Create status tracking
         FhirConversionStatusDetail statusDetail = new FhirConversionStatusDetail(operationId, bucketName);
         operationStatus.put(operationId, statusDetail);
         
-        // Start async conversion
-        CompletableFuture.runAsync(() -> performConversion(operationId, bucketName, connectionName));
+        // Start async conversion with custom config
+        CompletableFuture.runAsync(() -> performConversion(operationId, bucketName, connectionName, request));
         
         return new FhirConversionResponse(
             operationId, 
@@ -63,6 +63,13 @@ public class FhirBucketService {
     }
     
     /**
+     * Start FHIR bucket conversion process with default configuration
+     */
+    public FhirConversionResponse startConversion(String bucketName, String connectionName) {
+        return startConversion(bucketName, connectionName, null);
+    }
+    
+    /**
      * Get conversion status
      */
     public FhirConversionStatusDetail getConversionStatus(String operationId) {
@@ -70,9 +77,9 @@ public class FhirBucketService {
     }
     
     /**
-     * Perform the actual conversion process
+     * Perform the actual conversion process with custom configuration
      */
-    private void performConversion(String operationId, String bucketName, String connectionName) {
+    private void performConversion(String operationId, String bucketName, String connectionName, FhirConversionRequest request) {
         FhirConversionStatusDetail status = operationStatus.get(operationId);
         
         try {
@@ -121,9 +128,9 @@ public class FhirBucketService {
             createFtsIndexes(connectionName, bucketName);
             status.setCompletedSteps(7);
             
-            // Step 8: Mark as FHIR bucket
+            // Step 8: Mark as FHIR bucket with custom configuration
             updateStatus(status, "mark_as_fhir", "Marking bucket as FHIR-enabled");
-            markAsFhirBucket(bucketName, connectionName);
+            markAsFhirBucketWithConfig(bucketName, connectionName, request);
             status.setCompletedSteps(8);
             
             // Completion
@@ -137,6 +144,13 @@ public class FhirBucketService {
             status.setErrorMessage(e.getMessage());
             status.setCurrentStepDescription("Conversion failed: " + e.getMessage());
         }
+    }
+    
+    /**
+     * Perform the actual conversion process with default configuration
+     */
+    private void performConversion(String operationId, String bucketName, String connectionName) {
+        performConversion(operationId, bucketName, connectionName, null);
     }
     
     private void updateStatus(FhirConversionStatusDetail status, String stepName, String description) {
@@ -265,39 +279,79 @@ public class FhirBucketService {
         }
     }
     
-    private void markAsFhirBucket(String bucketName, String connectionName) throws Exception {
+    private void markAsFhirBucketWithConfig(String bucketName, String connectionName, FhirConversionRequest request) throws Exception {
         // Get connection to insert the FHIR configuration document
         Cluster cluster = connectionService.getConnection(connectionName);
         if (cluster == null) {
             throw new IllegalStateException("No active Couchbase connection found for: " + connectionName);
         }
         
-        // Create the comprehensive FHIR configuration document
-        var profileConfig = com.couchbase.client.java.json.JsonArray.create()
-            .add(com.couchbase.client.java.json.JsonObject.create()
+        // Use custom configuration if provided, otherwise use defaults
+        FhirBucketConfig customConfig = (request != null) ? request.getFhirConfiguration() : null;
+        
+        // Create profile configuration
+        var profileConfig = com.couchbase.client.java.json.JsonArray.create();
+        if (customConfig != null && customConfig.getProfiles() != null && !customConfig.getProfiles().isEmpty()) {
+            for (FhirBucketConfig.Profile profile : customConfig.getProfiles()) {
+                profileConfig.add(com.couchbase.client.java.json.JsonObject.create()
+                    .put("profile", profile.getProfile() != null ? profile.getProfile() : "US Core")
+                    .put("version", profile.getVersion() != null ? profile.getVersion() : "6.1.0"));
+            }
+        } else {
+            // Default profile
+            profileConfig.add(com.couchbase.client.java.json.JsonObject.create()
                 .put("profile", "US Core")
                 .put("version", "6.1.0"));
-                
-        var validationConfig = com.couchbase.client.java.json.JsonObject.create()
-            .put("mode", "lenient")           // "strict" | "lenient" | "disabled"
-            .put("enforceUSCore", false)      // true = strict US Core validation
-            .put("allowUnknownElements", true) // true = strip unknown fields
-            .put("terminologyChecks", false); // true = validate codes against terminologies
-            
-        var logsConfig = com.couchbase.client.java.json.JsonObject.create()
-            .put("enableSystem", false)
-            .put("enableCRUDAudit", false)
-            .put("enableSearchAudit", false)
-            .put("rotationBy", "size")        // "size" | "days"
-            .put("number", 30)                // in GB or Days
-            .put("s3Endpoint", "");           // S3 endpoint for log archival
+        }
         
+        // Create validation configuration
+        var validationConfig = com.couchbase.client.java.json.JsonObject.create();
+        if (customConfig != null && customConfig.getValidation() != null) {
+            FhirBucketConfig.Validation validation = customConfig.getValidation();
+            validationConfig
+                .put("mode", validation.getMode() != null ? validation.getMode() : "lenient")
+                .put("enforceUSCore", validation.isEnforceUSCore())
+                .put("allowUnknownElements", validation.isAllowUnknownElements())
+                .put("terminologyChecks", validation.isTerminologyChecks());
+        } else {
+            // Default validation
+            validationConfig
+                .put("mode", "lenient")
+                .put("enforceUSCore", false)
+                .put("allowUnknownElements", true)
+                .put("terminologyChecks", false);
+        }
+        
+        // Create logs configuration
+        var logsConfig = com.couchbase.client.java.json.JsonObject.create();
+        if (customConfig != null && customConfig.getLogs() != null) {
+            FhirBucketConfig.Logs logs = customConfig.getLogs();
+            logsConfig
+                .put("enableSystem", logs.isEnableSystem())
+                .put("enableCRUDAudit", logs.isEnableCRUDAudit())
+                .put("enableSearchAudit", logs.isEnableSearchAudit())
+                .put("rotationBy", logs.getRotationBy() != null ? logs.getRotationBy() : "size")
+                .put("number", logs.getNumber() > 0 ? logs.getNumber() : 30)
+                .put("s3Endpoint", logs.getS3Endpoint() != null ? logs.getS3Endpoint() : "");
+        } else {
+            // Default logs
+            logsConfig
+                .put("enableSystem", false)
+                .put("enableCRUDAudit", false)
+                .put("enableSearchAudit", false)
+                .put("rotationBy", "size")
+                .put("number", 30)
+                .put("s3Endpoint", "");
+        }
+        
+        // Create the comprehensive FHIR configuration document
         var fhirConfig = com.couchbase.client.java.json.JsonObject.create()
             .put("isFHIR", true)
             .put("createdAt", java.time.Instant.now().toString())
             .put("version", "1.0")
             .put("description", "FHIR-enabled bucket configuration")
-            .put("fhirRelease", "Release 4")
+            .put("fhirRelease", customConfig != null && customConfig.getFhirRelease() != null ? 
+                 customConfig.getFhirRelease() : "Release 4")
             .put("profiles", profileConfig)
             .put("validation", validationConfig)
             .put("logs", logsConfig);
@@ -311,7 +365,7 @@ public class FhirBucketService {
         
         try {
             cluster.query(sql);
-            // logger.info("Successfully marked bucket {} as FHIR-enabled", bucketName);
+            // logger.info("Successfully marked bucket {} as FHIR-enabled with custom configuration", bucketName);
             
         } catch (Exception e) {
             if (e.getMessage() != null && e.getMessage().contains("already exists")) {
@@ -321,6 +375,10 @@ public class FhirBucketService {
                 throw e;
             }
         }
+    }
+    
+    private void markAsFhirBucket(String bucketName, String connectionName) throws Exception {
+        markAsFhirBucketWithConfig(bucketName, connectionName, null);
     }
     
     /**

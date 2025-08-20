@@ -58,7 +58,7 @@ const AddFhirBucketDialog: React.FC<AddFhirBucketDialogProps> = ({
   const [activeStep, setActiveStep] = useState(0);
   const [fhirConfig, setFhirConfig] = useState<FhirConfiguration>({
     fhirRelease: "Release 4",
-    profiles: [{ profile: "US Core", version: "6.1.0" }],
+    profiles: [{ profile: "US Core 6.1.0", version: "" }],
     validation: {
       mode: "lenient",
       enforceUSCore: false,
@@ -236,7 +236,7 @@ const AddFhirBucketDialog: React.FC<AddFhirBucketDialogProps> = ({
       maxWidth={"sm"}
       disableEscapeKeyDown={!canClose}
     >
-      <DialogTitle>Convert to FHIR Bucket</DialogTitle>
+      <DialogTitle>Convert bucket "{bucketName}" to FHIR</DialogTitle>
       <DialogContent>
         {error && (
           <Alert variant="filled" severity="error" sx={{ mb: 2 }}>
@@ -250,12 +250,12 @@ const AddFhirBucketDialog: React.FC<AddFhirBucketDialogProps> = ({
           </Alert>
         )}
 
-        <Typography gutterBottom variant="body2" sx={{ mb: 2 }}>
+        {/* <Typography gutterBottom variant="body2" sx={{ mb: 2 }}>
           This action will convert <strong>{bucketName}</strong> to a FHIR
           bucket.
           <br />
           <strong>This action is irreversible.</strong>
-        </Typography>
+        </Typography> */}
 
         {/* Stepper */}
         <Stepper activeStep={activeStep} sx={{ mb: 3 }}>
@@ -284,13 +284,55 @@ const AddFhirBucketDialog: React.FC<AddFhirBucketDialogProps> = ({
               <Typography variant="body2">
                 <strong>FHIR Release:</strong> {fhirConfig.fhirRelease}
                 <br />
-                <strong>Validation Mode:</strong> {fhirConfig.validation.mode}
-                <br />
-                <strong>US Core Enforcement:</strong>{" "}
-                {fhirConfig.validation.enforceUSCore ? "Enabled" : "Disabled"}
-                <br />
-                <strong>CRUD Audit:</strong>{" "}
-                {fhirConfig.logs.enableCRUDAudit ? "Enabled" : "Disabled"}
+                <strong>Profiles:</strong>
+                <ul style={{ margin: 0, paddingLeft: 20 }}>
+                  {fhirConfig.profiles.map((p, idx) => (
+                    <li key={idx}>
+                      {p.profile}
+                      {p.version ? ` (v${p.version})` : ""}
+                    </li>
+                  ))}
+                </ul>
+                <strong>Validation:</strong>
+                <ul style={{ margin: 0, paddingLeft: 20 }}>
+                  <li>Mode: {fhirConfig.validation.mode}</li>
+                  <li>
+                    Enforce US Core:{" "}
+                    {fhirConfig.validation.enforceUSCore
+                      ? "Enabled"
+                      : "Disabled"}
+                  </li>
+                  <li>
+                    Allow Unknown Elements:{" "}
+                    {fhirConfig.validation.allowUnknownElements
+                      ? "Enabled"
+                      : "Disabled"}
+                  </li>
+                  <li>
+                    Terminology Checks:{" "}
+                    {fhirConfig.validation.terminologyChecks
+                      ? "Enabled"
+                      : "Disabled"}
+                  </li>
+                </ul>
+                <strong>Logs:</strong>
+                <ul style={{ margin: 0, paddingLeft: 20 }}>
+                  <li>
+                    Enable System Logs:{" "}
+                    {fhirConfig.logs.enableSystem ? "Enabled" : "Disabled"}
+                  </li>
+                  <li>
+                    Enable CRUD Audit:{" "}
+                    {fhirConfig.logs.enableCRUDAudit ? "Enabled" : "Disabled"}
+                  </li>
+                  <li>
+                    Enable Search Audit:{" "}
+                    {fhirConfig.logs.enableSearchAudit ? "Enabled" : "Disabled"}
+                  </li>
+                  <li>Rotation By: {fhirConfig.logs.rotationBy}</li>
+                  <li>Number: {fhirConfig.logs.number}</li>
+                  <li>S3 Endpoint: {fhirConfig.logs.s3Endpoint || "(none)"}</li>
+                </ul>
               </Typography>
             </Alert>
           </Box>
