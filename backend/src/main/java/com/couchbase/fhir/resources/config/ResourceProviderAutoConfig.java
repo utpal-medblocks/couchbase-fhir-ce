@@ -2,17 +2,19 @@ package com.couchbase.fhir.resources.config;
 
 import ca.uhn.fhir.context.FhirContext;
 import ca.uhn.fhir.rest.server.IResourceProvider;
+import ca.uhn.fhir.validation.FhirValidator;
 import com.couchbase.fhir.resources.provider.FhirCouchbaseResourceProvider;
 import com.couchbase.fhir.resources.search.validation.FhirSearchParameterPreprocessor;
 import com.couchbase.fhir.resources.service.FHIRResourceService;
+import com.couchbase.fhir.resources.service.FhirBucketConfigService;
 import com.couchbase.fhir.resources.validation.FhirBucketValidator;
 import org.hl7.fhir.r4.model.Resource;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Bean;
 
 import org.springframework.stereotype.Component;
 
-import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -47,9 +49,19 @@ public class ResourceProviderAutoConfig {
     
     @Autowired
     private FhirBucketValidator bucketValidator;
+    
+    @Autowired
+    private FhirBucketConfigService configService;
 
     @Autowired
     private FhirContext fhirContext; // Inject singleton FhirContext bean
+    
+    @Autowired
+    private FhirValidator strictValidator; // Primary US Core validator
+    
+    @Autowired
+    @Qualifier("basicFhirValidator")
+    private FhirValidator lenientValidator; // Basic validator
 
     @SuppressWarnings("unchecked")
     @Bean
@@ -59,7 +71,7 @@ public class ResourceProviderAutoConfig {
                 .map(fhirContext::getResourceDefinition)
                 .map(rd -> (Class<? extends Resource>) rd.getImplementingClass())
                 .distinct()
-                .map(clazz -> new FhirCouchbaseResourceProvider<>(clazz, serviceFactory.getService(clazz) , fhirContext, searchPreprocessor, bucketValidator))
+                .map(clazz -> new FhirCouchbaseResourceProvider<>(clazz, serviceFactory.getService(clazz) , fhirContext, searchPreprocessor, bucketValidator, configService, strictValidator, lenientValidator))
                 .collect(Collectors.toList());
 
     }

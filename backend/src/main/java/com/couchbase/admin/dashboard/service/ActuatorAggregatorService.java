@@ -62,10 +62,10 @@ public class ActuatorAggregatorService {
      */
     public DashboardMetrics getAggregatedMetrics() {
         if (isRunningInContainer()) {
-            log.info("Detected running inside a container environment");
+            //log.info("Detected running inside a container environment");
             return getMergedContainerAndActuatorMetrics();
         } else {
-            log.info("Detected running outside container (VM or bare metal)");
+            //log.info("Detected running outside container (VM or bare metal)");
             return getActuatorOnlyMetrics();
         }
     }

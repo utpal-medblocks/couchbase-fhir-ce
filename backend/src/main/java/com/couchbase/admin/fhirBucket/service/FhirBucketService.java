@@ -272,12 +272,35 @@ public class FhirBucketService {
             throw new IllegalStateException("No active Couchbase connection found for: " + connectionName);
         }
         
-        // Create the FHIR configuration document using Couchbase's JsonObject
+        // Create the comprehensive FHIR configuration document
+        var profileConfig = com.couchbase.client.java.json.JsonArray.create()
+            .add(com.couchbase.client.java.json.JsonObject.create()
+                .put("profile", "US Core")
+                .put("version", "6.1.0"));
+                
+        var validationConfig = com.couchbase.client.java.json.JsonObject.create()
+            .put("mode", "lenient")           // "strict" | "lenient" | "disabled"
+            .put("enforceUSCore", false)      // true = strict US Core validation
+            .put("allowUnknownElements", true) // true = strip unknown fields
+            .put("terminologyChecks", false); // true = validate codes against terminologies
+            
+        var logsConfig = com.couchbase.client.java.json.JsonObject.create()
+            .put("enableSystem", false)
+            .put("enableCRUDAudit", false)
+            .put("enableSearchAudit", false)
+            .put("rotationBy", "size")        // "size" | "days"
+            .put("number", 30)                // in GB or Days
+            .put("s3Endpoint", "");           // S3 endpoint for log archival
+        
         var fhirConfig = com.couchbase.client.java.json.JsonObject.create()
             .put("isFHIR", true)
             .put("createdAt", java.time.Instant.now().toString())
             .put("version", "1.0")
-            .put("description", "FHIR-enabled bucket configuration");
+            .put("description", "FHIR-enabled bucket configuration")
+            .put("fhirRelease", "Release 4")
+            .put("profiles", profileConfig)
+            .put("validation", validationConfig)
+            .put("logs", logsConfig);
         
         // Insert the document into Admin/config collection
         String documentId = "fhir-config";

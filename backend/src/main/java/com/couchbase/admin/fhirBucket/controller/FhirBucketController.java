@@ -4,6 +4,7 @@ import com.couchbase.admin.fhirBucket.model.FhirConversionRequest;
 import com.couchbase.admin.fhirBucket.model.FhirConversionResponse;
 import com.couchbase.admin.fhirBucket.model.FhirConversionStatusDetail;
 import com.couchbase.admin.fhirBucket.service.FhirBucketService;
+import com.couchbase.fhir.resources.service.FhirBucketConfigService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -25,6 +26,9 @@ public class FhirBucketController {
     
     @Autowired
     private FhirBucketService fhirBucketService;
+    
+    @Autowired
+    private FhirBucketConfigService fhirBucketConfigService;
     
     /**
      * Start FHIR bucket conversion
@@ -128,6 +132,35 @@ public class FhirBucketController {
             logger.error("Failed to get FHIR buckets: {}", e.getMessage());
             Map<String, Object> errorResponse = Map.of(
                 "error", "Failed to get FHIR buckets",
+                "message", e.getMessage()
+            );
+            return ResponseEntity.internalServerError().body(errorResponse);
+        }
+    }
+    
+    /**
+     * Get FHIR configuration for a bucket
+     * GET /api/admin/fhir-bucket/{bucketName}/config
+     */
+    @GetMapping("/{bucketName}/config")
+    public ResponseEntity<?> getFhirConfiguration(
+            @PathVariable String bucketName,
+            @RequestParam String connectionName) {
+        try {
+            logger.debug("Getting FHIR configuration for bucket: {} using connection: {}", bucketName, connectionName);
+            
+            FhirBucketConfigService.FhirBucketConfig config = fhirBucketConfigService.getFhirBucketConfig(bucketName, connectionName);
+            
+            if (config == null) {
+                return ResponseEntity.notFound().build();
+            }
+            
+            return ResponseEntity.ok(config);
+            
+        } catch (Exception e) {
+            logger.error("Failed to get FHIR configuration for bucket: {}", bucketName, e);
+            Map<String, Object> errorResponse = Map.of(
+                "error", "Failed to get FHIR configuration",
                 "message", e.getMessage()
             );
             return ResponseEntity.internalServerError().body(errorResponse);

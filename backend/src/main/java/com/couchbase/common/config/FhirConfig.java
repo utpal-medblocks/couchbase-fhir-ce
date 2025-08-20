@@ -49,11 +49,11 @@ public class FhirConfig {
 
     /**
      * Create JSON parser bean for dependency injection
-     * Optimized for US Core resource processing
+     * Optimized for US Core resource processing (lenient by default)
      */
     @Bean
     public IParser jsonParser(FhirContext fhirContext) {
-        logger.info("🔧 Configuring FHIR JSON Parser for US Core");
+        logger.info("🔧 Configuring FHIR JSON Parser for US Core (lenient)");
         
         IParser parser = fhirContext.newJsonParser();
         
@@ -64,7 +64,31 @@ public class FhirConfig {
         parser.setSummaryMode(false);
         parser.setEncodeElementsAppliesToChildResourcesOnly(false);
         
-        logger.info("✅ FHIR JSON Parser configured for US Core");
+        logger.info("✅ FHIR JSON Parser configured for US Core (lenient)");
+        return parser;
+    }
+    
+    /**
+     * Create strict JSON parser for strict validation buckets
+     */
+    @Bean
+    @Qualifier("strictJsonParser")
+    public IParser strictJsonParser(FhirContext fhirContext) {
+        logger.info("🔧 Configuring strict FHIR JSON Parser");
+        
+        IParser parser = fhirContext.newJsonParser();
+        
+        // Configure parser for strict validation
+        parser.setPrettyPrint(false);
+        parser.setStripVersionsFromReferences(false);
+        parser.setOmitResourceId(false);
+        parser.setSummaryMode(false);
+        parser.setEncodeElementsAppliesToChildResourcesOnly(false);
+        
+        // Use strict error handler that fails on unknown elements
+        parser.setParserErrorHandler(new ca.uhn.fhir.parser.StrictErrorHandler());
+        
+        logger.info("✅ Strict FHIR JSON Parser configured");
         return parser;
     }
 
