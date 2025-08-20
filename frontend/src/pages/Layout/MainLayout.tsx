@@ -110,12 +110,6 @@ const menuItems = [
     icon: VscFlame,
     path: "/fhir-resources",
   },
-  {
-    id: "workbench",
-    label: "API Workbench",
-    icon: TbApiApp,
-    path: "/workbench",
-  },
 ];
 
 const bottomMenuItems = [

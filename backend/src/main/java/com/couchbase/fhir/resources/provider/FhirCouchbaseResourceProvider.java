@@ -18,6 +18,8 @@ import com.couchbase.fhir.resources.config.TenantContextHolder;
 import com.couchbase.fhir.resources.repository.FhirResourceDaoImpl;
 import com.couchbase.fhir.resources.service.FhirAuditService;
 import com.couchbase.fhir.resources.service.UserAuditInfo;
+import com.couchbase.fhir.resources.service.FhirBucketConfigService;
+
 import com.couchbase.fhir.resources.util.*;
 import com.couchbase.fhir.search.model.TokenParam;
 import com.couchbase.fhir.resources.util.Ftsn1qlQueryBuilder.SortField;
@@ -33,6 +35,8 @@ import ca.uhn.fhir.rest.api.RestSearchParameterTypeEnum;
 import java.io.IOException;
 import java.util.*;
 import java.util.stream.Collectors;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Generic FHIR resource provider for HAPI FHIR that enables CRUD operations and search capabilities
@@ -48,19 +52,26 @@ import java.util.stream.Collectors;
 
 public class FhirCouchbaseResourceProvider <T extends Resource> implements IResourceProvider {
 
+    private static final Logger logger = LoggerFactory.getLogger(FhirCouchbaseResourceProvider.class);
     private final Class<T> resourceClass;
     private final FhirResourceDaoImpl<T> dao;
     private final FhirContext fhirContext;
     private final FhirSearchParameterPreprocessor searchPreprocessor;
     private final FhirBucketValidator bucketValidator;
+    private final FhirBucketConfigService configService;
+    private final FhirValidator strictValidator; // Primary US Core validator
+    private final FhirValidator lenientValidator; // Basic validator
 
 
-    public FhirCouchbaseResourceProvider(Class<T> resourceClass, FhirResourceDaoImpl<T> dao , FhirContext fhirContext, FhirSearchParameterPreprocessor searchPreprocessor, FhirBucketValidator bucketValidator) {
+    public FhirCouchbaseResourceProvider(Class<T> resourceClass, FhirResourceDaoImpl<T> dao , FhirContext fhirContext, FhirSearchParameterPreprocessor searchPreprocessor, FhirBucketValidator bucketValidator, FhirBucketConfigService configService, FhirValidator strictValidator, FhirValidator lenientValidator) {
         this.resourceClass = resourceClass;
         this.dao = dao;
         this.fhirContext = fhirContext;
         this.searchPreprocessor = searchPreprocessor;
         this.bucketValidator = bucketValidator;
+        this.configService = configService;
+        this.strictValidator = strictValidator;
+        this.lenientValidator = lenientValidator;
     }
 
     @Read
@@ -106,18 +117,50 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
             ((DomainResource) resource).getMeta().setLastUpdated(new Date());
         }*/
 
-        ValidationUtil validationUtil = new ValidationUtil();
-        ValidationResult result = validationUtil.validate(resource , resourceClass.getSimpleName() , fhirContext);
-        if (!result.isSuccessful()) {
-            StringBuilder issues = new StringBuilder();
-            result.getMessages().forEach(msg -> issues.append(msg.getSeverity())
-                    .append(": ")
-                    .append(msg.getLocationString())
-                    .append(" - ")
-                    .append(msg.getMessage())
-                    .append("\n"));
-
-            throw new UnprocessableEntityException("FHIR Validation failed:\n" + issues.toString());
+        // Get bucket-specific validation configuration
+        FhirBucketConfigService.FhirBucketConfig bucketConfig = configService.getFhirBucketConfig(bucketName);
+        
+        // Perform validation based on bucket configuration
+        if (!bucketConfig.isValidationDisabled()) {
+            // Choose validator based on bucket configuration
+            FhirValidator validator;
+            String validationMode;
+            
+            if (bucketConfig.isStrictValidation() || bucketConfig.isEnforceUSCore()) {
+                validator = strictValidator;
+                validationMode = "strict (US Core enforced)";
+            } else {
+                validator = lenientValidator;
+                validationMode = "lenient (basic FHIR R4)";
+            }
+            
+            logger.debug("Using {} validation for bucket: {}", validationMode, bucketName);
+            
+            ValidationResult result = validator.validateWithResult(resource);
+            
+            if (!result.isSuccessful()) {
+                if (bucketConfig.isStrictValidation()) {
+                    // Strict mode: reject any validation errors
+                    StringBuilder issues = new StringBuilder();
+                    result.getMessages().forEach(msg -> issues.append(msg.getSeverity())
+                            .append(": ")
+                            .append(msg.getLocationString())
+                            .append(" - ")
+                            .append(msg.getMessage())
+                            .append("\n"));
+                    throw new UnprocessableEntityException("FHIR Validation failed (strict mode):\n" + issues.toString());
+                } else if (bucketConfig.isLenientValidation()) {
+                    // Lenient mode: log warnings but continue
+                    logger.warn("FHIR Validation warnings for {} (lenient mode - continuing):", resourceClass.getSimpleName());
+                    result.getMessages().forEach(msg -> 
+                        logger.warn("  {}: {} - {}", msg.getSeverity(), msg.getLocationString(), msg.getMessage())
+                    );
+                }
+            } else {
+                logger.debug("FHIR validation passed for {} in bucket {}", resourceClass.getSimpleName(), bucketName);
+            }
+        } else {
+            logger.debug("FHIR Validation disabled for bucket: {}", bucketName);
         }
 
 

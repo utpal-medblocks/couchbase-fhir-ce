@@ -23,10 +23,17 @@ import React from "react";
 import { useConnectionStore } from "../../store/connectionStore";
 import { useBucketStore } from "../../store/bucketStore";
 import fhirResourceService from "../../services/fhirResourceService";
-import type { DocumentKeyResponse } from "../../services/fhirResourceService";
+import type {
+  DocumentKeyResponse,
+  DocumentMetadata,
+  DocumentMetadataResponse,
+} from "../../services/fhirResourceService";
 import EditorComponent from "../../components/EditorComponent";
 import FhirTreeView from "../../components/FhirTreeView";
+import TimelineComponent from "../../components/TimelineComponent";
+import BlameComponent from "../../components/BlameComponent";
 import { useThemeContext } from "../../contexts/ThemeContext";
+import type { VersionHistoryItem } from "../../components/TimelineComponent";
 
 export default function FhirResources() {
   // Get stores and theme
@@ -46,8 +53,16 @@ export default function FhirResources() {
   const [documentKeys, setDocumentKeys] = useState<string[]>([]);
   const [documentKeysLoading, setDocumentKeysLoading] = useState(false);
 
+  // Document metadata state
+  const [documentMetadata, setDocumentMetadata] = useState<DocumentMetadata[]>(
+    []
+  );
+  const [documentMetadataLoading, setDocumentMetadataLoading] = useState(false);
+
   // Document content state
   const [selectedDocumentKey, setSelectedDocumentKey] = useState("");
+  const [selectedDocumentMetadata, setSelectedDocumentMetadata] =
+    useState<DocumentMetadata | null>(null);
   const [documentContent, setDocumentContent] = useState<any>(null);
   const [documentLoading, setDocumentLoading] = useState(false);
 
@@ -55,6 +70,11 @@ export default function FhirResources() {
   const [page, setPage] = React.useState(0);
   const [rowsPerPage, setRowsPerPage] = React.useState(10);
   const [totalCount, setTotalCount] = React.useState(0);
+
+  // Version selection state for Timeline/Blame
+  const [selectedVersions, setSelectedVersions] = React.useState<
+    VersionHistoryItem[]
+  >([]);
 
   // Get available buckets for FHIR (you might want to filter these)
   const availableBuckets = bucketStore.buckets[connectionId] || [];
@@ -72,8 +92,8 @@ export default function FhirResources() {
           if (a.collectionName === "Patient") return -1;
           if (b.collectionName === "Patient") return 1;
 
-          // Sort rest by items count in descending order
-          return b.items - a.items;
+          // Sort rest alphabetically
+          return a.collectionName.localeCompare(b.collectionName);
         })
     : [];
 
@@ -106,7 +126,7 @@ export default function FhirResources() {
   ) => {
     setPage(newPage);
     if (selectedCollection) {
-      fetchDocumentKeys(selectedCollection, newPage, rowsPerPage);
+      fetchDocumentMetadata(selectedCollection, newPage, rowsPerPage);
     }
   };
 
@@ -115,14 +135,14 @@ export default function FhirResources() {
     setRowsPerPage(newRowsPerPage);
     setPage(0);
     if (selectedCollection) {
-      fetchDocumentKeys(selectedCollection, 0, newRowsPerPage);
+      fetchDocumentMetadata(selectedCollection, 0, newRowsPerPage);
     }
   };
 
   const handleCollectionClick = (collectionName: string) => {
     setSelectedCollection(collectionName);
     setPage(0); // Reset to first page
-    fetchDocumentKeys(collectionName, 0, rowsPerPage);
+    fetchDocumentMetadata(collectionName, 0, rowsPerPage);
   };
 
   const fetchDocumentContent = async (documentKey: string) => {
@@ -130,6 +150,8 @@ export default function FhirResources() {
 
     setDocumentLoading(true);
     setSelectedDocumentKey(documentKey);
+    // Reset version selections when switching documents
+    setSelectedVersions([]);
 
     try {
       // console.log("🔍 Frontend: Fetching document with key:", documentKey);
@@ -166,6 +188,15 @@ export default function FhirResources() {
     }
   };
 
+  const handleVersionCompare = (
+    version1: VersionHistoryItem,
+    version2: VersionHistoryItem
+  ) => {
+    setSelectedVersions([version1, version2]);
+    // Auto-switch to Blame tab to show the comparison
+    setSelectedTab(3);
+  };
+
   const fetchDocumentKeys = async (
     collectionName: string,
     pageNum: number,
@@ -193,6 +224,36 @@ export default function FhirResources() {
       setTotalCount(0);
     } finally {
       setDocumentKeysLoading(false);
+    }
+  };
+
+  const fetchDocumentMetadata = async (
+    collectionName: string,
+    pageNum: number,
+    pageSize: number
+  ) => {
+    if (!selectedBucket || !connectionId) return;
+
+    setDocumentMetadataLoading(true);
+    try {
+      const response: DocumentMetadataResponse =
+        await fhirResourceService.getDocumentMetadata({
+          connectionName: connectionId,
+          bucketName: selectedBucket,
+          collectionName: collectionName,
+          page: pageNum,
+          pageSize: pageSize,
+          patientId: patientId || undefined,
+        });
+
+      setDocumentMetadata(response.documents);
+      setTotalCount(response.totalCount);
+    } catch (error) {
+      console.error("Failed to fetch document metadata:", error);
+      setDocumentMetadata([]);
+      setTotalCount(0);
+    } finally {
+      setDocumentMetadataLoading(false);
     }
   };
 
@@ -293,7 +354,15 @@ export default function FhirResources() {
             flexDirection: "column",
           }}
         >
-          <TableContainer sx={{ height: "100%" }}>
+          <TableContainer
+            sx={{
+              height: "100%",
+              overflowY: "auto",
+              scrollbarWidth: "none", // Firefox
+              msOverflowStyle: "none", // IE/Edge
+              "&::-webkit-scrollbar": { display: "none" }, // Chrome/Safari
+            }}
+          >
             <Table stickyHeader size="small">
               <TableHead>
                 <TableRow>
@@ -342,7 +411,7 @@ export default function FhirResources() {
           </TableContainer>
         </Box>
 
-        {/* Document Keys Box - 30% */}
+        {/* Document IDs Box - 30% */}
         <Box
           sx={{
             width: "30%",
@@ -359,45 +428,67 @@ export default function FhirResources() {
             <Table stickyHeader size="small">
               <TableHead>
                 <TableRow>
-                  <TableCell sx={tableHeaderStyle}>Document Key</TableCell>
+                  <TableCell sx={tableHeaderStyle}>Resource id</TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
-                {documentKeysLoading ? (
+                {documentMetadataLoading ? (
                   <TableRow>
                     <TableCell align="center">
                       <CircularProgress size={20} />
                     </TableCell>
                   </TableRow>
-                ) : documentKeys.length === 0 ? (
+                ) : documentMetadata.length === 0 ? (
                   <TableRow>
                     <TableCell align="center">
                       <Typography color="textSecondary" variant="body2">
                         {selectedCollection
-                          ? "No document keys found"
+                          ? "No resource ids found"
                           : "Select a collection"}
                       </Typography>
                     </TableCell>
                   </TableRow>
                 ) : (
-                  documentKeys.map((documentKey) => (
-                    <TableRow
-                      key={documentKey}
-                      hover
-                      sx={{
-                        cursor: "pointer",
-                        backgroundColor:
-                          selectedDocumentKey === documentKey
-                            ? "action.selected"
-                            : "inherit",
-                      }}
-                      onClick={() => {
-                        fetchDocumentContent(documentKey);
-                      }}
-                    >
-                      <TableCell sx={tableCellStyle}>{documentKey}</TableCell>
-                    </TableRow>
-                  ))
+                  documentMetadata.map((metadata) => {
+                    const documentKey = `${selectedCollection}/${metadata.id}`;
+                    const isVersioned = parseInt(metadata.versionId) > 1;
+                    const isDeleted = metadata.deleted;
+
+                    return (
+                      <TableRow
+                        key={documentKey}
+                        hover
+                        sx={{
+                          cursor: "pointer",
+                          backgroundColor:
+                            selectedDocumentKey === documentKey
+                              ? "action.selected"
+                              : "inherit",
+                        }}
+                        onClick={() => {
+                          setSelectedDocumentMetadata(metadata);
+                          fetchDocumentContent(documentKey);
+                        }}
+                      >
+                        <TableCell sx={tableCellStyle}>
+                          <Typography
+                            variant="body2"
+                            sx={{
+                              color: isDeleted
+                                ? "error.main"
+                                : isVersioned
+                                ? "success.main"
+                                : "text.primary",
+                              fontWeight:
+                                isVersioned || isDeleted ? "medium" : "normal",
+                            }}
+                          >
+                            {metadata.id}
+                          </Typography>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })
                 )}
               </TableBody>
             </Table>
@@ -456,7 +547,13 @@ export default function FhirResources() {
                 sx={{
                   margin: 0,
                 }}
-                label="History"
+                label="Versions"
+              />
+              <Tab
+                sx={{
+                  margin: 0,
+                }}
+                label="Blame"
               />
             </Tabs>
           </Box>
@@ -498,7 +595,7 @@ export default function FhirResources() {
                     }}
                   >
                     <Typography variant="body2" color="text.secondary">
-                      Select a document key to view JSON content
+                      Select a document id to view JSON content
                     </Typography>
                   </Box>
                 )}
@@ -536,17 +633,28 @@ export default function FhirResources() {
               </Box>
             )}
             {selectedTab === 2 && (
-              <Box
-                sx={{
-                  display: "flex",
-                  justifyContent: "center",
-                  alignItems: "center",
-                  height: "100%",
-                }}
-              >
-                <Typography variant="body2" color="text.secondary">
-                  History view will go here
-                </Typography>
+              <Box sx={{ flex: 1, overflow: "hidden" }}>
+                <TimelineComponent
+                  documentKey={selectedDocumentKey}
+                  connectionName={connectionId}
+                  bucketName={selectedBucket}
+                  collectionName={selectedCollection}
+                  currentDocumentMetadata={
+                    selectedDocumentMetadata || undefined
+                  }
+                  onCompare={handleVersionCompare}
+                />
+              </Box>
+            )}
+            {selectedTab === 3 && (
+              <Box sx={{ flex: 1, overflow: "hidden" }}>
+                <BlameComponent
+                  documentKey={selectedDocumentKey}
+                  connectionName={connectionId}
+                  bucketName={selectedBucket}
+                  collectionName={selectedCollection}
+                  selectedVersions={selectedVersions}
+                />
               </Box>
             )}
           </Box>

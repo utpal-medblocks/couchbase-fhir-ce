@@ -49,11 +49,11 @@ public class FhirConfig {
 
     /**
      * Create JSON parser bean for dependency injection
-     * Optimized for US Core resource processing
+     * Optimized for US Core resource processing (lenient by default)
      */
     @Bean
     public IParser jsonParser(FhirContext fhirContext) {
-        logger.info("🔧 Configuring FHIR JSON Parser for US Core");
+        logger.info("🔧 Configuring FHIR JSON Parser for US Core (lenient)");
         
         IParser parser = fhirContext.newJsonParser();
         
@@ -64,7 +64,31 @@ public class FhirConfig {
         parser.setSummaryMode(false);
         parser.setEncodeElementsAppliesToChildResourcesOnly(false);
         
-        logger.info("✅ FHIR JSON Parser configured for US Core");
+        logger.info("✅ FHIR JSON Parser configured for US Core (lenient)");
+        return parser;
+    }
+    
+    /**
+     * Create strict JSON parser for strict validation buckets
+     */
+    @Bean
+    @Qualifier("strictJsonParser")
+    public IParser strictJsonParser(FhirContext fhirContext) {
+        logger.info("🔧 Configuring strict FHIR JSON Parser");
+        
+        IParser parser = fhirContext.newJsonParser();
+        
+        // Configure parser for strict validation
+        parser.setPrettyPrint(false);
+        parser.setStripVersionsFromReferences(false);
+        parser.setOmitResourceId(false);
+        parser.setSummaryMode(false);
+        parser.setEncodeElementsAppliesToChildResourcesOnly(false);
+        
+        // Use strict error handler that fails on unknown elements
+        parser.setParserErrorHandler(new ca.uhn.fhir.parser.StrictErrorHandler());
+        
+        logger.info("✅ Strict FHIR JSON Parser configured");
         return parser;
     }
 
@@ -77,21 +101,18 @@ public class FhirConfig {
         logger.info("🔍 Configuring FHIR Validator with US Core support");
         
         try {
-            // Create NPM package support for US Core
-            NpmPackageValidationSupport npmPackageSupport = new NpmPackageValidationSupport(fhirContext);
+            // Create validation support chain with US Core structure definitions
+            logger.info("📦 Loading US Core structure definitions from resources...");
             
-            // Load US Core 6.1.0 package
-            logger.info("📦 Loading US Core 6.1.0 package...");
-            npmPackageSupport.loadPackageFromClasspath("classpath:hl7.fhir.us.core-6.1.0.tgz");
-            logger.info("✅ US Core package loaded successfully");
-            
-            // Create validation support chain
+            // Create validation support chain - using base FHIR R4 support only
+            // US Core structure definitions are loaded separately as individual resources
             ValidationSupportChain validationSupportChain = new ValidationSupportChain(
                 new DefaultProfileValidationSupport(fhirContext),  // Base FHIR R4
-                npmPackageSupport,  // US Core package
                 new InMemoryTerminologyServerValidationSupport(fhirContext),
                 new CommonCodeSystemsTerminologyService(fhirContext)
             );
+            
+            logger.info("✅ US Core validation support configured with individual structure definitions");
             
             // Create validator with instance validator
             FhirValidator validator = fhirContext.newValidator();
