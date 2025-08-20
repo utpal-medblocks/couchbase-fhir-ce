@@ -10,12 +10,14 @@ import ca.uhn.fhir.rest.param.DateParam;
 import ca.uhn.fhir.rest.param.StringParam;
 import ca.uhn.fhir.rest.server.IResourceProvider;
 import ca.uhn.fhir.rest.server.exceptions.InternalErrorException;
+import ca.uhn.fhir.rest.server.exceptions.ResourceNotFoundException;
 import ca.uhn.fhir.rest.server.exceptions.UnprocessableEntityException;
 import ca.uhn.fhir.validation.FhirValidator;
 import ca.uhn.fhir.validation.ValidationResult;
 import com.couchbase.client.java.json.JsonObject;
 import com.couchbase.client.java.search.SearchQuery;
 import com.couchbase.fhir.resources.config.TenantContextHolder;
+import com.couchbase.fhir.resources.model.VersionedResource;
 import com.couchbase.fhir.resources.repository.FhirResourceDaoImpl;
 import com.couchbase.fhir.resources.service.FhirAuditService;
 import com.couchbase.fhir.resources.service.UserAuditInfo;
@@ -30,6 +32,7 @@ import com.couchbase.fhir.resources.validation.FhirBucketValidator;
 import com.couchbase.fhir.resources.validation.FhirBucketValidationException;
 import com.couchbase.fhir.validation.ValidationUtil;
 import org.hl7.fhir.instance.model.api.IBaseResource;
+import org.hl7.fhir.instance.model.api.IIdType;
 import org.hl7.fhir.r4.model.*;
 import ca.uhn.fhir.rest.api.RestSearchParameterTypeEnum;
 
@@ -111,7 +114,7 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
 
         FhirAuditService auditService = new FhirAuditService();
         UserAuditInfo auditInfo = auditService.getCurrentUserAuditInfo();
-        auditService.addAuditInfoToMeta(resource, auditInfo, "CREATE");
+        auditService.addAuditInfoToMeta(resource, auditInfo, "CREATE" , "1");
 
        /* if (resource instanceof DomainResource) {
          //   ((DomainResource) resource).getMeta().addProfile("http://hl7.org/fhir/us/core/StructureDefinition/us-core-" +  resource.getClass().getSimpleName().toLowerCase());
@@ -301,7 +304,6 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
 
         }
 
-
         // Construct a FHIR Bundle response with _summary and _elements support
 
         // Construct a FHIR Bundle response
@@ -325,6 +327,57 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
         }
 
         return bundle;
+    }
+
+
+    @Delete
+    public MethodOutcome delete(@IdParam IIdType theId, RequestDetails requestDetails) {
+
+        String bucketName = TenantContextHolder.getTenantId();
+
+        // STEP 0: Validate that this is a FHIR bucket before proceeding
+        try {
+            bucketValidator.validateFhirBucketOrThrow(bucketName, "default");
+        } catch (FhirBucketValidationException e) {
+            throw new ca.uhn.fhir.rest.server.exceptions.InvalidRequestException(e.getMessage());
+        }
+
+        //STEP 1: Fetch Current resource
+        JsonObject current = dao.read(resourceClass.getSimpleName(), theId.getIdPart(), bucketName);
+
+        if (current == null) {
+            throw new ca.uhn.fhir.rest.server.exceptions.ResourceNotFoundException(theId);
+        }
+
+        //STEP 2: Check if it is deleted
+        boolean isDeleted = current.containsKey("deleted") && current.getBoolean("deleted");
+        if (isDeleted) {
+            throw new ca.uhn.fhir.rest.server.exceptions.PreconditionFailedException(
+                    resourceClass.getSimpleName() + "/" + theId.getIdPart() + " is already deleted"
+            );
+        }
+
+        VersionedResource  versionedResource = FhirVersioningUtil.getVersionedResource(current , resourceClass.getSimpleName(), theId.getIdPart() , "DELETE" , fhirContext);
+
+        boolean deleted = dao.upsert(resourceClass.getSimpleName() , versionedResource , bucketName);
+
+        MethodOutcome outcome = new MethodOutcome();
+        if (deleted) {
+            OperationOutcome outcomeResource = new OperationOutcome();
+
+            OperationOutcome.OperationOutcomeIssueComponent issue =
+                    new OperationOutcome.OperationOutcomeIssueComponent()
+                            .setSeverity(OperationOutcome.IssueSeverity.INFORMATION)
+                            .setCode(OperationOutcome.IssueType.INFORMATIONAL) // required field
+                            .setDiagnostics("Resource "+ theId.getIdPart()+" is deleted successfully");
+
+            outcomeResource.addIssue(issue);
+            outcome.setOperationOutcome(outcomeResource);
+        } else {
+            throw new ResourceNotFoundException(theId);
+        }
+        return outcome;
+
     }
 
 
