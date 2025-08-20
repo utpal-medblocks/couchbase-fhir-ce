@@ -1,6 +1,7 @@
 package com.couchbase.fhir.resources.provider;
 
 import ca.uhn.fhir.context.*;
+import ca.uhn.fhir.parser.IParser;
 import ca.uhn.fhir.rest.annotation.*;
 import ca.uhn.fhir.rest.api.MethodOutcome;
 import ca.uhn.fhir.rest.api.SummaryEnum;
@@ -76,8 +77,6 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
             throw new ca.uhn.fhir.rest.server.exceptions.InvalidRequestException(e.getMessage());
         }
 
-        /*return dao.read(resourceClass.getSimpleName(), theId.getIdPart() , bucketName).orElseThrow(() ->
-                new ResourceNotFoundException(theId));*/
         JsonObject jsonObject =  dao.read(resourceClass.getSimpleName(), theId.getIdPart() , bucketName);
         return SummaryHelper.applySummary(jsonObject, summaryParam , fhirContext);
 
@@ -266,14 +265,290 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
     }
 
 
-
-
-
-
-
     @Override
     public Class<T> getResourceType() {
         return resourceClass;
+    }
+
+
+    // ========== _summary and _elements Support Methods ==========
+
+    /**
+     * Parse _summary parameter from search parameters (FHIR standard)
+     */
+    private SummaryEnum parseSummaryParameter(Map<String, String> searchParams) {
+        String summaryValue = searchParams.get("_summary");
+        if (summaryValue == null || summaryValue.isEmpty()) {
+            return null;
+        }
+
+        try {
+            switch (summaryValue.toLowerCase()) {
+                case "true":
+                    return SummaryEnum.TRUE;
+                case "false":
+                    return SummaryEnum.FALSE;
+                case "text":
+                    return SummaryEnum.TEXT;
+                case "data":
+                    return SummaryEnum.DATA;
+                case "count":
+                    return SummaryEnum.COUNT;
+                default:
+                    return SummaryEnum.FALSE;
+            }
+        } catch (Exception e) {
+            return SummaryEnum.FALSE;
+        }
+    }
+
+    /**
+     * Parse _elements parameter from search parameters (FHIR standard)
+     */
+    private Set<String> parseElementsParameter(Map<String, String> searchParams) {
+        String elementsValue = searchParams.get("_elements");
+        if (elementsValue == null || elementsValue.isEmpty()) {
+            return null;
+        }
+
+        try {
+            Set<String> elements = new HashSet<>();
+            String[] elementArray = elementsValue.split(",");
+
+            for (String element : elementArray) {
+                String trimmedElement = element.trim();
+                if (!trimmedElement.isEmpty() && !trimmedElement.equals("*")) {
+                    elements.add(trimmedElement);
+                }
+            }
+
+            return elements.isEmpty() ? null : elements;
+
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /**
+     * Parse _count parameter from search parameters (FHIR standard)
+     * Default is 20, maximum is 100 for performance
+     */
+    private int parseCountParameter(Map<String, String> searchParams) {
+        String countValue = searchParams.get("_count");
+        if (countValue == null || countValue.isEmpty()) {
+            return 20; // Default count reduced from 50 to 20
+        }
+
+        try {
+            int count = Integer.parseInt(countValue);
+            // Limit to reasonable bounds
+            if (count <= 0) return 20;
+            if (count > 100) return 100; // Maximum limit for performance
+            return count;
+        } catch (NumberFormatException e) {
+            return 20; // Default on parse error
+        }
+    }
+
+    /**
+     * Parse _sort parameter from search parameters (FHIR standard)
+     * Supports: _sort=field (ascending), _sort=-field (descending), _sort=field1,field2,-field3
+     * Maps FHIR field names to proper FTS paths
+     */
+    private List<SortField> parseSortParameter(Map<String, String> searchParams) {
+        String sortValue = searchParams.get("_sort");
+        if (sortValue == null || sortValue.isEmpty()) {
+            return new ArrayList<>();
+        }
+
+        List<SortField> sortFields = new ArrayList<>();
+        String[] fields = sortValue.split(",");
+
+        for (String field : fields) {
+            field = field.trim();
+            if (field.isEmpty()) continue;
+
+            // Check for descending order prefix
+            boolean isDescending = field.startsWith("-");
+            String fieldName = isDescending ? field.substring(1).trim() : field;
+
+            // Only allow alphanumeric, dots, and underscores for security
+            if (!fieldName.matches("^[a-zA-Z0-9._]+$")) {
+                continue; // Skip invalid sort field
+            }
+
+            // Map FHIR field names to proper FTS paths
+            String mappedField = mapFhirFieldToFtsPath(fieldName, resourceClass.getSimpleName());
+            sortFields.add(new SortField(mappedField, isDescending));
+        }
+
+        return sortFields;
+    }
+
+    /**
+     * Parse _total parameter from search parameters (FHIR standard)
+     * Supports: _total=none (default), _total=estimate, _total=accurate
+     */
+    private String parseTotalParameter(Map<String, String> searchParams) {
+        String totalValue = searchParams.get("_total");
+        if (totalValue == null || totalValue.isEmpty()) {
+            return "none"; // Default
+        }
+
+        switch (totalValue.toLowerCase()) {
+            case "none":
+            case "estimate":
+            case "accurate":
+                return totalValue.toLowerCase();
+            default:
+                return "none"; // Invalid value defaults to none
+        }
+    }
+
+    /**
+     * Handle count-only queries (_total=accurate with _count=0)
+     */
+    private Bundle handleCountOnlyQuery(List<SearchQuery> ftsQueries, List<SearchQuery> mustNotQueries,
+                                        String resourceType, String bucketName) {
+        int totalCount = getAccurateCount(ftsQueries, mustNotQueries, resourceType, bucketName);
+
+        Bundle bundle = new Bundle();
+        bundle.setType(Bundle.BundleType.SEARCHSET);
+        bundle.setTotal(totalCount);
+        // No entries - just the count
+
+        return bundle;
+    }
+
+    /**
+     * Get accurate count using FTS COUNT query
+     */
+    private int getAccurateCount(List<SearchQuery> ftsQueries, List<SearchQuery> mustNotQueries,
+                                 String resourceType, String bucketName) {
+        try {
+            Ftsn1qlQueryBuilder ftsn1qlQueryBuilder = new Ftsn1qlQueryBuilder();
+            String countQuery = ftsn1qlQueryBuilder.buildCountQuery(ftsQueries, mustNotQueries, resourceType);
+
+            // Execute count query via DAO
+            int count = dao.getCount(resourceType, countQuery);
+            return count;
+
+        } catch (Exception e) {
+            // Fallback to estimated count or 0
+            return 0;
+        }
+    }
+
+    /**
+     * Map FHIR field names to proper FTS index paths
+     */
+    private String mapFhirFieldToFtsPath(String fhirField, String resourceType) {
+        // Handle common FHIR field mappings by resource type
+        switch (resourceType) {
+            case "Patient":
+                switch (fhirField) {
+                    case "family": return "name.family";  // Let query builder add .keyword
+                    case "given": return "name.given";    // Let query builder add .keyword
+                    case "birthdate": return "birthDate"; // Datetime - no .keyword needed
+                    case "birthDate": return "birthDate"; // Datetime - no .keyword needed
+                    case "gender": return "gender";       // Let query builder add .keyword
+                    case "active": return "active";       // Boolean - no .keyword needed
+                    default: break;
+                }
+                break;
+
+            case "Observation":
+                switch (fhirField) {
+                    case "date": return "effectiveDateTime";
+                    case "code": return "code.coding.code";
+                    case "status": return "status";
+                    default: break;
+                }
+                break;
+
+            case "Encounter":
+                switch (fhirField) {
+                    case "date": return "period.start";
+                    case "status": return "status";
+                    case "class": return "class.code";
+                    default: break;
+                }
+                break;
+
+            // Add more resource-specific mappings as needed
+        }
+
+        // Handle common fields across all resources
+        switch (fhirField) {
+            case "_lastUpdated": return "meta.lastUpdated";
+            case "lastUpdated": return "meta.lastUpdated";
+            case "_id": return "id";
+            default: return fhirField; // Use as-is if no mapping found
+        }
+    }
+
+    /**
+     * Apply resource filtering based on _summary and _elements parameters
+     */
+    @SuppressWarnings("unchecked")
+    private T applyResourceFiltering(T resource, SummaryEnum summaryMode, Set<String> elements) {
+        if (summaryMode == null && elements == null) {
+            return resource; // No filtering needed
+        }
+
+        try {
+            IParser parser = fhirContext.newJsonParser();
+
+            // Apply summary mode
+            if (summaryMode != null) {
+                switch (summaryMode) {
+                    case TRUE:
+                        parser.setSummaryMode(true);
+                        break;
+                    case COUNT:
+                        // For count mode, return minimal resource (just id and resourceType)
+                        parser.setEncodeElements(Set.of("id", "resourceType"));
+                        break;
+                    case TEXT:
+                        parser.setEncodeElements(Set.of("id", "resourceType", "text", "meta"));
+                        break;
+                    case DATA:
+                        parser.setOmitResourceId(false);
+                        parser.setSummaryMode(false);
+                        break;
+                    case FALSE:
+                    default:
+                        // No summary mode
+                        break;
+                }
+            }
+
+            // Apply elements filter
+            if (elements != null && !elements.isEmpty()) {
+                Set<String> encodeElements = new HashSet<>();
+
+                // Always include mandatory fields
+                encodeElements.add("id");
+                encodeElements.add("resourceType");
+                encodeElements.add("meta");
+
+                // Add requested elements with resource type prefix (HAPI requirement)
+                String resourceType = resource.getClass().getSimpleName();
+                for (String element : elements) {
+                    encodeElements.add(resourceType + "." + element);
+                }
+
+                parser.setEncodeElements(encodeElements);
+            }
+
+            // Serialize and deserialize to apply filtering
+            String filteredJson = parser.encodeResourceToString(resource);
+            return (T) parser.parseResource(resourceClass, filteredJson);
+
+        } catch (Exception e) {
+            // If filtering fails, return original resource
+            return resource;
+        }
     }
 
 }
