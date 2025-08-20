@@ -381,6 +381,74 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
     }
 
 
+    /**
+     * FHIR $validate Operation - Validates a resource without storing it
+     * POST /fhir/{bucket}/{ResourceType}/$validate
+     */
+    @Operation(name = "$validate", idempotent = false)
+    public OperationOutcome validateResource(@ResourceParam T resource) {
+        try {
+            // Create a FHIR validator
+            FhirValidator validator = fhirContext.newValidator();
+
+            // Validate the resource
+            ValidationResult result = validator.validateWithResult(resource);
+
+            // Create OperationOutcome based on validation result
+            OperationOutcome outcome = new OperationOutcome();
+
+            if (result.isSuccessful()) {
+                // Validation passed
+                outcome.addIssue()
+                        .setSeverity(OperationOutcome.IssueSeverity.INFORMATION)
+                        .setCode(OperationOutcome.IssueType.INFORMATIONAL)
+                        .setDiagnostics("Resource validation successful");
+
+            } else {
+                // Validation failed - add all issues
+                for (var issue : result.getMessages()) {
+                    OperationOutcome.OperationOutcomeIssueComponent outcomeIssue = outcome.addIssue();
+
+                    // Map severity
+                    switch (issue.getSeverity()) {
+                        case ERROR:
+                            outcomeIssue.setSeverity(OperationOutcome.IssueSeverity.ERROR);
+                            break;
+                        case WARNING:
+                            outcomeIssue.setSeverity(OperationOutcome.IssueSeverity.WARNING);
+                            break;
+                        case INFORMATION:
+                            outcomeIssue.setSeverity(OperationOutcome.IssueSeverity.INFORMATION);
+                            break;
+                        default:
+                            outcomeIssue.setSeverity(OperationOutcome.IssueSeverity.ERROR);
+                    }
+
+                    // Set issue type and message
+                    outcomeIssue.setCode(OperationOutcome.IssueType.INVALID);
+                    outcomeIssue.setDiagnostics(issue.getMessage());
+
+                    // Add location if available
+                    if (issue.getLocationString() != null) {
+                        outcomeIssue.addLocation(issue.getLocationString());
+                    }
+                }
+            }
+
+            return outcome;
+
+        } catch (Exception e) {
+            // Handle validation errors
+            OperationOutcome errorOutcome = new OperationOutcome();
+            errorOutcome.addIssue()
+                    .setSeverity(OperationOutcome.IssueSeverity.ERROR)
+                    .setCode(OperationOutcome.IssueType.EXCEPTION)
+                    .setDiagnostics("Validation failed: " + e.getMessage());
+
+            return errorOutcome;
+        }
+    }
+
     @Override
     public Class<T> getResourceType() {
         return resourceClass;
