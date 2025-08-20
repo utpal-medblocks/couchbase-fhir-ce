@@ -11,6 +11,7 @@ import ca.uhn.fhir.rest.param.StringParam;
 import ca.uhn.fhir.rest.server.IResourceProvider;
 import ca.uhn.fhir.rest.server.exceptions.InternalErrorException;
 import ca.uhn.fhir.rest.server.exceptions.UnprocessableEntityException;
+import ca.uhn.fhir.validation.FhirValidator;
 import ca.uhn.fhir.validation.ValidationResult;
 import com.couchbase.client.java.json.JsonObject;
 import com.couchbase.client.java.search.SearchQuery;
@@ -282,6 +283,25 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
 
         List<T> results = dao.search(resourceType, query);
 
+        //Handle  _revinclude queries, add it to the result
+        //TODO - Refactor for pagination - as 2nd page shouldn't include original source result (e.g. Patient)
+        if(!revIncludes.isEmpty()){
+            List<String> resourceIds = results.stream()
+                    .map(r -> ((IBaseResource) r).getIdElement().toUnqualifiedVersionless().getValue())
+                    .collect(Collectors.toList());
+
+            SearchQuery revSearchQuery = RevIncludeHelperFTS.buildRevIncludeFTSQuery(revIncludes , resourceIds);
+
+            String revInclude = revIncludes.get(0);
+            String[] revParts = revInclude.split(":");
+            String sourceResource = revParts[0];
+            String revQuery = ftsn1qlQueryBuilder.build(Collections.singletonList(revSearchQuery), mustNotQueries, sourceResource, 0, count, sortFields);
+            List<T> revResults = dao.search(sourceResource, revQuery);
+            results.addAll(revResults);
+
+        }
+
+
         // Construct a FHIR Bundle response with _summary and _elements support
 
         // Construct a FHIR Bundle response
@@ -301,7 +321,7 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
             T filteredResource = applyResourceFiltering(resource, summaryMode, elements);
             bundle.addEntry()
                     .setResource(filteredResource)
-                    .setFullUrl(resourceType + "/" + filteredResource.getIdElement().getIdPart());
+                    .setFullUrl(filteredResource.getResourceType() + "/" + filteredResource.getIdElement().getIdPart());
         }
 
         return bundle;
