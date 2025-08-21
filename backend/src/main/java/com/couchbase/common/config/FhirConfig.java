@@ -113,7 +113,7 @@ public class FhirConfig {
             // Load US Core structure definitions from classpath
             PrePopulatedValidationSupport usCoreSupport = new PrePopulatedValidationSupport(fhirContext);
             PathMatchingResourcePatternResolver resolver = new PathMatchingResourcePatternResolver();
-            Resource[] usCoreResources = resolver.getResources("classpath:us_core/StructureDefinition-*.json");
+            Resource[] usCoreResources = resolver.getResources("classpath:us_core_6.1.0/StructureDefinition-*.json");
             
             logger.info("🔍 Found {} US Core structure definition files", usCoreResources.length);
             
