@@ -280,61 +280,71 @@ const AddFhirBucketDialog: React.FC<AddFhirBucketDialogProps> = ({
             <Typography variant="body2" sx={{ mb: 2 }}>
               Ready to convert bucket with the following configuration:
             </Typography>
-            <Alert severity="info" sx={{ mb: 2 }}>
-              <Typography variant="body2">
-                <strong>FHIR Release:</strong> {fhirConfig.fhirRelease}
-                <br />
-                <strong>Profiles:</strong>
-                <ul style={{ margin: 0, paddingLeft: 20 }}>
-                  {fhirConfig.profiles.map((p, idx) => (
-                    <li key={idx}>
-                      {p.profile}
-                      {p.version ? ` (v${p.version})` : ""}
+            <Box sx={{ display: "flex", gap: 2, mb: 2 }}>
+              <Alert severity="info" sx={{ flex: 1 }}>
+                <Typography variant="body2">
+                  <strong>FHIR Release:</strong> {fhirConfig.fhirRelease}
+                  <br />
+                  <strong>Profiles:</strong>
+                  <ul style={{ margin: 0, paddingLeft: 20 }}>
+                    {fhirConfig.profiles.map((p, idx) => (
+                      <li key={idx}>
+                        {p.profile}
+                        {p.version ? ` (v${p.version})` : ""}
+                      </li>
+                    ))}
+                  </ul>
+                  <strong>Validation:</strong>
+                  <ul style={{ margin: 0, paddingLeft: 20 }}>
+                    <li>Mode: {fhirConfig.validation.mode}</li>
+                    <li>
+                      Enforce US Core:{" "}
+                      {fhirConfig.validation.enforceUSCore
+                        ? "Enabled"
+                        : "Disabled"}
                     </li>
-                  ))}
-                </ul>
-                <strong>Validation:</strong>
-                <ul style={{ margin: 0, paddingLeft: 20 }}>
-                  <li>Mode: {fhirConfig.validation.mode}</li>
-                  <li>
-                    Enforce US Core:{" "}
-                    {fhirConfig.validation.enforceUSCore
-                      ? "Enabled"
-                      : "Disabled"}
-                  </li>
-                  <li>
-                    Allow Unknown Elements:{" "}
-                    {fhirConfig.validation.allowUnknownElements
-                      ? "Enabled"
-                      : "Disabled"}
-                  </li>
-                  <li>
-                    Terminology Checks:{" "}
-                    {fhirConfig.validation.terminologyChecks
-                      ? "Enabled"
-                      : "Disabled"}
-                  </li>
-                </ul>
-                <strong>Logs:</strong>
-                <ul style={{ margin: 0, paddingLeft: 20 }}>
-                  <li>
-                    Enable System Logs:{" "}
-                    {fhirConfig.logs.enableSystem ? "Enabled" : "Disabled"}
-                  </li>
-                  <li>
-                    Enable CRUD Audit:{" "}
-                    {fhirConfig.logs.enableCRUDAudit ? "Enabled" : "Disabled"}
-                  </li>
-                  <li>
-                    Enable Search Audit:{" "}
-                    {fhirConfig.logs.enableSearchAudit ? "Enabled" : "Disabled"}
-                  </li>
-                  <li>Rotation By: {fhirConfig.logs.rotationBy}</li>
-                  <li>Number: {fhirConfig.logs.number}</li>
-                  <li>S3 Endpoint: {fhirConfig.logs.s3Endpoint || "(none)"}</li>
-                </ul>
-              </Typography>
-            </Alert>
+                    <li>
+                      Allow Unknown Elements:{" "}
+                      {fhirConfig.validation.allowUnknownElements
+                        ? "Enabled"
+                        : "Disabled"}
+                    </li>
+                    <li>
+                      Terminology Checks:{" "}
+                      {fhirConfig.validation.terminologyChecks
+                        ? "Enabled"
+                        : "Disabled"}
+                    </li>
+                  </ul>
+                </Typography>
+              </Alert>
+              <Alert severity="info" sx={{ flex: 1 }}>
+                <Typography variant="body2">
+                  <strong>Logs:</strong>
+                  <ul style={{ margin: 0, paddingLeft: 20 }}>
+                    <li>
+                      Enable System Logs:{" "}
+                      {fhirConfig.logs.enableSystem ? "Enabled" : "Disabled"}
+                    </li>
+                    <li>
+                      Enable CRUD Audit:{" "}
+                      {fhirConfig.logs.enableCRUDAudit ? "Enabled" : "Disabled"}
+                    </li>
+                    <li>
+                      Enable Search Audit:{" "}
+                      {fhirConfig.logs.enableSearchAudit
+                        ? "Enabled"
+                        : "Disabled"}
+                    </li>
+                    <li>Rotation By: {fhirConfig.logs.rotationBy}</li>
+                    <li>Number: {fhirConfig.logs.number}</li>
+                    <li>
+                      S3 Endpoint: {fhirConfig.logs.s3Endpoint || "(none)"}
+                    </li>
+                  </ul>
+                </Typography>
+              </Alert>
+            </Box>
           </Box>
         )}
 
