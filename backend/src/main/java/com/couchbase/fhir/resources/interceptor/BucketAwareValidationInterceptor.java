@@ -56,13 +56,12 @@ public class BucketAwareValidationInterceptor {
             logger.info("🔍 Getting bucket config for: {}", bucketName);
             FhirBucketConfigService.FhirBucketConfig config = configService.getFhirBucketConfig(bucketName);
             
-            // Log complete validation configuration
-            logger.info("🔍 Bucket config - mode: {}, enforceUSCore: {}, allowUnknown: {}, terminology: {}", 
-                config.getValidationMode(), config.isEnforceUSCore(), 
-                config.isAllowUnknownElements(), config.isTerminologyChecks());
+            // Log simplified validation configuration
+            logger.info("🔍 Bucket config - mode: {}, profile: {}", 
+                config.getValidationMode(), config.getValidationProfile());
             
-            // Apply strict parsing validation based on mode and allowUnknownElements
-            if ("strict".equals(config.getValidationMode()) && !config.isAllowUnknownElements()) {
+            // Apply strict parsing validation for strict mode (simplified - no allowUnknownElements check)
+            if ("strict".equals(config.getValidationMode())) {
                 logger.info("🔍 APPLYING STRICT VALIDATION for bucket: {}", bucketName);
                 
                 // Get the request body before HAPI parses it
@@ -92,9 +91,9 @@ public class BucketAwareValidationInterceptor {
             } else if ("disabled".equals(config.getValidationMode())) {
                 logger.info("🔍 VALIDATION DISABLED for bucket: {}", bucketName);
             } else {
-                String validationType = config.isEnforceUSCore() ? "US Core" : "basic FHIR R4";
-                logger.info("🔍 Using {} {} validation for bucket: {} (allowUnknown: {})", 
-                    config.getValidationMode().toUpperCase(), validationType, bucketName, config.isAllowUnknownElements());
+                String validationType = "us-core".equals(config.getValidationProfile()) ? "US Core 6.1.0" : "basic FHIR R4";
+                logger.info("🔍 Using {} {} validation for bucket: {}", 
+                    config.getValidationMode().toUpperCase(), validationType, bucketName);
             }
         } catch (Exception e) {
             if (e instanceof ca.uhn.fhir.rest.server.exceptions.UnprocessableEntityException) {

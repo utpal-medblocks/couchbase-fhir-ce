@@ -11,6 +11,8 @@ import ca.uhn.fhir.validation.ResultSeverityEnum;
 import com.couchbase.admin.connections.service.ConnectionService;
 import com.couchbase.client.java.Cluster;
 import com.couchbase.client.java.json.JsonObject;
+import com.couchbase.client.java.query.QueryResult;
+import java.util.Map;
 import org.hl7.fhir.instance.model.api.IBaseResource;
 import org.hl7.fhir.r4.model.*;
 import org.slf4j.Logger;
@@ -47,6 +49,15 @@ public class FhirBundleProcessingService {
 
     @Autowired
     private FhirAuditService auditService;
+    
+    @Autowired
+    private PostService postService;
+    
+    @Autowired
+    private PutService putService;
+    
+    @Autowired
+    private DeleteService deleteService;
 
     // Default connection and bucket names
     private static final String DEFAULT_CONNECTION = "default";
@@ -101,12 +112,10 @@ public class FhirBundleProcessingService {
     public Bundle processBundleTransaction(String bundleJson, String connectionName, String bucketName,
                                            com.couchbase.fhir.resources.service.FhirBucketConfigService.FhirBucketConfig bucketConfig) {
         try {
-            // Extract validation settings from bucket config
+            // Extract validation settings from simplified bucket config
             boolean skipValidation = "disabled".equals(bucketConfig.getValidationMode());
             boolean useLenientValidation = "lenient".equals(bucketConfig.getValidationMode());
-            boolean enforceUSCore = bucketConfig.isEnforceUSCore();
-            boolean allowUnknownElements = bucketConfig.isAllowUnknownElements();
-            boolean terminologyChecks = bucketConfig.isTerminologyChecks();
+            boolean enforceUSCore = "us-core".equals(bucketConfig.getValidationProfile());
             
             // Build validation description
             String validationType;
@@ -115,10 +124,7 @@ public class FhirBundleProcessingService {
             } else {
                 StringBuilder desc = new StringBuilder();
                 desc.append(useLenientValidation ? "lenient" : "strict");
-                desc.append(" (").append(enforceUSCore ? "US Core 6.1.0" : "basic FHIR R4");
-                if (allowUnknownElements) desc.append(", allow unknown");
-                if (terminologyChecks) desc.append(", terminology checks");
-                desc.append(")");
+                desc.append(" (").append(enforceUSCore ? "US Core 6.1.0" : "basic FHIR R4").append(")");
                 validationType = desc.toString();
             }
             logger.info("🔄 Processing FHIR Bundle transaction with {} validation", validationType);
@@ -252,131 +258,159 @@ public class FhirBundleProcessingService {
 
     /**
      * Process Bundle entries within a Couchbase transaction context
+     * Now orchestrates individual POST, PUT, DELETE services
      */
     private void processEntriesInTransactionContext(com.couchbase.client.java.transactions.TransactionAttemptContext ctx, 
                                                    Bundle bundle, Cluster cluster, String bucketName, 
                                                    com.couchbase.fhir.resources.service.FhirBucketConfigService.FhirBucketConfig bucketConfig) {
-        logger.info("🔄 Processing {} Bundle entries within transaction", bundle.getEntry().size());
+        logger.info("🔄 Processing {} Bundle entries within transaction using service orchestration", bundle.getEntry().size());
         
-        // Step 1: Build UUID mapping for all entries first
+        // Step 1: Build UUID mapping for all entries first (for POST operations)
         Map<String, String> uuidToIdMapping = buildUuidMapping(bundle);
         
-        // Step 2: Process each entry in transaction context
-        UserAuditInfo auditInfo = auditService.getCurrentUserAuditInfo();
+        // Step 2: Create transaction context for services
+        TransactionContext transactionContext = new TransactionContextImpl(cluster, bucketName, ctx);
         
+        // Step 3: Process each entry using appropriate service
         for (int i = 0; i < bundle.getEntry().size(); i++) {
             Bundle.BundleEntryComponent entry = bundle.getEntry().get(i);
             Resource resource = entry.getResource();
             String resourceType = resource.getResourceType().name();
+            Bundle.HTTPVerb method = entry.getRequest() != null ? entry.getRequest().getMethod() : Bundle.HTTPVerb.POST;
             
-            logger.info("🔄 Processing entry {}/{}: {} resource in transaction", i+1, bundle.getEntry().size(), resourceType);
+            logger.info("🔄 Processing entry {}/{}: {} {} in transaction", i+1, bundle.getEntry().size(), method, resourceType);
             
             try {
-                // Step 2a: Resolve UUID references in this resource
-                resolveUuidReferencesInResource(resource, uuidToIdMapping);
+                // Step 3a: Resolve UUID references in this resource (for POST operations)
+                if (method == Bundle.HTTPVerb.POST) {
+                    resolveUuidReferencesInResource(resource, uuidToIdMapping);
+                }
                 
-                // Step 2b: Add audit information
-                auditService.addAuditInfoToMeta(resource, auditInfo, "CREATE");
-                
-                // Step 2c: Prepare for insertion
-                String resourceId = resource.getIdElement().getIdPart();
-                String documentKey = resourceType + "/" + resourceId;
-                
-                // Step 2d: Insert into Couchbase using transaction context
-                insertResourceInTransaction(ctx, cluster, bucketName, resourceType, documentKey, resource);
+                // Step 3b: Route to appropriate service based on HTTP method
+                switch (method) {
+                    case POST:
+                        postService.createResourceInTransaction(resource, ctx, cluster, bucketName);
+                        logger.info("✅ POST {}: Created with server-generated ID {}", resourceType, resource.getId());
+                        break;
+                        
+                    case PUT:
+                        TransactionContext putContext = new TransactionContextImpl(cluster, bucketName, ctx);
+                        putService.updateOrCreateResource(resource, putContext);
+                        logger.info("✅ PUT {}: Updated/created with ID {}", resourceType, resource.getId());
+                        break;
+                        
+                    case DELETE:
+                        String resourceId = extractResourceIdFromUrl(entry.getRequest().getUrl());
+                        if (resourceId != null) {
+                            deleteService.deleteResource(resourceType, resourceId, transactionContext);
+                            logger.info("✅ DELETE {}: Soft deleted ID {}", resourceType, resourceId);
+                        } else {
+                            throw new RuntimeException("DELETE operation requires resource ID in request URL");
+                        }
+                        break;
+                        
+                    default:
+                        throw new RuntimeException("Unsupported HTTP method in Bundle: " + method);
+                }
                 
             } catch (Exception e) {
-                logger.error("❌ Failed to process {} resource in transaction: {}", resourceType, e.getMessage());
-                throw new RuntimeException("Transaction failed processing " + resourceType + ": " + e.getMessage(), e);
+                logger.error("❌ Failed to process {} {} in transaction: {}", method, resourceType, e.getMessage());
+                throw new RuntimeException("Transaction failed processing " + method + " " + resourceType + ": " + e.getMessage(), e);
             }
         }
+        
+        logger.info("✅ All Bundle entries processed successfully within transaction");
     }
     
     /**
      * Internal method to process Bundle entries with a given cluster connection
-     * Used by both transaction and non-transaction processing
+     * Used by BATCH processing (non-transaction) - now orchestrates individual services
      */
     private List<ProcessedEntry> processEntriesSequentiallyInternal(Bundle bundle, Cluster cluster, String bucketName, 
                                                                    com.couchbase.fhir.resources.service.FhirBucketConfigService.FhirBucketConfig bucketConfig) {
         boolean skipValidation = "disabled".equals(bucketConfig.getValidationMode());
         
-        // Step 1: Build UUID mapping for all entries first
+        // Step 1: Build UUID mapping for POST entries
         Map<String, String> uuidToIdMapping = buildUuidMapping(bundle);
 
-        // Step 2: Process each entry in order
-        List<ProcessedEntry> processedEntries = new ArrayList<>();
-        UserAuditInfo auditInfo = auditService.getCurrentUserAuditInfo();
+        // Step 2: Create standalone transaction context for services
+        TransactionContext standaloneContext = new TransactionContextImpl(cluster, bucketName);
         
-        logger.info("🔄 Starting to process {} Bundle entries", bundle.getEntry().size());
+        // Step 3: Process each entry in order using service orchestration
+        List<ProcessedEntry> processedEntries = new ArrayList<>();
+        
+        logger.info("🔄 Starting to process {} Bundle entries sequentially (BATCH mode)", bundle.getEntry().size());
 
         for (int i = 0; i < bundle.getEntry().size(); i++) {
             Bundle.BundleEntryComponent entry = bundle.getEntry().get(i);
             Resource resource = entry.getResource();
             String resourceType = resource.getResourceType().name();
+            Bundle.HTTPVerb method = entry.getRequest() != null ? entry.getRequest().getMethod() : Bundle.HTTPVerb.POST;
             
-            logger.info("🔄 Processing entry {}/{}: {} resource", i+1, bundle.getEntry().size(), resourceType);
+            logger.info("🔄 Processing entry {}/{}: {} {} resource", i+1, bundle.getEntry().size(), method, resourceType);
 
             try {
-                // Step 2a: Resolve UUID references in this resource
-                resolveUuidReferencesInResource(resource, uuidToIdMapping);
-
-                // Step 2b: Validate the resource (skip if requested for performance)
-                if (!skipValidation) {
-                    // Choose validator based on bucket config
-                    FhirValidator validator;
-                    boolean useLenientValidation = "lenient".equals(bucketConfig.getValidationMode());
-                    
-                    if (useLenientValidation || !bucketConfig.isEnforceUSCore()) {
-                        validator = basicFhirValidator;
-                    } else {
-                        validator = fhirValidator;
-                    }
-                    
-                    ValidationResult result = validator.validateWithResult(resource);
-
-                    // Filter out INFORMATION level messages
-                    List<SingleValidationMessage> filteredMessages = result
-                            .getMessages()
-                            .stream()
-                            .filter(msg -> msg.getSeverity() != ResultSeverityEnum.INFORMATION)
-                            .collect(Collectors.toList());
-
-                    ValidationResult validation = new ValidationResult(result.getContext(), filteredMessages);
-
-                    if (!validation.isSuccessful()) {
-                        logger.warn("⚠️ Validation failed for {} with {} significant issues", resourceType, validation.getMessages().size());
-                        // Continue processing even if validation fails (configurable behavior)
-                    }
+                Resource processedResource = null;
+                String responseStatus = "201 Created";
+                
+                // Step 3a: Route to appropriate service based on HTTP method
+                switch (method) {
+                    case POST:
+                        // Resolve UUID references for POST operations
+                        resolveUuidReferencesInResource(resource, uuidToIdMapping);
+                        
+                        // Validate if enabled
+                        if (!skipValidation) {
+                            validateResource(resource, bucketConfig);
+                        }
+                        
+                        processedResource = postService.createResource(resource, cluster, bucketName);
+                        responseStatus = "201 Created";
+                        logger.info("✅ POST {}: Created with server-generated ID {}", resourceType, processedResource.getId());
+                        break;
+                        
+                    case PUT:
+                        // Validate if enabled
+                        if (!skipValidation) {
+                            validateResource(resource, bucketConfig);
+                        }
+                        
+                        boolean wasCreated = !resourceExists(cluster, bucketName, resourceType, resource.getId());
+                        processedResource = putService.updateOrCreateResource(resource, standaloneContext);
+                        responseStatus = wasCreated ? "201 Created" : "200 OK";
+                        logger.info("✅ PUT {}: {} with ID {}", resourceType, wasCreated ? "Created" : "Updated", processedResource.getId());
+                        break;
+                        
+                    case DELETE:
+                        String resourceId = extractResourceIdFromUrl(entry.getRequest().getUrl());
+                        if (resourceId != null) {
+                            deleteService.deleteResource(resourceType, resourceId, standaloneContext);
+                            responseStatus = "204 No Content";
+                            logger.info("✅ DELETE {}: Soft deleted ID {}", resourceType, resourceId);
+                            // For DELETE, we don't have a resource to return
+                            processedResource = null;
+                        } else {
+                            throw new RuntimeException("DELETE operation requires resource ID in request URL");
+                        }
+                        break;
+                        
+                    default:
+                        throw new RuntimeException("Unsupported HTTP method in Bundle: " + method);
                 }
-
-                // Step 2c: Add audit information
-                auditService.addAuditInfoToMeta(resource, auditInfo, "CREATE");
-
-                // Step 2d: Prepare for insertion
-                String resourceId = resource.getIdElement().getIdPart();
-                String documentKey = resourceType + "/" + resourceId;
-
-                // Step 2e: Insert into Couchbase
-                insertResourceIntoCouchbase(cluster, bucketName, resourceType, documentKey, resource);
-
-                // Step 2f: Create response entry
-                Bundle.BundleEntryComponent responseEntry = createResponseEntry(resource, resourceType);
-
+                
+                // Step 3b: Create response entry
+                Bundle.BundleEntryComponent responseEntry = createResponseEntryForMethod(processedResource, resourceType, method, responseStatus);
+                String documentKey = processedResource != null ? resourceType + "/" + processedResource.getId() : resourceType + "/" + "deleted";
+                String resourceId = processedResource != null ? processedResource.getId() : "deleted";
+                
                 processedEntries.add(ProcessedEntry.success(resourceType, resourceId, documentKey, responseEntry));
-                logger.debug("✅ Successfully processed {}/{}", resourceType, resourceId);
+                logger.debug("✅ Successfully processed {} {}", method, resourceType);
 
             } catch (Exception e) {
                 String errorMessage = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
-                logger.error("❌ Failed to process {} entry: {} (Exception: {})", resourceType, errorMessage, e.getClass().getSimpleName(), e);
+                logger.error("❌ Failed to process {} {} entry: {}", method, resourceType, errorMessage, e);
 
-                // Additional debug logging for the resource that failed
-                logger.error("   Resource ID: {}", resource.getId());
-                logger.error("   Resource Type: {}", resourceType);
-                if (entry.getFullUrl() != null) {
-                    logger.error("   FullUrl: {}", entry.getFullUrl());
-                }
-
-                processedEntries.add(ProcessedEntry.failed("Failed to process " + resourceType + ": " + errorMessage));
+                processedEntries.add(ProcessedEntry.failed("Failed to process " + method + " " + resourceType + ": " + errorMessage));
             }
         }
 
@@ -385,6 +419,8 @@ public class FhirBundleProcessingService {
 
     /**
      * Build UUID mapping for all entries in the Bundle
+     * For POST operations: Always generate new IDs (ignore client-supplied IDs)
+     * For PUT operations: Use client-supplied IDs (not implemented yet)
      */
     private Map<String, String> buildUuidMapping(Bundle bundle) {
         Map<String, String> uuidToIdMapping = new HashMap<>();
@@ -398,24 +434,20 @@ public class FhirBundleProcessingService {
             logger.debug("📝 Processing entry - ResourceType: {}, FullUrl: {}, Initial ID: {}",
                     resourceType, entry.getFullUrl(), resource.getId());
 
-            String actualResourceId;
+            // ✅ FHIR Compliance: For POST operations, ALWAYS generate new IDs
+            // The server ignores any client-supplied IDs and generates its own
+            String actualResourceId = generateResourceId(resourceType);
+            logger.debug("🆔 Generated new server ID for {}: {} (ignoring any client-supplied ID)", resourceType, actualResourceId);
 
-            // Extract meaningful ID from urn:uuid if present
+            // Map urn:uuid references to the new server-generated ID
             if (entry.getFullUrl() != null && entry.getFullUrl().startsWith("urn:uuid:")) {
-                String uuidFullUrl = entry.getFullUrl(); // "urn:uuid:org1"
-                actualResourceId = extractIdFromUuid(uuidFullUrl); // "org1"
-                logger.debug("🆔 Extracted ID from UUID: {} → {}", uuidFullUrl, actualResourceId);
-                // Map the full urn:uuid to the resource reference
-                String mappedReference = resourceType + "/" + actualResourceId; // "Organization/org1"
+                String uuidFullUrl = entry.getFullUrl(); // "urn:uuid:550e8400-e29b-41d4-a716-446655440000"
+                String mappedReference = resourceType + "/" + actualResourceId; // "Patient/abc123-def456-..."
                 uuidToIdMapping.put(uuidFullUrl, mappedReference);
                 logger.debug("🔗 UUID mapping: {} → {}", uuidFullUrl, mappedReference);
-            } else {
-                // Generate ID for resources without urn:uuid
-                actualResourceId = generateResourceId(resourceType);
-                logger.debug("🆔 Generated new ID for {}: {}", resourceType, actualResourceId);
             }
 
-            // Set the actual ID on the resource
+            // ✅ Always set the server-generated ID on the resource (overwrite any client ID)
             resource.setId(actualResourceId);
         }
 
@@ -423,34 +455,8 @@ public class FhirBundleProcessingService {
         return uuidToIdMapping;
     }
 
-    /**
-     * Extract meaningful ID from urn:uuid format
-     */
-    private String extractIdFromUuid(String uuidFullUrl) {
-        if (uuidFullUrl.startsWith("urn:uuid:")) {
-            String extracted = uuidFullUrl.substring("urn:uuid:".length());
-            // Validate that it's a reasonable ID (optional)
-            if (isValidResourceId(extracted)) {
-                return extracted;
-            } else {
-                // Fallback to generated ID if the UUID part isn't suitable
-                logger.warn("⚠️ UUID part '{}' not suitable as resource ID, generating new one", extracted);
-                return UUID.randomUUID().toString();
-            }
-        }
-        return UUID.randomUUID().toString();
-    }
-
-    /**
-     * Check if extracted ID is valid for use as resource ID
-     */
-    private boolean isValidResourceId(String id) {
-        // FHIR ID rules: length 1-64, [A-Za-z0-9\-\.]{1,64}
-        return id != null &&
-                id.length() >= 1 &&
-                id.length() <= 64 &&
-                id.matches("[A-Za-z0-9\\-\\.]+");
-    }
+    // Removed extractIdFromUuid and isValidResourceId methods - no longer needed
+    // Server always generates its own IDs for POST operations
 
     /**
      * Generate a new resource ID
@@ -505,83 +511,9 @@ public class FhirBundleProcessingService {
         }
     }
 
-    /**
-     * Insert a single resource into Couchbase using transaction context
-     */
-    private void insertResourceInTransaction(com.couchbase.client.java.transactions.TransactionAttemptContext ctx,
-                                           Cluster cluster, String bucketName, String resourceType, String documentKey, Resource resource) {
-        try {
-            // Apply meta information
-            com.couchbase.common.fhir.FhirMetaHelper.applyMeta(resource, new Date(), "1", null, "user:anonymous");
-            
-            // Convert to JSON
-            String resourceJson = jsonParser.encodeResourceToString(resource);
-            
-            // Insert using transaction context
-            logger.info("🔧 Inserting {} into transaction: {}", resourceType, documentKey);
-            // Get collection reference from cluster (passed separately)
-            com.couchbase.client.java.Collection collection = cluster.bucket(bucketName).scope(DEFAULT_SCOPE).collection(resourceType);
-            ctx.insert(collection, 
-                      documentKey, 
-                      com.couchbase.client.java.json.JsonObject.fromJson(resourceJson));
-            
-            logger.info("✅ Inserted {}/{} in transaction", resourceType, resource.getIdElement().getIdPart());
-            
-        } catch (Exception e) {
-            logger.error("❌ Failed to insert {} in transaction: {}", resourceType, e.getMessage());
-            throw new RuntimeException("Transaction insert failed for " + resourceType + ": " + e.getMessage(), e);
-        }
-    }
+    // Removed insertResourceInTransaction - now handled by PostService
 
-    /**
-     * Insert a single resource into Couchbase
-     */
-    private void insertResourceIntoCouchbase(Cluster cluster, String bucketName, String resourceType,
-                                             String documentKey, Resource resource) {
-        // Ensure proper meta information using FhirMetaHelper
-        String versionId = "1";
-        Date lastUpdated = new Date();
-        java.util.List<String> profiles = null;
-        if (resource.getMeta() != null && resource.getMeta().hasProfile()) {
-            profiles = new java.util.ArrayList<>();
-            for (org.hl7.fhir.r4.model.CanonicalType ct : resource.getMeta().getProfile()) {
-                profiles.add(ct.getValue());
-            }
-        }
-        // Use auditService to get user info if available, else fallback
-        String createdBy = "user:anonymous";
-        try {
-            com.couchbase.fhir.resources.service.FhirAuditService auditService = this.auditService;
-            if (auditService != null) {
-                com.couchbase.fhir.resources.service.UserAuditInfo auditInfo = auditService.getCurrentUserAuditInfo();
-                if (auditInfo != null && auditInfo.getUserId() != null) {
-                    createdBy = "user:" + auditInfo.getUserId();
-                }
-            }
-        } catch (Exception e) {}
-        com.couchbase.common.fhir.FhirMetaHelper.applyMeta(
-                resource,
-                lastUpdated,
-                versionId,
-                profiles,
-                createdBy
-        );
-
-        // Convert to JSON and then to Map for Couchbase
-        String resourceJson = jsonParser.encodeResourceToString(resource);
-        Map<String, Object> resourceMap = JsonObject.fromJson(resourceJson).toMap();
-
-        // UPSERT into appropriate collection
-        String sql = String.format(
-                "UPSERT INTO `%s`.`%s`.`%s` (KEY, VALUE) VALUES ('%s', %s)",
-                bucketName, DEFAULT_SCOPE, resourceType, documentKey,
-                JsonObject.from(resourceMap).toString()
-        );
-
-        logger.info("🔧 Executing SQL: {}", sql);
-        cluster.query(sql);
-        logger.info("✅ Upserted {}/{} into collection", resourceType, resource.getIdElement().getIdPart());
-    }
+    // Removed insertResourceIntoCouchbase - now handled by individual services
 
     /**
      * Create processed entries from Bundle without re-processing (for transaction responses)
@@ -608,15 +540,28 @@ public class FhirBundleProcessingService {
      * Create a response entry for Bundle transaction response
      */
     private Bundle.BundleEntryComponent createResponseEntry(Resource resource, String resourceType) {
+        return createResponseEntryForMethod(resource, resourceType, Bundle.HTTPVerb.POST, "201 Created");
+    }
+    
+    /**
+     * Create a response entry for different HTTP methods
+     */
+    private Bundle.BundleEntryComponent createResponseEntryForMethod(Resource resource, String resourceType, Bundle.HTTPVerb method, String status) {
         Bundle.BundleEntryComponent responseEntry = new Bundle.BundleEntryComponent();
 
-        // Set the resource in response
-        responseEntry.setResource(resource);
+        // Set the resource in response (except for DELETE)
+        if (resource != null && method != Bundle.HTTPVerb.DELETE) {
+            responseEntry.setResource(resource);
+        }
 
         // Set response details
         Bundle.BundleEntryResponseComponent response = new Bundle.BundleEntryResponseComponent();
-        response.setStatus("201 Created");
-        response.setLocation(resourceType + "/" + resource.getIdElement().getIdPart());
+        response.setStatus(status);
+        
+        if (resource != null) {
+            response.setLocation(resourceType + "/" + resource.getIdElement().getIdPart());
+        }
+        
         responseEntry.setResponse(response);
         return responseEntry;
     }
@@ -632,10 +577,12 @@ public class FhirBundleProcessingService {
         FhirValidator validator;
         boolean useLenientValidation = "lenient".equals(bucketConfig.getValidationMode());
         
-        if (useLenientValidation || !bucketConfig.isEnforceUSCore()) {
+        boolean enforceUSCore = "us-core".equals(bucketConfig.getValidationProfile());
+        
+        if (useLenientValidation || !enforceUSCore) {
             validator = basicFhirValidator;
-            logger.info("Using basic FHIR R4 validator (lenient: {}, enforceUSCore: {})", 
-                       useLenientValidation, bucketConfig.isEnforceUSCore());
+            logger.info("Using basic FHIR R4 validator (mode: {}, profile: {})", 
+                       bucketConfig.getValidationMode(), bucketConfig.getValidationProfile());
         } else {
             validator = fhirValidator;
             logger.info("Using strict US Core 6.1.0 validator");
@@ -750,6 +697,83 @@ public class FhirBundleProcessingService {
         );
     }
 
+    /**
+     * Extract resource ID from Bundle request URL (for DELETE operations)
+     */
+    private String extractResourceIdFromUrl(String url) {
+        if (url == null || url.trim().isEmpty()) {
+            return null;
+        }
+        
+        // Handle URLs like "Patient/1234" or "/Patient/1234"
+        String[] parts = url.split("/");
+        if (parts.length >= 2) {
+            return parts[parts.length - 1]; // Get the last part (ID)
+        }
+        
+        return null;
+    }
+    
+    /**
+     * Check if a resource exists in the live collection
+     */
+    private boolean resourceExists(Cluster cluster, String bucketName, String resourceType, String resourceId) {
+        try {
+            String documentKey = resourceType + "/" + resourceId;
+            String sql = String.format(
+                "SELECT COUNT(*) AS count FROM `%s`.`%s`.`%s` USE KEYS '%s'",
+                bucketName, DEFAULT_SCOPE, resourceType, documentKey
+            );
+            
+            QueryResult result = cluster.query(sql);
+            List<JsonObject> rows = result.rowsAsObject();
+            
+            if (!rows.isEmpty()) {
+                int count = rows.get(0).getInt("count");
+                return count > 0;
+            }
+            
+            return false;
+            
+        } catch (Exception e) {
+            logger.debug("Failed to check if resource exists {}/{}: {}", resourceType, resourceId, e.getMessage());
+            return false;
+        }
+    }
+    
+    /**
+     * Validate a single resource using bucket configuration
+     */
+    private void validateResource(Resource resource, com.couchbase.fhir.resources.service.FhirBucketConfigService.FhirBucketConfig bucketConfig) {
+        // Choose validator based on simplified bucket config
+        FhirValidator validator;
+        boolean useLenientValidation = "lenient".equals(bucketConfig.getValidationMode());
+        boolean enforceUSCore = "us-core".equals(bucketConfig.getValidationProfile());
+        
+        if (useLenientValidation || !enforceUSCore) {
+            validator = basicFhirValidator;
+        } else {
+            validator = fhirValidator;
+        }
+        
+        ValidationResult result = validator.validateWithResult(resource);
+
+        // Filter out INFORMATION level messages
+        List<SingleValidationMessage> filteredMessages = result
+                .getMessages()
+                .stream()
+                .filter(msg -> msg.getSeverity() != ResultSeverityEnum.INFORMATION)
+                .collect(Collectors.toList());
+
+        ValidationResult validation = new ValidationResult(result.getContext(), filteredMessages);
+
+        if (!validation.isSuccessful()) {
+            String resourceType = resource.getResourceType().name();
+            logger.warn("⚠️ Validation failed for {} with {} significant issues", resourceType, validation.getMessages().size());
+            // Continue processing even if validation fails (configurable behavior)
+        }
+    }
+    
     private String extractCleanErrorMessage(Exception e) {
         String message = e.getMessage();
         

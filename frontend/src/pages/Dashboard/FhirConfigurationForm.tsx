@@ -23,15 +23,9 @@ import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 
 export interface FhirConfiguration {
   fhirRelease: string;
-  profiles: Array<{
-    profile: string;
-    version: string;
-  }>;
   validation: {
     mode: "strict" | "lenient" | "disabled";
-    enforceUSCore: boolean;
-    allowUnknownElements: boolean;
-    terminologyChecks: boolean;
+    profile: "none" | "us-core";
   };
   logs: {
     enableSystem: boolean;
@@ -81,34 +75,17 @@ const FhirConfigurationForm: React.FC<FhirConfigurationFormProps> = ({
             FHIR Configuration
           </Typography>
 
-          <Box sx={{ display: "flex", gap: 2, mb: 1 }}>
-            <FormControl fullWidth disabled={disabled}>
-              <InputLabel>FHIR Release</InputLabel>
-              <Select
-                disabled={true}
-                value={config.fhirRelease}
-                label="FHIR Release"
-                onChange={(e) => updateConfig({ fhirRelease: e.target.value })}
-              >
-                <MenuItem value="Release 4">FHIR R4</MenuItem>
-              </Select>
-            </FormControl>
-
-            <FormControl fullWidth disabled={true}>
-              <InputLabel>US Core Profile</InputLabel>
-              <Select
-                value={config.profiles[0]?.profile || "US Core 6.1.0"}
-                label="US Core Profile"
-                disabled={true}
-              >
-                <MenuItem
-                  value={config.profiles[0]?.profile || "US Core 6.1.0"}
-                >
-                  US Core 6.1.0
-                </MenuItem>
-              </Select>
-            </FormControl>
-          </Box>
+          <FormControl fullWidth disabled={disabled} sx={{ mb: 2 }}>
+            <InputLabel>FHIR Release</InputLabel>
+            <Select
+              disabled={true}
+              value={config.fhirRelease}
+              label="FHIR Release"
+              onChange={(e) => updateConfig({ fhirRelease: e.target.value })}
+            >
+              <MenuItem value="Release 4">FHIR R4</MenuItem>
+            </Select>
+          </FormControl>
         </CardContent>
       </Card>
 
@@ -175,50 +152,41 @@ const FhirConfigurationForm: React.FC<FhirConfigurationFormProps> = ({
           </FormControl>
 
           {config.validation.mode !== "disabled" && (
-            <Box sx={{ mt: 1 }}>
-              <FormControlLabel
-                control={
-                  <Switch
-                    size="small"
-                    checked={config.validation.enforceUSCore}
-                    onChange={(e) =>
-                      updateValidation({ enforceUSCore: e.target.checked })
-                    }
-                    disabled={disabled}
-                  />
-                }
-                label="Enforce US Core compliance"
-              />
-              <br />
-              <FormControlLabel
-                control={
-                  <Switch
-                    size="small"
-                    checked={config.validation.allowUnknownElements}
-                    onChange={(e) =>
-                      updateValidation({
-                        allowUnknownElements: e.target.checked,
-                      })
-                    }
-                    disabled={disabled}
-                  />
-                }
-                label="Allow unknown elements (strip silently)"
-              />
-              <br />
-              <FormControlLabel
-                control={
-                  <Switch
-                    size="small"
-                    checked={config.validation.terminologyChecks}
-                    onChange={(e) =>
-                      updateValidation({ terminologyChecks: e.target.checked })
-                    }
-                    disabled={disabled}
-                  />
-                }
-                label="Enable terminology validation"
-              />
+            <Box sx={{ mt: 2 }}>
+              <FormControl fullWidth disabled={disabled}>
+                <InputLabel>Profile</InputLabel>
+                <Select
+                  value={config.validation.profile}
+                  label="Profile"
+                  onChange={(e) =>
+                    updateValidation({
+                      profile: e.target.value as "none" | "us-core",
+                    })
+                  }
+                >
+                  <MenuItem value="none">
+                    <Box>
+                      <Typography variant="body2">
+                        <strong>None</strong> - Basic FHIR R4 validation
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        Standard FHIR R4 compliance only
+                      </Typography>
+                    </Box>
+                  </MenuItem>
+                  <MenuItem value="us-core">
+                    <Box>
+                      <Typography variant="body2">
+                        <strong>US Core 6.1.0</strong> - Enforce US Core
+                        profiles
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        Includes terminology validation and US Core constraints
+                      </Typography>
+                    </Box>
+                  </MenuItem>
+                </Select>
+              </FormControl>
             </Box>
           )}
         </CardContent>

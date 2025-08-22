@@ -304,22 +304,18 @@ public class FhirBucketService {
                 .put("version", "6.1.0"));
         }
         
-        // Create validation configuration
+        // Create validation configuration (simplified structure)
         var validationConfig = com.couchbase.client.java.json.JsonObject.create();
         if (customConfig != null && customConfig.getValidation() != null) {
             FhirBucketConfig.Validation validation = customConfig.getValidation();
             validationConfig
                 .put("mode", validation.getMode() != null ? validation.getMode() : "lenient")
-                .put("enforceUSCore", validation.isEnforceUSCore())
-                .put("allowUnknownElements", validation.isAllowUnknownElements())
-                .put("terminologyChecks", validation.isTerminologyChecks());
+                .put("profile", validation.getProfile() != null ? validation.getProfile() : "none");
         } else {
-            // Default validation
+            // Default validation (simplified)
             validationConfig
                 .put("mode", "lenient")
-                .put("enforceUSCore", false)
-                .put("allowUnknownElements", true)
-                .put("terminologyChecks", false);
+                .put("profile", "none");
         }
         
         // Create logs configuration

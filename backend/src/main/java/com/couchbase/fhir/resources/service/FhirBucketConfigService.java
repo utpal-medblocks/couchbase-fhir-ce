@@ -80,47 +80,32 @@ public class FhirBucketConfigService {
      */
     public static class FhirBucketConfig {
         private String fhirRelease = "Release 4";
-        private List<ProfileInfo> profiles = new ArrayList<>();
         private String validationMode = "lenient";      // "strict" | "lenient" | "disabled"
-        private boolean enforceUSCore = false;          // true = strict US Core validation
-        private boolean allowUnknownElements = true;    // true = strip unknown fields
-        private boolean terminologyChecks = false;      // true = validate terminologies
+        private String validationProfile = "none";      // "none" | "us-core"
         private LogsConfig logs = new LogsConfig();
         
         // Getters and setters
         public String getValidationMode() { return validationMode; }
         public void setValidationMode(String validationMode) { this.validationMode = validationMode; }
         
-        public boolean isEnforceUSCore() { return enforceUSCore; }
-        public void setEnforceUSCore(boolean enforceUSCore) { this.enforceUSCore = enforceUSCore; }
-        
-        public boolean isAllowUnknownElements() { return allowUnknownElements; }
-        public void setAllowUnknownElements(boolean allowUnknownElements) { this.allowUnknownElements = allowUnknownElements; }
-        
-        public boolean isTerminologyChecks() { return terminologyChecks; }
-        public void setTerminologyChecks(boolean terminologyChecks) { this.terminologyChecks = terminologyChecks; }
+        public String getValidationProfile() { return validationProfile; }
+        public void setValidationProfile(String validationProfile) { this.validationProfile = validationProfile; }
         
         public String getFhirRelease() { return fhirRelease; }
         public void setFhirRelease(String fhirRelease) { this.fhirRelease = fhirRelease; }
         
-        public List<ProfileInfo> getProfiles() { return profiles; }
-        public void setProfiles(List<ProfileInfo> profiles) { this.profiles = profiles; }
-        
         public LogsConfig getLogs() { return logs; }
         public void setLogs(LogsConfig logs) { this.logs = logs; }
         
-        // Convenience methods
-        public boolean isStrictValidation() {
-            return "strict".equalsIgnoreCase(validationMode);
-        }
+        // Convenience methods for backward compatibility and validation logic
+        public boolean isEnforceUSCore() { return "us-core".equals(validationProfile); }
+        public boolean isStrictValidation() { return "strict".equalsIgnoreCase(validationMode); }
+        public boolean isLenientValidation() { return "lenient".equalsIgnoreCase(validationMode); }
+        public boolean isValidationDisabled() { return "disabled".equalsIgnoreCase(validationMode); }
         
-        public boolean isLenientValidation() {
-            return "lenient".equalsIgnoreCase(validationMode);
-        }
-        
-        public boolean isValidationDisabled() {
-            return "disabled".equalsIgnoreCase(validationMode);
-        }
+        // Backward compatibility methods (deprecated)
+        @Deprecated public boolean isAllowUnknownElements() { return true; } // Always allow in simplified model
+        @Deprecated public boolean isTerminologyChecks() { return isEnforceUSCore(); } // Only with US Core
     }
     
     /**
@@ -177,30 +162,13 @@ public class FhirBucketConfigService {
                 config.setFhirRelease(fhirRelease);
             }
             
-            // Parse profiles
-            com.couchbase.client.java.json.JsonArray profiles = configDoc.getArray("profiles");
-            if (profiles != null) {
-                List<ProfileInfo> profileList = new ArrayList<>();
-                for (int i = 0; i < profiles.size(); i++) {
-                    JsonObject profileObj = profiles.getObject(i);
-                    if (profileObj != null) {
-                        ProfileInfo profileInfo = new ProfileInfo(
-                            profileObj.getString("profile"),
-                            profileObj.getString("version")
-                        );
-                        profileList.add(profileInfo);
-                    }
-                }
-                config.setProfiles(profileList);
-            }
+            // Skip profiles parsing - now handled by simplified validation.profile setting
             
-            // Parse validation settings
+            // Parse validation settings (simplified structure)
             JsonObject validation = configDoc.getObject("validation");
             if (validation != null) {
                 config.setValidationMode(validation.getString("mode"));
-                config.setEnforceUSCore(validation.getBoolean("enforceUSCore"));
-                config.setAllowUnknownElements(validation.getBoolean("allowUnknownElements"));
-                config.setTerminologyChecks(validation.getBoolean("terminologyChecks"));
+                config.setValidationProfile(validation.getString("profile"));
             }
             
             // Parse logs settings
@@ -216,8 +184,8 @@ public class FhirBucketConfigService {
                 config.setLogs(logsConfig);
             }
             
-            logger.debug("Loaded FHIR config: release={}, validation={}, profiles={}", 
-                config.getFhirRelease(), config.getValidationMode(), config.getProfiles().size());
+            logger.debug("Loaded FHIR config: release={}, validation mode={}, profile={}", 
+                config.getFhirRelease(), config.getValidationMode(), config.getValidationProfile());
                 
         } catch (Exception e) {
             logger.warn("Failed to parse FHIR config document, using defaults: {}", e.getMessage());
@@ -236,16 +204,9 @@ public class FhirBucketConfigService {
         // Set defaults
         config.setFhirRelease("Release 4");
         
-        // Default US Core profile
-        List<ProfileInfo> defaultProfiles = new ArrayList<>();
-        defaultProfiles.add(new ProfileInfo("US Core", "6.1.0"));
-        config.setProfiles(defaultProfiles);
-        
-        // Default validation settings
+        // Default validation settings (simplified)
         config.setValidationMode("lenient");
-        config.setEnforceUSCore(false);
-        config.setAllowUnknownElements(true);
-        config.setTerminologyChecks(false);
+        config.setValidationProfile("none");
         
         // Default logs settings
         LogsConfig defaultLogs = new LogsConfig();

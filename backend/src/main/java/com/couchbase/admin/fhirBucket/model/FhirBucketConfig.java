@@ -43,18 +43,19 @@ public class FhirBucketConfig {
     }
 
     public static class Validation {
-        private String mode;
-        private boolean enforceUSCore;
-        private boolean allowUnknownElements;
-        private boolean terminologyChecks;
+        private String mode;    // "strict" | "lenient" | "disabled"
+        private String profile; // "none" | "us-core"
+        
         public String getMode() { return mode; }
         public void setMode(String mode) { this.mode = mode; }
-        public boolean isEnforceUSCore() { return enforceUSCore; }
-        public void setEnforceUSCore(boolean enforceUSCore) { this.enforceUSCore = enforceUSCore; }
-        public boolean isAllowUnknownElements() { return allowUnknownElements; }
-        public void setAllowUnknownElements(boolean allowUnknownElements) { this.allowUnknownElements = allowUnknownElements; }
-        public boolean isTerminologyChecks() { return terminologyChecks; }
-        public void setTerminologyChecks(boolean terminologyChecks) { this.terminologyChecks = terminologyChecks; }
+        public String getProfile() { return profile; }
+        public void setProfile(String profile) { this.profile = profile; }
+        
+        // Convenience methods for backward compatibility and validation logic
+        public boolean isEnforceUSCore() { return "us-core".equals(profile); }
+        public boolean isStrictValidation() { return "strict".equals(mode); }
+        public boolean isLenientValidation() { return "lenient".equals(mode); }
+        public boolean isValidationDisabled() { return "disabled".equals(mode); }
     }
 
     public static class Logs {

@@ -72,9 +72,8 @@ public class BundleTransactionProvider implements IResourceProvider {
             // Build validation description for logging
             String validationDescription = buildValidationDescription(bucketConfig);
             
-            logger.info("🔍 Bucket validation config - mode: {}, enforceUSCore: {}, allowUnknown: {}, terminology: {}", 
-                       bucketConfig.getValidationMode(), bucketConfig.isEnforceUSCore(), 
-                       bucketConfig.isAllowUnknownElements(), bucketConfig.isTerminologyChecks());
+            logger.info("🔍 Bucket validation config - mode: {}, profile: {}", 
+                       bucketConfig.getValidationMode(), bucketConfig.getValidationProfile());
             logger.info("🔍 Using validation: {}", validationDescription);
             
             // Process using complete bucket configuration
@@ -103,7 +102,7 @@ public class BundleTransactionProvider implements IResourceProvider {
     }
     
     /**
-     * Build a human-readable validation description from bucket config
+     * Build a human-readable validation description from simplified bucket config
      */
     private String buildValidationDescription(FhirBucketConfig config) {
         String validationMode = config.getValidationMode();
@@ -115,9 +114,7 @@ public class BundleTransactionProvider implements IResourceProvider {
         StringBuilder desc = new StringBuilder();
         desc.append("lenient".equals(validationMode) ? "LENIENT" : "STRICT");
         desc.append(" (");
-        desc.append(config.isEnforceUSCore() ? "US Core" : "basic FHIR R4");
-        if (config.isAllowUnknownElements()) desc.append(", allow unknown");
-        if (config.isTerminologyChecks()) desc.append(", terminology checks");
+        desc.append("us-core".equals(config.getValidationProfile()) ? "US Core 6.1.0" : "basic FHIR R4");
         desc.append(")");
         
         return desc.toString();

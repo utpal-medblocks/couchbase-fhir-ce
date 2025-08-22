@@ -21,16 +21,9 @@ export interface CollectionDetails {
   sampleDoc?: any;
 }
 
-export interface FhirProfileInfo {
-  profile: string;
-  version: string;
-}
-
 export interface FhirValidationConfig {
   mode: "strict" | "lenient" | "disabled";
-  enforceUSCore: boolean;
-  allowUnknownElements: boolean;
-  terminologyChecks: boolean;
+  profile: "none" | "us-core";
 }
 
 export interface FhirLogsConfig {
@@ -44,7 +37,6 @@ export interface FhirLogsConfig {
 
 export interface FhirConfiguration {
   fhirRelease: string;
-  profiles: FhirProfileInfo[];
   validation: FhirValidationConfig;
   logs: FhirLogsConfig;
   version?: string;
@@ -331,11 +323,8 @@ export const useBucketStore = create<BucketStore>()((set, get) => ({
       // Backend returns flat structure
       const backendConfig: {
         fhirRelease?: string;
-        profiles?: Array<{ profile: string; version: string }>;
         validationMode?: string;
         enforceUSCore?: boolean;
-        allowUnknownElements?: boolean;
-        terminologyChecks?: boolean;
         logs?: {
           enableSystem: boolean;
           enableCRUDAudit: boolean;
@@ -346,24 +335,18 @@ export const useBucketStore = create<BucketStore>()((set, get) => ({
         };
       } = await response.json();
 
-      // Transform flat backend structure to nested frontend structure
+      // Transform flat backend structure to simplified frontend structure
       const config: FhirConfiguration = {
         fhirRelease: backendConfig.fhirRelease || "Release 4",
-        profiles: backendConfig.profiles || [
-          { profile: "US Core", version: "6.1.0" },
-        ],
         validation: {
           mode:
             (backendConfig.validationMode as
               | "strict"
               | "lenient"
               | "disabled") || "lenient",
-          enforceUSCore: backendConfig.enforceUSCore || false,
-          allowUnknownElements:
-            backendConfig.allowUnknownElements !== undefined
-              ? backendConfig.allowUnknownElements
-              : true,
-          terminologyChecks: backendConfig.terminologyChecks || false,
+          profile: (backendConfig.enforceUSCore ? "us-core" : "none") as
+            | "none"
+            | "us-core",
         },
         logs: backendConfig.logs
           ? {
