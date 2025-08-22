@@ -162,6 +162,10 @@ fhir:
           description: "FHIR Versions resources"
           indexes:
 
+        - name: "Tombstones"
+          description: "FHIR Tombstones resources"
+          indexes:
+
   build_commands:
     - name: "Build Deferred Indexes"
       description: "Finds all deferred indexes and generates BUILD INDEX statements to run."

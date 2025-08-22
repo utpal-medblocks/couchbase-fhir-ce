@@ -55,9 +55,20 @@ const FhirConfigurationForm: React.FC<FhirConfigurationFormProps> = ({
   const updateValidation = (
     updates: Partial<FhirConfiguration["validation"]>
   ) => {
-    updateConfig({
-      validation: { ...config.validation, ...updates },
-    });
+    // If mode is changing and not "disabled", reset profile to "none"
+    if (
+      updates.mode &&
+      updates.mode !== config.validation.mode &&
+      updates.mode !== "disabled"
+    ) {
+      updateConfig({
+        validation: { ...config.validation, ...updates, profile: "none" },
+      });
+    } else {
+      updateConfig({
+        validation: { ...config.validation, ...updates },
+      });
+    }
   };
 
   const updateLogs = (updates: Partial<FhirConfiguration["logs"]>) => {
@@ -75,7 +86,7 @@ const FhirConfigurationForm: React.FC<FhirConfigurationFormProps> = ({
             FHIR Configuration
           </Typography>
 
-          <FormControl fullWidth disabled={disabled} sx={{ mb: 2 }}>
+          <FormControl fullWidth disabled={disabled} sx={{ mb: 1 }}>
             <InputLabel>FHIR Release</InputLabel>
             <Select
               disabled={true}
@@ -156,13 +167,14 @@ const FhirConfigurationForm: React.FC<FhirConfigurationFormProps> = ({
               <FormControl fullWidth disabled={disabled}>
                 <InputLabel>Profile</InputLabel>
                 <Select
-                  value={config.validation.profile}
+                  value={config.validation.profile || "none"}
                   label="Profile"
                   onChange={(e) =>
                     updateValidation({
                       profile: e.target.value as "none" | "us-core",
                     })
                   }
+                  defaultValue="none"
                 >
                   <MenuItem value="none">
                     <Box>

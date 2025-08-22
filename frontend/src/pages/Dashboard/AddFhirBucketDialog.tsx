@@ -58,12 +58,9 @@ const AddFhirBucketDialog: React.FC<AddFhirBucketDialogProps> = ({
   const [activeStep, setActiveStep] = useState(0);
   const [fhirConfig, setFhirConfig] = useState<FhirConfiguration>({
     fhirRelease: "Release 4",
-    profiles: [{ profile: "US Core 6.1.0", version: "" }],
     validation: {
       mode: "lenient",
-      enforceUSCore: false,
-      allowUnknownElements: true,
-      terminologyChecks: false,
+      profile: "none",
     },
     logs: {
       enableSystem: false,
@@ -88,7 +85,6 @@ const AddFhirBucketDialog: React.FC<AddFhirBucketDialogProps> = ({
       if (existingConfig) {
         setFhirConfig({
           fhirRelease: existingConfig.fhirRelease,
-          profiles: existingConfig.profiles,
           validation: existingConfig.validation,
           logs: existingConfig.logs,
         });
@@ -126,7 +122,6 @@ const AddFhirBucketDialog: React.FC<AddFhirBucketDialogProps> = ({
               // Save the FHIR configuration to the bucket store
               saveFhirConfigToStore(connectionName, bucketName, {
                 fhirRelease: fhirConfig.fhirRelease,
-                profiles: fhirConfig.profiles,
                 validation: fhirConfig.validation,
                 logs: fhirConfig.logs,
                 version: "1.0",
@@ -285,36 +280,14 @@ const AddFhirBucketDialog: React.FC<AddFhirBucketDialogProps> = ({
                 <Typography variant="body2">
                   <strong>FHIR Release:</strong> {fhirConfig.fhirRelease}
                   <br />
-                  <strong>Profiles:</strong>
-                  <ul style={{ margin: 0, paddingLeft: 20 }}>
-                    {fhirConfig.profiles.map((p, idx) => (
-                      <li key={idx}>
-                        {p.profile}
-                        {p.version ? ` (v${p.version})` : ""}
-                      </li>
-                    ))}
-                  </ul>
+                  <strong>Profiles:</strong>{" "}
+                  {fhirConfig.validation.profile === "us-core"
+                    ? "US Core 6.1.0"
+                    : "none"}
+                  <br />
                   <strong>Validation:</strong>
                   <ul style={{ margin: 0, paddingLeft: 20 }}>
                     <li>Mode: {fhirConfig.validation.mode}</li>
-                    <li>
-                      Enforce US Core:{" "}
-                      {fhirConfig.validation.enforceUSCore
-                        ? "Enabled"
-                        : "Disabled"}
-                    </li>
-                    <li>
-                      Allow Unknown Elements:{" "}
-                      {fhirConfig.validation.allowUnknownElements
-                        ? "Enabled"
-                        : "Disabled"}
-                    </li>
-                    <li>
-                      Terminology Checks:{" "}
-                      {fhirConfig.validation.terminologyChecks
-                        ? "Enabled"
-                        : "Disabled"}
-                    </li>
                   </ul>
                 </Typography>
               </Alert>

@@ -362,52 +362,22 @@ const DashboardCouchbaseServer: React.FC = () => {
                       Basic Configuration
                     </Typography>
 
-                    <Typography variant="body2" sx={{ mb: 1 }}>
+                    <Typography variant="body2" sx={{ mb: 0 }}>
                       <strong>FHIR Release:</strong> {fhirConfig.fhirRelease}
                     </Typography>
 
-                    <Typography variant="body2" sx={{ mb: 1 }}>
-                      <strong>Profiles:</strong>
-                    </Typography>
-                    <Box sx={{ ml: 2, mb: 2 }}>
-                      {fhirConfig.profiles.map((profile, idx) => (
-                        <Typography
-                          key={idx}
-                          variant="body2"
-                          color="text.secondary"
-                        >
-                          • {profile.profile}{" "}
-                          {profile.version && `(v${profile.version})`}
-                        </Typography>
-                      ))}
-                    </Box>
-
-                    <Typography variant="body2" sx={{ mb: 1 }}>
+                    <Typography variant="body2" sx={{ mb: 0 }}>
                       <strong>Validation:</strong>
+                      <ul style={{ margin: 0, paddingLeft: 20 }}>
+                        <li>Mode: {fhirConfig.validation.mode}</li>
+                        <li>
+                          Profile:{" "}
+                          {fhirConfig.validation.profile === "us-core"
+                            ? "US Core 6.1.0"
+                            : "none"}
+                        </li>
+                      </ul>
                     </Typography>
-                    <Box sx={{ ml: 2 }}>
-                      <Typography variant="body2" color="text.secondary">
-                        • Mode: {fhirConfig.validation.mode}
-                      </Typography>
-                      <Typography variant="body2" color="text.secondary">
-                        • Enforce US Core:{" "}
-                        {fhirConfig.validation.enforceUSCore
-                          ? "Enabled"
-                          : "Disabled"}
-                      </Typography>
-                      <Typography variant="body2" color="text.secondary">
-                        • Allow Unknown Elements:{" "}
-                        {fhirConfig.validation.allowUnknownElements
-                          ? "Enabled"
-                          : "Disabled"}
-                      </Typography>
-                      <Typography variant="body2" color="text.secondary">
-                        • Terminology Checks:{" "}
-                        {fhirConfig.validation.terminologyChecks
-                          ? "Enabled"
-                          : "Disabled"}
-                      </Typography>
-                    </Box>
                   </CardContent>
                 </Card>
               </Box>
@@ -420,7 +390,7 @@ const DashboardCouchbaseServer: React.FC = () => {
                       Logs Configuration
                     </Typography>
 
-                    <Typography variant="body2" sx={{ mb: 1 }}>
+                    <Typography variant="body2" sx={{ mb: 0 }}>
                       <strong>Logs:</strong>
                     </Typography>
                     <Box sx={{ ml: 2 }}>
