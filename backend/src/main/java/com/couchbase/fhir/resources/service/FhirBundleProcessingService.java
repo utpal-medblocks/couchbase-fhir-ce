@@ -20,8 +20,7 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 import jakarta.annotation.PostConstruct;
 
-import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
+
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -73,36 +72,54 @@ public class FhirBundleProcessingService {
 
     /**
      * Process a FHIR Bundle transaction with strict US Core validation (default)
+     * @deprecated Use processBundleTransaction(String, String, String, FhirBucketConfig) instead
      */
+    @Deprecated
     public Bundle processBundleTransaction(String bundleJson, String connectionName, String bucketName) {
-        return processBundleTransaction(bundleJson, connectionName, bucketName, false);
+        throw new UnsupportedOperationException("This method is deprecated. Use the version that accepts FhirBucketConfig.");
     }
     /**
-     * Process a FHIR Bundle transaction with configurable validation
+     * Process a FHIR Bundle transaction with configurable validation (deprecated - use config object version)
      * @param bundleJson Bundle JSON string
      * @param connectionName Couchbase connection name
      * @param bucketName Couchbase bucket name
      * @param useLenientValidation If true, uses basic FHIR validation instead of strict US Core validation
+     * @deprecated Use processBundleTransaction(String, String, String, FhirBucketConfig) instead
      */
+    @Deprecated
     public Bundle processBundleTransaction(String bundleJson, String connectionName, String bucketName, boolean useLenientValidation) {
-        return processBundleTransaction(bundleJson, connectionName, bucketName, useLenientValidation, false);
+        // Create a temporary config object for backward compatibility
+        throw new UnsupportedOperationException("This method is deprecated. Use the version that accepts FhirBucketConfig.");
     }
     /**
-     * Process a FHIR Bundle transaction with full validation control
+     * Process a FHIR Bundle transaction with bucket-specific validation configuration
      * @param bundleJson Bundle JSON string
      * @param connectionName Couchbase connection name
      * @param bucketName Couchbase bucket name
-     * @param useLenientValidation If true, uses basic FHIR validation instead of strict US Core validation
-     * @param skipValidation If true, skips all validation for performance (use for trusted sample data)
+     * @param bucketConfig Complete bucket validation configuration
      */
     public Bundle processBundleTransaction(String bundleJson, String connectionName, String bucketName,
-                                           boolean useLenientValidation, boolean skipValidation) {
+                                           com.couchbase.fhir.resources.service.FhirBucketConfigService.FhirBucketConfig bucketConfig) {
         try {
+            // Extract validation settings from bucket config
+            boolean skipValidation = "disabled".equals(bucketConfig.getValidationMode());
+            boolean useLenientValidation = "lenient".equals(bucketConfig.getValidationMode());
+            boolean enforceUSCore = bucketConfig.isEnforceUSCore();
+            boolean allowUnknownElements = bucketConfig.isAllowUnknownElements();
+            boolean terminologyChecks = bucketConfig.isTerminologyChecks();
+            
+            // Build validation description
             String validationType;
             if (skipValidation) {
-                validationType = "NONE (skip validation for performance)";
+                validationType = "NONE (disabled)";
             } else {
-                validationType = useLenientValidation ? "lenient (basic FHIR R4)" : "strict (US Core 6.1.0)";
+                StringBuilder desc = new StringBuilder();
+                desc.append(useLenientValidation ? "lenient" : "strict");
+                desc.append(" (").append(enforceUSCore ? "US Core 6.1.0" : "basic FHIR R4");
+                if (allowUnknownElements) desc.append(", allow unknown");
+                if (terminologyChecks) desc.append(", terminology checks");
+                desc.append(")");
+                validationType = desc.toString();
             }
             logger.info("🔄 Processing FHIR Bundle transaction with {} validation", validationType);
             // Step 1: Parse Bundle
@@ -111,7 +128,7 @@ public class FhirBundleProcessingService {
 
             // Step 2: Validate Bundle structure (skip if requested for performance)
             if (!skipValidation) {
-                ValidationResult bundleValidation = validateBundle(bundle, useLenientValidation);
+                ValidationResult bundleValidation = validateBundle(bundle, bucketConfig);
                 if (!bundleValidation.isSuccessful()) {
                     logger.error("❌ Bundle validation failed with {} errors", bundleValidation.getMessages().size());
                     bundleValidation.getMessages().forEach(msg ->
@@ -128,22 +145,98 @@ public class FhirBundleProcessingService {
             List<IBaseResource> allResources = BundleUtil.toListOfResources(fhirContext, bundle);
             logger.info("📋 Extracted {} resources from Bundle", allResources.size());
 
-            // Step 4: Process entries sequentially with proper UUID resolution
-            List<ProcessedEntry> processedEntries = processEntriesSequentially(bundle, connectionName, bucketName, skipValidation);
+            // Step 4: Process entries sequentially with proper UUID resolution and ACID transaction support
+            List<ProcessedEntry> processedEntries;
+            
+            // Use Couchbase Server transactions for BUNDLE TRANSACTION types (not for BATCH)
+            if (bundle.getType() == Bundle.BundleType.TRANSACTION) {
+                logger.info("🔒 Starting Couchbase Server TRANSACTION for Bundle processing");
+                processedEntries = processEntriesWithTransaction(bundle, connectionName, bucketName, bucketConfig);
+            } else {
+                logger.info("📦 Processing Bundle as BATCH (no transaction wrapper)");
+                processedEntries = processEntriesSequentially(bundle, connectionName, bucketName, bucketConfig);
+            }
 
             // Step 5: Create proper FHIR transaction-response Bundle
             return createTransactionResponseBundle(processedEntries, bundle.getType());
 
         } catch (Exception e) {
-            logger.error("❌ Failed to process Bundle transaction: {}", e.getMessage(), e);
-            throw new RuntimeException("Bundle processing failed: " + e.getMessage(), e);
+            String cleanMessage = extractCleanErrorMessage(e);
+            logger.error("❌ Failed to process Bundle transaction: {}", cleanMessage);
+            if (isCouchbaseError(e)) {
+                logger.debug("❌ Couchbase error details:", e);
+            } else {
+                logger.debug("❌ Full stack trace:", e);
+            }
+            throw new RuntimeException(cleanMessage);
         }
     }
 
     /**
-     * Process Bundle entries sequentially with proper UUID resolution
+     * Process Bundle entries within a Couchbase Server transaction for ACID properties
      */
-    private List<ProcessedEntry> processEntriesSequentially(Bundle bundle, String connectionName, String bucketName, boolean skipValidation) {
+    private List<ProcessedEntry> processEntriesWithTransaction(Bundle bundle, String connectionName, String bucketName, 
+                                                              com.couchbase.fhir.resources.service.FhirBucketConfigService.FhirBucketConfig bucketConfig) {
+        boolean skipValidation = "disabled".equals(bucketConfig.getValidationMode());
+        logger.info("🔒 Processing Bundle entries with Couchbase Server TRANSACTION (validation: {})", skipValidation ? "SKIPPED" : "ENABLED");
+
+        final String finalConnectionName = connectionName != null ? connectionName : getDefaultConnection();
+        final String finalBucketName = bucketName != null ? bucketName : DEFAULT_BUCKET;
+
+        Cluster cluster = connectionService.getConnection(finalConnectionName);
+        if (cluster == null) {
+            throw new RuntimeException("No active connection found: " + finalConnectionName);
+        }
+
+        List<ProcessedEntry> processedEntries = new ArrayList<>();
+        
+        try {
+            // Use Couchbase Transactions API for proper ACID guarantees
+            logger.info("🚀 Starting Couchbase transaction for Bundle processing");
+            
+            try {
+                // Execute all operations within a single transaction
+                cluster.transactions().run((ctx) -> {
+                    logger.info("🔄 Executing Bundle operations within transaction context");
+                    processEntriesInTransactionContext(ctx, bundle, cluster, finalBucketName, bucketConfig);
+                });
+                
+                logger.info("✅ Transaction committed successfully - Bundle processing complete");
+                
+                // Create processed entries for response (without re-processing)
+                processedEntries = createProcessedEntriesFromBundle(bundle);
+                
+            } catch (Exception txEx) {
+                String cleanMessage = extractCleanErrorMessage(txEx);
+                logger.error("❌ FHIR Bundle TRANSACTION failed: {}", cleanMessage);
+                logger.debug("❌ Transaction error details:", txEx);
+                // ✅ CORRECT: No fallback - FHIR transactions must be atomic (all-or-nothing)
+                // POST operations MUST fail if resource exists (409 Conflict)
+                // PUT operations should succeed and update existing resources
+                // TRANSACTION bundles require strict atomicity - no partial success allowed
+                throw new RuntimeException("Bundle TRANSACTION failed (FHIR atomicity required): " + cleanMessage, txEx);
+            }
+            
+        } catch (Exception e) {
+            String cleanMessage = extractCleanErrorMessage(e);
+            logger.error("❌ Transaction processing failed: {}", cleanMessage);
+            if (isCouchbaseError(e)) {
+                logger.debug("❌ Couchbase error details:", e);
+            } else {
+                logger.debug("❌ Full stack trace:", e);
+            }
+            throw new RuntimeException(cleanMessage);
+        }
+
+        return processedEntries;
+    }
+
+    /**
+     * Process Bundle entries sequentially with proper UUID resolution (without transaction wrapper)
+     */
+    private List<ProcessedEntry> processEntriesSequentially(Bundle bundle, String connectionName, String bucketName, 
+                                                           com.couchbase.fhir.resources.service.FhirBucketConfigService.FhirBucketConfig bucketConfig) {
+        boolean skipValidation = "disabled".equals(bucketConfig.getValidationMode());
         logger.info("🔄 Processing Bundle entries sequentially (validation: {})", skipValidation ? "SKIPPED" : "ENABLED");
 
         connectionName = connectionName != null ? connectionName : getDefaultConnection();
@@ -153,18 +246,75 @@ public class FhirBundleProcessingService {
         if (cluster == null) {
             throw new RuntimeException("No active connection found: " + connectionName);
         }
+        
+        return processEntriesSequentiallyInternal(bundle, cluster, bucketName, bucketConfig);
+    }
 
+    /**
+     * Process Bundle entries within a Couchbase transaction context
+     */
+    private void processEntriesInTransactionContext(com.couchbase.client.java.transactions.TransactionAttemptContext ctx, 
+                                                   Bundle bundle, Cluster cluster, String bucketName, 
+                                                   com.couchbase.fhir.resources.service.FhirBucketConfigService.FhirBucketConfig bucketConfig) {
+        logger.info("🔄 Processing {} Bundle entries within transaction", bundle.getEntry().size());
+        
+        // Step 1: Build UUID mapping for all entries first
+        Map<String, String> uuidToIdMapping = buildUuidMapping(bundle);
+        
+        // Step 2: Process each entry in transaction context
+        UserAuditInfo auditInfo = auditService.getCurrentUserAuditInfo();
+        
+        for (int i = 0; i < bundle.getEntry().size(); i++) {
+            Bundle.BundleEntryComponent entry = bundle.getEntry().get(i);
+            Resource resource = entry.getResource();
+            String resourceType = resource.getResourceType().name();
+            
+            logger.info("🔄 Processing entry {}/{}: {} resource in transaction", i+1, bundle.getEntry().size(), resourceType);
+            
+            try {
+                // Step 2a: Resolve UUID references in this resource
+                resolveUuidReferencesInResource(resource, uuidToIdMapping);
+                
+                // Step 2b: Add audit information
+                auditService.addAuditInfoToMeta(resource, auditInfo, "CREATE");
+                
+                // Step 2c: Prepare for insertion
+                String resourceId = resource.getIdElement().getIdPart();
+                String documentKey = resourceType + "/" + resourceId;
+                
+                // Step 2d: Insert into Couchbase using transaction context
+                insertResourceInTransaction(ctx, cluster, bucketName, resourceType, documentKey, resource);
+                
+            } catch (Exception e) {
+                logger.error("❌ Failed to process {} resource in transaction: {}", resourceType, e.getMessage());
+                throw new RuntimeException("Transaction failed processing " + resourceType + ": " + e.getMessage(), e);
+            }
+        }
+    }
+    
+    /**
+     * Internal method to process Bundle entries with a given cluster connection
+     * Used by both transaction and non-transaction processing
+     */
+    private List<ProcessedEntry> processEntriesSequentiallyInternal(Bundle bundle, Cluster cluster, String bucketName, 
+                                                                   com.couchbase.fhir.resources.service.FhirBucketConfigService.FhirBucketConfig bucketConfig) {
+        boolean skipValidation = "disabled".equals(bucketConfig.getValidationMode());
+        
         // Step 1: Build UUID mapping for all entries first
         Map<String, String> uuidToIdMapping = buildUuidMapping(bundle);
 
         // Step 2: Process each entry in order
         List<ProcessedEntry> processedEntries = new ArrayList<>();
         UserAuditInfo auditInfo = auditService.getCurrentUserAuditInfo();
+        
+        logger.info("🔄 Starting to process {} Bundle entries", bundle.getEntry().size());
 
         for (int i = 0; i < bundle.getEntry().size(); i++) {
             Bundle.BundleEntryComponent entry = bundle.getEntry().get(i);
             Resource resource = entry.getResource();
             String resourceType = resource.getResourceType().name();
+            
+            logger.info("🔄 Processing entry {}/{}: {} resource", i+1, bundle.getEntry().size(), resourceType);
 
             try {
                 // Step 2a: Resolve UUID references in this resource
@@ -172,7 +322,17 @@ public class FhirBundleProcessingService {
 
                 // Step 2b: Validate the resource (skip if requested for performance)
                 if (!skipValidation) {
-                    ValidationResult result = fhirValidator.validateWithResult(resource);
+                    // Choose validator based on bucket config
+                    FhirValidator validator;
+                    boolean useLenientValidation = "lenient".equals(bucketConfig.getValidationMode());
+                    
+                    if (useLenientValidation || !bucketConfig.isEnforceUSCore()) {
+                        validator = basicFhirValidator;
+                    } else {
+                        validator = fhirValidator;
+                    }
+                    
+                    ValidationResult result = validator.validateWithResult(resource);
 
                     // Filter out INFORMATION level messages
                     List<SingleValidationMessage> filteredMessages = result
@@ -346,6 +506,34 @@ public class FhirBundleProcessingService {
     }
 
     /**
+     * Insert a single resource into Couchbase using transaction context
+     */
+    private void insertResourceInTransaction(com.couchbase.client.java.transactions.TransactionAttemptContext ctx,
+                                           Cluster cluster, String bucketName, String resourceType, String documentKey, Resource resource) {
+        try {
+            // Apply meta information
+            com.couchbase.common.fhir.FhirMetaHelper.applyMeta(resource, new Date(), "1", null, "user:anonymous");
+            
+            // Convert to JSON
+            String resourceJson = jsonParser.encodeResourceToString(resource);
+            
+            // Insert using transaction context
+            logger.info("🔧 Inserting {} into transaction: {}", resourceType, documentKey);
+            // Get collection reference from cluster (passed separately)
+            com.couchbase.client.java.Collection collection = cluster.bucket(bucketName).scope(DEFAULT_SCOPE).collection(resourceType);
+            ctx.insert(collection, 
+                      documentKey, 
+                      com.couchbase.client.java.json.JsonObject.fromJson(resourceJson));
+            
+            logger.info("✅ Inserted {}/{} in transaction", resourceType, resource.getIdElement().getIdPart());
+            
+        } catch (Exception e) {
+            logger.error("❌ Failed to insert {} in transaction: {}", resourceType, e.getMessage());
+            throw new RuntimeException("Transaction insert failed for " + resourceType + ": " + e.getMessage(), e);
+        }
+    }
+
+    /**
      * Insert a single resource into Couchbase
      */
     private void insertResourceIntoCouchbase(Cluster cluster, String bucketName, String resourceType,
@@ -390,8 +578,30 @@ public class FhirBundleProcessingService {
                 JsonObject.from(resourceMap).toString()
         );
 
+        logger.info("🔧 Executing SQL: {}", sql);
         cluster.query(sql);
-        logger.debug("✅ Upserted {}/{} into collection", resourceType, resource.getIdElement().getIdPart());
+        logger.info("✅ Upserted {}/{} into collection", resourceType, resource.getIdElement().getIdPart());
+    }
+
+    /**
+     * Create processed entries from Bundle without re-processing (for transaction responses)
+     */
+    private List<ProcessedEntry> createProcessedEntriesFromBundle(Bundle bundle) {
+        List<ProcessedEntry> processedEntries = new ArrayList<>();
+        
+        for (Bundle.BundleEntryComponent entry : bundle.getEntry()) {
+            Resource resource = entry.getResource();
+            String resourceType = resource.getResourceType().name();
+            String resourceId = resource.getIdElement().getIdPart();
+            String documentKey = resourceType + "/" + resourceId;
+            
+            // Create response entry
+            Bundle.BundleEntryComponent responseEntry = createResponseEntry(resource, resourceType);
+            processedEntries.add(ProcessedEntry.success(resourceType, resourceId, documentKey, responseEntry));
+        }
+        
+        logger.debug("✅ Created {} processed entries from Bundle (no re-processing)", processedEntries.size());
+        return processedEntries;
     }
 
     /**
@@ -416,16 +626,19 @@ public class FhirBundleProcessingService {
 
 
     /**
-     * Validate Bundle structure
+     * Validate Bundle structure using bucket-specific validation configuration
      */
-    private ValidationResult validateBundle(Bundle bundle, boolean useLenientValidation) {
+    private ValidationResult validateBundle(Bundle bundle, com.couchbase.fhir.resources.service.FhirBucketConfigService.FhirBucketConfig bucketConfig) {
         FhirValidator validator;
-        if (useLenientValidation) {
+        boolean useLenientValidation = "lenient".equals(bucketConfig.getValidationMode());
+        
+        if (useLenientValidation || !bucketConfig.isEnforceUSCore()) {
             validator = basicFhirValidator;
-            logger.info("Using basic FHIR R4 validator for lenient validation.");
+            logger.info("Using basic FHIR R4 validator (lenient: {}, enforceUSCore: {})", 
+                       useLenientValidation, bucketConfig.isEnforceUSCore());
         } else {
             validator = fhirValidator;
-            logger.info("Using strict US Core 6.1.0 validator.");
+            logger.info("Using strict US Core 6.1.0 validator");
         }
 
         ValidationResult result = validator.validateWithResult(bundle);
@@ -513,9 +726,7 @@ public class FhirBundleProcessingService {
         return outcome;
     }
 
-    private String getCurrentFhirTimestamp() {
-        return LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'"));
-    }
+    // Removed unused getCurrentFhirTimestamp method
 
 
 
@@ -527,5 +738,62 @@ public class FhirBundleProcessingService {
     private String getDefaultConnection() {
         List<String> connections = connectionService.getActiveConnections();
         return connections.isEmpty() ? DEFAULT_CONNECTION : connections.get(0);
+    }
+
+    private boolean isCouchbaseError(Exception e) {
+        String message = e.getMessage();
+        return message != null && (
+            message.contains("COMMIT statement is not supported") ||
+            message.contains("ROLLBACK statement is not supported") ||
+            message.contains("Unknown query error") ||
+            message.contains("Bundle transaction failed")
+        );
+    }
+
+    private String extractCleanErrorMessage(Exception e) {
+        String message = e.getMessage();
+        
+        if (message == null) {
+            return "Bundle processing failed due to unknown error";
+        }
+        
+        // Handle Couchbase transaction errors
+        if (message.contains("COMMIT statement is not supported")) {
+            return "Database transaction error: Transaction commit failed. Please check Couchbase transaction configuration.";
+        }
+        
+        if (message.contains("ROLLBACK statement is not supported")) {
+            return "Database transaction error: Transaction rollback failed. Please check Couchbase transaction configuration.";
+        }
+        
+        // Handle bundle transaction failures with JSON error details
+        if (message.contains("Bundle transaction failed: Unknown query error")) {
+            try {
+                // Extract just the error message from the JSON blob
+                if (message.contains("\"message\":\"")) {
+                    int start = message.indexOf("\"message\":\"") + 11;
+                    int end = message.indexOf("\"", start);
+                    if (start > 10 && end > start) {
+                        String errorMsg = message.substring(start, end);
+                        return "Database error: " + errorMsg;
+                    }
+                }
+            } catch (Exception ex) {
+                // Fall back if JSON parsing fails
+            }
+            return "Bundle transaction failed due to database error";
+        }
+        
+        // For other bundle processing errors, try to extract the root cause
+        if (message.contains("Bundle processing failed:")) {
+            return message; // Already clean
+        }
+        
+        // Truncate very long messages
+        if (message.length() > 200) {
+            return message.substring(0, 200) + "... (error message truncated)";
+        }
+        
+        return message;
     }
 }

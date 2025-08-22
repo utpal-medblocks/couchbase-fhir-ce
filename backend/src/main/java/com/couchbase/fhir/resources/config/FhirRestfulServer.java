@@ -11,7 +11,7 @@ import ca.uhn.fhir.rest.server.RestfulServer;
 import ca.uhn.fhir.rest.server.tenant.UrlBaseTenantIdentificationStrategy;
 
 import com.couchbase.common.config.FhirConfig;
-import com.couchbase.fhir.resources.provider.FhirTransactionProvider;
+
 import com.couchbase.fhir.resources.provider.USCoreCapabilityProvider;
 import com.couchbase.fhir.resources.interceptor.BucketAwareValidationInterceptor;
 import com.couchbase.fhir.resources.service.FhirBucketConfigService;
@@ -49,8 +49,7 @@ public class FhirRestfulServer extends RestfulServer {
     @Autowired
     private List<IResourceProvider> providers;
 
-    @Autowired
-    private FhirTransactionProvider transactionProvider;
+
     
     @Autowired
     private FhirContext fhirContext; // ← Inject your configured context
@@ -60,20 +59,27 @@ public class FhirRestfulServer extends RestfulServer {
     
     @Autowired
     private FhirBucketConfigService configService;
+    
+    @Autowired
+    private com.couchbase.fhir.resources.interceptor.CleanExceptionInterceptor cleanExceptionInterceptor;
 
     @Override
     protected void initialize() {
         logger.info("🚀 Initializing FhirRestfulServer");
+        // Debug: Log what providers we have
+    logger.info("Found {} providers in autowired list:", providers.size());
+    for (IResourceProvider provider : providers) {
+        logger.info("  - Provider: {} for resource: {}", 
+                   provider.getClass().getSimpleName(), 
+                   provider.getResourceType().getSimpleName());
+    }
         setFhirContext(fhirContext); // Use the injected context
         setTenantIdentificationStrategy(new UrlBaseTenantIdentificationStrategy());
         registerInterceptor(new MultiTenantInterceptor());
         registerInterceptor(bucketValidationInterceptor);
+        registerInterceptor(cleanExceptionInterceptor);
         USCoreCapabilityProvider capabilityProvider = new USCoreCapabilityProvider(this);
         setServerConformanceProvider(capabilityProvider);
         registerProviders(providers);
-        // Register system-level transaction provider
-        registerProvider(transactionProvider);
     }
-    
-
 }

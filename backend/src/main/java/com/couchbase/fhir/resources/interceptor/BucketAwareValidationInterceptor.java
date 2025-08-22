@@ -37,9 +37,10 @@ public class BucketAwareValidationInterceptor {
         logger.info("🔍 BucketAwareValidationInterceptor: Processing request - Operation: {}, URL: {}", 
             theRequestDetails.getRestOperationType(), theRequestDetails.getRequestPath());
             
-        // Only validate CREATE operations
-        if (theRequestDetails.getRestOperationType() != RestOperationTypeEnum.CREATE) {
-            logger.info("🔍 Skipping non-CREATE operation: {}", theRequestDetails.getRestOperationType());
+        // Validate CREATE operations and TRANSACTION operations (Bundle processing)
+        RestOperationTypeEnum operation = theRequestDetails.getRestOperationType();
+        if (operation != RestOperationTypeEnum.CREATE && operation != RestOperationTypeEnum.TRANSACTION) {
+            logger.info("🔍 Skipping operation: {} (only CREATE and TRANSACTION are validated)", operation);
             return;
         }
         
@@ -55,11 +56,13 @@ public class BucketAwareValidationInterceptor {
             logger.info("🔍 Getting bucket config for: {}", bucketName);
             FhirBucketConfigService.FhirBucketConfig config = configService.getFhirBucketConfig(bucketName);
             
-            logger.info("🔍 Bucket config - isStrictValidation: {}, allowUnknownElements: {}", 
-                config.isStrictValidation(), config.isAllowUnknownElements());
+            // Log complete validation configuration
+            logger.info("🔍 Bucket config - mode: {}, enforceUSCore: {}, allowUnknown: {}, terminology: {}", 
+                config.getValidationMode(), config.isEnforceUSCore(), 
+                config.isAllowUnknownElements(), config.isTerminologyChecks());
             
-            // Only apply strict parsing for strict validation buckets
-            if (config.isStrictValidation() && !config.isAllowUnknownElements()) {
+            // Apply strict parsing validation based on mode and allowUnknownElements
+            if ("strict".equals(config.getValidationMode()) && !config.isAllowUnknownElements()) {
                 logger.info("🔍 APPLYING STRICT VALIDATION for bucket: {}", bucketName);
                 
                 // Get the request body before HAPI parses it
@@ -86,9 +89,12 @@ public class BucketAwareValidationInterceptor {
                         );
                     }
                 }
+            } else if ("disabled".equals(config.getValidationMode())) {
+                logger.info("🔍 VALIDATION DISABLED for bucket: {}", bucketName);
             } else {
-                logger.info("🔍 Using LENIENT validation for bucket: {} (strict: {}, allowUnknown: {})", 
-                    bucketName, config.isStrictValidation(), config.isAllowUnknownElements());
+                String validationType = config.isEnforceUSCore() ? "US Core" : "basic FHIR R4";
+                logger.info("🔍 Using {} {} validation for bucket: {} (allowUnknown: {})", 
+                    config.getValidationMode().toUpperCase(), validationType, bucketName, config.isAllowUnknownElements());
             }
         } catch (Exception e) {
             if (e instanceof ca.uhn.fhir.rest.server.exceptions.UnprocessableEntityException) {

@@ -9,6 +9,7 @@ import com.couchbase.fhir.resources.service.FHIRResourceService;
 import com.couchbase.fhir.resources.service.FhirBucketConfigService;
 import com.couchbase.fhir.resources.validation.FhirBucketValidator;
 import org.hl7.fhir.r4.model.Resource;
+import org.hl7.fhir.r4.model.Bundle;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Bean;
@@ -16,6 +17,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 
@@ -36,6 +38,12 @@ import java.util.stream.Collectors;
 @Component
 public class ResourceProviderAutoConfig {
     private static final org.slf4j.Logger logger = org.slf4j.LoggerFactory.getLogger(ResourceProviderAutoConfig.class);
+    
+    // Resources that should NOT be auto-discovered as generic providers
+    // Bundle is handled by dedicated BundleTransactionProvider
+    private static final Set<Class<? extends Resource>> excludedResources = Set.of(
+        Bundle.class  // Handled by BundleTransactionProvider
+    );
 
     public ResourceProviderAutoConfig() {
         logger.info("🚀 ResourceProviderAutoConfig: Constructor called, bean is being instantiated");
@@ -71,6 +79,7 @@ public class ResourceProviderAutoConfig {
                 .map(fhirContext::getResourceDefinition)
                 .map(rd -> (Class<? extends Resource>) rd.getImplementingClass())
                 .distinct()
+                .filter(clazz -> !excludedResources.contains(clazz))
                 .map(clazz -> new FhirCouchbaseResourceProvider<>(clazz, serviceFactory.getService(clazz) , fhirContext, searchPreprocessor, bucketValidator, configService, strictValidator, lenientValidator))
                 .collect(Collectors.toList());
 
