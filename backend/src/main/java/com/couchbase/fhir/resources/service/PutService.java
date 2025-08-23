@@ -4,14 +4,13 @@ import ca.uhn.fhir.parser.IParser;
 import com.couchbase.client.java.Cluster;
 import com.couchbase.client.java.json.JsonObject;
 import com.couchbase.client.java.query.QueryResult;
-import org.hl7.fhir.r4.model.Meta;
+import com.couchbase.common.fhir.FhirMetaHelper;
 import org.hl7.fhir.r4.model.Resource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
-import java.util.Date;
 import java.util.List;
 
 /**
@@ -30,7 +29,7 @@ public class PutService {
     private IParser jsonParser;
     
     @Autowired
-    private FhirAuditService auditService;
+    private FhirMetaHelper metaHelper;
     
     @Autowired
     private DeleteService deleteService;
@@ -192,17 +191,9 @@ public class PutService {
      * Update resource metadata (version, lastUpdated, audit info)
      */
     private void updateResourceMetadata(Resource resource, String versionId, String operation) {
-        // Add/update Meta information
-        if (resource.getMeta() == null) {
-            resource.setMeta(new Meta());
-        }
-        
-        resource.getMeta().setVersionId(versionId);
-        resource.getMeta().setLastUpdated(new Date());
-        
-        // Add audit information
-        UserAuditInfo auditInfo = auditService.getCurrentUserAuditInfo();
-        auditService.addAuditInfoToMeta(resource, auditInfo, operation);
+        // Apply proper meta using new architecture
+        MetaRequest metaRequest = MetaRequest.forUpdate(null, versionId, null);
+        metaHelper.applyMeta(resource, metaRequest);
         
         logger.warn("🏷️ Updated metadata: version={}, operation={}", versionId, operation);
     }

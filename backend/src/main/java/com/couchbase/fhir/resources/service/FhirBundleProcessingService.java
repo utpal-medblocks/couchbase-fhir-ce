@@ -172,7 +172,8 @@ public class FhirBundleProcessingService {
             if (isCouchbaseError(e)) {
                 logger.debug("❌ Couchbase error details:", e);
             } else {
-                logger.debug("❌ Full stack trace:", e);
+                // Uncomment for stack trace during deep debugging:
+                // logger.debug("❌ Full stack trace:", e);
             }
             throw new RuntimeException(cleanMessage);
         }
@@ -227,9 +228,11 @@ public class FhirBundleProcessingService {
             String cleanMessage = extractCleanErrorMessage(e);
             logger.error("❌ Transaction processing failed: {}", cleanMessage);
             if (isCouchbaseError(e)) {
-                logger.debug("❌ Couchbase error details:", e);
+                // Uncomment for stack trace during deep debugging:
+                // logger.debug("❌ Couchbase error details:", e);
             } else {
-                logger.debug("❌ Full stack trace:", e);
+                // Uncomment for stack trace during deep debugging:
+                // logger.debug("❌ Full stack trace:", e);
             }
             throw new RuntimeException(cleanMessage);
         }

@@ -1,142 +1,186 @@
 package com.couchbase.common.fhir;
 
+import com.couchbase.fhir.resources.service.AuditOp;
+import com.couchbase.fhir.resources.service.FhirAuditService;
+import com.couchbase.fhir.resources.service.MetaRequest;
 import org.hl7.fhir.r4.model.Meta;
 import org.hl7.fhir.r4.model.Resource;
 import org.hl7.fhir.r4.model.Coding;
 import org.hl7.fhir.r4.model.CanonicalType;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Component;
+
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
+import java.util.HashSet;
+import java.util.Set;
 
 /**
- * Centralized helper for applying FHIR meta tags consistently across all services.
- * This ensures uniform audit information across the application.
+ * Centralized Meta orchestrator for FHIR resources
+ * Single entry point for all meta operations: versioning, timestamps, profiles, and audit tags
+ * Works with FhirAuditService to get audit tags but handles all other meta concerns
  */
+@Component
 public class FhirMetaHelper {
 
-    // Constants for audit tags
-    private static final String AUDIT_TAG_SYSTEM = "http://couchbase.fhir.com/fhir/custom-tags";
-    private static final String CREATED_BY_CODE = "created-by";
-    private static final String UPDATED_BY_CODE = "updated-by";
-    private static final String DELETED_BY_CODE = "deleted-by";
+    @Autowired
+    private FhirAuditService auditService;
     
     /**
-     * Apply complete meta information to a FHIR resource (most comprehensive method)
+     * Main entry point: Apply meta information based on MetaRequest
+     * This is the single orchestrator for all meta operations
      */
-    public static void applyCompleteMeta(Resource resource, String userId, String operation, 
-                                        Date lastUpdated, String versionId, List<String> profiles) {
-        if (resource == null) {
+    public void applyMeta(Resource resource, MetaRequest request) {
+        if (resource == null || request == null) {
             return;
         }
         
         Meta meta = getOrCreateMeta(resource);
         
-        // Set standard meta fields
-        if (lastUpdated != null) {
-            meta.setLastUpdated(lastUpdated);
-        } else {
-            meta.setLastUpdated(new Date());
-        }
+        // 1. Set lastUpdated
+        Date timestamp = request.lastUpdated != null ? request.lastUpdated : new Date();
+        meta.setLastUpdated(timestamp);
         
+        // 2. Handle versionId based on operation
+        String versionId = determineVersionId(resource, request);
         if (versionId != null) {
             meta.setVersionId(versionId);
         }
         
-        // Set profiles if provided
-        if (profiles != null && !profiles.isEmpty()) {
-            List<CanonicalType> canonicalProfiles = new ArrayList<>();
-            for (String profile : profiles) {
-                canonicalProfiles.add(new CanonicalType(profile));
-            }
-            meta.setProfile(canonicalProfiles);
+        // 3. Handle profiles (merge with existing)
+        if (request.profiles != null && !request.profiles.isEmpty()) {
+            mergeProfiles(meta, request.profiles);
         }
         
-        // Apply audit tags
-        applyAuditTags(meta, userId, operation);
-    }
-    
-    /**
-     * Apply basic meta information with defaults (simplified method)
-     */
-    public static void applyMeta(Resource resource, Date lastUpdated, String versionId, 
-                                List<String> profiles, String createdBy) {
-        if (resource == null) {
-            return;
-        }
-        
-        // Extract operation from createdBy if it contains operation info
-        String operation = "CREATE"; // default
-        String userId = createdBy != null ? createdBy : "user:anonymous";
-        
-        applyCompleteMeta(resource, userId, operation, lastUpdated, versionId, profiles);
-    }
-    
-    /**
-     * Apply minimal meta information (for simple cases)
-     */
-    public static void applyMinimalMeta(Resource resource, String userId, String operation) {
-        applyCompleteMeta(resource, userId, operation, new Date(), "1", null);
+        // 4. Get audit tag from audit service and replace existing audit tags
+        String userId = request.userId != null ? request.userId : auditService.getCurrentUserId();
+        Coding auditTag = auditService.newAuditTag(request.op, userId);
+        replaceAuditTag(meta, auditTag);
     }
     
     /**
      * Convenience method for CREATE operations
      */
-    public static void applyCreateMeta(Resource resource, String userId) {
-        applyMinimalMeta(resource, userId, "CREATE");
+    public void applyCreateMeta(Resource resource, String userId, String versionId, List<String> profiles) {
+        MetaRequest request = MetaRequest.forCreate(userId, versionId, profiles);
+        applyMeta(resource, request);
     }
     
     /**
      * Convenience method for UPDATE operations
      */
-    public static void applyUpdateMeta(Resource resource, String userId, String versionId) {
-        applyCompleteMeta(resource, userId, "UPDATE", new Date(), versionId, extractExistingProfiles(resource));
+    public void applyUpdateMeta(Resource resource, String userId, String versionId, List<String> profiles) {
+        MetaRequest request = MetaRequest.forUpdate(userId, versionId, profiles);
+        applyMeta(resource, request);
     }
     
     /**
-     * Convenience method for DELETE operations (soft delete with audit)
+     * Convenience method for DELETE operations
      */
-    public static void applyDeleteMeta(Resource resource, String userId) {
-        applyCompleteMeta(resource, userId, "DELETE", new Date(), 
-            incrementVersion(resource.getMeta()), extractExistingProfiles(resource));
+    public void applyDeleteMeta(Resource resource, String userId) {
+        MetaRequest request = MetaRequest.forDelete(userId);
+        applyMeta(resource, request);
+    }
+
+    /**
+     * Determine version ID based on operation and request
+     */
+    private String determineVersionId(Resource resource, MetaRequest request) {
+        // If explicitly provided, use it
+        if (request.versionId != null) {
+            return request.versionId;
+        }
+        
+        // Operation-specific defaults
+        switch (request.op) {
+            case CREATE:
+                return "1"; // Always start at version 1 for new resources
+                
+            case UPDATE:
+                // For updates, increment existing version or default to 2
+                Meta updateMeta = resource.getMeta();
+                if (updateMeta != null && updateMeta.getVersionId() != null) {
+                    return incrementVersion(updateMeta.getVersionId());
+                }
+                return "2"; // If no existing version, assume this is version 2
+                
+            case DELETE:
+                // For deletes, optionally bump version
+                if (request.bumpVersionIfMissing) {
+                    Meta deleteMeta = resource.getMeta();
+                    if (deleteMeta != null && deleteMeta.getVersionId() != null) {
+                        return incrementVersion(deleteMeta.getVersionId());
+                    }
+                    return "1"; // If no existing version, default to 1
+                }
+                return null; // Don't change version for delete
+                
+            default:
+                return "1";
+        }
     }
     
     /**
      * Helper method to increment version ID
      */
-    private static String incrementVersion(Meta meta) {
-        if (meta == null || meta.getVersionId() == null) {
+    private String incrementVersion(String versionId) {
+        if (versionId == null) {
             return "1";
         }
         try {
-            int currentVersion = Integer.parseInt(meta.getVersionId());
+            int currentVersion = Integer.parseInt(versionId);
             return String.valueOf(currentVersion + 1);
         } catch (NumberFormatException e) {
             return "1"; // Fallback if version is not numeric
         }
     }
-    
+
     /**
-     * Apply audit-only meta (preserves existing meta, adds audit tags)
+     * Merge profiles with existing ones, avoiding duplicates
      */
-    public static void applyAuditOnly(Resource resource, String userId, String operation) {
-        if (resource == null) {
-            return;
+    private void mergeProfiles(Meta meta, List<String> newProfiles) {
+        Set<String> allProfiles = new HashSet<>();
+        
+        // Add existing profiles
+        if (meta.hasProfile()) {
+            for (CanonicalType existing : meta.getProfile()) {
+                if (existing.getValue() != null) {
+                    allProfiles.add(existing.getValue());
+                }
+            }
         }
         
-        Meta meta = getOrCreateMeta(resource);
+        // Add new profiles
+        allProfiles.addAll(newProfiles);
         
-        // Only update lastUpdated if not already set
-        if (meta.getLastUpdated() == null) {
-            meta.setLastUpdated(new Date());
+        // Set merged profiles
+        List<CanonicalType> canonicalProfiles = new ArrayList<>();
+        for (String profile : allProfiles) {
+            canonicalProfiles.add(new CanonicalType(profile));
+        }
+        meta.setProfile(canonicalProfiles);
+    }
+
+    /**
+     * Replace existing audit tags with new one
+     */
+    private void replaceAuditTag(Meta meta, Coding newAuditTag) {
+        List<Coding> existingTags = meta.getTag();
+        List<Coding> newTags = new ArrayList<>();
+        
+        // Keep existing non-audit tags
+        if (existingTags != null) {
+            for (Coding tag : existingTags) {
+                if (!FhirAuditService.auditSystem().equals(tag.getSystem())) {
+                    newTags.add(tag);
+                }
+            }
         }
         
-        // Only set versionId if not already set
-        if (meta.getVersionId() == null) {
-            meta.setVersionId("1");
-        }
-        
-        // Apply audit tags
-        applyAuditTags(meta, userId, operation);
+        // Add the new audit tag
+        newTags.add(newAuditTag);
+        meta.setTag(newTags);
     }
     
     /**
@@ -167,105 +211,46 @@ public class FhirMetaHelper {
         }
         return meta;
     }
+
+    // ========== LEGACY METHODS FOR BACKWARD COMPATIBILITY ==========
+    // These will be deprecated once all services are migrated to the new approach
     
     /**
-     * Apply audit tags to meta based on operation type
+     * @deprecated Use applyMeta(Resource, MetaRequest) instead
      */
-    private static void applyAuditTags(Meta meta, String userId, String operation) {
-        // Normalize userId
-        String normalizedUserId = userId != null ? userId : "user:anonymous";
-        if (!normalizedUserId.startsWith("user:") && !normalizedUserId.startsWith("system:")) {
-            normalizedUserId = "user:" + normalizedUserId;
-        }
-        
-        // Determine audit tag code based on operation
-        String auditCode;
-        switch (operation.toUpperCase()) {
-            case "CREATE":
-                auditCode = CREATED_BY_CODE;
-                break;
-            case "UPDATE":
-                auditCode = UPDATED_BY_CODE;
-                break;
-            case "DELETE":
-                auditCode = DELETED_BY_CODE;
-                break;
-            default:
-                auditCode = CREATED_BY_CODE; // Default fallback
-        }
-        
-        // Create audit tag
-        Coding auditTag = new Coding()
-                .setSystem(AUDIT_TAG_SYSTEM)
-                .setCode(auditCode)
-                .setDisplay(normalizedUserId);
-        
-        // Handle existing tags - preserve non-audit tags, replace audit tags
-        List<Coding> existingTags = meta.getTag();
-        List<Coding> newTags = new ArrayList<>();
-        
-        // Keep existing non-audit tags
-        if (existingTags != null) {
-            for (Coding tag : existingTags) {
-                if (!AUDIT_TAG_SYSTEM.equals(tag.getSystem())) {
-                    newTags.add(tag);
-                }
-            }
-        }
-        
-        // Add the new audit tag
-        newTags.add(auditTag);
-        meta.setTag(newTags);
-    }
-    
-    /**
-     * Add ONLY audit tags to resource meta - does not touch versionId, lastUpdated, etc.
-     * This is for separation of concerns - audit service only handles audit info
-     */
+    @Deprecated
     public static void addAuditTags(Resource resource, String userId, String operation) {
-        if (resource == null) {
-            return;
-        }
+        // Legacy method - kept for backward compatibility during migration
+        if (resource == null) return;
         
         Meta meta = getOrCreateMeta(resource);
-        
-        // Determine audit code based on operation
-        String auditCode;
-        switch (operation.toUpperCase()) {
-            case "CREATE":
-                auditCode = CREATED_BY_CODE;
-                break;
-            case "UPDATE":
-                auditCode = UPDATED_BY_CODE;
-                break;
-            case "DELETE":
-                auditCode = DELETED_BY_CODE;
-                break;
-            default:
-                auditCode = CREATED_BY_CODE; // Default fallback
-        }
-        
-        // Create audit tag
         String normalizedUserId = (userId != null && !userId.trim().isEmpty()) ? userId : "system";
+        
+        // Create audit tag using legacy approach
+        String auditCode = switch (operation.toUpperCase()) {
+            case "CREATE" -> "created-by";
+            case "UPDATE" -> "updated-by";
+            case "DELETE" -> "deleted-by";
+            default -> "created-by";
+        };
+        
         Coding auditTag = new Coding()
-                .setSystem(AUDIT_TAG_SYSTEM)
+                .setSystem("http://couchbase.fhir.com/fhir/custom-tags")
                 .setCode(auditCode)
                 .setDisplay(normalizedUserId);
         
-        // Handle existing tags - preserve non-audit tags, replace audit tags
+        // Replace audit tags
         List<Coding> existingTags = meta.getTag();
         List<Coding> newTags = new ArrayList<>();
         
-        // Keep existing non-audit tags
         if (existingTags != null) {
             for (Coding tag : existingTags) {
-                if (!AUDIT_TAG_SYSTEM.equals(tag.getSystem())) {
+                if (!"http://couchbase.fhir.com/fhir/custom-tags".equals(tag.getSystem())) {
                     newTags.add(tag);
                 }
             }
         }
         
-        // Add the new audit tag
         newTags.add(auditTag);
         meta.setTag(newTags);
     }

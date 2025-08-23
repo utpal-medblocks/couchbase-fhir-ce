@@ -18,8 +18,8 @@ import java.util.List;
  * 
  * Flow:
  * 1. Copy current resource to Versions (if exists)
- * 2. Create tombstone in Tombstones collection  
- * 3. Remove from live Resources collection
+ * 2. Create tombstone ONLY if resource actually existed (FHIR best practice)
+ * 3. Remove from live Resources collection (always attempt for idempotency)
  * 4. Always return 204 (even if resource didn't exist)
  */
 @Service
@@ -106,85 +106,59 @@ public class DeleteService {
         // Step 1: Copy current resource to Versions (if it exists) and get version info
         String lastVersionId = copyCurrentResourceToVersions(cluster, bucketName, resourceType, documentKey);
         
-        // Step 2: Create tombstone (even if resource didn't exist - idempotent)
-        createTombstone(txContext, cluster, bucketName, resourceType, resourceId, lastVersionId);
+        // Step 2: Only create tombstone if resource actually existed (FHIR best practice)
+        if (lastVersionId != null) {
+            createTombstone(txContext, cluster, bucketName, resourceType, resourceId, lastVersionId);
+            logger.info("🪦 DELETE {}: Resource deleted - archived version {}, tombstone created, live removed", 
+                       documentKey, lastVersionId);
+        } else {
+            logger.info("🔍 DELETE {}: Resource didn't exist - no tombstone created (idempotent 204)", 
+                       documentKey);
+        }
         
-        // Step 3: Remove from live Resources collection (if it exists)
+        // Step 3: Remove from live Resources collection (if it exists) - always attempt for idempotency
         removeFromLiveCollection(txContext, cluster, bucketName, resourceType, documentKey);
-        
-        logger.info("🪦 DELETE {}: Soft delete completed - archived version {}, tombstone created, live removed", 
-                   documentKey, lastVersionId != null ? lastVersionId : "none");
     }
     
     /**
-     * Copy current resource to Versions collection using efficient N1QL
+     * Copy current resource to Versions collection using efficient N1QL with RETURNING
+     * Same approach as PUT service to get version ID directly from the query
      * @return The version ID of the archived resource (null if resource didn't exist)
      */
     private String copyCurrentResourceToVersions(Cluster cluster, String bucketName, String resourceType, String documentKey) {
         try {
-            // Use efficient N1QL with USE KEYS for direct document access (no primary scan)
+            // Use same efficient N1QL as PUT service with RETURNING to get version ID directly
             String sql = String.format(
                 "INSERT INTO `%s`.`%s`.`%s` (KEY k, VALUE v) " +
                 "SELECT " +
                 "    CONCAT(META(r).id, '/', IFNULL(r.meta.versionId, '1')) AS k, " +
                 "    r AS v " +
                 "FROM `%s`.`%s`.`%s` r " +
-                "USE KEYS '%s'",
+                "USE KEYS '%s' " +
+                "RETURNING RAW %s.meta.versionId",
                 bucketName, DEFAULT_SCOPE, VERSIONS_COLLECTION,  // INSERT INTO Versions
                 bucketName, DEFAULT_SCOPE, resourceType,         // FROM ResourceType
-                documentKey                                      // USE KEYS 'Patient/simple-patient-1'
+                documentKey,                                     // USE KEYS 'Patient/04d74bb4-61a9-45f5-8912-3d30d8029fa7'
+                VERSIONS_COLLECTION                              // RETURNING RAW Versions.meta.versionId
             );
             
-            logger.debug("🔄 Copying current resource to Versions with USE KEYS for delete: {}", sql);
+            logger.debug("🔄 Copying current resource to Versions with RETURNING for delete: {}", sql);
             QueryResult result = cluster.query(sql);
             
-            // Check if resource existed and was copied
-            if (result.metaData().metrics().isPresent()) {
-                long mutationCount = result.metaData().metrics().get().mutationCount();
-                
-                if (mutationCount > 0) {
-                    // Resource existed and was copied - get the version ID
-                    String versionId = getCurrentVersion(cluster, bucketName, resourceType, documentKey);
-                    logger.debug("📂 Copied resource to Versions for delete, version: {}", versionId);
-                    return versionId;
-                } else {
-                    logger.debug("🔍 Resource {} doesn't exist - no version to archive", documentKey);
-                    return null;
-                }
+            // Get RETURNING results from SDK - this gives us the version ID that was copied
+            List<String> rows = result.rowsAs(String.class);
+            if (!rows.isEmpty()) {
+                String versionId = rows.get(0);
+                logger.debug("📂 Copied resource to Versions for delete, version: {}", versionId);
+                return versionId;
+            } else {
+                logger.debug("🔍 Resource {} doesn't exist - no version to archive", documentKey);
+                return null;
             }
-            
-            return null; // Resource didn't exist
             
         } catch (Exception e) {
             logger.debug("Failed to copy resource {} to Versions: {}", documentKey, e.getMessage());
             return null; // Continue with delete even if archiving fails
-        }
-    }
-    
-    /**
-     * Get current version of resource
-     */
-    private String getCurrentVersion(Cluster cluster, String bucketName, String resourceType, String documentKey) {
-        try {
-            String sql = String.format(
-                "SELECT IFNULL(r.meta.versionId, '1') AS currentVersion " +
-                "FROM `%s`.`%s`.`%s` r " +
-                "WHERE META(r).id = '%s'",
-                bucketName, DEFAULT_SCOPE, resourceType, documentKey
-            );
-            
-            QueryResult result = cluster.query(sql);
-            List<JsonObject> rows = result.rowsAsObject();
-            
-            if (!rows.isEmpty()) {
-                return rows.get(0).getString("currentVersion");
-            }
-            
-            return "1"; // Default version
-            
-        } catch (Exception e) {
-            logger.debug("Failed to get current version for {}: {}", documentKey, e.getMessage());
-            return "1"; // Default version
         }
     }
     

@@ -22,11 +22,11 @@
     <logger name="com.couchbase.transactions" level="WARN"/>
     
     <logger name="com.couchbase.admin" level="WARN"/>
-    <logger name="com.couchbase.fhir" level="WARN"/>
+    <logger name="com.couchbase.fhir" level="DEBUG"/>
     <logger name="com.couchbase.common" level="WARN"/>
     
     <!-- Suppress noisy HAPI FHIR parser warnings -->
-    <logger name="ca.uhn.fhir.parser.LenientErrorHandler" level="INFO"/>
+    <logger name="ca.uhn.fhir.parser.LenientErrorHandler" level="ERROR"/>
     
     <!-- Suppress verbose HAPI FHIR profile loading messages -->
     <logger name="ca.uhn.fhir.context.support.DefaultProfileValidationSupport" level="WARN"/>

@@ -15,6 +15,9 @@ import com.couchbase.fhir.resources.repository.FhirResourceDaoImpl;
 import com.couchbase.fhir.resources.service.FhirAuditService;
 import com.couchbase.fhir.resources.service.UserAuditInfo;
 import com.couchbase.fhir.resources.service.FhirBucketConfigService;
+import com.couchbase.fhir.resources.service.AuditOp;
+import com.couchbase.fhir.resources.service.MetaRequest;
+import com.couchbase.common.fhir.FhirMetaHelper;
 
 import com.couchbase.fhir.resources.util.*;
 import com.couchbase.fhir.resources.util.Ftsn1qlQueryBuilder.SortField;
@@ -65,9 +68,10 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
     private final com.couchbase.admin.connections.service.ConnectionService connectionService;
     private final com.couchbase.fhir.resources.service.PutService putService;
     private final com.couchbase.fhir.resources.service.DeleteService deleteService;
+    private final FhirMetaHelper metaHelper;
 
 
-    public FhirCouchbaseResourceProvider(Class<T> resourceClass, FhirResourceDaoImpl<T> dao , FhirContext fhirContext, FhirSearchParameterPreprocessor searchPreprocessor, FhirBucketValidator bucketValidator, FhirBucketConfigService configService, FhirValidator strictValidator, FhirValidator lenientValidator, com.couchbase.admin.connections.service.ConnectionService connectionService, com.couchbase.fhir.resources.service.PutService putService, com.couchbase.fhir.resources.service.DeleteService deleteService) {
+    public FhirCouchbaseResourceProvider(Class<T> resourceClass, FhirResourceDaoImpl<T> dao , FhirContext fhirContext, FhirSearchParameterPreprocessor searchPreprocessor, FhirBucketValidator bucketValidator, FhirBucketConfigService configService, FhirValidator strictValidator, FhirValidator lenientValidator, com.couchbase.admin.connections.service.ConnectionService connectionService, com.couchbase.fhir.resources.service.PutService putService, com.couchbase.fhir.resources.service.DeleteService deleteService, FhirMetaHelper metaHelper) {
         this.resourceClass = resourceClass;
         this.dao = dao;
         this.fhirContext = fhirContext;
@@ -79,6 +83,7 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
         this.connectionService = connectionService;
         this.putService = putService;
         this.deleteService = deleteService;
+        this.metaHelper = metaHelper;
     }
 
     @Read
@@ -114,16 +119,19 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
         // Get bucket-specific validation configuration first
         FhirBucketConfigService.FhirBucketConfig bucketConfig = configService.getFhirBucketConfig(bucketName);
 
-        FhirAuditService auditService = new FhirAuditService();
-        UserAuditInfo auditInfo = auditService.getCurrentUserAuditInfo();
-        auditService.addAuditInfoToMeta(resource, auditInfo, "CREATE");
-
-        // Add US Core profile for strict validation buckets
+        // Apply proper meta with version "1" for CREATE operations
+        List<String> profiles = null;
         if (resource instanceof DomainResource && bucketConfig.isEnforceUSCore()) {
             String profileUrl = "http://hl7.org/fhir/us/core/StructureDefinition/us-core-" + 
                                 resource.getClass().getSimpleName().toLowerCase();
-            ((DomainResource) resource).getMeta().addProfile(profileUrl);
-            logger.info("🔍 ResourceProvider: Added US Core profile: {}", profileUrl);
+            profiles = List.of(profileUrl);
+        }
+        
+        MetaRequest metaRequest = MetaRequest.forCreate(null, "1", profiles);
+        metaHelper.applyMeta(resource, metaRequest);
+        
+        if (profiles != null && !profiles.isEmpty()) {
+            logger.info("🔍 ResourceProvider: Added US Core profile: {}", profiles.get(0));
         }
         
         logger.info("🔍 ResourceProvider: Processing {} for bucket: {}", resourceClass.getSimpleName(), bucketName);

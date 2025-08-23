@@ -3,6 +3,7 @@ package com.couchbase.fhir.resources.service;
 import ca.uhn.fhir.parser.IParser;
 import com.couchbase.client.java.Cluster;
 import com.couchbase.client.java.json.JsonObject;
+import com.couchbase.common.fhir.FhirMetaHelper;
 import org.hl7.fhir.r4.model.Resource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -26,7 +27,7 @@ public class PostService {
     private IParser jsonParser;
     
     @Autowired
-    private FhirAuditService auditService;
+    private FhirMetaHelper metaHelper;
     
     /**
      * Create a new FHIR resource via POST operation.
@@ -47,9 +48,9 @@ public class PostService {
         logger.info("🆔 POST {}: Generated server ID {} (ignoring any client-supplied ID)", 
                    resourceType, serverGeneratedId);
         
-        // Add audit metadata (created-by, lastUpdated, versionId=1)
-        UserAuditInfo auditInfo = auditService.getCurrentUserAuditInfo();
-        auditService.addAuditInfoToMeta(resource, auditInfo, "CREATE");
+        // Apply proper meta with version "1" for CREATE operations
+        MetaRequest metaRequest = MetaRequest.forCreate(null, "1", null);
+        metaHelper.applyMeta(resource, metaRequest);
         
         // Prepare document key and JSON
         String documentKey = resourceType + "/" + serverGeneratedId;
@@ -85,9 +86,9 @@ public class PostService {
         logger.info("🆔 POST {} (in transaction): Generated server ID {} (ignoring any client-supplied ID)", 
                    resourceType, serverGeneratedId);
         
-        // Add audit metadata (created-by, lastUpdated, versionId=1)
-        UserAuditInfo auditInfo = auditService.getCurrentUserAuditInfo();
-        auditService.addAuditInfoToMeta(resource, auditInfo, "CREATE");
+        // Apply proper meta with version "1" for CREATE operations
+        MetaRequest metaRequest = MetaRequest.forCreate(null, "1", null);
+        metaHelper.applyMeta(resource, metaRequest);
         
         // Prepare document key and JSON
         String documentKey = resourceType + "/" + serverGeneratedId;
