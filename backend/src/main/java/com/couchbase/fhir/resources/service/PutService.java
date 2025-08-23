@@ -100,12 +100,15 @@ public class PutService {
         
         try {
             // Create standalone transaction for this PUT operation
+            logger.info("🔄 PUT {}: Starting standalone transaction for {}", resourceType, documentKey);
             context.getCluster().transactions().run(txContext -> {
+                logger.debug("🔄 PUT {}: Inside transaction context", resourceType);
                 handleVersioningAndUpdate(resource, documentKey, txContext, 
                                         context.getCluster(), context.getBucketName());
+                logger.debug("✅ PUT {}: Transaction operations completed", resourceType);
             });
             
-            logger.info("✅ PUT {}: Updated resource {} (standalone transaction)", resourceType, documentKey);
+            logger.info("✅ PUT {}: Updated resource {} (standalone transaction committed)", resourceType, documentKey);
             return resource;
             
         } catch (Exception e) {
@@ -127,8 +130,8 @@ public class PutService {
         int nextVersion = copyExistingResourceToVersions(cluster, bucketName, resourceType, documentKey);
         
         if (nextVersion > 1) {
-            logger.info("📋 PUT {}: Resource exists, copied to Versions, version {} → {}", 
-                       documentKey, nextVersion - 1, nextVersion);
+            logger.info("📋 PUT {}: Resource exists, copied to Versions, updating to version {}", 
+                       documentKey, nextVersion);
             updateResourceMetadata(resource, String.valueOf(nextVersion), "UPDATE");
         } else {
             logger.info("🆕 PUT {}: Creating new resource (version 1)", documentKey);
@@ -147,74 +150,41 @@ public class PutService {
      */
     private int copyExistingResourceToVersions(Cluster cluster, String bucketName, String resourceType, String documentKey) {
         try {
-            // Use efficient N1QL to copy existing resource to Versions collection
+            // Use efficient N1QL with USE KEYS - get current version and increment
             String sql = String.format(
                 "INSERT INTO `%s`.`%s`.`%s` (KEY k, VALUE v) " +
                 "SELECT " +
                 "    CONCAT(META(r).id, '/', IFNULL(r.meta.versionId, '1')) AS k, " +
                 "    r AS v " +
                 "FROM `%s`.`%s`.`%s` r " +
-                "WHERE META(r).id = '%s'",
+                "USE KEYS '%s' " +
+                "RETURNING RAW %s.meta.versionId",
                 bucketName, DEFAULT_SCOPE, VERSIONS_COLLECTION,  // INSERT INTO Versions
                 bucketName, DEFAULT_SCOPE, resourceType,         // FROM ResourceType
-                documentKey                                      // WHERE META(r).id = 'Patient/1001'
+                documentKey,                                     // USE KEYS 'Patient/simple-patient-1'
+                VERSIONS_COLLECTION                              // RETURNING RAW Versions.meta.versionId
             );
             
-            logger.debug("🔄 Copying existing resource to Versions: {}", sql);
+            logger.warn("🔄 Copying to Versions with USE KEYS: {}", sql);
             QueryResult result = cluster.query(sql);
             
-            // Check how many rows were inserted (0 = resource doesn't exist, 1 = resource existed and copied)
-            if (result.metaData().metrics().isPresent()) {
-                long mutationCount = result.metaData().metrics().get().mutationCount();
-                
-                if (mutationCount > 0) {
-                    // Resource existed and was copied - get current version and increment
-                    int currentVersion = getCurrentVersion(cluster, bucketName, resourceType, documentKey);
-                    int nextVersion = currentVersion + 1;
-                    logger.debug("📂 Copied resource to Versions, incrementing version {} → {}", currentVersion, nextVersion);
-                    return nextVersion;
-                } else {
-                    // Resource doesn't exist - this will be version 1
-                    logger.debug("🆕 Resource doesn't exist, will create as version 1");
-                    return 1;
-                }
+            // Get RETURNING results from SDK - this gives us the CURRENT version that was copied
+            List<String> rows = result.rowsAs(String.class);
+            if (!rows.isEmpty()) {
+                String currentVersionStr = rows.get(0);
+                int currentVersion = Integer.parseInt(currentVersionStr);
+                int nextVersion = currentVersion + 1;
+                logger.warn("📊 Document exists, current version: {}, next version: {}", currentVersion, nextVersion);
+                return nextVersion;
+            } else {
+                logger.warn("🆕 Document doesn't exist, using version 1");
+                return 1;
             }
             
-            // Fallback - assume resource doesn't exist
-            return 1;
-            
         } catch (Exception e) {
-            logger.debug("Resource {} doesn't exist or copy failed: {}", documentKey, e.getMessage());
+            logger.warn("Resource {} doesn't exist or copy failed: {}", documentKey, e.getMessage());
             // If copy fails, assume resource doesn't exist (version 1)
             return 1;
-        }
-    }
-    
-    /**
-     * Get current version of existing resource
-     */
-    private int getCurrentVersion(Cluster cluster, String bucketName, String resourceType, String documentKey) {
-        try {
-            String sql = String.format(
-                "SELECT IFNULL(r.meta.versionId, '1') AS currentVersion " +
-                "FROM `%s`.`%s`.`%s` r " +
-                "WHERE META(r).id = '%s'",
-                bucketName, DEFAULT_SCOPE, resourceType, documentKey
-            );
-            
-            QueryResult result = cluster.query(sql);
-            List<JsonObject> rows = result.rowsAsObject();
-            
-            if (!rows.isEmpty()) {
-                String versionStr = rows.get(0).getString("currentVersion");
-                return Integer.parseInt(versionStr);
-            }
-            
-            return 1; // Default version
-            
-        } catch (Exception e) {
-            logger.debug("Failed to get current version for {}: {}", documentKey, e.getMessage());
-            return 1; // Default version
         }
     }
     
@@ -234,7 +204,7 @@ public class PutService {
         UserAuditInfo auditInfo = auditService.getCurrentUserAuditInfo();
         auditService.addAuditInfoToMeta(resource, auditInfo, operation);
         
-        logger.debug("🏷️ Updated metadata: version={}, operation={}", versionId, operation);
+        logger.warn("🏷️ Updated metadata: version={}, operation={}", versionId, operation);
     }
     
     /**
@@ -260,7 +230,7 @@ public class PutService {
                 txContext.insert(collection, documentKey, JsonObject.fromJson(resourceJson));
             }
             
-            logger.debug("🔧 Upserted resource in transaction: {}", documentKey);
+            logger.warn("🔧 Upserted resource in transaction: {}", documentKey);
             
         } catch (Exception e) {
             logger.error("❌ Failed to upsert resource {} in transaction: {}", documentKey, e.getMessage());

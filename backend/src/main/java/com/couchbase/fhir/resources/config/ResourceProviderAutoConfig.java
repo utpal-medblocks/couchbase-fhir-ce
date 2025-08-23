@@ -70,6 +70,15 @@ public class ResourceProviderAutoConfig {
     @Autowired
     @Qualifier("basicFhirValidator")
     private FhirValidator lenientValidator; // Basic validator
+    
+    @Autowired
+    private com.couchbase.admin.connections.service.ConnectionService connectionService;
+    
+    @Autowired
+    private com.couchbase.fhir.resources.service.PutService putService;
+    
+    @Autowired
+    private com.couchbase.fhir.resources.service.DeleteService deleteService;
 
     @SuppressWarnings("unchecked")
     @Bean
@@ -80,7 +89,10 @@ public class ResourceProviderAutoConfig {
                 .map(rd -> (Class<? extends Resource>) rd.getImplementingClass())
                 .distinct()
                 .filter(clazz -> !excludedResources.contains(clazz))
-                .map(clazz -> new FhirCouchbaseResourceProvider<>(clazz, serviceFactory.getService(clazz) , fhirContext, searchPreprocessor, bucketValidator, configService, strictValidator, lenientValidator))
+                .map(clazz -> {
+                    // logger.info("✅ Creating generic provider for: {}", clazz.getSimpleName());
+                    return new FhirCouchbaseResourceProvider<>(clazz, serviceFactory.getService(clazz), fhirContext, searchPreprocessor, bucketValidator, configService, strictValidator, lenientValidator, connectionService, putService, deleteService);
+                })
                 .collect(Collectors.toList());
 
     }

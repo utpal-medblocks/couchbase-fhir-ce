@@ -13,23 +13,23 @@
     </root>
 
     <!-- Your Couchbase loggers -->
-    <logger name="com.couchbase" level="INFO"/>
-    <logger name="com.couchbase.client" level="INFO"/>
-    <logger name="com.couchbase.core" level="INFO"/>
-    <logger name="com.couchbase.io" level="INFO"/>
-    <logger name="com.couchbase.endpoint" level="INFO"/>
-    <logger name="com.couchbase.node" level="INFO"/>
-    <logger name="com.couchbase.transactions" level="INFO"/>
+    <logger name="com.couchbase" level="WARN"/>
+    <logger name="com.couchbase.client" level="WARN"/>
+    <logger name="com.couchbase.core" level="WARN"/>
+    <logger name="com.couchbase.io" level="WARN"/>
+    <logger name="com.couchbase.endpoint" level="WARN"/>
+    <logger name="com.couchbase.node" level="WARN"/>
+    <logger name="com.couchbase.transactions" level="WARN"/>
     
-    <logger name="com.couchbase.admin" level="INFO"/>
-    <logger name="com.couchbase.fhir" level="INFO"/>
-    <logger name="com.couchbase.common" level="INFO"/>
+    <logger name="com.couchbase.admin" level="WARN"/>
+    <logger name="com.couchbase.fhir" level="WARN"/>
+    <logger name="com.couchbase.common" level="WARN"/>
     
     <!-- Suppress noisy HAPI FHIR parser warnings -->
     <logger name="ca.uhn.fhir.parser.LenientErrorHandler" level="INFO"/>
     
     <!-- Suppress verbose HAPI FHIR profile loading messages -->
-    <logger name="ca.uhn.fhir.context.support.DefaultProfileValidationSupport" level="INFO"/>
+    <logger name="ca.uhn.fhir.context.support.DefaultProfileValidationSupport" level="WARN"/>
     
     <!-- Suppress HAPI FHIR's exception interceptor stack traces - we handle our own clean error logging -->
     <logger name="ca.uhn.fhir.rest.server.interceptor.ExceptionHandlingInterceptor" level="WARN"/>

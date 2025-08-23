@@ -26,7 +26,8 @@ public class FhirAuditService {
         addAuditInfoToMeta(resource, auditInfo, operation);
     }
     /**
-     * Add comprehensive audit information to resource meta with detailed audit info using centralized helper
+     * Add ONLY audit information to resource meta (who created/updated/deleted)
+     * Does NOT touch versionId, lastUpdated, or other meta fields - that's the caller's responsibility
      */
     public void addAuditInfoToMeta(IBaseResource resource, UserAuditInfo auditInfo, String operation) {
         try {
@@ -42,20 +43,10 @@ public class FhirAuditService {
                     ? auditInfo.getUserId()
                     : getCurrentUserId();
 
-            // Extract existing profiles to preserve them
-            List<String> existingProfiles = FhirMetaHelper.extractExistingProfiles(r4Resource);
+            // Only add audit tags - don't touch versionId, lastUpdated, etc.
+            FhirMetaHelper.addAuditTags(r4Resource, userId, operation);
 
-            // Use centralized helper to apply complete meta information
-            FhirMetaHelper.applyCompleteMeta(
-                    r4Resource,
-                    userId,
-                    operation,
-                    new Date(),        // lastUpdated - always current time
-                    "1",              // versionId - simple for now
-                    existingProfiles  // preserve existing profiles
-            );
-
-            logger.debug("✅ Applied audit meta to {} resource for user: {}, operation: {}",
+            logger.debug("✅ Added audit tags to {} resource for user: {}, operation: {}",
                     r4Resource.getResourceType().name(), userId, operation);
 
         } catch (Exception e) {

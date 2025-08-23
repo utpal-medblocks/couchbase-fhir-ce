@@ -79,10 +79,14 @@ public class DeleteService {
     private void performDeleteWithStandaloneTransaction(String resourceType, String resourceId, String documentKey, TransactionContext context) {
         try {
             // Create standalone transaction for this DELETE operation
+            logger.info("🔄 DELETE {}: Starting standalone transaction for {}", resourceType, documentKey);
             context.getCluster().transactions().run(txContext -> {
+                logger.debug("🔄 DELETE {}: Inside transaction context", resourceType);
                 handleSoftDeleteInTransaction(resourceType, resourceId, documentKey, 
                                             txContext, context.getCluster(), context.getBucketName());
+                logger.debug("✅ DELETE {}: Transaction operations completed", resourceType);
             });
+            logger.info("✅ DELETE {}: Standalone transaction committed for {}", resourceType, documentKey);
         } catch (Exception e) {
             logger.error("❌ DELETE {} (standalone transaction) failed: {}", documentKey, e.getMessage());
             throw new RuntimeException("DELETE operation failed: " + e.getMessage(), e);
@@ -118,20 +122,20 @@ public class DeleteService {
      */
     private String copyCurrentResourceToVersions(Cluster cluster, String bucketName, String resourceType, String documentKey) {
         try {
-            // Use efficient N1QL to copy current resource to Versions
+            // Use efficient N1QL with USE KEYS for direct document access (no primary scan)
             String sql = String.format(
                 "INSERT INTO `%s`.`%s`.`%s` (KEY k, VALUE v) " +
                 "SELECT " +
                 "    CONCAT(META(r).id, '/', IFNULL(r.meta.versionId, '1')) AS k, " +
                 "    r AS v " +
                 "FROM `%s`.`%s`.`%s` r " +
-                "WHERE META(r).id = '%s'",
+                "USE KEYS '%s'",
                 bucketName, DEFAULT_SCOPE, VERSIONS_COLLECTION,  // INSERT INTO Versions
                 bucketName, DEFAULT_SCOPE, resourceType,         // FROM ResourceType
-                documentKey                                      // WHERE META(r).id = 'Patient/1001'
+                documentKey                                      // USE KEYS 'Patient/simple-patient-1'
             );
             
-            logger.debug("🔄 Copying current resource to Versions for delete: {}", sql);
+            logger.debug("🔄 Copying current resource to Versions with USE KEYS for delete: {}", sql);
             QueryResult result = cluster.query(sql);
             
             // Check if resource existed and was copied

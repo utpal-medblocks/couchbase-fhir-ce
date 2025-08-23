@@ -38,6 +38,7 @@ import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+
 /**
  * Generic FHIR resource provider for HAPI FHIR that enables CRUD operations and search capabilities
  * for any FHIR resource type backed by a Couchbase data store.
@@ -61,9 +62,12 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
     private final FhirBucketConfigService configService;
     private final FhirValidator strictValidator; // Primary US Core validator
     private final FhirValidator lenientValidator; // Basic validator
+    private final com.couchbase.admin.connections.service.ConnectionService connectionService;
+    private final com.couchbase.fhir.resources.service.PutService putService;
+    private final com.couchbase.fhir.resources.service.DeleteService deleteService;
 
 
-    public FhirCouchbaseResourceProvider(Class<T> resourceClass, FhirResourceDaoImpl<T> dao , FhirContext fhirContext, FhirSearchParameterPreprocessor searchPreprocessor, FhirBucketValidator bucketValidator, FhirBucketConfigService configService, FhirValidator strictValidator, FhirValidator lenientValidator) {
+    public FhirCouchbaseResourceProvider(Class<T> resourceClass, FhirResourceDaoImpl<T> dao , FhirContext fhirContext, FhirSearchParameterPreprocessor searchPreprocessor, FhirBucketValidator bucketValidator, FhirBucketConfigService configService, FhirValidator strictValidator, FhirValidator lenientValidator, com.couchbase.admin.connections.service.ConnectionService connectionService, com.couchbase.fhir.resources.service.PutService putService, com.couchbase.fhir.resources.service.DeleteService deleteService) {
         this.resourceClass = resourceClass;
         this.dao = dao;
         this.fhirContext = fhirContext;
@@ -72,6 +76,9 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
         this.configService = configService;
         this.strictValidator = strictValidator;
         this.lenientValidator = lenientValidator;
+        this.connectionService = connectionService;
+        this.putService = putService;
+        this.deleteService = deleteService;
     }
 
     @Read
@@ -184,6 +191,93 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
         outcome.setResource(created);
         outcome.setId(new IdType(resourceClass.getSimpleName(), created.getIdElement().getIdPart()));
         return outcome;
+    }
+
+    @Update
+    public MethodOutcome update(@IdParam IdType theId, @ResourceParam T resource) throws IOException {
+        String bucketName = TenantContextHolder.getTenantId();
+        
+        // Validate FHIR bucket before proceeding
+        try {
+            bucketValidator.validateFhirBucketOrThrow(bucketName, "default");
+        } catch (FhirBucketValidationException e) {
+            throw new ca.uhn.fhir.rest.server.exceptions.InvalidRequestException(e.getMessage());
+        }
+
+        // Ensure the resource ID matches the URL parameter
+        String urlId = theId.getIdPart();
+        resource.setId(urlId);
+        
+        logger.info("🔄 PUT {}: Processing update for ID {}", resourceClass.getSimpleName(), urlId);
+
+        // Delegate to PutService for proper versioning and tombstone checking
+        try {
+            com.couchbase.client.java.Cluster cluster = connectionService.getConnection("default");
+            com.couchbase.fhir.resources.service.TransactionContextImpl context = 
+                new com.couchbase.fhir.resources.service.TransactionContextImpl(cluster, bucketName);
+            
+            T updatedResource = (T) putService.updateOrCreateResource(resource, context);
+            
+            MethodOutcome outcome = new MethodOutcome();
+            outcome.setResource(updatedResource);
+            outcome.setId(new IdType(resourceClass.getSimpleName(), updatedResource.getIdElement().getIdPart()));
+            
+            // Determine if this was a create or update based on version
+            String versionId = updatedResource.getMeta().getVersionId();
+            if ("1".equals(versionId)) {
+                outcome.setCreated(true); // New resource
+                logger.info("✅ PUT {}: Created new resource with ID {}", resourceClass.getSimpleName(), urlId);
+            } else {
+                outcome.setCreated(false); // Updated existing
+                logger.info("✅ PUT {}: Updated existing resource with ID {}, version {}", resourceClass.getSimpleName(), urlId, versionId);
+            }
+            
+            return outcome;
+            
+        } catch (ca.uhn.fhir.rest.server.exceptions.ResourceVersionConflictException e) {
+            // ID was tombstoned - return 409
+            throw e;
+        } catch (Exception e) {
+            logger.error("❌ PUT {}: Failed to update resource {}: {}", resourceClass.getSimpleName(), urlId, e.getMessage());
+            throw new InternalErrorException("Failed to update resource: " + e.getMessage());
+        }
+    }
+
+    @Delete
+    public MethodOutcome delete(@IdParam IdType theId) throws IOException {
+        String bucketName = TenantContextHolder.getTenantId();
+        
+        // Validate FHIR bucket before proceeding
+        try {
+            bucketValidator.validateFhirBucketOrThrow(bucketName, "default");
+        } catch (FhirBucketValidationException e) {
+            throw new ca.uhn.fhir.rest.server.exceptions.InvalidRequestException(e.getMessage());
+        }
+
+        String resourceId = theId.getIdPart();
+        String resourceType = resourceClass.getSimpleName();
+        
+        logger.info("🗑️ DELETE {}: Processing soft delete for ID {}", resourceType, resourceId);
+
+        // Delegate to DeleteService for proper tombstone handling
+        try {
+            com.couchbase.client.java.Cluster cluster = connectionService.getConnection("default");
+            com.couchbase.fhir.resources.service.TransactionContextImpl context = 
+                new com.couchbase.fhir.resources.service.TransactionContextImpl(cluster, bucketName);
+            
+            deleteService.deleteResource(resourceType, resourceId, context);
+            
+            // DELETE always returns 204 No Content (idempotent)
+            MethodOutcome outcome = new MethodOutcome();
+            // Note: No resource or ID set for DELETE - just success indication
+            
+            logger.info("✅ DELETE {}: Soft delete completed for ID {}", resourceType, resourceId);
+            return outcome;
+            
+        } catch (Exception e) {
+            logger.error("❌ DELETE {}: Failed to delete resource {}: {}", resourceType, resourceId, e.getMessage());
+            throw new InternalErrorException("Failed to delete resource: " + e.getMessage());
+        }
     }
 
     @Search(allowUnknownParams = true)

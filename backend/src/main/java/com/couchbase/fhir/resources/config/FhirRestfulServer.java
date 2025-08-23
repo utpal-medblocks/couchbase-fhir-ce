@@ -48,6 +48,9 @@ public class FhirRestfulServer extends RestfulServer {
 
     @Autowired
     private List<IResourceProvider> providers;
+    
+    @Autowired
+    private ResourceProviderAutoConfig resourceProviderAutoConfig;
 
 
     
@@ -66,20 +69,52 @@ public class FhirRestfulServer extends RestfulServer {
     @Override
     protected void initialize() {
         logger.info("🚀 Initializing FhirRestfulServer");
-        // Debug: Log what providers we have
-    logger.info("Found {} providers in autowired list:", providers.size());
-    for (IResourceProvider provider : providers) {
-        logger.info("  - Provider: {} for resource: {}", 
-                   provider.getClass().getSimpleName(), 
-                   provider.getResourceType().getSimpleName());
-    }
-        setFhirContext(fhirContext); // Use the injected context
-        setTenantIdentificationStrategy(new UrlBaseTenantIdentificationStrategy());
-        registerInterceptor(new MultiTenantInterceptor());
-        registerInterceptor(bucketValidationInterceptor);
-        registerInterceptor(cleanExceptionInterceptor);
-        USCoreCapabilityProvider capabilityProvider = new USCoreCapabilityProvider(this);
-        setServerConformanceProvider(capabilityProvider);
-        registerProviders(providers);
+        
+        // Debug: Log what providers we have from autowired list
+        logger.info("Found {} providers in autowired list:", providers.size());
+        for (IResourceProvider provider : providers) {
+            logger.info("  - Provider: {} for resource: {}", 
+                       provider.getClass().getSimpleName(), 
+                       provider.getResourceType().getSimpleName());
+        }
+        
+        // MANUAL FIX: Get dynamic providers directly from the config bean
+        try {
+            logger.info("🔧 Manually fetching dynamic providers from ResourceProviderAutoConfig...");
+            List<IResourceProvider> dynamicProviders = resourceProviderAutoConfig.dynamicProviders();
+            logger.info("📋 Got {} dynamic providers from config", dynamicProviders.size());
+            
+            // Combine autowired providers with dynamic providers
+            List<IResourceProvider> allProviders = new java.util.ArrayList<>(providers);
+            allProviders.addAll(dynamicProviders);
+            
+            logger.info("🎯 Total providers to register: {}", allProviders.size());
+            for (IResourceProvider provider : allProviders) {
+                logger.info("  ✅ Will register: {} for resource: {}", 
+                           provider.getClass().getSimpleName(), 
+                           provider.getResourceType().getSimpleName());
+            }
+            
+            setFhirContext(fhirContext); // Use the injected context
+            setTenantIdentificationStrategy(new UrlBaseTenantIdentificationStrategy());
+            registerInterceptor(new MultiTenantInterceptor());
+            registerInterceptor(bucketValidationInterceptor);
+            registerInterceptor(cleanExceptionInterceptor);
+            USCoreCapabilityProvider capabilityProvider = new USCoreCapabilityProvider(this);
+            setServerConformanceProvider(capabilityProvider);
+            registerProviders(allProviders); // Register all providers
+            
+        } catch (Exception e) {
+            logger.error("❌ Failed to get dynamic providers, falling back to autowired only: {}", e.getMessage());
+            // Fallback to original behavior
+            setFhirContext(fhirContext);
+            setTenantIdentificationStrategy(new UrlBaseTenantIdentificationStrategy());
+            registerInterceptor(new MultiTenantInterceptor());
+            registerInterceptor(bucketValidationInterceptor);
+            registerInterceptor(cleanExceptionInterceptor);
+            USCoreCapabilityProvider capabilityProvider = new USCoreCapabilityProvider(this);
+            setServerConformanceProvider(capabilityProvider);
+            registerProviders(providers);
+        }
     }
 }

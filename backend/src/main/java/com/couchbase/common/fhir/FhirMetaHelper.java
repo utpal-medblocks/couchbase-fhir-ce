@@ -217,4 +217,56 @@ public class FhirMetaHelper {
         newTags.add(auditTag);
         meta.setTag(newTags);
     }
+    
+    /**
+     * Add ONLY audit tags to resource meta - does not touch versionId, lastUpdated, etc.
+     * This is for separation of concerns - audit service only handles audit info
+     */
+    public static void addAuditTags(Resource resource, String userId, String operation) {
+        if (resource == null) {
+            return;
+        }
+        
+        Meta meta = getOrCreateMeta(resource);
+        
+        // Determine audit code based on operation
+        String auditCode;
+        switch (operation.toUpperCase()) {
+            case "CREATE":
+                auditCode = CREATED_BY_CODE;
+                break;
+            case "UPDATE":
+                auditCode = UPDATED_BY_CODE;
+                break;
+            case "DELETE":
+                auditCode = DELETED_BY_CODE;
+                break;
+            default:
+                auditCode = CREATED_BY_CODE; // Default fallback
+        }
+        
+        // Create audit tag
+        String normalizedUserId = (userId != null && !userId.trim().isEmpty()) ? userId : "system";
+        Coding auditTag = new Coding()
+                .setSystem(AUDIT_TAG_SYSTEM)
+                .setCode(auditCode)
+                .setDisplay(normalizedUserId);
+        
+        // Handle existing tags - preserve non-audit tags, replace audit tags
+        List<Coding> existingTags = meta.getTag();
+        List<Coding> newTags = new ArrayList<>();
+        
+        // Keep existing non-audit tags
+        if (existingTags != null) {
+            for (Coding tag : existingTags) {
+                if (!AUDIT_TAG_SYSTEM.equals(tag.getSystem())) {
+                    newTags.add(tag);
+                }
+            }
+        }
+        
+        // Add the new audit tag
+        newTags.add(auditTag);
+        meta.setTag(newTags);
+    }
 }
