@@ -12,10 +12,7 @@ import ca.uhn.fhir.validation.ValidationResult;
 import com.couchbase.client.java.search.SearchQuery;
 import com.couchbase.fhir.resources.config.TenantContextHolder;
 import com.couchbase.fhir.resources.repository.FhirResourceDaoImpl;
-import com.couchbase.fhir.resources.service.FhirAuditService;
-import com.couchbase.fhir.resources.service.UserAuditInfo;
 import com.couchbase.fhir.resources.service.FhirBucketConfigService;
-import com.couchbase.fhir.resources.service.AuditOp;
 import com.couchbase.fhir.resources.service.MetaRequest;
 import com.couchbase.common.fhir.FhirMetaHelper;
 
@@ -25,17 +22,20 @@ import com.couchbase.fhir.resources.search.validation.FhirSearchParameterPreproc
 import com.couchbase.fhir.resources.search.validation.FhirSearchValidationException;
 import com.couchbase.fhir.resources.validation.FhirBucketValidator;
 import com.couchbase.fhir.resources.validation.FhirBucketValidationException;
-import com.couchbase.fhir.validation.ValidationUtil;
 import org.hl7.fhir.r4.model.*;
 import ca.uhn.fhir.rest.api.RestSearchParameterTypeEnum;
 import ca.uhn.fhir.rest.api.SummaryEnum;
 import ca.uhn.fhir.parser.IParser;
 import ca.uhn.fhir.validation.FhirValidator;
-import ca.uhn.fhir.validation.ValidationResult;
 import ca.uhn.fhir.rest.annotation.Operation;
 import ca.uhn.fhir.rest.annotation.ResourceParam;
+import ca.uhn.fhir.rest.api.PatchTypeEnum;
 
 import java.io.IOException;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.github.fge.jsonpatch.JsonPatch;
+import com.github.fge.jsonpatch.JsonPatchException;
 import java.util.*;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
@@ -69,9 +69,10 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
     private final com.couchbase.fhir.resources.service.PutService putService;
     private final com.couchbase.fhir.resources.service.DeleteService deleteService;
     private final FhirMetaHelper metaHelper;
+    private final ObjectMapper objectMapper;
 
 
-    public FhirCouchbaseResourceProvider(Class<T> resourceClass, FhirResourceDaoImpl<T> dao , FhirContext fhirContext, FhirSearchParameterPreprocessor searchPreprocessor, FhirBucketValidator bucketValidator, FhirBucketConfigService configService, FhirValidator strictValidator, FhirValidator lenientValidator, com.couchbase.admin.connections.service.ConnectionService connectionService, com.couchbase.fhir.resources.service.PutService putService, com.couchbase.fhir.resources.service.DeleteService deleteService, FhirMetaHelper metaHelper) {
+    public FhirCouchbaseResourceProvider(Class<T> resourceClass, FhirResourceDaoImpl<T> dao , FhirContext fhirContext, FhirSearchParameterPreprocessor searchPreprocessor, FhirBucketValidator bucketValidator, FhirBucketConfigService configService, FhirValidator strictValidator, FhirValidator lenientValidator, com.couchbase.admin.connections.service.ConnectionService connectionService, com.couchbase.fhir.resources.service.PutService putService, com.couchbase.fhir.resources.service.DeleteService deleteService, FhirMetaHelper metaHelper, ObjectMapper objectMapper) {
         this.resourceClass = resourceClass;
         this.dao = dao;
         this.fhirContext = fhirContext;
@@ -84,6 +85,7 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
         this.putService = putService;
         this.deleteService = deleteService;
         this.metaHelper = metaHelper;
+        this.objectMapper = objectMapper;
     }
 
     @Read
@@ -224,6 +226,7 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
             com.couchbase.fhir.resources.service.TransactionContextImpl context = 
                 new com.couchbase.fhir.resources.service.TransactionContextImpl(cluster, bucketName);
             
+            @SuppressWarnings("unchecked")
             T updatedResource = (T) putService.updateOrCreateResource(resource, context);
             
             MethodOutcome outcome = new MethodOutcome();
@@ -288,6 +291,97 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
         }
     }
 
+    @ca.uhn.fhir.rest.annotation.Patch
+    public MethodOutcome patch(@IdParam IdType theId, PatchTypeEnum patchType, @ResourceParam String patchBody) throws IOException {
+        String bucketName = TenantContextHolder.getTenantId();
+        
+        // Validate FHIR bucket before proceeding
+        try {
+            bucketValidator.validateFhirBucketOrThrow(bucketName, "default");
+        } catch (FhirBucketValidationException e) {
+            throw new ca.uhn.fhir.rest.server.exceptions.InvalidRequestException(e.getMessage());
+        }
+
+        String resourceId = theId.getIdPart();
+        String resourceType = resourceClass.getSimpleName();
+        
+        logger.info("🔧 PATCH {}: Processing {} patch for ID {}", resourceType, patchType, resourceId);
+        
+        // Validate patch type - we only support JSON Patch
+        if (patchType != PatchTypeEnum.JSON_PATCH) {
+            logger.error("❌ PATCH {}: Unsupported patch type: {}", resourceType, patchType);
+            throw new ca.uhn.fhir.rest.server.exceptions.InvalidRequestException(
+                "Only JSON Patch is supported. Received: " + patchType);
+        }
+
+        // 1. Get current resource (direct key lookup)
+        T currentResource = dao.read(resourceType, resourceId, bucketName)
+            .orElseThrow(() -> new ResourceNotFoundException(theId));
+        
+        logger.info("🔧 PATCH {}: Found existing resource with version {}", 
+                   resourceType, currentResource.getMeta().getVersionId());
+
+        // 2. Apply JSON Patch
+        T patchedResource;
+        try {
+            // Use HAPI FHIR's JSON parser to avoid circular reference issues
+            IParser fhirParser = fhirContext.newJsonParser();
+            
+            // Convert FHIR resource to JSON string, then to JsonNode
+            String currentResourceJson = fhirParser.encodeResourceToString(currentResource);
+            JsonNode currentJson = objectMapper.readTree(currentResourceJson);
+            
+            // Apply the JSON Patch
+            JsonPatch patch = JsonPatch.fromJson(objectMapper.readTree(patchBody));
+            JsonNode patchedJson = patch.apply(currentJson);
+            
+            // Convert back to FHIR resource using HAPI parser
+            String patchedResourceJson = objectMapper.writeValueAsString(patchedJson);
+            patchedResource = (T) fhirParser.parseResource(resourceClass, patchedResourceJson);
+            
+            // Ensure ID consistency (patch shouldn't change ID)
+            patchedResource.setId(resourceId);
+            
+            logger.info("🔧 PATCH {}: Successfully applied JSON Patch operations", resourceType);
+            
+        } catch (JsonPatchException e) {
+            logger.error("❌ PATCH {}: Invalid JSON Patch operation: {}", resourceType, e.getMessage());
+            throw new ca.uhn.fhir.rest.server.exceptions.InvalidRequestException("Invalid JSON Patch: " + e.getMessage());
+        } catch (Exception e) {
+            logger.error("❌ PATCH {}: Failed to parse or apply patch: {}", resourceType, e.getMessage());
+            throw new ca.uhn.fhir.rest.server.exceptions.InvalidRequestException("Failed to process JSON Patch: " + e.getMessage());
+        }
+
+        // 3. Delegate to PUT service (handles versioning, validation, conflicts, meta, audit, storage)
+        try {
+            com.couchbase.client.java.Cluster cluster = connectionService.getConnection("default");
+            com.couchbase.fhir.resources.service.TransactionContextImpl context = 
+                new com.couchbase.fhir.resources.service.TransactionContextImpl(cluster, bucketName);
+            
+            @SuppressWarnings("unchecked")
+            T updatedResource = (T) putService.updateOrCreateResource(patchedResource, context);
+            
+            MethodOutcome outcome = new MethodOutcome();
+            outcome.setResource(updatedResource);
+            outcome.setCreated(false); // PATCH is always an update (resource must exist)
+            outcome.setId(new IdType(resourceType, updatedResource.getIdElement().getIdPart()));
+            
+            String newVersionId = updatedResource.getMeta().getVersionId();
+            logger.info("✅ PATCH {}: Successfully patched resource ID {}, new version {}", 
+                       resourceType, resourceId, newVersionId);
+            
+            return outcome;
+            
+        } catch (ca.uhn.fhir.rest.server.exceptions.ResourceVersionConflictException e) {
+            // ID was tombstoned - return 409
+            logger.error("❌ PATCH {}: Resource {} is tombstoned", resourceType, resourceId);
+            throw e;
+        } catch (Exception e) {
+            logger.error("❌ PATCH {}: Failed to update resource {}: {}", resourceType, resourceId, e.getMessage());
+            throw new InternalErrorException("Failed to patch resource: " + e.getMessage());
+        }
+    }
+
     @Search(allowUnknownParams = true)
     public Bundle search(RequestDetails requestDetails) {
         List<String> filters = new ArrayList<>();
@@ -342,7 +436,6 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
         searchParams.remove("_sort");
         searchParams.remove("_total");
 
-        RuntimeResourceDefinition resourceDef = fhirContext.getResourceDefinition(resourceType);
         for (Map.Entry<String, String> entry : searchParams.entrySet()) {
             String rawParamName = entry.getKey();
             String paramName = rawParamName;
@@ -719,7 +812,6 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
     /**
      * Apply resource filtering based on _summary and _elements parameters
      */
-    @SuppressWarnings("unchecked")
     private T applyResourceFiltering(T resource, SummaryEnum summaryMode, Set<String> elements) {
         if (summaryMode == null && elements == null) {
             return resource; // No filtering needed

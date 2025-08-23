@@ -9,6 +9,7 @@ import com.couchbase.fhir.resources.service.FHIRResourceService;
 import com.couchbase.fhir.resources.service.FhirBucketConfigService;
 import com.couchbase.fhir.resources.validation.FhirBucketValidator;
 import com.couchbase.common.fhir.FhirMetaHelper;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.hl7.fhir.r4.model.Resource;
 import org.hl7.fhir.r4.model.Bundle;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -84,6 +85,9 @@ public class ResourceProviderAutoConfig {
     @Autowired
     private FhirMetaHelper metaHelper;
 
+    @Autowired
+    private ObjectMapper objectMapper;
+
     @SuppressWarnings("unchecked")
     @Bean
     public List<IResourceProvider> dynamicProviders() {
@@ -95,7 +99,7 @@ public class ResourceProviderAutoConfig {
                 .filter(clazz -> !excludedResources.contains(clazz))
                 .map(clazz -> {
                     // logger.info("✅ Creating generic provider for: {}", clazz.getSimpleName());
-                    return new FhirCouchbaseResourceProvider<>(clazz, serviceFactory.getService(clazz), fhirContext, searchPreprocessor, bucketValidator, configService, strictValidator, lenientValidator, connectionService, putService, deleteService, metaHelper);
+                    return new FhirCouchbaseResourceProvider<>(clazz, serviceFactory.getService(clazz), fhirContext, searchPreprocessor, bucketValidator, configService, strictValidator, lenientValidator, connectionService, putService, deleteService, metaHelper, objectMapper);
                 })
                 .collect(Collectors.toList());
 
