@@ -40,6 +40,8 @@ public class FhirDocumentAdminService {
             
             // Build the SQL query
             String sql = buildDocumentKeysQuery(request, offset);
+            // Log this query
+            logger.debug("Executing SQL query: {}", sql);
             
             // Execute query with timeout
             var result = cluster.query(sql, QueryOptions.queryOptions()
@@ -168,7 +170,7 @@ public class FhirDocumentAdminService {
             // Build the FTS query
             String ftsQuery = buildFtsMetadataQuery(request, offset);
             
-            logger.info("Executing FTS query: {}", ftsQuery);
+            logger.debug("Executing FTS query: {}", ftsQuery);
             
             // Execute query with timeout
             var result = cluster.query(ftsQuery, QueryOptions.queryOptions()
@@ -218,8 +220,7 @@ public class FhirDocumentAdminService {
              .append("resource.meta.versionId, ")
              .append("resource.meta.lastUpdated, ")
              .append("resource.meta.tag[0].code, ")
-             .append("resource.meta.tag[0].display, ")
-             .append("resource.deleted ");
+             .append("resource.meta.tag[0].display ");
         
         query.append("FROM `")
              .append(request.getBucketName())
@@ -275,9 +276,8 @@ public class FhirDocumentAdminService {
             String lastUpdated = row.getString("lastUpdated");
             String code = row.getString("code");
             String display = row.getString("display");
-            Boolean deleted = row.getBoolean("deleted");
             
-            return new DocumentMetadata(id, versionId, lastUpdated, code, display, deleted, isCurrentVersion);
+            return new DocumentMetadata(id, versionId, lastUpdated, code, display, isCurrentVersion);
             
         } catch (Exception e) {
             logger.warn("Failed to parse document metadata from row: {}, error: {}", row, e.getMessage());
@@ -348,7 +348,7 @@ public class FhirDocumentAdminService {
             // Build the FTS query for versions
             String versionsQuery = buildVersionsQuery(bucketName, documentId);
             
-            logger.info("Executing versions query: {}", versionsQuery);
+            logger.debug("Executing versions query: {}", versionsQuery);
             
             // Execute query with timeout
             var result = cluster.query(versionsQuery, QueryOptions.queryOptions()
@@ -389,18 +389,17 @@ public class FhirDocumentAdminService {
              .append("resource.meta.versionId, ")
              .append("resource.meta.lastUpdated, ")
              .append("resource.meta.tag[0].code, ")
-             .append("resource.meta.tag[0].display, ")
-             .append("resource.deleted ");
+             .append("resource.meta.tag[0].display ");
         
         query.append("FROM `")
              .append(bucketName)
              .append("`.`Resources`.`Versions` resource ");
         
-        // Add FTS search condition to find all versions of this document using wildcard
+        // Add FTS search condition to find all versions of this document using match
         query.append("WHERE SEARCH(resource, { ")
-             .append("\"wildcard\": \"")
+             .append("\"match\": \"")
              .append(documentId)
-             .append("/*\", ")
+             .append("\", ")
              .append("\"field\": \"id\" ")
              .append("}, { \"index\": \"")
              .append(bucketName)

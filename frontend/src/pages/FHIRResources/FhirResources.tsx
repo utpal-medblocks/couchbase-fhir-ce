@@ -452,7 +452,6 @@ export default function FhirResources() {
                   documentMetadata.map((metadata) => {
                     const documentKey = `${selectedCollection}/${metadata.id}`;
                     const isVersioned = parseInt(metadata.versionId) > 1;
-                    const isDeleted = metadata.deleted;
 
                     return (
                       <TableRow
@@ -474,13 +473,10 @@ export default function FhirResources() {
                           <Typography
                             variant="body2"
                             sx={{
-                              color: isDeleted
-                                ? "error.main"
-                                : isVersioned
+                              color: isVersioned
                                 ? "success.main"
                                 : "text.primary",
-                              fontWeight:
-                                isVersioned || isDeleted ? "medium" : "normal",
+                              fontWeight: isVersioned ? "medium" : "normal",
                             }}
                           >
                             {metadata.id}

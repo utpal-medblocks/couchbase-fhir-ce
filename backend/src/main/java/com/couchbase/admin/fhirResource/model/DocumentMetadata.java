@@ -18,10 +18,7 @@ public class DocumentMetadata {
     
     @JsonProperty("display")
     private String display;
-    
-    @JsonProperty("deleted")
-    private Boolean deleted;
-    
+        
     @JsonProperty("isCurrentVersion")
     private Boolean isCurrentVersion;
     
@@ -31,13 +28,12 @@ public class DocumentMetadata {
     
     // Constructor with all fields
     public DocumentMetadata(String id, String versionId, String lastUpdated, 
-                           String code, String display, Boolean deleted, Boolean isCurrentVersion) {
+                           String code, String display, Boolean isCurrentVersion) {
         this.id = id;
         this.versionId = versionId;
         this.lastUpdated = lastUpdated;
         this.code = code;
         this.display = display;
-        this.deleted = deleted;
         this.isCurrentVersion = isCurrentVersion;
     }
     
@@ -82,13 +78,6 @@ public class DocumentMetadata {
         this.display = display;
     }
     
-    public Boolean getDeleted() {
-        return deleted;
-    }
-    
-    public void setDeleted(Boolean deleted) {
-        this.deleted = deleted;
-    }
     
     public Boolean getIsCurrentVersion() {
         return isCurrentVersion;
@@ -106,7 +95,6 @@ public class DocumentMetadata {
                 ", lastUpdated='" + lastUpdated + '\'' +
                 ", code='" + code + '\'' +
                 ", display='" + display + '\'' +
-                ", deleted=" + deleted +
                 ", isCurrentVersion=" + isCurrentVersion +
                 '}';
     }
