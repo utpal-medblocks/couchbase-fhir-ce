@@ -94,6 +94,9 @@ public class ResourceProviderAutoConfig {
     @Autowired
     private com.couchbase.fhir.resources.service.PatchService patchService;
 
+    @Autowired
+    private com.couchbase.fhir.resources.service.ConditionalPutService conditionalPutService;
+
     @SuppressWarnings("unchecked")
     @Bean
     public List<IResourceProvider> dynamicProviders() {
@@ -105,7 +108,7 @@ public class ResourceProviderAutoConfig {
                 .filter(clazz -> !excludedResources.contains(clazz))
                 .map(clazz -> {
                     // logger.info("✅ Creating generic provider for: {}", clazz.getSimpleName());
-                    return new FhirCouchbaseResourceProvider<>(clazz, serviceFactory.getService(clazz), fhirContext, searchPreprocessor, bucketValidator, configService, strictValidator, lenientValidator, connectionService, putService, deleteService, metaHelper, searchService, patchService);
+                    return new FhirCouchbaseResourceProvider<>(clazz, serviceFactory.getService(clazz), fhirContext, searchPreprocessor, bucketValidator, configService, strictValidator, lenientValidator, connectionService, putService, deleteService, metaHelper, searchService, patchService, conditionalPutService);
                 })
                 .collect(Collectors.toList());
 

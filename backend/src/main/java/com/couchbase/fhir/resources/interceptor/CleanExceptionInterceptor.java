@@ -48,10 +48,17 @@ public class CleanExceptionInterceptor {
             message.contains("Bundle processing failed") ||
             message.contains("Bundle type must be") ||
             message.contains("FHIR Validation failed") ||
-            message.contains("cannot be reused") ||
+            message.contains("previously deleted and cannot be reused") ||
             message.contains("is not known") ||
             message.contains("Unknown parameter") ||
-            message.contains("Search parameter validation failed")
+            message.contains("Search parameter validation failed") ||
+            message.contains("is not FHIR-enabled") ||
+            message.contains("HAPI-0389") ||
+            message.contains("HAPI-0418") ||
+            message.contains("No Patient found matching the specified criteria") ||
+            message.contains("Multiple resources found matching criteria") ||
+            message.contains("Multiple Patient resources found matching the specified criteria")
+          
         );
     }
 }

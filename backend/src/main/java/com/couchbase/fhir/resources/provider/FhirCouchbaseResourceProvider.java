@@ -57,9 +57,10 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
     private final FhirMetaHelper metaHelper;
     private final com.couchbase.fhir.resources.service.SearchService searchService;
     private final com.couchbase.fhir.resources.service.PatchService patchService;
+    private final com.couchbase.fhir.resources.service.ConditionalPutService conditionalPutService;
 
 
-    public FhirCouchbaseResourceProvider(Class<T> resourceClass, FhirResourceDaoImpl<T> dao , FhirContext fhirContext, FhirSearchParameterPreprocessor searchPreprocessor, FhirBucketValidator bucketValidator, FhirBucketConfigService configService, FhirValidator strictValidator, FhirValidator lenientValidator, com.couchbase.admin.connections.service.ConnectionService connectionService, com.couchbase.fhir.resources.service.PutService putService, com.couchbase.fhir.resources.service.DeleteService deleteService, FhirMetaHelper metaHelper, com.couchbase.fhir.resources.service.SearchService searchService, com.couchbase.fhir.resources.service.PatchService patchService) {
+    public FhirCouchbaseResourceProvider(Class<T> resourceClass, FhirResourceDaoImpl<T> dao , FhirContext fhirContext, FhirSearchParameterPreprocessor searchPreprocessor, FhirBucketValidator bucketValidator, FhirBucketConfigService configService, FhirValidator strictValidator, FhirValidator lenientValidator, com.couchbase.admin.connections.service.ConnectionService connectionService, com.couchbase.fhir.resources.service.PutService putService, com.couchbase.fhir.resources.service.DeleteService deleteService, FhirMetaHelper metaHelper, com.couchbase.fhir.resources.service.SearchService searchService, com.couchbase.fhir.resources.service.PatchService patchService, com.couchbase.fhir.resources.service.ConditionalPutService conditionalPutService) {
         this.resourceClass = resourceClass;
         this.dao = dao;
         this.fhirContext = fhirContext;
@@ -75,6 +76,7 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
         // objectMapper is now handled by PatchService
         this.searchService = searchService;
         this.patchService = patchService;
+        this.conditionalPutService = conditionalPutService;
     }
 
     @Read
@@ -192,8 +194,18 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
         return outcome;
     }
 
+    /**
+     * Unified PUT handler: supports both ID-based and conditional PUT
+     * - PUT /Patient/123 → ID-based update
+     * - PUT /Patient?family=Smith → Conditional update (upsert)
+     */
     @Update
-    public MethodOutcome update(@IdParam IdType theId, @ResourceParam T resource) throws IOException {
+    public MethodOutcome update(
+        @IdParam(optional = true) IdType theId,
+        @ResourceParam T resource,
+        @ConditionalUrlParam String theConditionalUrl,
+        RequestDetails requestDetails
+    ) throws IOException {
         String bucketName = TenantContextHolder.getTenantId();
         
         // Validate FHIR bucket before proceeding
@@ -203,11 +215,55 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
             throw new ca.uhn.fhir.rest.server.exceptions.InvalidRequestException(e.getMessage());
         }
 
-        // Ensure the resource ID matches the URL parameter
-        String urlId = theId.getIdPart();
-        resource.setId(urlId);
+        String resourceType = resourceClass.getSimpleName();
         
-        logger.info("🔄 PUT {}: Processing update for ID {}", resourceClass.getSimpleName(), urlId);
+        if (theId != null && theId.hasIdPart()) {
+            // ID-based PUT: PUT /Patient/123
+            String urlId = theId.getIdPart();
+            logger.info("🔄 ResourceProvider: Processing ID-based PUT for {}/{}", resourceType, urlId);
+            
+            // Ensure the resource ID matches the URL parameter
+            resource.setId(urlId);
+            
+            return performPut(resource, urlId, bucketName, false);
+            
+        } else {
+            // Conditional PUT - use HAPI's already-parsed parameters
+            logger.info("🔄 ResourceProvider: Processing conditional PUT for {}", resourceType);
+            
+            Map<String, String[]> rawParams = requestDetails.getParameters();
+            Map<String, String> searchCriteria = new LinkedHashMap<>();
+            for (Map.Entry<String, String[]> e : rawParams.entrySet()) {
+                String key = e.getKey();
+                if (key.startsWith("_")) continue;      // skip control params
+                String[] vals = e.getValue();
+                if (vals != null && vals.length > 0) {
+                    searchCriteria.put(key, vals[0]);   // first value OK for now
+                }
+            }
+            
+            logger.debug("🔍 ResourceProvider: Conditional PUT criteria: {}", searchCriteria);
+            
+            if (searchCriteria.isEmpty()) {
+                throw new ca.uhn.fhir.rest.server.exceptions.InvalidRequestException(
+                    "PUT operation requires either an ID in the URL or search parameters for conditional update");
+            }
+            
+            return conditionalPutService.conditionalPut(resource, searchCriteria, resourceType);
+        }
+    }
+    
+
+    
+    /**
+     * Perform the actual PUT operation for both ID-based and conditional updates
+     */
+    private MethodOutcome performPut(T resource, String expectedId, String bucketName, boolean isConditionalCreate) throws IOException {
+        String resourceType = resourceClass.getSimpleName();
+        String resourceId = resource.getIdElement() != null ? resource.getIdElement().getIdPart() : "new";
+        
+        logger.info("🔄 PUT {}: Processing {} for ID {}", resourceType, 
+            isConditionalCreate ? "conditional create" : "update", resourceId);
 
         // Delegate to PutService for proper versioning and tombstone checking
         try {
@@ -220,16 +276,16 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
             
             MethodOutcome outcome = new MethodOutcome();
             outcome.setResource(updatedResource);
-            outcome.setId(new IdType(resourceClass.getSimpleName(), updatedResource.getIdElement().getIdPart()));
+            outcome.setId(new IdType(resourceType, updatedResource.getIdElement().getIdPart()));
             
             // Determine if this was a create or update based on version
             String versionId = updatedResource.getMeta().getVersionId();
-            if ("1".equals(versionId)) {
+            if ("1".equals(versionId) || isConditionalCreate) {
                 outcome.setCreated(true); // New resource
-                logger.info("✅ PUT {}: Created new resource with ID {}", resourceClass.getSimpleName(), urlId);
+                logger.info("✅ PUT {}: Created new resource with ID {}", resourceType, updatedResource.getIdElement().getIdPart());
             } else {
                 outcome.setCreated(false); // Updated existing
-                logger.info("✅ PUT {}: Updated existing resource with ID {}, version {}", resourceClass.getSimpleName(), urlId, versionId);
+                logger.info("✅ PUT {}: Updated existing resource with ID {}, version {}", resourceType, updatedResource.getIdElement().getIdPart(), versionId);
             }
             
             return outcome;
@@ -238,13 +294,13 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
             // ID was tombstoned - return 409
             throw e;
         } catch (Exception e) {
-            logger.error("❌ PUT {}: Failed to update resource {}: {}", resourceClass.getSimpleName(), urlId, e.getMessage());
+            logger.error("❌ PUT {}: Failed to update resource {}: {}", resourceType, resourceId, e.getMessage());
             throw new InternalErrorException("Failed to update resource: " + e.getMessage());
         }
     }
 
     @Delete
-    public MethodOutcome delete(@IdParam IdType theId) throws IOException {
+    public MethodOutcome delete(@IdParam(optional = true) IdType theId, RequestDetails requestDetails) throws IOException {
         String bucketName = TenantContextHolder.getTenantId();
         
         // Validate FHIR bucket before proceeding
@@ -254,9 +310,80 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
             throw new ca.uhn.fhir.rest.server.exceptions.InvalidRequestException(e.getMessage());
         }
 
-        String resourceId = theId.getIdPart();
         String resourceType = resourceClass.getSimpleName();
         
+        if (theId != null && theId.hasIdPart()) {
+            // ID-based DELETE: DELETE /Patient/123
+            String resourceId = theId.getIdPart();
+            logger.info("🗑️ DELETE {}: Processing ID-based delete for {}", resourceType, resourceId);
+            
+            return performDelete(resourceType, resourceId, bucketName);
+            
+        } else {
+            // Conditional DELETE: DELETE /Patient?family=Smith
+            logger.info("🗑️ DELETE {}: Processing conditional delete", resourceType);
+            
+            // Extract search parameters from request
+            Map<String, String[]> rawParams = requestDetails.getParameters();
+            Map<String, String> searchCriteria = new HashMap<>();
+            
+            for (Map.Entry<String, String[]> entry : rawParams.entrySet()) {
+                String paramName = entry.getKey();
+                String[] values = entry.getValue();
+                
+                // Skip FHIR control parameters
+                if (paramName.startsWith("_")) {
+                    continue;
+                }
+                
+                if (values != null && values.length > 0) {
+                    searchCriteria.put(paramName, values[0]); // Use first value
+                }
+            }
+            
+            if (searchCriteria.isEmpty()) {
+                throw new ca.uhn.fhir.rest.server.exceptions.InvalidRequestException(
+                    "Conditional DELETE requires search parameters");
+            }
+            
+            logger.debug("🔍 DELETE {}: Conditional criteria: {}", resourceType, searchCriteria);
+            
+            // Use SearchService to resolve the condition
+            com.couchbase.fhir.resources.service.ResolveResult resolveResult = searchService.resolveOne(resourceType, searchCriteria);
+
+            // com.couchbase.fhir.resources.service.ResolveResult resolveResult = 
+            //     searchService.resolveOne(resourceType, searchCriteria);
+            
+            switch (resolveResult.getStatus()) {
+                case ZERO:
+                    // No matches - return 404 Not Found
+                    logger.info("❌ DELETE {}: No resources found matching criteria", resourceType);
+                    throw new ResourceNotFoundException("No " + resourceType + " found matching the specified criteria");
+                    
+                case MANY:
+                    // Multiple matches - return 412 Precondition Failed
+                    logger.warn("❌ DELETE {}: Multiple resources found matching criteria", resourceType);
+                    throw new ca.uhn.fhir.rest.server.exceptions.PreconditionFailedException(
+                        "Multiple " + resourceType + " resources found matching the specified criteria. " +
+                        "Conditional DELETE requires exactly one match.");
+                    
+                case ONE:
+                    // Single match - proceed with delete
+                    String resourceId = resolveResult.getResourceId();
+                    logger.info("✅ DELETE {}: Found single match: {}", resourceType, resourceId);
+                    
+                    return performDelete(resourceType, resourceId, bucketName);
+                    
+                default:
+                    throw new InternalErrorException("Unexpected resolve result: " + resolveResult.getStatus());
+            }
+        }
+    }
+    
+    /**
+     * Perform the actual DELETE operation for both ID-based and conditional deletes
+     */
+    private MethodOutcome performDelete(String resourceType, String resourceId, String bucketName) throws IOException {
         logger.info("🗑️ DELETE {}: Processing soft delete for ID {}", resourceType, resourceId);
 
         // Delegate to DeleteService for proper tombstone handling

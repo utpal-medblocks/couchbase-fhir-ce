@@ -55,7 +55,7 @@ public class SearchService {
     
     /**
      * Lightweight resolution for conditional operations.
-     * Queries live collection only (excludes tombstones), projects ID only, LIMIT 2 for fast ambiguity detection.
+     * Uses the same search logic but with LIMIT 2 for fast ambiguity detection.
      * 
      * @param resourceType FHIR resource type (e.g., "Patient")
      * @param criteria Search criteria as key-value pairs
@@ -73,30 +73,35 @@ public class SearchService {
             throw new InvalidRequestException(e.getMessage());
         }
         
-        // Build lightweight ID-only query
+        // Build search queries using the same logic as regular search
+        List<SearchQuery> ftsQueries = buildSearchQueries(resourceType, criteria);
+        
+        // Execute lightweight search with LIMIT 2
         try {
-            List<SearchQuery> ftsQueries = buildSearchQueries(resourceType, criteria);
-            // Build ID-only query with LIMIT 2
-            String query = buildResolveOneQuery(ftsQueries, resourceType, bucketName);
+            Ftsn1qlQueryBuilder queryBuilder = new Ftsn1qlQueryBuilder();
+            String query = queryBuilder.build(ftsQueries, resourceType, 0, 2, null);  // LIMIT 2
             
             logger.debug("🔍 Resolve query: {}", query);
             
-            // Execute query
-            Cluster cluster = connectionService.getConnection("default");
-            QueryResult result = cluster.query(query);
-            List<JsonObject> rows = result.rowsAs(JsonObject.class);
+            // Get appropriate DAO for the resource type
+            @SuppressWarnings("unchecked")
+            Class<? extends Resource> resourceClassType = (Class<? extends Resource>) fhirContext.getResourceDefinition(resourceType).getImplementingClass();
+            FhirResourceDaoImpl<?> dao = serviceFactory.getService(resourceClassType);
             
-            logger.info("🔍 SearchService.resolveOne: Found {} matches for {}", rows.size(), resourceType);
+            @SuppressWarnings("unchecked")
+            List<Resource> results = (List<Resource>) dao.search(resourceType, query);
+            
+            logger.info("🔍 SearchService.resolveOne: Found {} matches for {}", results.size(), resourceType);
             
             // Analyze results
-            if (rows.isEmpty()) {
+            if (results.isEmpty()) {
                 return ResolveResult.zero();
-            } else if (rows.size() == 1) {
-                String resourceId = extractResourceId(rows.get(0));
+            } else if (results.size() == 1) {
+                String resourceId = results.get(0).getIdElement().getIdPart();
                 logger.info("🔍 SearchService.resolveOne: Single match found: {}", resourceId);
                 return ResolveResult.one(resourceId);
             } else {
-                logger.warn("🔍 SearchService.resolveOne: Multiple matches found ({}), returning MANY", rows.size());
+                logger.warn("🔍 SearchService.resolveOne: Multiple matches found ({}), returning MANY", results.size());
                 return ResolveResult.many();
             }
             
@@ -215,6 +220,8 @@ public class SearchService {
         List<SearchQuery> ftsQueries = new ArrayList<>();
         List<String> filters = new ArrayList<>();
         
+        logger.debug("🔍 buildSearchQueries: Processing {} criteria for {}: {}", criteria.size(), resourceType, criteria);
+        
         for (Map.Entry<String, String> entry : criteria.entrySet()) {
             String rawParamName = entry.getKey();
             String paramName = rawParamName;
@@ -241,19 +248,28 @@ public class SearchService {
             if (searchParam == null) continue;
             
             // Build appropriate query based on parameter type
+            logger.debug("🔍 Processing parameter: {} = {} (type: {})", paramName, value, searchParam.getParamType());
+            
             switch (searchParam.getParamType()) {
                 case TOKEN:
-                    ftsQueries.add(TokenSearchHelperFTS.buildTokenFTSQuery(fhirContext, resourceType, paramName, value));
+                    SearchQuery tokenQuery = TokenSearchHelperFTS.buildTokenFTSQuery(fhirContext, resourceType, paramName, value);
+                    ftsQueries.add(tokenQuery);
+                    logger.debug("🔍 Added TOKEN query for {}: {}", paramName, tokenQuery.export());
                     break;
                 case STRING:
-                    ftsQueries.add(StringSearchHelperFTS.buildStringFTSQuery(fhirContext, resourceType, paramName, value, searchParam, modifier));
+                    SearchQuery stringQuery = StringSearchHelperFTS.buildStringFTSQuery(fhirContext, resourceType, paramName, value, searchParam, modifier);
+                    ftsQueries.add(stringQuery);
+                    logger.debug("🔍 Added STRING query for {}: {}", paramName, stringQuery.export());
                     break;
                 case DATE:
-                    ftsQueries.add(DateSearchHelperFTS.buildDateFTS(fhirContext, resourceType, paramName, value));
+                    SearchQuery dateQuery = DateSearchHelperFTS.buildDateFTS(fhirContext, resourceType, paramName, value);
+                    ftsQueries.add(dateQuery);
+                    logger.debug("🔍 Added DATE query for {}: {}", paramName, dateQuery.export());
                     break;
                 case REFERENCE:
                     String referenceClause = ReferenceSearchHelper.buildReferenceWhereCluse(fhirContext, resourceType, paramName, value, searchParam);
                     filters.add(referenceClause);
+                    logger.debug("🔍 Added REFERENCE filter for {}: {}", paramName, referenceClause);
                     break;
                 case URI:
                 case COMPOSITE:
@@ -267,6 +283,7 @@ public class SearchService {
             }
         }
         
+        logger.debug("🔍 buildSearchQueries: Built {} FTS queries total", ftsQueries.size());
         return ftsQueries;
     }
     
