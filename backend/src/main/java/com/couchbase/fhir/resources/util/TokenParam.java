@@ -1,4 +1,4 @@
-package com.couchbase.fhir.search.model;
+package com.couchbase.fhir.resources.util;
 
 public class TokenParam {
     public String system;

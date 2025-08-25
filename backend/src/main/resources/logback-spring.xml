@@ -14,12 +14,13 @@
 
     <!-- Your Couchbase loggers -->
     <logger name="com.couchbase" level="WARN"/>
-    <logger name="com.couchbase.client" level="WARN"/>
+    <logger name="com.couchbase.client" level="INFO"/>
     <logger name="com.couchbase.core" level="WARN"/>
     <logger name="com.couchbase.io" level="WARN"/>
     <logger name="com.couchbase.endpoint" level="WARN"/>
     <logger name="com.couchbase.node" level="WARN"/>
     <logger name="com.couchbase.transactions" level="WARN"/>
+    <logger name="com.couchbase.tracing" level="ERROR"/>
     
     <logger name="com.couchbase.admin" level="DEBUG"/>
     <logger name="com.couchbase.fhir" level="DEBUG"/>

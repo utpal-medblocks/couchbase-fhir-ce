@@ -124,7 +124,7 @@ public class FhirConfig {
                     StructureDefinition structureDefinition = fhirContext.newJsonParser().parseResource(StructureDefinition.class, json);
                     usCoreSupport.addStructureDefinition(structureDefinition);
                     loadedCount++;
-                    logger.debug("✅ Loaded US Core profile: {}", structureDefinition.getUrl());
+                    // logger.debug("✅ Loaded US Core profile: {}", structureDefinition.getUrl());
                 } catch (Exception e) {
                     logger.warn("⚠️  Failed to load US Core resource {}: {}", resource.getFilename(), e.getMessage());
                 }

@@ -52,8 +52,8 @@ public class FtsIndexService {
                 indexDetails.add(details);
             }
             
-            log.info("Successfully retrieved {} FTS index details for bucket: {} scope: {}", 
-                indexDetails.size(), bucketName, scopeName);
+            // log.info("Successfully retrieved {} FTS index details for bucket: {} scope: {}", 
+            //     indexDetails.size(), bucketName, scopeName);
             return indexDetails;
         } catch (Exception e) {
             log.error("Failed to get FTS index details for bucket: {} scope: {}", bucketName, scopeName, e);
@@ -122,7 +122,7 @@ public class FtsIndexService {
         
         ConnectionDetails connection = connectionService.getConnectionDetails(connectionName);
         if (connection == null) {
-            log.warn("Could not get connection details for FTS progress");
+            log.error("Could not get connection details for FTS progress");
             return progressResults;
         }
         
@@ -150,7 +150,7 @@ public class FtsIndexService {
                 String progressUrl = String.format("%s://%s:%d/_p/fts/api/stats/index/%s.%s.%s/progress", 
                     protocol, hostname, consolePort, bucketName, scopeName, indexName);
                 
-                log.debug("Fetching FTS progress from: {}", progressUrl);
+                // log.debug("Fetching FTS progress from: {}", progressUrl);
                 
                 ResponseEntity<Map> response = restTemplate.exchange(
                     progressUrl, 
@@ -163,19 +163,19 @@ public class FtsIndexService {
                     Map<String, Object> progressData = response.getBody();
                     FtsProgressData progress = parseProgressData(indexName, progressData);
                     progressResults.add(progress);
-                    log.debug("Successfully fetched progress for index: {}", indexName);
+                    // log.debug("Successfully fetched progress for index: {}", indexName);
                 } else {
-                    log.warn("Failed to get progress for index: {} - Status: {}", indexName, response.getStatusCode());
+                    log.error("Failed to get progress for index: {} - Status: {}", indexName, response.getStatusCode());
                     addErrorProgress(progressResults, indexName, "HTTP " + response.getStatusCode());
                 }
                 
             } catch (Exception e) {
-                log.warn("Error fetching progress for index: {} - {}", indexName, e.getMessage());
+                log.error("Error fetching progress for index: {} - {}", indexName, e.getMessage());
                 addErrorProgress(progressResults, indexName, e.getMessage());
             }
         }
         
-        log.info("Successfully fetched progress for {}/{} FTS indexes", progressResults.size(), indexNames.size());
+        //log.info("Successfully fetched progress for {}/{} FTS indexes", progressResults.size(), indexNames.size());
         return progressResults;
     }
     
@@ -251,7 +251,7 @@ public class FtsIndexService {
                 }
             }
             
-            log.info("Successfully parsed {} FTS index definitions", indexes.size());
+            // log.info("Successfully parsed {} FTS index definitions", indexes.size());
             
         } catch (Exception e) {
             log.error("Error parsing FTS index definitions", e);

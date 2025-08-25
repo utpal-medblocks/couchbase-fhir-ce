@@ -76,14 +76,14 @@ public class FtsIndexController {
     @PostMapping("/progress")
     public ResponseEntity<FtsProgressResponse> getFtsProgress(@RequestBody FtsProgressRequest request) {
         try {
-            logger.info("Getting FTS progress for connection: {}, indexes: {}", 
-                request.getConnectionName(), request.getIndexNames().size());
+            // logger.info("Getting FTS progress for connection: {}, indexes: {}", 
+            //     request.getConnectionName(), request.getIndexNames().size());
             
             // Use bucket and scope from request, with fallbacks
             String bucketName = request.getBucketName() != null ? request.getBucketName() : "us-core";
             String scopeName = request.getScopeName() != null ? request.getScopeName() : "Resources";
             
-            logger.info("Using bucket: {}, scope: {} for progress lookup", bucketName, scopeName);
+            // logger.info("Using bucket: {}, scope: {} for progress lookup", bucketName, scopeName);
             
             List<FtsProgressData> progressData = ftsIndexService.getFtsProgress(
                 request.getConnectionName(), 
@@ -93,13 +93,13 @@ public class FtsIndexController {
             );
             
             FtsProgressResponse response = new FtsProgressResponse(progressData);
-            logger.info("Successfully retrieved progress for {} indexes", progressData.size());
+            // logger.info("Successfully retrieved progress for {} indexes", progressData.size());
             
             // Debug logging to help troubleshoot
-            for (FtsProgressData data : progressData) {
-                logger.debug("Progress data: {} - docCount: {}, status: {}", 
-                    data.getIndexName(), data.getDocCount(), data.getIngestStatus());
-            }
+            // for (FtsProgressData data : progressData) {
+            //     logger.debug("Progress data: {} - docCount: {}, status: {}", 
+            //         data.getIndexName(), data.getDocCount(), data.getIngestStatus());
+            // }
             
             return ResponseEntity.ok(response);
         } catch (Exception e) {

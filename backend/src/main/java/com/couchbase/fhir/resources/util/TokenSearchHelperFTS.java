@@ -2,8 +2,8 @@ package com.couchbase.fhir.resources.util;
 
 import ca.uhn.fhir.context.*;
 import com.couchbase.client.java.search.SearchQuery;
-import com.couchbase.fhir.search.model.ConceptInfo;
-import com.couchbase.fhir.search.model.TokenParam;
+import com.couchbase.fhir.resources.util.ConceptInfo;
+import com.couchbase.fhir.resources.util.TokenParam;
 
 
 import java.util.Arrays;
@@ -35,11 +35,11 @@ public class TokenSearchHelperFTS {
             if (isMultipleValues) {
                 List<SearchQuery> termQueries = Arrays.stream(token.code.split(","))
                         .map(String::trim)
-                        .map(val -> SearchQuery.term(val).field(ftsFieldPath))
+                        .map(val -> createPrimitiveQuery(val, ftsFieldPath))
                         .collect(Collectors.toList());
                 return SearchQuery.disjuncts(termQueries.toArray(new SearchQuery[0]));
             } else {
-                return SearchQuery.term(token.code).field(ftsFieldPath);
+                return createPrimitiveQuery(token.code, ftsFieldPath);
             }
         }
 
@@ -54,6 +54,20 @@ public class TokenSearchHelperFTS {
             // Other complex type with system/value
             return buildSystemValueQuery(ftsFieldPath, token);
         }
+    }
+
+    /**
+     * Create appropriate query for primitive values (boolean, string, etc.)
+     */
+    private static SearchQuery createPrimitiveQuery(String value, String ftsFieldPath) {
+        // Check if the value is a boolean
+        if ("true".equalsIgnoreCase(value) || "false".equalsIgnoreCase(value)) {
+            boolean boolValue = Boolean.parseBoolean(value);
+            return SearchQuery.booleanField(boolValue).field(ftsFieldPath);
+        }
+        
+        // Default to term query for strings
+        return SearchQuery.term(value).field(ftsFieldPath);
     }
 
     private static SearchQuery buildCodeableConceptQuery(String ftsFieldPath, TokenParam token) {

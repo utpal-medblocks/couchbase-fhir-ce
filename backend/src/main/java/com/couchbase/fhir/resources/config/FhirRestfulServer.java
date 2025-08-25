@@ -89,11 +89,11 @@ public class FhirRestfulServer extends RestfulServer {
             allProviders.addAll(dynamicProviders);
             
             logger.info("🎯 Total providers to register: {}", allProviders.size());
-            for (IResourceProvider provider : allProviders) {
-                logger.info("  ✅ Will register: {} for resource: {}", 
-                           provider.getClass().getSimpleName(), 
-                           provider.getResourceType().getSimpleName());
-            }
+            // for (IResourceProvider provider : allProviders) {
+            //     logger.info("  ✅ Will register: {} for resource: {}", 
+            //                provider.getClass().getSimpleName(), 
+            //                provider.getResourceType().getSimpleName());
+            // }
             
             setFhirContext(fhirContext); // Use the injected context
             setTenantIdentificationStrategy(new UrlBaseTenantIdentificationStrategy());

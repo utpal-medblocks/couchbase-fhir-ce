@@ -47,7 +47,11 @@ public class CleanExceptionInterceptor {
             message.contains("Database transaction error") ||
             message.contains("Bundle processing failed") ||
             message.contains("Bundle type must be") ||
-            message.contains("FHIR Validation failed")
+            message.contains("FHIR Validation failed") ||
+            message.contains("cannot be reused") ||
+            message.contains("is not known") ||
+            message.contains("Unknown parameter") ||
+            message.contains("Search parameter validation failed")
         );
     }
 }

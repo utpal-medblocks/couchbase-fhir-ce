@@ -12,12 +12,10 @@ import java.util.stream.Collectors;
 
 public class Ftsn1qlQueryBuilder {
 
-    private static final String DEFAULT_BUCKET = "fhir";
     private static final String DEFAULT_SCOPE = "Resources";
 
     public String build(
             List<SearchQuery> mustQueries,
-            List<SearchQuery> mustNotQueries,
             String resourceType,
             int from,
             int size,
@@ -26,21 +24,21 @@ public class Ftsn1qlQueryBuilder {
 
         String bucketName = TenantContextHolder.getTenantId();
 
-        JsonObject mustPart = JsonObject.create().put(
+        JsonObject queryBody;
+        
+        // Simplified query structure - no must_not needed anymore
+        if (mustQueries.isEmpty()) {
+            // No search criteria - match all
+            queryBody = JsonObject.create().put("match_all", JsonObject.create());
+        } else if (mustQueries.size() == 1) {
+            // Single query - use simple structure
+            queryBody = mustQueries.get(0).export();
+        } else {
+            // Multiple queries - use conjuncts (AND logic between different parameters)
+            queryBody = JsonObject.create().put(
                 "conjuncts",
                 mustQueries.stream().map(SearchQuery::export).collect(Collectors.toList())
-        );
-
-        JsonObject queryBody = JsonObject.create()
-                .put("must", mustPart);
-
-        // Add must_not clause for deleted resources
-        if (mustNotQueries != null && !mustNotQueries.isEmpty()) {
-            JsonObject mustNotPart = JsonObject.create().put(
-                    "disjuncts",
-                    mustNotQueries.stream().map(SearchQuery::export).collect(Collectors.toList())
             );
-            queryBody.put("must_not", mustNotPart);
         }
 
         JsonObject ftsDsl = JsonObject.create()
@@ -83,12 +81,11 @@ public class Ftsn1qlQueryBuilder {
      */
     public String build(
             List<SearchQuery> mustQueries,
-            List<SearchQuery> mustNotQueries,
             String resourceType,
             int from,
             int size
     ) {
-        return build(mustQueries, mustNotQueries, resourceType, from, size, new ArrayList<>());
+        return build(mustQueries, resourceType, from, size, new ArrayList<>());
     }
     
     /**
@@ -96,26 +93,22 @@ public class Ftsn1qlQueryBuilder {
      */
     public String buildCountQuery(
             List<SearchQuery> mustQueries,
-            List<SearchQuery> mustNotQueries,
             String resourceType
     ) {
         String bucketName = TenantContextHolder.getTenantId();
 
-        JsonObject mustPart = JsonObject.create().put(
+        JsonObject queryBody;
+        
+        // Use same simplified logic as main build method
+        if (mustQueries.isEmpty()) {
+            queryBody = JsonObject.create().put("match_all", JsonObject.create());
+        } else if (mustQueries.size() == 1) {
+            queryBody = mustQueries.get(0).export();
+        } else {
+            queryBody = JsonObject.create().put(
                 "conjuncts",
                 mustQueries.stream().map(SearchQuery::export).collect(Collectors.toList())
-        );
-
-        JsonObject queryBody = JsonObject.create()
-                .put("must", mustPart);
-
-        // Add must_not clause for deleted resources
-        if (mustNotQueries != null && !mustNotQueries.isEmpty()) {
-            JsonObject mustNotPart = JsonObject.create().put(
-                    "disjuncts",
-                    mustNotQueries.stream().map(SearchQuery::export).collect(Collectors.toList())
             );
-            queryBody.put("must_not", mustNotPart);
         }
 
         JsonObject ftsDsl = JsonObject.create()
