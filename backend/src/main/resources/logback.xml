@@ -36,4 +36,13 @@
     <logger name="com.couchbase.admin" level="INFO"/>
     <logger name="com.couchbase.fhir" level="INFO"/>
     <logger name="com.couchbase.common" level="INFO"/>
+
+     <!-- Suppress noisy HAPI FHIR parser warnings -->
+    <logger name="ca.uhn.fhir.parser.LenientErrorHandler" level="ERROR"/>
+    
+    <!-- Suppress verbose HAPI FHIR profile loading messages -->
+    <logger name="ca.uhn.fhir.context.support.DefaultProfileValidationSupport" level="ERROR"/>
+    
+    <!-- Suppress HAPI FHIR's exception interceptor stack traces - we handle our own clean error logging -->
+    <logger name="ca.uhn.fhir.rest.server.interceptor.ExceptionHandlingInterceptor" level="ERROR"/>
 </configuration>
