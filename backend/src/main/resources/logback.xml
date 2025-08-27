@@ -5,9 +5,22 @@
         </encoder>
     </appender>
 
+    <!-- RollingFileAppender for log rotation -->
+    <appender name="ROLLING" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>logs/app.log</file>
+        <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
+            <fileNamePattern>logs/app-%d{yyyy-MM-dd_HH}.log</fileNamePattern>
+            <maxHistory>30</maxHistory>
+        </rollingPolicy>
+        <encoder>
+            <pattern>%d{HH:mm:ss.SSS} %-5level %logger{36} - %msg%n</pattern>
+        </encoder>
+    </appender>
+
     <!-- Keep normal application logging at INFO level -->
     <root level="INFO">
         <appender-ref ref="STDOUT"/>
+        <appender-ref ref="ROLLING"/>
     </root>
 
     <!-- Suppress Couchbase Java SDK - only show ERROR level -->
