@@ -3,6 +3,8 @@ package com.couchbase.common.config;
 import ca.uhn.fhir.context.FhirContext;
 import ca.uhn.fhir.parser.IParser;
 import ca.uhn.fhir.validation.FhirValidator;
+import org.hl7.fhir.r4.model.CodeSystem;
+import org.hl7.fhir.r4.model.ValueSet;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.support.PathMatchingResourcePatternResolver;
 
@@ -114,7 +116,9 @@ public class FhirConfig {
             PrePopulatedValidationSupport usCoreSupport = new PrePopulatedValidationSupport(fhirContext);
             PathMatchingResourcePatternResolver resolver = new PathMatchingResourcePatternResolver();
             Resource[] usCoreResources = resolver.getResources("classpath:us_core_6.1.0/StructureDefinition-*.json");
-            
+            Resource[] valueSets = resolver.getResources("classpath:us_core_6.1.0/ValueSet-*.json");
+            Resource[] codeSystems = resolver.getResources("classpath:us_core_6.1.0/CodeSystem-*.json");
+
             logger.info("🔍 Found {} US Core structure definition files", usCoreResources.length);
             
             int loadedCount = 0;
@@ -129,8 +133,32 @@ public class FhirConfig {
                     logger.warn("⚠️  Failed to load US Core resource {}: {}", resource.getFilename(), e.getMessage());
                 }
             }
-            
-            logger.info("✅ Successfully loaded {} US Core structure definitions", loadedCount);
+
+            logger.info("🔍 Found {} US Core ValueSet files", valueSets.length);
+
+            for (Resource resource : valueSets) {
+                try {
+                    String json = new String(resource.getInputStream().readAllBytes());
+                    ValueSet valueSet = fhirContext.newJsonParser().parseResource(ValueSet.class, json);
+                    usCoreSupport.addValueSet(valueSet);
+                    loadedCount++;
+                } catch (Exception e) {
+                    logger.warn("⚠️  Failed to load US Core ValueSet {}: {}", resource.getFilename(), e.getMessage());
+                }
+            }
+            logger.info("🔍 Found {} US Core CodeSystem files", codeSystems.length);
+            for (Resource resource : codeSystems) {
+                try {
+                    String json = new String(resource.getInputStream().readAllBytes());
+                    CodeSystem codeSystem = fhirContext.newJsonParser().parseResource(CodeSystem.class, json);
+                    usCoreSupport.addCodeSystem(codeSystem);
+                    loadedCount++;
+                } catch (Exception e) {
+                    logger.warn("⚠️  Failed to load US Core CodeSystem {}: {}", resource.getFilename(), e.getMessage());
+                }
+            }
+
+            logger.info("✅ Successfully loaded {} US Core structure definitions , valueSets and CodeSystems ", loadedCount);
             
             // Create validation support chain with US Core profiles
             ValidationSupportChain validationSupportChain = new ValidationSupportChain(
