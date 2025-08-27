@@ -14,7 +14,7 @@ import {
   IconButton,
 } from "@mui/material";
 import { Refresh } from "@mui/icons-material";
-import { useState, useCallback } from "react";
+import { useState, useCallback, useMemo } from "react";
 import type { SelectChangeEvent } from "@mui/material";
 import { useConnectionStore } from "../../store/connectionStore";
 import { useBucketStore } from "../../store/bucketStore";
@@ -24,14 +24,17 @@ import {
   type TimeRange,
 } from "../../services/bucketMetricsService";
 import BucketMetricsCharts from "../../components/BucketMetricsCharts";
+import { getStoredTimeRange, storeTimeRange } from "../../utils/sessionStorage";
 
 const BucketsMain = () => {
   // Get stores
   const connection = useConnectionStore((state) => state.connection);
   const bucketStore = useBucketStore();
 
-  // State for time range
-  const [timeRange, setTimeRange] = useState<TimeRange>("HOUR");
+  // State for time range with session storage
+  const [timeRange, setTimeRange] = useState<TimeRange>(() =>
+    getStoredTimeRange("HOUR")
+  );
 
   const connectionId = connection.name;
 
@@ -40,7 +43,9 @@ const BucketsMain = () => {
   const collections = bucketStore.collections[connectionId] || [];
 
   const handleTimeRangeChange = useCallback((event: SelectChangeEvent) => {
-    setTimeRange(event.target.value as TimeRange);
+    const newTimeRange = event.target.value as TimeRange;
+    setTimeRange(newTimeRange);
+    storeTimeRange(newTimeRange);
   }, []);
 
   const handleRefresh = useCallback(() => {
@@ -72,6 +77,18 @@ const BucketsMain = () => {
       col.bucketName === activeBucket?.bucketName &&
       col.scopeName === "Resources"
   );
+
+  // Sort collections with Patient first, then alphabetically
+  const sortedCollections = useMemo(() => {
+    return [...filteredCollections].sort((a, b) => {
+      // Patient always comes first
+      if (a.collectionName === "Patient") return -1;
+      if (b.collectionName === "Patient") return 1;
+
+      // Rest are sorted alphabetically
+      return a.collectionName.localeCompare(b.collectionName);
+    });
+  }, [filteredCollections]);
 
   return (
     <Box sx={{ height: "100%", display: "flex", flexDirection: "column" }}>
@@ -136,7 +153,7 @@ const BucketsMain = () => {
                   </TableRow>
                 </TableHead>
                 <TableBody>
-                  {filteredCollections.length === 0 ? (
+                  {sortedCollections.length === 0 ? (
                     <TableRow>
                       <TableCell colSpan={4} align="center">
                         <Typography color="textSecondary">
@@ -145,7 +162,7 @@ const BucketsMain = () => {
                       </TableCell>
                     </TableRow>
                   ) : (
-                    filteredCollections.map((collection) => (
+                    sortedCollections.map((collection) => (
                       <TableRow
                         key={`${collection.bucketName}-${collection.scopeName}-${collection.collectionName}`}
                       >

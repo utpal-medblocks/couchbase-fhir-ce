@@ -11,6 +11,8 @@ import {
   ResponsiveContainer,
   LineChart,
   Line,
+  BarChart,
+  Bar,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -238,24 +240,28 @@ const BucketMetricsCharts: React.FC<BucketMetricsChartsProps> = ({
       metrics: ["kv_ops"],
       colors: [chartColors.primary],
       unit: "ops/sec",
+      type: "bar" as const,
     },
     {
       title: "Cache Performance",
       metrics: ["kv_vb_resident_items_ratio", "kv_ep_cache_miss_ratio"],
       colors: [chartColors.success, chartColors.error],
       unit: "ratio",
+      type: "line" as const,
     },
     {
       title: "Query Performance",
       metrics: ["n1ql_request_time", "n1ql_service_time"],
       colors: [chartColors.warning, chartColors.info],
       unit: "ns",
+      type: "bar" as const,
     },
     {
       title: "N1QL Reqs/sec",
       metrics: ["n1ql_requests"],
       colors: [chartColors.teal],
       unit: "req/sec",
+      type: "bar" as const,
     },
   ];
 
@@ -330,77 +336,127 @@ const BucketMetricsCharts: React.FC<BucketMetricsChartsProps> = ({
                 {config.title}
               </Typography>
               <ResponsiveContainer width="100%" height={200}>
-                <LineChart
-                  data={chartData}
-                  margin={{ top: 5, right: 5, left: 5, bottom: 10 }}
-                >
-                  <CartesianGrid
-                    strokeDasharray="3 3"
-                    stroke="#e0e0e0"
-                    // strokeWidth={0.5}
-                  />
-                  <XAxis
-                    dataKey="time"
-                    tick={{ fontSize: 12, fill: "currentColor" }}
-                    axisLine={{ stroke: "#e0e0e0" }}
-                    tickLine={{ stroke: "#e0e0e0" }}
-                    interval={getTickInterval(timeRange, chartData.length)}
-                    angle={
-                      timeRange === "DAY" ||
-                      timeRange === "WEEK" ||
-                      timeRange === "MONTH"
-                        ? -45
-                        : 0
-                    }
-                    textAnchor={
-                      timeRange === "DAY" ||
-                      timeRange === "WEEK" ||
-                      timeRange === "MONTH"
-                        ? "end"
-                        : "middle"
-                    }
-                    height={
-                      timeRange === "DAY"
-                        ? // timeRange === "WEEK" ||
-                          // timeRange === "MONTH"
-                          50
-                        : 30
-                    }
-                  />
-                  <YAxis
-                    tick={{ fontSize: 10, fill: "currentColor" }}
-                    tickFormatter={(value) => formatValue(value, config.unit)}
-                    axisLine={{ stroke: "#e0e0e0" }}
-                    tickLine={{ stroke: "#e0e0e0" }}
-                    //tickCount={8}
-                    width={60}
-                    domain={["auto", "auto"]}
-                  />
-                  <Tooltip content={customTooltip} />
-                  {chartMetrics.length > 1 && (
-                    <Legend
-                      wrapperStyle={{ fontSize: "10px" }}
-                      formatter={(value) => {
-                        const metric = metrics.metrics.find(
-                          (m) => m.name === value
-                        );
-                        return metric?.label || value;
-                      }}
+                {config.type === "bar" ? (
+                  <BarChart
+                    data={chartData}
+                    margin={{ top: 5, right: 5, left: 5, bottom: 10 }}
+                  >
+                    <CartesianGrid strokeDasharray="3 3" stroke="#e0e0e0" />
+                    <XAxis
+                      dataKey="time"
+                      tick={{ fontSize: 12, fill: "currentColor" }}
+                      axisLine={{ stroke: "#e0e0e0" }}
+                      tickLine={{ stroke: "#e0e0e0" }}
+                      interval={getTickInterval(timeRange, chartData.length)}
+                      angle={
+                        timeRange === "DAY" ||
+                        timeRange === "WEEK" ||
+                        timeRange === "MONTH"
+                          ? -45
+                          : 0
+                      }
+                      textAnchor={
+                        timeRange === "DAY" ||
+                        timeRange === "WEEK" ||
+                        timeRange === "MONTH"
+                          ? "end"
+                          : "middle"
+                      }
+                      height={timeRange === "DAY" ? 50 : 30}
                     />
-                  )}
-                  {chartMetrics.map((metric, metricIndex) => (
-                    <Line
-                      key={metric.name}
-                      type="monotone"
-                      dataKey={metric.name}
-                      stroke={config.colors[metricIndex]}
-                      strokeWidth={2}
-                      dot={false}
-                      connectNulls={false} // Don't connect through NaN values
-                      name={metric.label}
+                    <YAxis
+                      tick={{ fontSize: 10, fill: "currentColor" }}
+                      tickFormatter={(value) => formatValue(value, config.unit)}
+                      axisLine={{ stroke: "#e0e0e0" }}
+                      tickLine={{ stroke: "#e0e0e0" }}
+                      width={60}
+                      domain={["auto", "auto"]}
                     />
-                  ))}
-                </LineChart>
+                    <Tooltip content={customTooltip} />
+                    {chartMetrics.length > 1 && (
+                      <Legend
+                        wrapperStyle={{ fontSize: "10px" }}
+                        formatter={(value) => {
+                          const metric = metrics.metrics.find(
+                            (m) => m.name === value
+                          );
+                          return metric?.label || value;
+                        }}
+                      />
+                    )}
+                    {chartMetrics.map((metric, metricIndex) => (
+                      <Bar
+                        key={metric.name}
+                        dataKey={metric.name}
+                        fill={config.colors[metricIndex]}
+                        name={metric.label}
+                        isAnimationActive={false}
+                      />
+                    ))}
+                  </BarChart>
+                ) : (
+                  <LineChart
+                    data={chartData}
+                    margin={{ top: 5, right: 5, left: 5, bottom: 10 }}
+                  >
+                    <CartesianGrid strokeDasharray="3 3" stroke="#e0e0e0" />
+                    <XAxis
+                      dataKey="time"
+                      tick={{ fontSize: 12, fill: "currentColor" }}
+                      axisLine={{ stroke: "#e0e0e0" }}
+                      tickLine={{ stroke: "#e0e0e0" }}
+                      interval={getTickInterval(timeRange, chartData.length)}
+                      angle={
+                        timeRange === "DAY" ||
+                        timeRange === "WEEK" ||
+                        timeRange === "MONTH"
+                          ? -45
+                          : 0
+                      }
+                      textAnchor={
+                        timeRange === "DAY" ||
+                        timeRange === "WEEK" ||
+                        timeRange === "MONTH"
+                          ? "end"
+                          : "middle"
+                      }
+                      height={timeRange === "DAY" ? 50 : 30}
+                    />
+                    <YAxis
+                      tick={{ fontSize: 10, fill: "currentColor" }}
+                      tickFormatter={(value) => formatValue(value, config.unit)}
+                      axisLine={{ stroke: "#e0e0e0" }}
+                      tickLine={{ stroke: "#e0e0e0" }}
+                      width={60}
+                      domain={["auto", "auto"]}
+                    />
+                    <Tooltip content={customTooltip} />
+                    {chartMetrics.length > 1 && (
+                      <Legend
+                        wrapperStyle={{ fontSize: "10px" }}
+                        formatter={(value) => {
+                          const metric = metrics.metrics.find(
+                            (m) => m.name === value
+                          );
+                          return metric?.label || value;
+                        }}
+                      />
+                    )}
+                    {chartMetrics.map((metric, metricIndex) => (
+                      <Line
+                        key={metric.name}
+                        type="monotone"
+                        dataKey={metric.name}
+                        stroke={config.colors[metricIndex]}
+                        strokeWidth={2}
+                        dot={false}
+                        connectNulls={false}
+                        name={metric.label}
+                        isAnimationActive={false}
+                      />
+                    ))}
+                  </LineChart>
+                )}
               </ResponsiveContainer>
             </Paper>
           );

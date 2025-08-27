@@ -21,6 +21,29 @@ export interface CollectionDetails {
   sampleDoc?: any;
 }
 
+export interface FhirValidationConfig {
+  mode: "strict" | "lenient" | "disabled";
+  profile: "none" | "us-core";
+}
+
+export interface FhirLogsConfig {
+  enableSystem: boolean;
+  enableCRUDAudit: boolean;
+  enableSearchAudit: boolean;
+  rotationBy: "size" | "days";
+  number: number;
+  s3Endpoint: string;
+}
+
+export interface FhirConfiguration {
+  fhirRelease: string;
+  validation: FhirValidationConfig;
+  logs: FhirLogsConfig;
+  version?: string;
+  description?: string;
+  createdAt?: string;
+}
+
 export interface BucketDetails {
   bucketName: string;
   bucketType: string;
@@ -39,6 +62,8 @@ export interface BucketDetails {
   cacheHit: number;
   // Collection metrics from backend
   collectionMetrics?: { [key: string]: { [key: string]: any } };
+  // FHIR configuration from Admin.config document
+  fhirConfig?: FhirConfiguration;
   // Note: No need for isFhirBucket flag since ALL buckets in store are FHIR-enabled
 }
 export interface IndexDetails {
@@ -82,6 +107,21 @@ export type BucketStore = {
 
   // Check if a bucket is a FHIR bucket (always true for buckets in our store)
   isFhirBucket: (bucketName: string) => boolean;
+
+  // FHIR Configuration methods
+  getFhirConfig: (
+    connectionId: string,
+    bucketName: string
+  ) => FhirConfiguration | null;
+  setFhirConfig: (
+    connectionId: string,
+    bucketName: string,
+    config: FhirConfiguration
+  ) => void;
+  fetchFhirConfig: (
+    connectionId: string,
+    bucketName: string
+  ) => Promise<FhirConfiguration | null>;
 
   activeBucket: { [connectionId: string]: BucketDetails | null };
   setActiveBucket: (connectionId: string, bucketName: string | null) => void;
@@ -228,6 +268,116 @@ export const useBucketStore = create<BucketStore>()((set, get) => ({
     return false; // Bucket not in our store, so not FHIR-enabled
   },
 
+  // Get FHIR configuration for a specific bucket
+  getFhirConfig: (connectionId, bucketName) => {
+    const state = get();
+    const bucket = state.buckets[connectionId]?.find(
+      (b) => b.bucketName === bucketName
+    );
+    return bucket?.fhirConfig || null;
+  },
+
+  // Set FHIR configuration for a specific bucket
+  setFhirConfig: (connectionId, bucketName, config) => {
+    set((state) => {
+      const buckets = state.buckets[connectionId] || [];
+      const updatedBuckets = buckets.map((bucket) =>
+        bucket.bucketName === bucketName
+          ? { ...bucket, fhirConfig: config }
+          : bucket
+      );
+
+      return {
+        ...state,
+        buckets: {
+          ...state.buckets,
+          [connectionId]: updatedBuckets,
+        },
+      };
+    });
+  },
+
+  // Fetch FHIR configuration from backend
+  fetchFhirConfig: async (connectionId, bucketName) => {
+    try {
+      const response = await fetch(
+        `/api/admin/fhir-bucket/${bucketName}/config?connectionName=${encodeURIComponent(
+          connectionId
+        )}`,
+        {
+          method: "GET",
+          headers: {
+            "Content-Type": "application/json",
+          },
+        }
+      );
+
+      if (!response.ok) {
+        if (response.status === 404) {
+          // No FHIR config found, return default
+          return null;
+        }
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      // Backend returns flat structure
+      const backendConfig: {
+        fhirRelease?: string;
+        validationMode?: string;
+        enforceUSCore?: boolean;
+        logs?: {
+          enableSystem: boolean;
+          enableCRUDAudit: boolean;
+          enableSearchAudit: boolean;
+          rotationBy: string;
+          number: number;
+          s3Endpoint: string;
+        };
+      } = await response.json();
+
+      // Transform flat backend structure to simplified frontend structure
+      const config: FhirConfiguration = {
+        fhirRelease: backendConfig.fhirRelease || "Release 4",
+        validation: {
+          mode:
+            (backendConfig.validationMode as
+              | "strict"
+              | "lenient"
+              | "disabled") || "lenient",
+          profile: (backendConfig.enforceUSCore ? "us-core" : "none") as
+            | "none"
+            | "us-core",
+        },
+        logs: backendConfig.logs
+          ? {
+              enableSystem: backendConfig.logs.enableSystem || false,
+              enableCRUDAudit: backendConfig.logs.enableCRUDAudit || false,
+              enableSearchAudit: backendConfig.logs.enableSearchAudit || false,
+              rotationBy:
+                (backendConfig.logs.rotationBy as "size" | "days") || "size",
+              number: backendConfig.logs.number || 30,
+              s3Endpoint: backendConfig.logs.s3Endpoint || "",
+            }
+          : {
+              enableSystem: false,
+              enableCRUDAudit: false,
+              enableSearchAudit: false,
+              rotationBy: "size" as "size" | "days",
+              number: 30,
+              s3Endpoint: "",
+            },
+      };
+
+      // Update the store with the transformed configuration
+      get().setFhirConfig(connectionId, bucketName, config);
+
+      return config;
+    } catch (error) {
+      console.error(`Failed to fetch FHIR config for ${bucketName}:`, error);
+      return null;
+    }
+  },
+
   // Set active bucket
   setActiveBucket: (connectionId, bucketName) => {
     set((state) => {
@@ -343,6 +493,36 @@ export const useBucketStore = create<BucketStore>()((set, get) => ({
       // Update store with fetched data (all FHIR buckets)
       get().setBuckets(connectionId, bucketData);
 
+      // Fetch FHIR configurations for all buckets
+      const configPromises = bucketData.map(async (bucket) => {
+        try {
+          const config = await get().fetchFhirConfig(
+            connectionId,
+            bucket.bucketName
+          );
+          return { bucketName: bucket.bucketName, config };
+        } catch (error) {
+          console.warn(
+            `Failed to fetch FHIR config for ${bucket.bucketName}:`,
+            error
+          );
+          return { bucketName: bucket.bucketName, config: null };
+        }
+      });
+
+      // Wait for all config fetches to complete (but don't block the main flow)
+      Promise.all(configPromises)
+        .then((results) => {
+          results.forEach(({ bucketName, config }) => {
+            if (config) {
+              get().setFhirConfig(connectionId, bucketName, config);
+            }
+          });
+        })
+        .catch((error) => {
+          console.warn("Some FHIR config fetches failed:", error);
+        });
+
       // Extract and populate collections from bucket data
       const allCollections: CollectionDetails[] = [];
       bucketData.forEach((bucket) => {
@@ -366,18 +546,21 @@ export const useBucketStore = create<BucketStore>()((set, get) => ({
                 Object.entries(collections).forEach(
                   ([collectionName, metrics]) => {
                     if (metrics && typeof metrics === "object") {
-                      const collectionDetail: CollectionDetails = {
-                        collectionName,
-                        scopeName,
-                        bucketName: bucket.bucketName,
-                        items: Number(metrics["items"]) || 0,
-                        diskSize: Number(metrics["diskSize"]) || 0,
-                        memUsed: Number(metrics["memUsed"]) || 0,
-                        ops: Number(metrics["ops"]) || 0,
-                        indexes: Number(metrics["indexes"]) || 0, // This might not be in the data yet
-                        maxTTL: Number(metrics["maxTTL"]) || 0,
-                      };
-                      allCollections.push(collectionDetail);
+                      // Skip Versions collection as it's for internal use only
+                      if (collectionName !== "Versions") {
+                        const collectionDetail: CollectionDetails = {
+                          collectionName,
+                          scopeName,
+                          bucketName: bucket.bucketName,
+                          items: Number(metrics["items"]) || 0,
+                          diskSize: Number(metrics["diskSize"]) || 0,
+                          memUsed: Number(metrics["memUsed"]) || 0,
+                          ops: Number(metrics["ops"]) || 0,
+                          indexes: Number(metrics["indexes"]) || 0, // This might not be in the data yet
+                          maxTTL: Number(metrics["maxTTL"]) || 0,
+                        };
+                        allCollections.push(collectionDetail);
+                      }
                       // console.log(
                       //   `📦 Added collection: ${scopeName}.${collectionName}`,
                       //   collectionDetail

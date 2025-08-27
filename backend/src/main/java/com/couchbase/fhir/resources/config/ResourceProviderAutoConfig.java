@@ -2,16 +2,24 @@ package com.couchbase.fhir.resources.config;
 
 import ca.uhn.fhir.context.FhirContext;
 import ca.uhn.fhir.rest.server.IResourceProvider;
+import ca.uhn.fhir.validation.FhirValidator;
 import com.couchbase.fhir.resources.provider.FhirCouchbaseResourceProvider;
+import com.couchbase.fhir.resources.search.validation.FhirSearchParameterPreprocessor;
 import com.couchbase.fhir.resources.service.FHIRResourceService;
+import com.couchbase.fhir.resources.service.FhirBucketConfigService;
+import com.couchbase.fhir.resources.validation.FhirBucketValidator;
+import com.couchbase.common.fhir.FhirMetaHelper;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.hl7.fhir.r4.model.Resource;
+import org.hl7.fhir.r4.model.Bundle;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Bean;
 
 import org.springframework.stereotype.Component;
 
-import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 
@@ -31,21 +39,77 @@ import java.util.stream.Collectors;
 
 @Component
 public class ResourceProviderAutoConfig {
+    private static final org.slf4j.Logger logger = org.slf4j.LoggerFactory.getLogger(ResourceProviderAutoConfig.class);
+    
+    // Resources that should NOT be auto-discovered as generic providers
+    // Bundle is handled by dedicated BundleTransactionProvider
+    private static final Set<Class<? extends Resource>> excludedResources = Set.of(
+        Bundle.class  // Handled by BundleTransactionProvider
+    );
+
+    public ResourceProviderAutoConfig() {
+        logger.info("🚀 ResourceProviderAutoConfig: Constructor called, bean is being instantiated");
+    }
 
     @Autowired
-
     private FHIRResourceService serviceFactory;
+    
+    @Autowired
+    private FhirSearchParameterPreprocessor searchPreprocessor;
+    
+    @Autowired
+    private FhirBucketValidator bucketValidator;
+    
+    @Autowired
+    private FhirBucketConfigService configService;
+
+    @Autowired
+    private FhirContext fhirContext; // Inject singleton FhirContext bean
+    
+    @Autowired
+    private FhirValidator strictValidator; // Primary US Core validator
+    
+    @Autowired
+    @Qualifier("basicFhirValidator")
+    private FhirValidator lenientValidator; // Basic validator
+    
+    @Autowired
+    private com.couchbase.admin.connections.service.ConnectionService connectionService;
+    
+    @Autowired
+    private com.couchbase.fhir.resources.service.PutService putService;
+    
+    @Autowired
+    private com.couchbase.fhir.resources.service.DeleteService deleteService;
+    
+    @Autowired
+    private FhirMetaHelper metaHelper;
+
+    @Autowired
+    private ObjectMapper objectMapper;
+
+    @Autowired
+    private com.couchbase.fhir.resources.service.SearchService searchService;
+
+    @Autowired
+    private com.couchbase.fhir.resources.service.PatchService patchService;
+
+    @Autowired
+    private com.couchbase.fhir.resources.service.ConditionalPutService conditionalPutService;
 
     @SuppressWarnings("unchecked")
     @Bean
     public List<IResourceProvider> dynamicProviders() {
-        List<IResourceProvider> providers = new ArrayList<>();
-        FhirContext fhirContext = FhirContext.forR4();
+    logger.info("🚀 ResourceProviderAutoConfig: Using injected singleton FhirContext");
         return fhirContext.getResourceTypes().stream()
                 .map(fhirContext::getResourceDefinition)
                 .map(rd -> (Class<? extends Resource>) rd.getImplementingClass())
                 .distinct()
-                .map(clazz -> new FhirCouchbaseResourceProvider<>(clazz, serviceFactory.getService(clazz) , fhirContext))
+                .filter(clazz -> !excludedResources.contains(clazz))
+                .map(clazz -> {
+                    // logger.info("✅ Creating generic provider for: {}", clazz.getSimpleName());
+                    return new FhirCouchbaseResourceProvider<>(clazz, serviceFactory.getService(clazz), fhirContext, searchPreprocessor, bucketValidator, configService, strictValidator, lenientValidator, connectionService, putService, deleteService, metaHelper, searchService, patchService, conditionalPutService);
+                })
                 .collect(Collectors.toList());
 
     }

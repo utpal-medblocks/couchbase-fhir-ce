@@ -1,0 +1,274 @@
+{
+  "type": "fulltext-index",
+  "name": "",
+  "uuid": "",
+  "sourceType": "gocbcore",
+  "sourceName": "",
+  "sourceUUID": "",
+  "planParams": {
+    "maxPartitionsPerPIndex": 1024,
+    "indexPartitions": 1
+  },
+  "params": {
+    "doc_config": {
+      "docid_prefix_delim": "",
+      "docid_regexp": "",
+      "mode": "scope.collection.type_field",
+      "type_field": "type"
+    },
+    "mapping": {
+      "analysis": {},
+      "default_analyzer": "keyword",
+      "default_datetime_parser": "dateTimeOptional",
+      "default_field": "_all",
+      "default_mapping": {
+        "dynamic": false,
+        "enabled": false
+      },
+      "default_type": "_default",
+      "docvalues_dynamic": false,
+      "index_dynamic": true,
+      "store_dynamic": false,
+      "type_field": "_type",
+      "types": {
+        "Resources.Patient": {
+          "dynamic": false,
+          "enabled": true,
+          "properties": {
+            "active": {
+              "dynamic": false,
+              "enabled": true,
+              "fields": [
+                {
+                  "index": true,
+                  "name": "active",
+                  "type": "boolean"
+                }
+              ]
+            },
+            "address": {
+              "dynamic": true,
+              "enabled": true
+            },
+            "birthDate": {
+              "dynamic": false,
+              "enabled": true,
+              "fields": [
+                {
+                  "docvalues": true,
+                  "index": true,
+                  "name": "birthDate",
+                  "type": "datetime"
+                }
+              ]
+            },
+            "communication": {
+              "dynamic": true,
+              "enabled": true
+            },
+            "deceasedDateTime": {
+              "dynamic": false,
+              "enabled": true,
+              "fields": [
+                {
+                  "docvalues": true,
+                  "index": true,
+                  "name": "deceasedDateTime",
+                  "type": "datetime"
+                }
+              ]
+            },
+            "deleted": {
+              "dynamic": false,
+              "enabled": true,
+              "fields": [
+                {
+                  "index": true,
+                  "name": "deleted",
+                  "type": "boolean"
+                }
+              ]
+            },
+            "extension": {
+              "dynamic": true,
+              "enabled": true
+            },
+            "gender": {
+              "dynamic": false,
+              "enabled": true,
+              "fields": [
+                {
+                  "index": true,
+                  "name": "gender",
+                  "type": "text"
+                }
+              ]
+            },
+            "generalPractitioner": {
+              "dynamic": true,
+              "enabled": true
+            },
+            "id": {
+              "dynamic": false,
+              "enabled": true,
+              "fields": [
+                {
+                  "index": true,
+                  "name": "id",
+                  "type": "text"
+                }
+              ]
+            },
+            "identifier": {
+              "dynamic": true,
+              "enabled": true
+            },
+            "link": {
+              "dynamic": false,
+              "enabled": true,
+              "properties": {
+                "other": {
+                  "dynamic": true,
+                  "enabled": true
+                }
+              }
+            },
+            "managingOrganization": {
+              "dynamic": true,
+              "enabled": true
+            },
+            "meta": {
+              "dynamic": false,
+              "enabled": true,
+              "properties": {
+                "lastUpdated": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "docvalues": true,
+                      "index": true,
+                      "name": "lastUpdated",
+                      "type": "datetime"
+                    }
+                  ]
+                },
+                "versionId": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "index": true,
+                      "name": "versionId",
+                      "type": "text"
+                    }
+                  ]
+                }
+              }
+            },
+            "name": {
+              "dynamic": false,
+              "enabled": true,
+              "properties": {
+                "family": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "index": true,
+                      "name": "familyExact",
+                      "type": "text"
+                    },
+                    {
+                      "analyzer": "standard",
+                      "index": true,
+                      "name": "family",
+                      "type": "text"
+                    }
+                  ]
+                },
+                "given": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "index": true,
+                      "name": "givenExact",
+                      "type": "text"
+                    },
+                    {
+                      "analyzer": "standard",
+                      "index": true,
+                      "name": "given",
+                      "type": "text"
+                    }
+                  ]
+                },
+                "prefix": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "index": true,
+                      "name": "prefixExact",
+                      "type": "text"
+                    },
+                    {
+                      "analyzer": "standard",
+                      "index": true,
+                      "name": "prefix",
+                      "type": "text"
+                    }
+                  ]
+                },
+                "suffix": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "index": true,
+                      "name": "suffixExact",
+                      "type": "text"
+                    },
+                    {
+                      "analyzer": "standard",
+                      "index": true,
+                      "name": "suffix",
+                      "type": "text"
+                    }
+                  ]
+                },
+                "text": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "index": true,
+                      "name": "textExact",
+                      "type": "text"
+                    },
+                    {
+                      "analyzer": "standard",
+                      "index": true,
+                      "name": "text",
+                      "type": "text"
+                    }
+                  ]
+                }
+              }
+            },
+            "telecom": {
+              "dynamic": true,
+              "enabled": true
+            }
+          }
+        }
+      }
+    },
+    "store": {
+      "indexType": "scorch",
+      "segmentVersion": 15
+    }
+  },
+  "sourceParams": {}
+}

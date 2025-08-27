@@ -1,9 +1,6 @@
 package com.couchbase.admin.fts.controller;
 
-import com.couchbase.admin.fts.model.FtsIndex;
-import com.couchbase.admin.fts.model.FtsIndexDetails;
-import com.couchbase.admin.fts.model.FtsMetricsRequest;
-import com.couchbase.admin.fts.model.FtsMetricsResponse;
+import com.couchbase.admin.fts.model.*;
 import com.couchbase.admin.fts.service.FtsIndexService;
 import com.couchbase.admin.fts.service.FtsMetricsService;
 import org.slf4j.Logger;
@@ -13,7 +10,6 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
-import java.util.Map;
 
 /**
  * REST Controller for FTS index management and metrics
@@ -75,17 +71,39 @@ public class FtsIndexController {
     }
     
     /**
-     * Get FTS index statistics only
+     * Get FTS progress data for multiple indexes (NEW ENDPOINT)
      */
-    @GetMapping("/stats")
-    public ResponseEntity<Map<String, Object>> getFtsIndexStats(@RequestParam String connectionName) {
+    @PostMapping("/progress")
+    public ResponseEntity<FtsProgressResponse> getFtsProgress(@RequestBody FtsProgressRequest request) {
         try {
-            logger.info("Getting FTS index stats for connection: {}", connectionName);
+            // logger.info("Getting FTS progress for connection: {}, indexes: {}", 
+            //     request.getConnectionName(), request.getIndexNames().size());
             
-            var stats = ftsIndexService.getFtsIndexStats(connectionName);
-            return ResponseEntity.ok(Map.of("stats", stats));
+            // Use bucket and scope from request, with fallbacks
+            String bucketName = request.getBucketName() != null ? request.getBucketName() : "us-core";
+            String scopeName = request.getScopeName() != null ? request.getScopeName() : "Resources";
+            
+            // logger.info("Using bucket: {}, scope: {} for progress lookup", bucketName, scopeName);
+            
+            List<FtsProgressData> progressData = ftsIndexService.getFtsProgress(
+                request.getConnectionName(), 
+                request.getIndexNames(),
+                bucketName,
+                scopeName
+            );
+            
+            FtsProgressResponse response = new FtsProgressResponse(progressData);
+            // logger.info("Successfully retrieved progress for {} indexes", progressData.size());
+            
+            // Debug logging to help troubleshoot
+            // for (FtsProgressData data : progressData) {
+            //     logger.debug("Progress data: {} - docCount: {}, status: {}", 
+            //         data.getIndexName(), data.getDocCount(), data.getIngestStatus());
+            // }
+            
+            return ResponseEntity.ok(response);
         } catch (Exception e) {
-            logger.error("Failed to get FTS index stats: {}", e.getMessage());
+            logger.error("Failed to get FTS progress: {}", e.getMessage(), e);
             return ResponseEntity.internalServerError().build();
         }
     }

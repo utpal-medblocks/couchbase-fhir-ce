@@ -6,6 +6,7 @@ import ca.uhn.fhir.validation.ValidationResult;
 import com.couchbase.client.java.Cluster;
 import com.couchbase.client.java.Collection;
 import com.couchbase.client.java.Bucket;
+import com.couchbase.common.fhir.FhirMetaHelper;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.hl7.fhir.r4.model.Resource;
 import org.slf4j.Logger;
@@ -27,7 +28,7 @@ public class FhirResourceStorageHelper {
     private static final String DEFAULT_SCOPE = "Resources";
 
     @Autowired
-    private FhirAuditService auditService;
+    private FhirMetaHelper metaHelper;
 
     @Autowired
     private FhirValidator fhirValidator;  // Primary US Core validator
@@ -113,8 +114,21 @@ public class FhirResourceStorageHelper {
                 log.debug("⚡ FHIR {} validation SKIPPED for performance", resourceType);
             }
 
-            // Add audit metadata using centralized service - preserves existing meta
-            auditService.addAuditInfoToMeta(fhirResource, auditService.getCurrentUserId(), operation);
+            // Apply proper meta using new architecture
+            AuditOp auditOp = switch (operation.toUpperCase()) {
+                case "CREATE" -> AuditOp.CREATE;
+                case "UPDATE" -> AuditOp.UPDATE;
+                case "DELETE" -> AuditOp.DELETE;
+                default -> AuditOp.CREATE;
+            };
+            
+            MetaRequest metaRequest = switch (auditOp) {
+                case CREATE -> MetaRequest.forCreate(null, "1", null);
+                case UPDATE -> MetaRequest.forUpdate(null, null, null); // Let helper determine version
+                case DELETE -> MetaRequest.forDelete(null);
+            };
+            
+            metaHelper.applyMeta(fhirResource, metaRequest);
 
             // Construct document key: resourceType/id
             String documentKey = resourceType + "/" + resourceId;

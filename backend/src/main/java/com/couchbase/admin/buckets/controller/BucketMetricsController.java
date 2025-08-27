@@ -23,8 +23,8 @@ public class BucketMetricsController {
             @RequestParam String timeRange) {
         
         try {
-            logger.info("Fetching bucket metrics for connection: {}, bucket: {}, timeRange: {}", 
-                       connectionName, bucketName, timeRange);
+            // logger.info("Fetching bucket metrics for connection: {}, bucket: {}, timeRange: {}", 
+            //            connectionName, bucketName, timeRange);
             
             BucketMetricsResponse response = bucketMetricsService.getBucketMetrics(connectionName, bucketName, timeRange);
             return ResponseEntity.ok(response);

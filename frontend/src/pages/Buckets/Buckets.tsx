@@ -93,7 +93,6 @@ const Buckets = () => {
         <Tabs value={selectedTab} onChange={handleChange} sx={{ flexGrow: 1 }}>
           <Tab label="Collections" />
           <Tab disabled={!activeBucket} label="Samples" />
-          <Tab disabled={!activeBucket} label="GSI Indexes" />
           <Tab disabled={!activeBucket} label="FTS Indexes" />
         </Tabs>
 
@@ -128,21 +127,10 @@ const Buckets = () => {
       <Box sx={{ flexGrow: 1, overflow: "hidden" }}>
         {selectedTab === 0 && <BucketsMain />}
         {selectedTab === 1 && <Samples />}
-        {selectedTab === 2 && <GSIIndexes />}
-        {selectedTab === 3 && <FtsIndexes />}
+        {selectedTab === 2 && <FtsIndexes />}
       </Box>
     </Box>
   );
 };
-
-// Placeholder components for the other tabs
-const GSIIndexes = () => (
-  <Box p={2}>
-    <Alert severity="info">
-      <AlertTitle>GSI Indexes</AlertTitle>
-      GSI Indexes management will be implemented here.
-    </Alert>
-  </Box>
-);
 
 export default Buckets;

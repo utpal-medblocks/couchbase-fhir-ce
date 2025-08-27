@@ -1,8 +1,6 @@
 package com.couchbase.fhir.resources.service;
 
-import com.couchbase.common.fhir.FhirMetaHelper;
-import org.hl7.fhir.instance.model.api.IBaseResource;
-import org.hl7.fhir.r4.model.*;
+import org.hl7.fhir.r4.model.Coding;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.security.core.Authentication;
@@ -14,78 +12,60 @@ import org.springframework.stereotype.Service;
 import java.util.*;
 import java.util.stream.Collectors;
 
+/**
+ * Focused audit service that acts as an "audit tag factory"
+ * Returns audit tags (Coding objects) for given operations and users
+ * Does NOT modify resources directly - that's the Meta helper's job
+ */
 @Service
 public class FhirAuditService {
 
+    private static final String AUDIT_TAG_SYSTEM = "http://couchbase.fhir.com/fhir/custom-tags";
+    private static final String CREATED_BY_CODE = "created-by";
+    private static final String UPDATED_BY_CODE = "updated-by";
+    private static final String DELETED_BY_CODE = "deleted-by";
+
     private static final Logger logger = LoggerFactory.getLogger(FhirAuditService.class);
     /**
-     * Add comprehensive audit information to resource meta using centralized helper
+     * Create a new audit tag for the given operation and user
+     * This is the main "factory" method for audit tags
      */
-    public void addAuditInfoToMeta(IBaseResource resource, String userId, String operation) {
-        UserAuditInfo auditInfo = getCurrentUserAuditInfo();
-        addAuditInfoToMeta(resource, auditInfo, operation);
+    public Coding newAuditTag(AuditOp op, String userId) {
+        String normalized = normalizeUserId(userId);
+        String code = switch (op) {
+            case CREATE -> CREATED_BY_CODE;
+            case UPDATE -> UPDATED_BY_CODE;
+            case DELETE -> DELETED_BY_CODE;
+        };
+        return new Coding()
+                .setSystem(AUDIT_TAG_SYSTEM)
+                .setCode(code)
+                .setDisplay(normalized);
     }
+
     /**
-     * Add comprehensive audit information to resource meta with detailed audit info using centralized helper
+     * Create audit tag using current authenticated user
      */
-    public void addAuditInfoToMeta(IBaseResource resource, UserAuditInfo auditInfo, String operation) {
-        try {
-            if (!(resource instanceof Resource)) {
-                logger.warn("⚠️ Cannot add audit info to non-R4 resource: {}", resource.getClass().getSimpleName());
-                return;
-            }
-
-            Resource r4Resource = (Resource) resource;
-
-            // Determine user ID - prefer auditInfo, fallback to current user
-            String userId = (auditInfo != null && auditInfo.getUserId() != null)
-                    ? auditInfo.getUserId()
-                    : getCurrentUserId();
-
-            // Extract existing profiles to preserve them
-            List<String> existingProfiles = FhirMetaHelper.extractExistingProfiles(r4Resource);
-
-            // Use centralized helper to apply complete meta information
-            FhirMetaHelper.applyCompleteMeta(
-                    r4Resource,
-                    userId,
-                    operation,
-                    new Date(),        // lastUpdated - always current time
-                    "1",              // versionId - simple for now
-                    existingProfiles  // preserve existing profiles
-            );
-
-            logger.debug("✅ Applied audit meta to {} resource for user: {}, operation: {}",
-                    r4Resource.getResourceType().name(), userId, operation);
-
-        } catch (Exception e) {
-            logger.error("❌ Failed to add audit info to resource: {}", e.getMessage(), e);
-            // Don't throw - audit failure shouldn't break resource processing
-        }
+    public Coding newAuditTag(AuditOp op) {
+        return newAuditTag(op, getCurrentUserId());
     }
+
     /**
-     * Add minimal audit information to resource (preserves existing meta)
+     * Normalize user ID to consistent format
      */
-    public void addMinimalAuditInfo(IBaseResource resource, String operation) {
-        try {
-            if (!(resource instanceof Resource)) {
-                logger.warn("⚠️ Cannot add audit info to non-R4 resource: {}", resource.getClass().getSimpleName());
-                return;
-            }
-
-            Resource r4Resource = (Resource) resource;
-            String userId = getCurrentUserId();
-
-            // Use audit-only method to preserve existing meta
-            FhirMetaHelper.applyAuditOnly(r4Resource, userId, operation);
-
-            logger.debug("✅ Applied minimal audit meta to {} resource for user: {}, operation: {}",
-                    r4Resource.getResourceType().name(), userId, operation);
-
-        } catch (Exception e) {
-            logger.error("❌ Failed to add minimal audit info to resource: {}", e.getMessage(), e);
-            // Don't throw - audit failure shouldn't break resource processing
+    public String normalizeUserId(String userId) {
+        String u = (userId == null || userId.isBlank()) ? "anonymous" : userId.trim();
+        if (!u.startsWith("user:") && !u.startsWith("system:")) {
+            u = "user:" + u;
         }
+        return u;
+    }
+
+    /**
+     * Get the audit tag system URI
+     */
+    public static String auditSystem() {
+        return AUDIT_TAG_SYSTEM;
     }
     /**
      * Get current authenticated user from Spring Security context

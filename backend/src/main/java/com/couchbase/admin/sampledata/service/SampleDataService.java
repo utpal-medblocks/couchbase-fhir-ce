@@ -237,7 +237,12 @@ public class SampleDataService {
             // - Proper document keys (resourceType/id)
             // - Audit trails
             // - SKIPS validation for maximum performance
-            Bundle responseBundle = bundleProcessor.processBundleTransaction(bundleJson, connectionName, bucketName, false, true);
+            // Create a config object that skips validation for sample data performance
+            com.couchbase.fhir.resources.service.FhirBucketConfigService.FhirBucketConfig sampleDataConfig = 
+                new com.couchbase.fhir.resources.service.FhirBucketConfigService.FhirBucketConfig();
+            sampleDataConfig.setValidationMode("disabled"); // Skip validation for sample data
+            
+            Bundle responseBundle = bundleProcessor.processBundleTransaction(bundleJson, connectionName, bucketName, sampleDataConfig);
             
             // Count successful entries from the response
             if (responseBundle != null && responseBundle.getEntry() != null) {

@@ -178,7 +178,7 @@ public class BucketMetricsService {
             
             // Convert requests to JSON
             String requestBody = objectMapper.writeValueAsString(requests);
-            logger.debug("Bucket metrics request to {}: {}", url, requestBody);
+            // logger.debug("Bucket metrics request to {}: {}", url, requestBody);
             
             HttpEntity<String> entity = new HttpEntity<>(requestBody, headers);
             

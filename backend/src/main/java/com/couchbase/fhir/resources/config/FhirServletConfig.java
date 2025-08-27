@@ -20,9 +20,11 @@ public class FhirServletConfig {
         return FhirContext.forR4(); // or forR5() depending on version
     }
 */
+    private static final org.slf4j.Logger logger = org.slf4j.LoggerFactory.getLogger(FhirServletConfig.class);
 
     @Bean
     public ServletRegistrationBean<RestfulServer> fhirServletRegistration(RestfulServer restfulServer) {
+        logger.info("🚀 FhirServletConfig: Registering FHIR servlet");
         ServletRegistrationBean<RestfulServer> registration = new ServletRegistrationBean<>(restfulServer, "/fhir/*");
         registration.setName("fhirServlet");
         return registration;

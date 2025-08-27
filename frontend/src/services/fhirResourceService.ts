@@ -19,6 +19,26 @@ export interface DocumentKeyResponse {
   hasMore: boolean;
 }
 
+export interface DocumentMetadata {
+  id: string;
+  versionId: string;
+  lastUpdated: string;
+  code: string;
+  display: string;
+  deleted: boolean;
+  isCurrentVersion: boolean;
+}
+
+export interface DocumentMetadataResponse {
+  bucketName: string;
+  collectionName: string;
+  documents: DocumentMetadata[];
+  totalCount: number;
+  page: number;
+  pageSize: number;
+  hasMore: boolean;
+}
+
 export interface DocumentRequest {
   connectionName: string;
   bucketName: string;
@@ -62,6 +82,60 @@ export class FhirResourceService {
       return response.data;
     } catch (error) {
       console.error("Failed to get document keys:", error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get document metadata using FTS search for a FHIR collection with pagination
+   */
+  async getDocumentMetadata(
+    request: DocumentKeyRequest
+  ): Promise<DocumentMetadataResponse> {
+    try {
+      const params = new URLSearchParams({
+        connectionName: request.connectionName,
+        bucketName: request.bucketName,
+        collectionName: request.collectionName,
+        page: (request.page || 0).toString(),
+        pageSize: (request.pageSize || 10).toString(),
+      });
+
+      if (request.patientId) {
+        params.append("patientId", request.patientId);
+      }
+
+      const response = await axios.get(
+        `${this.baseURL}/document-metadata?${params}`
+      );
+      return response.data;
+    } catch (error) {
+      console.error("Failed to get document metadata:", error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get version history for a specific document ID
+   */
+  async getVersionHistory(
+    connectionName: string,
+    bucketName: string,
+    documentId: string
+  ): Promise<DocumentMetadata[]> {
+    try {
+      const params = new URLSearchParams({
+        connectionName,
+        bucketName,
+        documentId,
+      });
+
+      const response = await axios.get(
+        `${this.baseURL}/version-history?${params}`
+      );
+      return response.data;
+    } catch (error) {
+      console.error("Failed to get version history:", error);
       throw error;
     }
   }

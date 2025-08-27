@@ -12,7 +12,7 @@ import {
   CircularProgress,
   IconButton,
 } from "@mui/material";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { tableHeaderStyle, tableCellStyle } from "../../styles/styles";
 import { useConnectionStore } from "../../store/connectionStore";
 import { useBucketStore } from "../../store/bucketStore";
@@ -23,59 +23,184 @@ import FTSIndexTreeDisplay from "./FtsIndexTreeDisplay";
 import FtsMetricsCharts from "../../components/FtsMetricsCharts";
 import { useThemeContext } from "../../contexts/ThemeContext";
 import RefreshIcon from "@mui/icons-material/Refresh";
+import {
+  getStoredFtsIndex,
+  storeFtsIndex,
+  getStoredFtsTab,
+  storeFtsTab,
+} from "../../utils/sessionStorage";
+import {
+  formatIngestStatus,
+  formatDocCount,
+} from "../../services/ftsProgressService";
+import React from "react";
 
-export default function FTSIndexes() {
-  // Get stores and theme
+// Constants
+const SCOPE_NAME = "Resources"; // Always Resources
+const PROGRESS_POLL_INTERVAL = 60000; // 1 minute
+
+const FTSIndexes = React.memo(function FTSIndexes() {
+  // Stores and context
   const connection = useConnectionStore((state) => state.connection);
   const bucketStore = useBucketStore();
   const ftsIndexStore = useFtsIndexStore();
   const { themeMode } = useThemeContext();
 
-  const connectionId = connection.name;
+  // Refs for cleanup
+  const progressIntervalRef = useRef<ReturnType<typeof setInterval> | null>(
+    null
+  );
+  const mountedRef = useRef(true);
 
-  // State for component
-  const selectedScope = "Resources"; // Always Resources - no dropdown needed
-  const [selectedTab, setSelectedTab] = useState(0);
+  // Memoized store methods to prevent effect loops
+  const fetchIndexes = useCallback(
+    (connectionId: string, bucketName: string) => {
+      return ftsIndexStore.fetchIndexes(connectionId, bucketName, SCOPE_NAME);
+    },
+    [ftsIndexStore.fetchIndexes]
+  );
+
+  const fetchProgress = useCallback(
+    (connectionId: string, bucketName: string) => {
+      return ftsIndexStore.fetchProgress(connectionId, bucketName, SCOPE_NAME);
+    },
+    [] // Remove dependency to prevent re-renders
+  );
+
+  // Component state
+  const [selectedTab, setSelectedTab] = useState(() => getStoredFtsTab(0));
   const [selectedIndex, setSelectedIndex] = useState<FtsIndexDetails | null>(
     null
   );
 
-  // Get active bucket from store (no hardcoded dropdown)
+  // Derived state
+  const connectionId = connection?.name;
   const activeBucket = bucketStore.getActiveBucket(connectionId);
   const selectedBucket = activeBucket?.bucketName || "";
+  const { indexes, loading, error, progressLoading } = ftsIndexStore;
 
-  // Get FTS indexes from store
-  const { indexes, loading, error } = ftsIndexStore;
+  // Remove this console.log to prevent unnecessary re-renders
 
-  // No need to fetch bucket data - it's handled by parent Buckets.tsx
+  // Sort indexes with ftsPatient first
+  const sortedIndexes = useMemo(() => {
+    if (!indexes) return null;
+    return [...indexes].sort((a, b) => {
+      if (a.indexName === "ftsPatient") return -1;
+      if (b.indexName === "ftsPatient") return 1;
+      return a.indexName.localeCompare(b.indexName);
+    });
+  }, [indexes]);
 
-  // Fetch FTS indexes when bucket changes and clear selection
+  // Main effect - handles fetching indexes and setting up progress polling
   useEffect(() => {
-    if (connectionId && selectedBucket) {
-      // Clear previous selection when bucket changes
-      setSelectedIndex(null);
-      setSelectedTab(0); // Reset to table view
-      ftsIndexStore.fetchIndexes(connectionId, selectedBucket, selectedScope);
-    }
-  }, [connectionId, selectedBucket]);
+    let isCurrent = true;
 
-  // Cleanup polling on unmount
-  useEffect(() => {
+    const setupData = async () => {
+      if (!connectionId || !selectedBucket) {
+        console.log("🚫 FTSIndexes: Missing connectionId or selectedBucket");
+        return;
+      }
+
+      try {
+        // console.log("🚀 FTSIndexes: Starting data setup");
+
+        // Clear previous selection when bucket changes
+        setSelectedIndex(null);
+
+        // Fetch indexes
+        await fetchIndexes(connectionId, selectedBucket);
+
+        if (!isCurrent) return; // Component unmounted
+
+        // Initial progress fetch
+        // console.log("🚀 FTSIndexes: Starting initial progress fetch");
+        await fetchProgress(connectionId, selectedBucket);
+
+        if (!isCurrent) return; // Component unmounted
+
+        // Set up progress polling
+        // console.log("🔄 FTSIndexes: Setting up progress polling");
+        progressIntervalRef.current = setInterval(() => {
+          if (mountedRef.current) {
+            // console.log("🔄 FTSIndexes: Polling progress update");
+            fetchProgress(connectionId, selectedBucket);
+          }
+        }, PROGRESS_POLL_INTERVAL);
+      } catch (error) {
+        console.error("💥 FTSIndexes: Setup error:", error);
+      }
+    };
+
+    setupData();
+
     return () => {
+      isCurrent = false;
+      if (progressIntervalRef.current) {
+        // console.log("📋 FTSIndexes: Cleaning up progress interval");
+        clearInterval(progressIntervalRef.current);
+        progressIntervalRef.current = null;
+      }
+    };
+  }, [connectionId, selectedBucket, fetchIndexes, fetchProgress]);
+
+  // Auto-select index when indexes are loaded
+  useEffect(() => {
+    if (sortedIndexes && sortedIndexes.length > 0 && !selectedIndex) {
+      const storedIndexName = getStoredFtsIndex();
+      let indexToSelect: FtsIndexDetails | null = null;
+
+      if (storedIndexName) {
+        indexToSelect =
+          sortedIndexes.find((idx) => idx.indexName === storedIndexName) ||
+          null;
+      }
+
+      if (!indexToSelect) {
+        indexToSelect = sortedIndexes[0];
+      }
+
+      if (indexToSelect) {
+        // console.log(
+        //   "🎯 FTSIndexes: Auto-selecting index:",
+        //   indexToSelect.indexName
+        // );
+        setSelectedIndex(indexToSelect);
+        storeFtsIndex(indexToSelect.indexName);
+      }
+    }
+  }, [sortedIndexes]); // Removed selectedIndex from deps to avoid loops
+
+  // Cleanup on unmount
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
       ftsIndexStore.clearIndexes();
+      if (progressIntervalRef.current) {
+        clearInterval(progressIntervalRef.current);
+      }
     };
   }, []);
 
+  // Event handlers
   const handleIndexClick = useCallback((index: FtsIndexDetails) => {
+    // console.log("👆 FTSIndexes: Index clicked:", index.indexName);
     setSelectedIndex(index);
-    setSelectedTab(1); // Switch to Tree View tab when index is selected
+    storeFtsIndex(index.indexName);
   }, []);
 
-  const handleRefresh = useCallback(() => {
+  const handleTabChange = useCallback((newValue: number) => {
+    setSelectedTab(newValue);
+    storeFtsTab(newValue);
+  }, []);
+
+  const handleRefresh = useCallback(async () => {
     if (connectionId && selectedBucket) {
-      ftsIndexStore.refreshIndexes(connectionId, selectedBucket, selectedScope);
+      // console.log("🔄 FTSIndexes: Manual refresh triggered");
+      await fetchIndexes(connectionId, selectedBucket);
+      await fetchProgress(connectionId, selectedBucket);
     }
-  }, [connectionId, selectedBucket, selectedScope]);
+  }, [connectionId, selectedBucket, fetchIndexes, fetchProgress]);
 
   return (
     <Box
@@ -115,7 +240,7 @@ export default function FTSIndexes() {
           width: "100%",
         }}
       >
-        {/* Index Table - 60% */}
+        {/* Index Table - 50% */}
         <Box
           sx={{
             width: "50%",
@@ -144,14 +269,17 @@ export default function FTSIndexes() {
             <Table stickyHeader size="small">
               <TableHead>
                 <TableRow>
-                  <TableCell sx={tableHeaderStyle}>Bucket</TableCell>
                   <TableCell sx={tableHeaderStyle}>Index Name</TableCell>
+                  <TableCell sx={tableHeaderStyle} align="right">
+                    Doc Count
+                  </TableCell>
+                  <TableCell sx={tableHeaderStyle}>Status</TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
                 {loading ? (
                   <TableRow>
-                    <TableCell colSpan={2} align="center">
+                    <TableCell colSpan={3} align="center">
                       <Box
                         sx={{ display: "flex", justifyContent: "center", p: 2 }}
                       >
@@ -164,18 +292,18 @@ export default function FTSIndexes() {
                   </TableRow>
                 ) : !indexes || indexes.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={2} align="center">
+                    <TableCell colSpan={3} align="center">
                       <Typography color="textSecondary" variant="body2">
                         {selectedBucket
-                          ? `No FTS indexes found for ${selectedBucket}/${selectedScope}`
+                          ? `No FTS indexes found for ${selectedBucket}/${SCOPE_NAME}`
                           : "Select a bucket"}
                       </Typography>
                     </TableCell>
                   </TableRow>
                 ) : (
-                  indexes.map((index) => (
+                  sortedIndexes!.map((index) => (
                     <TableRow
-                      key={index.indexName}
+                      key={index.indexName} // Simplified key
                       hover
                       onClick={() => handleIndexClick(index)}
                       sx={{
@@ -187,10 +315,21 @@ export default function FTSIndexes() {
                       }}
                     >
                       <TableCell sx={tableCellStyle}>
-                        {index.bucketName}
+                        {index.indexName}
+                      </TableCell>
+                      <TableCell sx={tableCellStyle} align="right">
+                        {index.progress
+                          ? formatDocCount(index.progress.doc_count)
+                          : progressLoading && !index.progress
+                          ? "..."
+                          : "-"}
                       </TableCell>
                       <TableCell sx={tableCellStyle}>
-                        {index.indexName}
+                        {index.progress
+                          ? formatIngestStatus(index.progress.ingest_status)
+                          : progressLoading && !index.progress
+                          ? "..."
+                          : "-"}
                       </TableCell>
                     </TableRow>
                   ))
@@ -200,7 +339,7 @@ export default function FTSIndexes() {
           </TableContainer>
         </Box>
 
-        {/* Index Details Box - 40% */}
+        {/* Index Details Box - 50% */}
         <Box
           sx={{
             width: "50%",
@@ -217,7 +356,7 @@ export default function FTSIndexes() {
           <Box sx={{ borderBottom: 1, borderColor: "divider" }}>
             <Tabs
               value={selectedTab}
-              onChange={(_, newValue) => setSelectedTab(newValue)}
+              onChange={(_, newValue) => handleTabChange(newValue)}
             >
               <Tab label="JSON" />
               <Tab label="Tree View" />
@@ -315,4 +454,6 @@ export default function FTSIndexes() {
       </Box>
     </Box>
   );
-}
+});
+
+export default FTSIndexes;

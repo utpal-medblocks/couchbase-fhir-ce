@@ -9,8 +9,15 @@ import {
   Typography,
   LinearProgress,
   Box,
+  Stepper,
+  Step,
+  StepLabel,
 } from "@mui/material";
 import { useConnectionStore } from "../../store/connectionStore";
+import { useBucketStore } from "../../store/bucketStore";
+import FhirConfigurationForm, {
+  type FhirConfiguration,
+} from "./FhirConfigurationForm";
 
 interface AddFhirBucketDialogProps {
   open: boolean;
@@ -48,14 +55,44 @@ const AddFhirBucketDialog: React.FC<AddFhirBucketDialogProps> = ({
   const [conversionStatus, setConversionStatus] =
     useState<ConversionStatus | null>(null);
   const [operationId, setOperationId] = useState<string | null>(null);
+  const [activeStep, setActiveStep] = useState(0);
+  const [fhirConfig, setFhirConfig] = useState<FhirConfiguration>({
+    fhirRelease: "Release 4",
+    validation: {
+      mode: "lenient",
+      profile: "none",
+    },
+    logs: {
+      enableSystem: false,
+      enableCRUDAudit: false,
+      enableSearchAudit: false,
+      rotationBy: "size",
+      number: 30,
+      s3Endpoint: "",
+    },
+  });
   const { setBucketFhirStatus } = useConnectionStore();
+  const { setFhirConfig: saveFhirConfigToStore, getFhirConfig } =
+    useBucketStore();
 
-  // Cleanup when dialog closes
+  const steps = ["Configure FHIR Settings", "Convert Bucket"];
+
+  // Load existing FHIR config when dialog opens
   useEffect(() => {
-    if (!open) {
+    if (open) {
+      // Try to load existing FHIR configuration from store
+      const existingConfig = getFhirConfig(connectionName, bucketName);
+      if (existingConfig) {
+        setFhirConfig({
+          fhirRelease: existingConfig.fhirRelease,
+          validation: existingConfig.validation,
+          logs: existingConfig.logs,
+        });
+      }
+    } else {
       resetState();
     }
-  }, [open]);
+  }, [open, connectionName, bucketName, getFhirConfig]);
 
   // Status polling effect
   useEffect(() => {
@@ -81,6 +118,16 @@ const AddFhirBucketDialog: React.FC<AddFhirBucketDialogProps> = ({
 
               // Update the store to mark this bucket as FHIR-enabled
               setBucketFhirStatus(bucketName, true);
+
+              // Save the FHIR configuration to the bucket store
+              saveFhirConfigToStore(connectionName, bucketName, {
+                fhirRelease: fhirConfig.fhirRelease,
+                validation: fhirConfig.validation,
+                logs: fhirConfig.logs,
+                version: "1.0",
+                description: "FHIR-enabled bucket configuration",
+                createdAt: new Date().toISOString(),
+              });
 
               if (onSuccess) {
                 setTimeout(() => onSuccess(), 1000);
@@ -111,12 +158,14 @@ const AddFhirBucketDialog: React.FC<AddFhirBucketDialogProps> = ({
     setIsConverting(false);
     setConversionStatus(null);
     setOperationId(null);
+    setActiveStep(0);
   };
 
   const startConversion = async () => {
     setIsConverting(true);
     setError(null);
     setInfo("Initiating FHIR bucket conversion...");
+    setActiveStep(1);
 
     try {
       const response = await fetch(
@@ -126,7 +175,7 @@ const AddFhirBucketDialog: React.FC<AddFhirBucketDialogProps> = ({
           headers: {
             "Content-Type": "application/json",
           },
-          body: JSON.stringify({}),
+          body: JSON.stringify({ fhirConfiguration: fhirConfig }),
         }
       );
 
@@ -148,6 +197,14 @@ const AddFhirBucketDialog: React.FC<AddFhirBucketDialogProps> = ({
       setInfo(null);
       setIsConverting(false);
     }
+  };
+
+  const handleNext = () => {
+    setActiveStep((prevActiveStep) => prevActiveStep + 1);
+  };
+
+  const handleBack = () => {
+    setActiveStep((prevActiveStep) => prevActiveStep - 1);
   };
 
   const handleClose = () => {
@@ -174,7 +231,7 @@ const AddFhirBucketDialog: React.FC<AddFhirBucketDialogProps> = ({
       maxWidth={"sm"}
       disableEscapeKeyDown={!canClose}
     >
-      <DialogTitle>Convert to FHIR Bucket</DialogTitle>
+      <DialogTitle>Convert bucket "{bucketName}" to FHIR</DialogTitle>
       <DialogContent>
         {error && (
           <Alert variant="filled" severity="error" sx={{ mb: 2 }}>
@@ -188,12 +245,81 @@ const AddFhirBucketDialog: React.FC<AddFhirBucketDialogProps> = ({
           </Alert>
         )}
 
-        <Typography gutterBottom variant="body2" sx={{ mb: 2 }}>
+        {/* <Typography gutterBottom variant="body2" sx={{ mb: 2 }}>
           This action will convert <strong>{bucketName}</strong> to a FHIR
           bucket.
           <br />
           <strong>This action is irreversible.</strong>
-        </Typography>
+        </Typography> */}
+
+        {/* Stepper */}
+        <Stepper activeStep={activeStep} sx={{ mb: 3 }}>
+          {steps.map((label) => (
+            <Step key={label}>
+              <StepLabel>{label}</StepLabel>
+            </Step>
+          ))}
+        </Stepper>
+
+        {/* Step Content */}
+        {activeStep === 0 && (
+          <FhirConfigurationForm
+            config={fhirConfig}
+            onChange={setFhirConfig}
+            disabled={isConverting}
+          />
+        )}
+
+        {activeStep === 1 && (
+          <Box>
+            <Typography variant="body2" sx={{ mb: 2 }}>
+              Ready to convert bucket with the following configuration:
+            </Typography>
+            <Box sx={{ display: "flex", gap: 2, mb: 2 }}>
+              <Alert severity="info" sx={{ flex: 1 }}>
+                <Typography variant="body2">
+                  <strong>FHIR Release:</strong> {fhirConfig.fhirRelease}
+                  <br />
+                  <strong>Profiles:</strong>{" "}
+                  {fhirConfig.validation.profile === "us-core"
+                    ? "US Core 6.1.0"
+                    : "none"}
+                  <br />
+                  <strong>Validation:</strong>
+                  <ul style={{ margin: 0, paddingLeft: 20 }}>
+                    <li>Mode: {fhirConfig.validation.mode}</li>
+                  </ul>
+                </Typography>
+              </Alert>
+              <Alert severity="info" sx={{ flex: 1 }}>
+                <Typography variant="body2">
+                  <strong>Logs:</strong>
+                  <ul style={{ margin: 0, paddingLeft: 20 }}>
+                    <li>
+                      Enable System Logs:{" "}
+                      {fhirConfig.logs.enableSystem ? "Enabled" : "Disabled"}
+                    </li>
+                    <li>
+                      Enable CRUD Audit:{" "}
+                      {fhirConfig.logs.enableCRUDAudit ? "Enabled" : "Disabled"}
+                    </li>
+                    <li>
+                      Enable Search Audit:{" "}
+                      {fhirConfig.logs.enableSearchAudit
+                        ? "Enabled"
+                        : "Disabled"}
+                    </li>
+                    <li>Rotation By: {fhirConfig.logs.rotationBy}</li>
+                    <li>Number: {fhirConfig.logs.number}</li>
+                    <li>
+                      S3 Endpoint: {fhirConfig.logs.s3Endpoint || "(none)"}
+                    </li>
+                  </ul>
+                </Typography>
+              </Alert>
+            </Box>
+          </Box>
+        )}
 
         {/* Progress Information */}
         {conversionStatus && (
@@ -233,15 +359,37 @@ const AddFhirBucketDialog: React.FC<AddFhirBucketDialogProps> = ({
           {isConverting ? "Please Wait..." : "Close"}
         </Button>
 
-        {!isConverting && !conversionStatus && (
+        <Box sx={{ flex: "1 1 auto" }} />
+
+        {activeStep === 0 && !isConverting && (
           <Button
             variant="contained"
             size="small"
-            onClick={startConversion}
+            onClick={handleNext}
             sx={{ textTransform: "none", padding: "4px 16px" }}
           >
-            Convert to FHIR
+            Next: Review Configuration
           </Button>
+        )}
+
+        {activeStep === 1 && !isConverting && !conversionStatus && (
+          <>
+            <Button
+              size="small"
+              onClick={handleBack}
+              sx={{ textTransform: "none", padding: "4px 16px", mr: 1 }}
+            >
+              Back
+            </Button>
+            <Button
+              variant="contained"
+              size="small"
+              onClick={startConversion}
+              sx={{ textTransform: "none", padding: "4px 16px" }}
+            >
+              Convert to FHIR
+            </Button>
+          </>
         )}
       </DialogActions>
     </Dialog>
