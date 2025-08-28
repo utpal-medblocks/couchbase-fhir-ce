@@ -57,7 +57,8 @@ public class CleanExceptionInterceptor {
             message.contains("HAPI-0418") ||
             message.contains("No Patient found matching the specified criteria") ||
             message.contains("Multiple resources found matching criteria") ||
-            message.contains("Multiple Patient resources found matching the specified criteria")
+            message.contains("Multiple Patient resources found matching the specified criteria") ||
+            message.contains("Failed to execute search")
           
         );
     }

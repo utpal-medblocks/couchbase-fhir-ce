@@ -17,6 +17,9 @@ import com.couchbase.fhir.resources.util.*;
 import com.couchbase.fhir.resources.util.Ftsn1qlQueryBuilder.SortField;
 import com.couchbase.fhir.resources.validation.FhirBucketValidator;
 import com.couchbase.fhir.resources.validation.FhirBucketValidationException;
+import com.couchbase.fhir.resources.search.SearchState;
+import com.couchbase.fhir.resources.search.SearchStateManager;
+import com.couchbase.fhir.resources.search.RevIncludeParam;
 import org.hl7.fhir.r4.model.Bundle;
 import org.hl7.fhir.r4.model.Resource;
 import org.slf4j.Logger;
@@ -53,9 +56,16 @@ public class SearchService {
     @Autowired
     private FHIRResourceService serviceFactory;
     
+    @Autowired
+    private SearchStateManager searchStateManager;
+    
     /**
      * Lightweight resolution for conditional operations.
      * Uses the same search logic but with LIMIT 2 for fast ambiguity detection.
+     * 
+     * NOTE: Race condition exists with FTS-based searches.
+     * Rapid conditional PUTs may create duplicates due to FTS indexing delays.
+     * This is a known limitation that requires alternative solutions.
      * 
      * @param resourceType FHIR resource type (e.g., "Patient")
      * @param criteria Search criteria as key-value pairs
@@ -161,12 +171,23 @@ public class SearchService {
         List<SortField> sortFields = parseSortParameter(searchParams);
         String totalMode = parseTotalParameter(searchParams);
         
+        // Check for _revinclude parameter
+        String revIncludeValue = searchParams.get("_revinclude");
+        RevIncludeParam revIncludeParam = null;
+        if (revIncludeValue != null) {
+            revIncludeParam = RevIncludeParam.parse(revIncludeValue);
+            if (revIncludeParam == null || !revIncludeParam.isValid()) {
+                throw new InvalidRequestException("Invalid _revinclude parameter: " + revIncludeValue);
+            }
+        }
+        
         // Remove control parameters from search criteria
         searchParams.remove("_summary");
         searchParams.remove("_elements");
         searchParams.remove("_count");
         searchParams.remove("_sort");
         searchParams.remove("_total");
+        searchParams.remove("_revinclude");
         
         // Build search queries
         List<SearchQuery> ftsQueries = buildSearchQueries(resourceType, searchParams);
@@ -175,40 +196,15 @@ public class SearchService {
             return handleCountOnlyQuery(ftsQueries, resourceType, bucketName);
         }
         
-        // Execute full search
-        Ftsn1qlQueryBuilder queryBuilder = new Ftsn1qlQueryBuilder();
-        String query = queryBuilder.build(ftsQueries, resourceType, 0, count, sortFields);
-        
-        // Get appropriate DAO for the resource type
-        @SuppressWarnings("unchecked")
-        Class<? extends Resource> resourceClassType = (Class<? extends Resource>) fhirContext.getResourceDefinition(resourceType).getImplementingClass();
-        FhirResourceDaoImpl<?> dao = serviceFactory.getService(resourceClassType);
-        
-        @SuppressWarnings("unchecked")
-        List<Resource> results = (List<Resource>) dao.search(resourceType, query);
-        
-        // Build Bundle response
-        Bundle bundle = new Bundle();
-        bundle.setType(Bundle.BundleType.SEARCHSET);
-        
-        // Set total count
-        if ("accurate".equals(totalMode)) {
-            int accurateTotal = getAccurateCount(ftsQueries, resourceType, bucketName);
-            bundle.setTotal(accurateTotal);
-        } else {
-            bundle.setTotal(results.size());
+        // Check if this is a _revinclude search
+        if (revIncludeParam != null) {
+            return handleRevIncludeSearch(resourceType, ftsQueries, revIncludeParam, count, 
+                                        summaryMode, elements, totalMode, bucketName);
         }
         
-        // Add resources to bundle with filtering
-        for (Resource resource : results) {
-            Resource filteredResource = applyResourceFiltering(resource, summaryMode, elements);
-            bundle.addEntry()
-                    .setResource(filteredResource)
-                    .setFullUrl(resourceType + "/" + filteredResource.getIdElement().getIdPart());
-        }
-        
-        logger.info("🔍 SearchService.search: Returning {} results for {}", results.size(), resourceType);
-        return bundle;
+        // Execute regular search
+        return executeRegularSearch(resourceType, ftsQueries, count, sortFields, 
+                                  summaryMode, elements, totalMode, bucketName);
     }
     
     // ========== Private Helper Methods ==========
@@ -508,5 +504,330 @@ public class SearchService {
             logger.warn("Failed to apply resource filtering: {}", e.getMessage());
             return resource;
         }
+    }
+    
+    /**
+     * Execute regular search without _revinclude
+     */
+    private Bundle executeRegularSearch(String resourceType, List<SearchQuery> ftsQueries, int count,
+                                      List<SortField> sortFields, SummaryEnum summaryMode, 
+                                      Set<String> elements, String totalMode, String bucketName) {
+        
+        Ftsn1qlQueryBuilder queryBuilder = new Ftsn1qlQueryBuilder();
+        String query = queryBuilder.build(ftsQueries, resourceType, 0, count, sortFields);
+        
+        // Get appropriate DAO for the resource type
+        @SuppressWarnings("unchecked")
+        Class<? extends Resource> resourceClassType = (Class<? extends Resource>) fhirContext.getResourceDefinition(resourceType).getImplementingClass();
+        FhirResourceDaoImpl<?> dao = serviceFactory.getService(resourceClassType);
+        
+        @SuppressWarnings("unchecked")
+        List<Resource> results = (List<Resource>) dao.search(resourceType, query);
+        
+        // Build Bundle response
+        Bundle bundle = new Bundle();
+        bundle.setType(Bundle.BundleType.SEARCHSET);
+        
+        // Set total count
+        if ("accurate".equals(totalMode)) {
+            int accurateTotal = getAccurateCount(ftsQueries, resourceType, bucketName);
+            bundle.setTotal(accurateTotal);
+        } else {
+            bundle.setTotal(results.size());
+        }
+        
+        // Add resources to bundle with filtering
+        for (Resource resource : results) {
+            Resource filteredResource = applyResourceFiltering(resource, summaryMode, elements);
+            bundle.addEntry()
+                    .setResource(filteredResource)
+                    .setFullUrl(resourceType + "/" + filteredResource.getIdElement().getIdPart())
+                    .getSearch()
+                    .setMode(Bundle.SearchEntryMode.MATCH);
+        }
+        
+        logger.info("🔍 SearchService.search: Returning {} results for {}", results.size(), resourceType);
+        return bundle;
+    }
+    
+    /**
+     * Handle _revinclude search with two-query strategy
+     */
+    private Bundle handleRevIncludeSearch(String primaryResourceType, List<SearchQuery> ftsQueries,
+                                        RevIncludeParam revIncludeParam, int count,
+                                        SummaryEnum summaryMode, Set<String> elements,
+                                        String totalMode, String bucketName) {
+        
+        logger.info("🔍 Handling _revinclude search: {} -> {}:{}", 
+                   primaryResourceType, revIncludeParam.getResourceType(), revIncludeParam.getSearchParam());
+        
+        // Step 1: Execute primary resource search to get IDs only
+        List<String> primaryResourceIds = executeIdOnlySearch(primaryResourceType, ftsQueries, count, bucketName);
+        
+        if (primaryResourceIds.isEmpty()) {
+            logger.info("🔍 No primary resources found, returning empty bundle");
+            return createEmptyBundle();
+        }
+        
+        // Step 2: Calculate how many revinclude resources we need for first page
+        int primaryResourceCount = primaryResourceIds.size();
+        int revIncludeCount = count - primaryResourceCount;
+        
+        // Step 3: Search for revinclude resources
+        List<Resource> revIncludeResources = executeRevIncludeResourceSearch(
+            revIncludeParam.getResourceType(), revIncludeParam.getSearchParam(), 
+            primaryResourceIds, revIncludeCount, bucketName);
+        
+        // Step 4: Get full primary resources
+        List<Resource> primaryResources = getPrimaryResourcesByIds(primaryResourceType, primaryResourceIds, bucketName);
+        
+        // Step 5: Create search state for pagination
+        SearchState searchState = SearchState.builder()
+            .primaryResourceType(primaryResourceType)
+            .primaryResourceIds(primaryResourceIds)
+            .revIncludeResourceType(revIncludeParam.getResourceType())
+            .revIncludeSearchParam(revIncludeParam.getSearchParam())
+            .totalPrimaryResources(primaryResourceCount)
+            .currentPrimaryOffset(primaryResourceCount) // All primary resources returned in first page
+            .currentRevIncludeOffset(revIncludeCount)    // Next offset for revinclude resources
+            .bucketName(bucketName)
+            .build();
+        
+        // Get total count of revinclude resources for accurate pagination
+        int totalRevIncludeCount = getTotalRevIncludeCount(
+            revIncludeParam.getResourceType(), revIncludeParam.getSearchParam(), 
+            primaryResourceIds, bucketName);
+        searchState.setTotalRevIncludeResources(totalRevIncludeCount);
+        
+        String continuationToken = searchStateManager.storeSearchState(searchState);
+        
+        // Step 6: Build response bundle
+        Bundle bundle = new Bundle();
+        bundle.setType(Bundle.BundleType.SEARCHSET);
+        bundle.setTotal(primaryResourceCount + totalRevIncludeCount);
+        
+        // Add primary resources (search mode = "match")
+        for (Resource resource : primaryResources) {
+            Resource filteredResource = applyResourceFiltering(resource, summaryMode, elements);
+            bundle.addEntry()
+                    .setResource(filteredResource)
+                    .setFullUrl(primaryResourceType + "/" + filteredResource.getIdElement().getIdPart())
+                    .getSearch()
+                    .setMode(Bundle.SearchEntryMode.MATCH);
+        }
+        
+        // Add revinclude resources (search mode = "include")
+        for (Resource resource : revIncludeResources) {
+            Resource filteredResource = applyResourceFiltering(resource, summaryMode, elements);
+            bundle.addEntry()
+                    .setResource(filteredResource)
+                    .setFullUrl(revIncludeParam.getResourceType() + "/" + filteredResource.getIdElement().getIdPart())
+                    .getSearch()
+                    .setMode(Bundle.SearchEntryMode.INCLUDE);
+        }
+        
+        // Add next link if there are more revinclude resources
+        if (searchState.hasMoreRevIncludeResources()) {
+            bundle.addLink()
+                    .setRelation("next")
+                    .setUrl(buildNextPageUrl(continuationToken, count));
+        }
+        
+        logger.info("🔍 Returning _revinclude bundle: {} primary + {} revinclude resources", 
+                   primaryResourceCount, revIncludeResources.size());
+        
+        return bundle;
+    }
+    
+    /**
+     * Handle pagination requests for _revinclude searches
+     */
+    public Bundle handleRevIncludePagination(String continuationToken, int offset, int count) {
+        SearchState searchState = searchStateManager.retrieveSearchState(continuationToken);
+        
+        if (searchState == null) {
+            throw new InvalidRequestException("Invalid or expired search token");
+        }
+        
+        if (searchState.isExpired()) {
+            searchStateManager.removeSearchState(continuationToken);
+            throw new InvalidRequestException("Search results have expired. Please repeat your original search.");
+        }
+        
+        // Execute revinclude query for next batch
+        List<Resource> revIncludeResources = executeRevIncludeResourceSearch(
+            searchState.getRevIncludeResourceType(), 
+            searchState.getRevIncludeSearchParam(),
+            searchState.getPrimaryResourceIds(),
+            count,
+            searchState.getCurrentRevIncludeOffset(),
+            searchState.getBucketName());
+        
+        // Update search state
+        searchState.setCurrentRevIncludeOffset(searchState.getCurrentRevIncludeOffset() + count);
+        
+        // Build response bundle
+        Bundle bundle = new Bundle();
+        bundle.setType(Bundle.BundleType.SEARCHSET);
+        bundle.setTotal(searchState.getTotalPrimaryResources() + searchState.getTotalRevIncludeResources());
+        
+        // Add only revinclude resources (search mode = "include")
+        for (Resource resource : revIncludeResources) {
+            bundle.addEntry()
+                    .setResource(resource)
+                    .setFullUrl(searchState.getRevIncludeResourceType() + "/" + resource.getIdElement().getIdPart())
+                    .getSearch()
+                    .setMode(Bundle.SearchEntryMode.INCLUDE);
+        }
+        
+        // Add next link if there are more resources
+        if (searchState.hasMoreRevIncludeResources()) {
+            bundle.addLink()
+                    .setRelation("next")
+                    .setUrl(buildNextPageUrl(continuationToken, count));
+        }
+        
+        return bundle;
+    }
+    
+    // Helper methods for _revinclude implementation
+    
+    private List<String> executeIdOnlySearch(String resourceType, List<SearchQuery> ftsQueries, 
+                                           int count, String bucketName) {
+        Ftsn1qlQueryBuilder queryBuilder = new Ftsn1qlQueryBuilder();
+        String query = queryBuilder.build(ftsQueries, resourceType, 0, count, null);
+        
+        logger.debug("🔍 Original query: {}", query);
+        
+        // Modify query to select only IDs
+        String idOnlyQuery = query.replace("SELECT resource.* ", "SELECT raw resource.id ");
+        
+        logger.debug("🔍 Modified ID-only query: {}", idOnlyQuery);
+        
+        try {
+            Cluster cluster = connectionService.getConnection("default");
+            QueryResult result = cluster.query(idOnlyQuery);
+            
+            List<String> ids = new ArrayList<>();
+            // With SELECT raw resource.id, the results are raw strings
+            List<String> rawResults = result.rowsAs(String.class);
+            ids.addAll(rawResults);
+            
+            logger.debug("🔍 ID-only search returned {} IDs for {}: {}", ids.size(), resourceType, ids);
+            return ids;
+            
+        } catch (Exception e) {
+            logger.error("Failed to execute ID-only search for {}: {}", resourceType, e.getMessage());
+            throw new InvalidRequestException("Failed to execute search: " + e.getMessage());
+        }
+    }
+    
+    private List<Resource> executeRevIncludeResourceSearch(String resourceType, String searchParam,
+                                                         List<String> primaryResourceIds, int count, 
+                                                         String bucketName) {
+        return executeRevIncludeResourceSearch(resourceType, searchParam, primaryResourceIds, count, 0, bucketName);
+    }
+    
+    private List<Resource> executeRevIncludeResourceSearch(String resourceType, String searchParam,
+                                                         List<String> primaryResourceIds, int count,
+                                                         int offset, String bucketName) {
+        
+        // Build FTS query for revinclude resources
+        List<SearchQuery> revIncludeQueries = new ArrayList<>();
+        
+        // Create disjunction for all primary resource references
+        List<SearchQuery> referenceQueries = new ArrayList<>();
+        for (String primaryId : primaryResourceIds) {
+            String referenceValue = searchParam.equals("subject") ? 
+                "Patient/" + primaryId : // Assuming primary resource is Patient for now
+                primaryId;
+            referenceQueries.add(SearchQuery.match(referenceValue).field(searchParam + ".reference"));
+        }
+        
+        if (!referenceQueries.isEmpty()) {
+            revIncludeQueries.add(SearchQuery.disjuncts(referenceQueries.toArray(new SearchQuery[0])));
+        }
+        
+        // Execute the query
+        Ftsn1qlQueryBuilder queryBuilder = new Ftsn1qlQueryBuilder();
+        String query = queryBuilder.build(revIncludeQueries, resourceType, offset, count, null);
+        
+        @SuppressWarnings("unchecked")
+        Class<? extends Resource> resourceClassType = (Class<? extends Resource>) fhirContext.getResourceDefinition(resourceType).getImplementingClass();
+        FhirResourceDaoImpl<?> dao = serviceFactory.getService(resourceClassType);
+        
+        @SuppressWarnings("unchecked")
+        List<Resource> results = (List<Resource>) dao.search(resourceType, query);
+        
+        logger.debug("🔍 RevInclude search returned {} {} resources", results.size(), resourceType);
+        return results;
+    }
+    
+    private List<Resource> getPrimaryResourcesByIds(String resourceType, List<String> ids, String bucketName) {
+        List<Resource> resources = new ArrayList<>();
+        
+        @SuppressWarnings("unchecked")
+        Class<? extends Resource> resourceClassType = (Class<? extends Resource>) fhirContext.getResourceDefinition(resourceType).getImplementingClass();
+        FhirResourceDaoImpl<?> dao = serviceFactory.getService(resourceClassType);
+        
+        for (String id : ids) {
+            try {
+                @SuppressWarnings("unchecked")
+                Optional<Resource> resource = (Optional<Resource>) dao.read(resourceType, id, bucketName);
+                resource.ifPresent(resources::add);
+            } catch (Exception e) {
+                logger.warn("Failed to retrieve {} with ID {}: {}", resourceType, id, e.getMessage());
+            }
+        }
+        
+        return resources;
+    }
+    
+    private int getTotalRevIncludeCount(String resourceType, String searchParam, 
+                                      List<String> primaryResourceIds, String bucketName) {
+        // Build count query for revinclude resources
+        List<SearchQuery> revIncludeQueries = new ArrayList<>();
+        
+        List<SearchQuery> referenceQueries = new ArrayList<>();
+        for (String primaryId : primaryResourceIds) {
+            String referenceValue = searchParam.equals("subject") ? 
+                "Patient/" + primaryId :
+                primaryId;
+            referenceQueries.add(SearchQuery.match(referenceValue).field(searchParam + ".reference"));
+        }
+        
+        if (!referenceQueries.isEmpty()) {
+            revIncludeQueries.add(SearchQuery.disjuncts(referenceQueries.toArray(new SearchQuery[0])));
+        }
+        
+        Ftsn1qlQueryBuilder queryBuilder = new Ftsn1qlQueryBuilder();
+        String countQuery = queryBuilder.buildCountQuery(revIncludeQueries, resourceType);
+        
+        try {
+            Cluster cluster = connectionService.getConnection("default");
+            QueryResult result = cluster.query(countQuery);
+            List<JsonObject> rows = result.rowsAs(JsonObject.class);
+            
+            if (!rows.isEmpty()) {
+                return rows.get(0).getInt("total");
+            }
+            return 0;
+        } catch (Exception e) {
+            logger.warn("Failed to get revinclude count for {}: {}", resourceType, e.getMessage());
+            return 0;
+        }
+    }
+    
+    private Bundle createEmptyBundle() {
+        Bundle bundle = new Bundle();
+        bundle.setType(Bundle.BundleType.SEARCHSET);
+        bundle.setTotal(0);
+        return bundle;
+    }
+    
+    private String buildNextPageUrl(String continuationToken, int count) {
+        // This would typically build the full URL with proper base URL
+        // For now, return a simple format
+        return "?_getpages=" + continuationToken + "&_getpagesoffset=" + count + "&_count=" + count;
     }
 }

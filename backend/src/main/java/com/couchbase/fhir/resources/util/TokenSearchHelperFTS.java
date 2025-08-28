@@ -66,30 +66,30 @@ public class TokenSearchHelperFTS {
             return SearchQuery.booleanField(boolValue).field(ftsFieldPath);
         }
         
-        // Default to term query for strings
-        return SearchQuery.term(value).field(ftsFieldPath);
+        // Default to match query for strings
+        return SearchQuery.match(value).field(ftsFieldPath);
     }
 
     private static SearchQuery buildCodeableConceptQuery(String ftsFieldPath, TokenParam token) {
         // For FTS index: field might be like "name.coding.code" and "name.coding.system"
         if (token.system != null) {
             return SearchQuery.conjuncts(
-                    SearchQuery.term(token.system).field(ftsFieldPath + ".system"),
-                    SearchQuery.term(token.code).field(ftsFieldPath + ".code")
+                    SearchQuery.match(token.system).field(ftsFieldPath + ".system"),
+                    SearchQuery.match(token.code).field(ftsFieldPath + ".code")
             );
         } else {
-            return SearchQuery.term(token.code).field(ftsFieldPath + ".code");
+            return SearchQuery.match(token.code).field(ftsFieldPath + ".code");
         }
     }
 
     private static SearchQuery buildSystemValueQuery(String ftsFieldPath, TokenParam token) {
         if (token.system != null) {
             return SearchQuery.conjuncts(
-                    SearchQuery.term(token.system).field(ftsFieldPath + ".system"),
-                    SearchQuery.term(token.code).field(ftsFieldPath + ".value")
+                    SearchQuery.match(token.system).field(ftsFieldPath + ".system"),
+                    SearchQuery.match(token.code).field(ftsFieldPath + ".value")
             );
         } else {
-            return SearchQuery.term(token.code).field(ftsFieldPath + ".value");
+            return SearchQuery.match(token.code).field(ftsFieldPath + ".value");
         }
     }
 

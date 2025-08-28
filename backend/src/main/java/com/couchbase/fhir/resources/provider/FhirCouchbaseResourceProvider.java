@@ -428,6 +428,36 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
     @Search(allowUnknownParams = true)
     public Bundle search(RequestDetails requestDetails) {
         String resourceType = resourceClass.getSimpleName();
+        
+        // Check if this is a pagination request
+        Map<String, String[]> params = requestDetails.getParameters();
+        if (params.containsKey("_getpages")) {
+            String continuationToken = params.get("_getpages")[0];
+            int offset = 0;
+            int count = 20; // default
+            
+            if (params.containsKey("_getpagesoffset")) {
+                try {
+                    offset = Integer.parseInt(params.get("_getpagesoffset")[0]);
+                } catch (NumberFormatException e) {
+                    logger.warn("Invalid _getpagesoffset parameter: {}", params.get("_getpagesoffset")[0]);
+                }
+            }
+            
+            if (params.containsKey("_count")) {
+                try {
+                    count = Integer.parseInt(params.get("_count")[0]);
+                } catch (NumberFormatException e) {
+                    logger.warn("Invalid _count parameter: {}", params.get("_count")[0]);
+                }
+            }
+            
+            logger.info("🔍 ResourceProvider: Handling pagination request for {} (token: {}, offset: {}, count: {})", 
+                       resourceType, continuationToken, offset, count);
+            
+            return searchService.handleRevIncludePagination(continuationToken, offset, count);
+        }
+        
         logger.info("🔍 ResourceProvider: Delegating search for {} to SearchService", resourceType);
         
         // Delegate to SearchService for all search operations
