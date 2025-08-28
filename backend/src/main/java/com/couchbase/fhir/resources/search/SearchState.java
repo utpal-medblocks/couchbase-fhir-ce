@@ -1,26 +1,39 @@
 package com.couchbase.fhir.resources.search;
 
+import com.couchbase.client.java.search.SearchQuery;
+import com.couchbase.fhir.resources.util.Ftsn1qlQueryBuilder.SortField;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Represents the state of a search operation for pagination purposes.
- * Used primarily for _revinclude operations that require multiple queries
+ * Supports both regular searches and _revinclude operations that require multiple queries
  * and stateful pagination across different resource types.
  */
 public class SearchState {
     
+    // Search type and common fields
+    private String searchType; // "regular" or "revinclude"
     private String originalQuery;
-    private List<String> primaryResourceIds;
     private String primaryResourceType;
-    private String revIncludeResourceType;
-    private String revIncludeSearchParam;
     private int totalPrimaryResources;
-    private int totalRevIncludeResources;
     private int currentPrimaryOffset;
-    private int currentRevIncludeOffset;
+    private int pageSize; // The _count parameter from the original request
     private long timestamp;
     private long expiresAt;
     private String bucketName;
+    
+    // Regular search specific fields
+    private Map<String, String> originalSearchCriteria;
+    private List<SearchQuery> cachedFtsQueries;
+    private List<SortField> sortFields;
+    
+    // RevInclude search specific fields
+    private List<String> primaryResourceIds;
+    private String revIncludeResourceType;
+    private String revIncludeSearchParam;
+    private int totalRevIncludeResources;
+    private int currentRevIncludeOffset;
     
     // Constructors
     public SearchState() {
@@ -40,12 +53,24 @@ public class SearchState {
     }
     
     // Helper methods
+    public boolean isRegularSearch() {
+        return "regular".equals(searchType);
+    }
+    
+    public boolean isRevIncludeSearch() {
+        return "revinclude".equals(searchType);
+    }
+    
     public boolean isPrimaryResourcesExhausted() {
         return currentPrimaryOffset >= totalPrimaryResources;
     }
     
     public boolean hasMoreRevIncludeResources() {
         return currentRevIncludeOffset < totalRevIncludeResources;
+    }
+    
+    public boolean hasMoreRegularResults() {
+        return currentPrimaryOffset < totalPrimaryResources;
     }
     
     public boolean isExpired() {
@@ -60,18 +85,60 @@ public class SearchState {
     public static class Builder {
         private SearchState searchState = new SearchState();
         
+        public Builder searchType(String searchType) {
+            searchState.searchType = searchType;
+            return this;
+        }
+        
         public Builder originalQuery(String originalQuery) {
             searchState.originalQuery = originalQuery;
             return this;
         }
         
-        public Builder primaryResourceIds(List<String> primaryResourceIds) {
-            searchState.primaryResourceIds = primaryResourceIds;
+        public Builder primaryResourceType(String primaryResourceType) {
+            searchState.primaryResourceType = primaryResourceType;
             return this;
         }
         
-        public Builder primaryResourceType(String primaryResourceType) {
-            searchState.primaryResourceType = primaryResourceType;
+        public Builder totalPrimaryResources(int totalPrimaryResources) {
+            searchState.totalPrimaryResources = totalPrimaryResources;
+            return this;
+        }
+        
+        public Builder currentPrimaryOffset(int currentPrimaryOffset) {
+            searchState.currentPrimaryOffset = currentPrimaryOffset;
+            return this;
+        }
+        
+        public Builder bucketName(String bucketName) {
+            searchState.bucketName = bucketName;
+            return this;
+        }
+        
+        public Builder pageSize(int pageSize) {
+            searchState.pageSize = pageSize;
+            return this;
+        }
+        
+        // Regular search specific builders
+        public Builder originalSearchCriteria(Map<String, String> originalSearchCriteria) {
+            searchState.originalSearchCriteria = originalSearchCriteria;
+            return this;
+        }
+        
+        public Builder cachedFtsQueries(List<SearchQuery> cachedFtsQueries) {
+            searchState.cachedFtsQueries = cachedFtsQueries;
+            return this;
+        }
+        
+        public Builder sortFields(List<SortField> sortFields) {
+            searchState.sortFields = sortFields;
+            return this;
+        }
+        
+        // RevInclude search specific builders
+        public Builder primaryResourceIds(List<String> primaryResourceIds) {
+            searchState.primaryResourceIds = primaryResourceIds;
             return this;
         }
         
@@ -85,28 +152,13 @@ public class SearchState {
             return this;
         }
         
-        public Builder totalPrimaryResources(int totalPrimaryResources) {
-            searchState.totalPrimaryResources = totalPrimaryResources;
-            return this;
-        }
-        
         public Builder totalRevIncludeResources(int totalRevIncludeResources) {
             searchState.totalRevIncludeResources = totalRevIncludeResources;
             return this;
         }
         
-        public Builder currentPrimaryOffset(int currentPrimaryOffset) {
-            searchState.currentPrimaryOffset = currentPrimaryOffset;
-            return this;
-        }
-        
         public Builder currentRevIncludeOffset(int currentRevIncludeOffset) {
             searchState.currentRevIncludeOffset = currentRevIncludeOffset;
-            return this;
-        }
-        
-        public Builder bucketName(String bucketName) {
-            searchState.bucketName = bucketName;
             return this;
         }
         
@@ -116,12 +168,44 @@ public class SearchState {
     }
     
     // Getters and setters
+    public String getSearchType() {
+        return searchType;
+    }
+    
+    public void setSearchType(String searchType) {
+        this.searchType = searchType;
+    }
+    
     public String getOriginalQuery() {
         return originalQuery;
     }
     
     public void setOriginalQuery(String originalQuery) {
         this.originalQuery = originalQuery;
+    }
+    
+    public Map<String, String> getOriginalSearchCriteria() {
+        return originalSearchCriteria;
+    }
+    
+    public void setOriginalSearchCriteria(Map<String, String> originalSearchCriteria) {
+        this.originalSearchCriteria = originalSearchCriteria;
+    }
+    
+    public List<SearchQuery> getCachedFtsQueries() {
+        return cachedFtsQueries;
+    }
+    
+    public void setCachedFtsQueries(List<SearchQuery> cachedFtsQueries) {
+        this.cachedFtsQueries = cachedFtsQueries;
+    }
+    
+    public List<SortField> getSortFields() {
+        return sortFields;
+    }
+    
+    public void setSortFields(List<SortField> sortFields) {
+        this.sortFields = sortFields;
     }
     
     public List<String> getPrimaryResourceIds() {
@@ -210,5 +294,13 @@ public class SearchState {
     
     public void setBucketName(String bucketName) {
         this.bucketName = bucketName;
+    }
+    
+    public int getPageSize() {
+        return pageSize;
+    }
+    
+    public void setPageSize(int pageSize) {
+        this.pageSize = pageSize;
     }
 }

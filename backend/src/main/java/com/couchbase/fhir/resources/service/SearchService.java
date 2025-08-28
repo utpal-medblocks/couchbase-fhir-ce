@@ -202,7 +202,13 @@ public class SearchService {
                                         summaryMode, elements, totalMode, bucketName);
         }
         
-        // Execute regular search
+        // Check if this should be a paginated regular search
+        if (shouldPaginate(searchParams, count)) {
+            return handlePaginatedRegularSearch(resourceType, ftsQueries, searchParams, count, 
+                                              sortFields, summaryMode, elements, totalMode, bucketName);
+        }
+        
+        // Execute regular search (non-paginated)
         return executeRegularSearch(resourceType, ftsQueries, count, sortFields, 
                                   summaryMode, elements, totalMode, bucketName);
     }
@@ -583,6 +589,7 @@ public class SearchService {
         
         // Step 5: Create search state for pagination
         SearchState searchState = SearchState.builder()
+            .searchType("revinclude")
             .primaryResourceType(primaryResourceType)
             .primaryResourceIds(primaryResourceIds)
             .revIncludeResourceType(revIncludeParam.getResourceType())
@@ -590,6 +597,7 @@ public class SearchService {
             .totalPrimaryResources(primaryResourceCount)
             .currentPrimaryOffset(primaryResourceCount) // All primary resources returned in first page
             .currentRevIncludeOffset(revIncludeResources.size())  // Next offset = actual number of revinclude resources returned
+            .pageSize(count)
             .bucketName(bucketName)
             .build();
         
@@ -630,7 +638,7 @@ public class SearchService {
         if (searchState.hasMoreRevIncludeResources()) {
             bundle.addLink()
                     .setRelation("next")
-                    .setUrl(buildNextPageUrl(continuationToken, searchState.getCurrentRevIncludeOffset(), primaryResourceType));
+                    .setUrl(buildNextPageUrl(continuationToken, searchState.getCurrentRevIncludeOffset(), primaryResourceType, bucketName, searchState.getPageSize()));
         }
         
         logger.info("🔍 Returning _revinclude bundle: {} primary + {} revinclude resources", 
@@ -640,7 +648,7 @@ public class SearchService {
     }
     
     /**
-     * Handle pagination requests for _revinclude searches
+     * Handle pagination requests for both regular and _revinclude searches
      */
     public Bundle handleRevIncludePagination(String continuationToken, int offset, int count) {
         SearchState searchState = searchStateManager.retrieveSearchState(continuationToken);
@@ -654,6 +662,20 @@ public class SearchService {
             throw new InvalidRequestException("Search results have expired. Please repeat your original search.");
         }
         
+        // Route to appropriate pagination handler based on search type
+        if (searchState.isRevIncludeSearch()) {
+            return handleRevIncludePaginationInternal(searchState, continuationToken, offset, count);
+        } else if (searchState.isRegularSearch()) {
+            return handleRegularPaginationInternal(searchState, continuationToken, offset, count);
+        } else {
+            throw new InvalidRequestException("Unknown search type: " + searchState.getSearchType());
+        }
+    }
+    
+    /**
+     * Handle pagination for _revinclude searches
+     */
+    private Bundle handleRevIncludePaginationInternal(SearchState searchState, String continuationToken, int offset, int count) {
         // Execute revinclude query for next batch
         List<Resource> revIncludeResources = executeRevIncludeResourceSearch(
             searchState.getRevIncludeResourceType(), 
@@ -684,9 +706,57 @@ public class SearchService {
         if (searchState.hasMoreRevIncludeResources()) {
             bundle.addLink()
                     .setRelation("next")
-                    .setUrl(buildNextPageUrl(continuationToken, searchState.getCurrentRevIncludeOffset(), searchState.getRevIncludeResourceType()));
+                    .setUrl(buildNextPageUrl(continuationToken, searchState.getCurrentRevIncludeOffset(), searchState.getRevIncludeResourceType(), searchState.getBucketName(), searchState.getPageSize()));
         }
         
+        return bundle;
+    }
+    
+    /**
+     * Handle pagination for regular searches
+     */
+    private Bundle handleRegularPaginationInternal(SearchState searchState, String continuationToken, int offset, int count) {
+        logger.info("🔍 Handling regular pagination: offset={}, count={}", offset, count);
+        
+        // Execute query using cached FTS queries and sort fields
+        Ftsn1qlQueryBuilder queryBuilder = new Ftsn1qlQueryBuilder();
+        String query = queryBuilder.build(searchState.getCachedFtsQueries(), 
+                                        searchState.getPrimaryResourceType(), 
+                                        offset, count, 
+                                        searchState.getSortFields());
+        
+        @SuppressWarnings("unchecked")
+        Class<? extends Resource> resourceClassType = (Class<? extends Resource>) fhirContext.getResourceDefinition(searchState.getPrimaryResourceType()).getImplementingClass();
+        FhirResourceDaoImpl<?> dao = serviceFactory.getService(resourceClassType);
+        
+        @SuppressWarnings("unchecked")
+        List<Resource> results = (List<Resource>) dao.search(searchState.getPrimaryResourceType(), query);
+        
+        // Update search state
+        searchState.setCurrentPrimaryOffset(offset + results.size());
+        
+        // Build response bundle
+        Bundle bundle = new Bundle();
+        bundle.setType(Bundle.BundleType.SEARCHSET);
+        bundle.setTotal(searchState.getTotalPrimaryResources());
+        
+        // Add resources to bundle
+        for (Resource resource : results) {
+            bundle.addEntry()
+                    .setResource(resource)
+                    .setFullUrl(searchState.getPrimaryResourceType() + "/" + resource.getIdElement().getIdPart())
+                    .getSearch()
+                    .setMode(Bundle.SearchEntryMode.MATCH);
+        }
+        
+        // Add next link if there are more results
+        if (searchState.hasMoreRegularResults()) {
+            bundle.addLink()
+                    .setRelation("next")
+                    .setUrl(buildNextPageUrl(continuationToken, searchState.getCurrentPrimaryOffset(), searchState.getPrimaryResourceType(), searchState.getBucketName(), searchState.getPageSize()));
+        }
+        
+        logger.info("🔍 Returning regular pagination: {} results", results.size());
         return bundle;
     }
     
@@ -829,14 +899,127 @@ public class SearchService {
         return bundle;
     }
     
-    private String buildNextPageUrl(String continuationToken, int offset, String resourceType) {
+    private String buildNextPageUrl(String continuationToken, int offset, String resourceType, String bucketName, int count) {
         // TODO: Get proper base URL from request context
-        // For now, construct the full URL manually
-        String baseUrl = "http://localhost:8080/fhir/us-core";
+        // For now, construct the full URL manually using the correct bucket name
+        String baseUrl = "http://localhost:8080/fhir/" + bucketName;
         
         // Use different parameter names that HAPI might handle better
         // Use _page instead of _getpages to avoid HAPI validation issues
         return baseUrl + "/" + resourceType + "?_page=" + continuationToken + 
-               "&_offset=" + offset + "&_count=20";
+               "&_offset=" + offset + "&_count=" + count;
+    }
+    
+    // ========== Regular Search Pagination Methods ==========
+    
+    /**
+     * Determine if a search should use pagination
+     */
+    private boolean shouldPaginate(Map<String, String> searchParams, int count) {
+        // Always paginate if _count is explicitly set and reasonable
+        if (count > 0 && count <= 100) {
+            return true;
+        }
+        
+        // Paginate for potentially large result sets
+        if (hasLargeResultPotential(searchParams)) {
+            return true;
+        }
+        
+        // Configuration-driven pagination (future enhancement)
+        return isAutoPaginationEnabled();
+    }
+    
+    /**
+     * Check if search parameters indicate potentially large result sets
+     */
+    private boolean hasLargeResultPotential(Map<String, String> searchParams) {
+        // Broad searches that could return many results
+        if (searchParams.containsKey("name") || 
+            searchParams.containsKey("family") || 
+            searchParams.containsKey("given") ||
+            searchParams.containsKey("birthdate")) {
+            return true;
+        }
+        
+        // Few search criteria = potentially large results
+        if (searchParams.size() <= 2) {
+            return true;
+        }
+        
+        return false;
+    }
+    
+    /**
+     * Check if auto-pagination is enabled (configuration-driven)
+     */
+    private boolean isAutoPaginationEnabled() {
+        // For now, default to true - this can be made configurable later
+        return true;
+    }
+    
+    /**
+     * Handle paginated regular search (first page)
+     */
+    private Bundle handlePaginatedRegularSearch(String resourceType, List<SearchQuery> ftsQueries,
+                                              Map<String, String> searchParams, int count,
+                                              List<SortField> sortFields, SummaryEnum summaryMode,
+                                              Set<String> elements, String totalMode, String bucketName) {
+        
+        logger.info("🔍 Handling paginated regular search for {} with count {}", resourceType, count);
+        
+        // Get total count for accurate pagination
+        int totalCount = getAccurateCount(ftsQueries, resourceType, bucketName);
+        
+        // Execute first page
+        Ftsn1qlQueryBuilder queryBuilder = new Ftsn1qlQueryBuilder();
+        String query = queryBuilder.build(ftsQueries, resourceType, 0, count, sortFields);
+        
+        @SuppressWarnings("unchecked")
+        Class<? extends Resource> resourceClassType = (Class<? extends Resource>) fhirContext.getResourceDefinition(resourceType).getImplementingClass();
+        FhirResourceDaoImpl<?> dao = serviceFactory.getService(resourceClassType);
+        
+        @SuppressWarnings("unchecked")
+        List<Resource> results = (List<Resource>) dao.search(resourceType, query);
+        
+        // Create SearchState for regular search
+        SearchState searchState = SearchState.builder()
+            .searchType("regular")
+            .primaryResourceType(resourceType)
+            .originalSearchCriteria(new HashMap<>(searchParams))
+            .cachedFtsQueries(new ArrayList<>(ftsQueries))
+            .sortFields(sortFields != null ? new ArrayList<>(sortFields) : new ArrayList<>())
+            .totalPrimaryResources(totalCount)
+            .currentPrimaryOffset(results.size())
+            .pageSize(count)
+            .bucketName(bucketName)
+            .build();
+        
+        String continuationToken = searchStateManager.storeSearchState(searchState);
+        
+        // Build Bundle response
+        Bundle bundle = new Bundle();
+        bundle.setType(Bundle.BundleType.SEARCHSET);
+        bundle.setTotal(totalCount);
+        
+        // Add resources to bundle with filtering
+        for (Resource resource : results) {
+            Resource filteredResource = applyResourceFiltering(resource, summaryMode, elements);
+            bundle.addEntry()
+                    .setResource(filteredResource)
+                    .setFullUrl(resourceType + "/" + filteredResource.getIdElement().getIdPart())
+                    .getSearch()
+                    .setMode(Bundle.SearchEntryMode.MATCH);
+        }
+        
+        // Add next link if there are more results
+        if (results.size() == count && searchState.getCurrentPrimaryOffset() < totalCount) {
+            bundle.addLink()
+                    .setRelation("next")
+                    .setUrl(buildNextPageUrl(continuationToken, searchState.getCurrentPrimaryOffset(), resourceType, bucketName, count));
+        }
+        
+        logger.info("🔍 Returning paginated regular search: {} results, total: {}", results.size(), totalCount);
+        return bundle;
     }
 }
