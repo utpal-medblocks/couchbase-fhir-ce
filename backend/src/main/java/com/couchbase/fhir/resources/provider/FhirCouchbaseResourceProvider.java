@@ -4,6 +4,8 @@ import ca.uhn.fhir.context.*;
 import ca.uhn.fhir.rest.annotation.*;
 import ca.uhn.fhir.rest.api.MethodOutcome;
 import ca.uhn.fhir.rest.api.server.RequestDetails;
+import ca.uhn.fhir.rest.param.NumberParam;
+import ca.uhn.fhir.rest.param.StringParam;
 import ca.uhn.fhir.rest.server.IResourceProvider;
 import ca.uhn.fhir.rest.server.exceptions.InternalErrorException;
 import ca.uhn.fhir.rest.server.exceptions.ResourceNotFoundException;
@@ -431,16 +433,16 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
         
         // Check if this is a pagination request
         Map<String, String[]> params = requestDetails.getParameters();
-        if (params.containsKey("_getpages")) {
-            String continuationToken = params.get("_getpages")[0];
+        if (params.containsKey("_page")) {
+            String continuationToken = params.get("_page")[0];
             int offset = 0;
             int count = 20; // default
             
-            if (params.containsKey("_getpagesoffset")) {
+            if (params.containsKey("_offset")) {
                 try {
-                    offset = Integer.parseInt(params.get("_getpagesoffset")[0]);
+                    offset = Integer.parseInt(params.get("_offset")[0]);
                 } catch (NumberFormatException e) {
-                    logger.warn("Invalid _getpagesoffset parameter: {}", params.get("_getpagesoffset")[0]);
+                    logger.warn("Invalid _offset parameter: {}", params.get("_offset")[0]);
                 }
             }
             

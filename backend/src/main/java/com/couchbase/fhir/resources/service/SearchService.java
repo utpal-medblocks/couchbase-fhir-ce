@@ -573,10 +573,10 @@ public class SearchService {
         int primaryResourceCount = primaryResourceIds.size();
         int revIncludeCount = count - primaryResourceCount;
         
-        // Step 3: Search for revinclude resources
+        // Step 3: Search for revinclude resources (sorted by lastUpdated DESC)
         List<Resource> revIncludeResources = executeRevIncludeResourceSearch(
             revIncludeParam.getResourceType(), revIncludeParam.getSearchParam(), 
-            primaryResourceIds, revIncludeCount, bucketName);
+            primaryResourceIds, revIncludeCount, 0, bucketName);
         
         // Step 4: Get full primary resources
         List<Resource> primaryResources = getPrimaryResourcesByIds(primaryResourceType, primaryResourceIds, bucketName);
@@ -589,7 +589,7 @@ public class SearchService {
             .revIncludeSearchParam(revIncludeParam.getSearchParam())
             .totalPrimaryResources(primaryResourceCount)
             .currentPrimaryOffset(primaryResourceCount) // All primary resources returned in first page
-            .currentRevIncludeOffset(revIncludeCount)    // Next offset for revinclude resources
+            .currentRevIncludeOffset(revIncludeResources.size())  // Next offset = actual number of revinclude resources returned
             .bucketName(bucketName)
             .build();
         
@@ -630,7 +630,7 @@ public class SearchService {
         if (searchState.hasMoreRevIncludeResources()) {
             bundle.addLink()
                     .setRelation("next")
-                    .setUrl(buildNextPageUrl(continuationToken, count));
+                    .setUrl(buildNextPageUrl(continuationToken, searchState.getCurrentRevIncludeOffset(), primaryResourceType));
         }
         
         logger.info("🔍 Returning _revinclude bundle: {} primary + {} revinclude resources", 
@@ -684,7 +684,7 @@ public class SearchService {
         if (searchState.hasMoreRevIncludeResources()) {
             bundle.addLink()
                     .setRelation("next")
-                    .setUrl(buildNextPageUrl(continuationToken, count));
+                    .setUrl(buildNextPageUrl(continuationToken, searchState.getCurrentRevIncludeOffset(), searchState.getRevIncludeResourceType()));
         }
         
         return bundle;
@@ -748,9 +748,13 @@ public class SearchService {
             revIncludeQueries.add(SearchQuery.disjuncts(referenceQueries.toArray(new SearchQuery[0])));
         }
         
+        // Add automatic sorting by meta.lastUpdated DESC (most recent first)
+        List<SortField> sortFields = new ArrayList<>();
+        sortFields.add(new SortField("meta.lastUpdated", true)); // true = descending
+        
         // Execute the query
         Ftsn1qlQueryBuilder queryBuilder = new Ftsn1qlQueryBuilder();
-        String query = queryBuilder.build(revIncludeQueries, resourceType, offset, count, null);
+        String query = queryBuilder.build(revIncludeQueries, resourceType, offset, count, sortFields);
         
         @SuppressWarnings("unchecked")
         Class<? extends Resource> resourceClassType = (Class<? extends Resource>) fhirContext.getResourceDefinition(resourceType).getImplementingClass();
@@ -825,9 +829,14 @@ public class SearchService {
         return bundle;
     }
     
-    private String buildNextPageUrl(String continuationToken, int count) {
-        // This would typically build the full URL with proper base URL
-        // For now, return a simple format
-        return "?_getpages=" + continuationToken + "&_getpagesoffset=" + count + "&_count=" + count;
+    private String buildNextPageUrl(String continuationToken, int offset, String resourceType) {
+        // TODO: Get proper base URL from request context
+        // For now, construct the full URL manually
+        String baseUrl = "http://localhost:8080/fhir/us-core";
+        
+        // Use different parameter names that HAPI might handle better
+        // Use _page instead of _getpages to avoid HAPI validation issues
+        return baseUrl + "/" + resourceType + "?_page=" + continuationToken + 
+               "&_offset=" + offset + "&_count=20";
     }
 }
