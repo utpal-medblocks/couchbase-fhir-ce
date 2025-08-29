@@ -697,7 +697,11 @@ public class SearchService {
         }
         logger.info("🔍 Target resource type for inclusion: '{}'", targetResourceType);
         
-        // Step 1: Execute primary resource search to get full resources
+        // Step 1: Get total count of primary resources (like we do for _revinclude)
+        int totalPrimaryResourceCount = getAccurateCount(ftsQueries, primaryResourceType, bucketName);
+        logger.info("🔍 Total primary resources available: {}", totalPrimaryResourceCount);
+        
+        // Step 2: Execute primary resource search to get full resources
         Ftsn1qlQueryBuilder queryBuilder = new Ftsn1qlQueryBuilder();
         String query = queryBuilder.build(ftsQueries, primaryResourceType, 0, count, null);
         
@@ -739,14 +743,14 @@ public class SearchService {
             .cachedFtsQueries(new ArrayList<>(ftsQueries))
             .revIncludeResourceType(targetResourceType) // Reuse for include target type
             .revIncludeSearchParam(include.getParamName()) // Reuse for include param name
-            .totalPrimaryResources(primaryResources.size()) // For now, just current page size
-            .currentPrimaryOffset(primaryResources.size()) // All current primary resources processed
+            .totalPrimaryResources(totalPrimaryResourceCount) // Use real total count
+            .currentPrimaryOffset(primaryResources.size()) // Current primary resources processed
             .pageSize(count)
             .bucketName(bucketName)
             .build();
         
         // Get total count of included resources (all Patient IDs that could be included)
-        int totalIncludedCount = includedResources.size(); // For now, just what we found
+        int totalIncludedCount = includedResources.size(); // For now, just what we found on this page
         searchState.setTotalRevIncludeResources(totalIncludedCount); // Reuse field
         searchState.setCurrentRevIncludeOffset(0); // No include resource pagination yet
         
@@ -755,7 +759,7 @@ public class SearchService {
         // Step 5: Build response bundle
         Bundle bundle = new Bundle();
         bundle.setType(Bundle.BundleType.SEARCHSET);
-        bundle.setTotal(primaryResources.size() + includedResources.size());
+        bundle.setTotal(totalPrimaryResourceCount); // Only count primary resources, not included ones
         
         // Add primary resources (search mode = "match")
         for (Resource resource : primaryResources) {
