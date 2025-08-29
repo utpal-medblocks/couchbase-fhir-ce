@@ -81,6 +81,32 @@ public class FhirSearchParameterPreprocessor {
                 continue;
             }
             
+            // Check if this is a chained parameter (contains dot)
+            if (paramName.contains(".")) {
+                // This is a chained parameter like "patient.name" - validate the chain field
+                String chainField = paramName.substring(0, paramName.indexOf("."));
+                RuntimeSearchParam chainParam = resourceDef.getSearchParam(chainField);
+                if (chainParam == null) {
+                    logger.warn("⚠️ Unknown chain field '{}' for resource type {}", chainField, resourceType);
+                    throw new FhirSearchValidationException(
+                        "Unknown chain field: " + chainField + " for resource type " + resourceType, 
+                        chainField, 
+                        null
+                    );
+                }
+                // Validate that the chain field is a reference type
+                if (!chainParam.getParamType().name().equals("REFERENCE")) {
+                    logger.warn("⚠️ Chain field '{}' is not a reference parameter for resource type {}", chainField, resourceType);
+                    throw new FhirSearchValidationException(
+                        "Chain field " + chainField + " is not a reference parameter for resource type " + resourceType, 
+                        chainField, 
+                        null
+                    );
+                }
+                logger.debug("✅ Validated chain parameter: {}", paramName);
+                continue; // Skip normal validation for chain parameters
+            }
+            
             // Extract base parameter name (remove modifiers like :exact)
             String baseParamName = paramName.contains(":") ? paramName.substring(0, paramName.indexOf(":")) : paramName;
             
@@ -107,6 +133,11 @@ public class FhirSearchParameterPreprocessor {
             List<String> values = entry.getValue();
             
             if (paramName.startsWith("_") || isFrameworkParameter(paramName)) {
+                continue;
+            }
+            
+            // Skip chain parameters - they have their own validation logic
+            if (paramName.contains(".")) {
                 continue;
             }
             

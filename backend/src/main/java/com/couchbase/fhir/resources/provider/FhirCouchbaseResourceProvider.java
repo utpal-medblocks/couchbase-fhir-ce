@@ -465,13 +465,6 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
         // Delegate to SearchService for all search operations
         return searchService.search(resourceType, requestDetails);
     }
-
-
-
-
-
-
-
     /**
      * FHIR $validate Operation - Validates a resource without storing it
      * POST /fhir/{bucket}/{ResourceType}/$validate
@@ -544,11 +537,4 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
     public Class<T> getResourceType() {
         return resourceClass;
     }
-
-
-    
-
-
-
-
 }

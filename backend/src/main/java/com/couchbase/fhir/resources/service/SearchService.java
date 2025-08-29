@@ -19,6 +19,7 @@ import com.couchbase.fhir.resources.validation.FhirBucketValidator;
 import com.couchbase.fhir.resources.validation.FhirBucketValidationException;
 import com.couchbase.fhir.resources.search.SearchState;
 import com.couchbase.fhir.resources.search.SearchStateManager;
+import com.couchbase.fhir.resources.search.ChainParam;
 import ca.uhn.fhir.model.api.Include;
 import org.hl7.fhir.r4.model.Bundle;
 import org.hl7.fhir.r4.model.Resource;
@@ -195,6 +196,9 @@ public class SearchService {
             }
         }
         
+        // Check for chained parameters (must be done before removing control parameters)
+        ChainParam chainParam = detectChainParameter(searchParams, resourceType);
+        
         // Remove control parameters from search criteria
         searchParams.remove("_summary");
         searchParams.remove("_elements");
@@ -203,6 +207,11 @@ public class SearchService {
         searchParams.remove("_total");
         searchParams.remove("_revinclude");
         searchParams.remove("_include");
+        
+        // Remove chain parameter from search criteria if found
+        if (chainParam != null) {
+            searchParams.remove(chainParam.getOriginalParameter());
+        }
         
         // Build search queries
         List<SearchQuery> ftsQueries = buildSearchQueries(resourceType, searchParams);
@@ -223,6 +232,12 @@ public class SearchService {
                                      summaryMode, elements, totalMode, bucketName);
         }
         
+        // Check if this is a chained search
+        if (chainParam != null) {
+            return handleChainSearch(resourceType, ftsQueries, chainParam, count,
+                                   sortFields, summaryMode, elements, totalMode, bucketName);
+        }
+        
         // Check if this should be a paginated regular search
         if (shouldPaginate(searchParams, count)) {
             return handlePaginatedRegularSearch(resourceType, ftsQueries, searchParams, count, 
@@ -235,6 +250,29 @@ public class SearchService {
     }
     
     // ========== Private Helper Methods ==========
+    
+    /**
+     * Detect if any parameter is a chained parameter
+     */
+    private ChainParam detectChainParameter(Map<String, String> searchParams, String resourceType) {
+        for (Map.Entry<String, String> entry : searchParams.entrySet()) {
+            String paramKey = entry.getKey();
+            String paramValue = entry.getValue();
+            
+            // Skip control parameters
+            if (paramKey.startsWith("_")) {
+                continue;
+            }
+            
+            ChainParam chainParam = ChainParam.parse(paramKey, paramValue, resourceType, fhirContext);
+            if (chainParam != null) {
+                logger.info("🔗 Detected chain parameter: {}", chainParam);
+                return chainParam; // For now, support only one chain parameter per search
+            }
+        }
+        
+        return null;
+    }
     
     /**
      * Build search queries from criteria parameters
@@ -797,6 +835,99 @@ public class SearchService {
     }
     
     /**
+     * Handle chained search with two-query strategy
+     */
+    private Bundle handleChainSearch(String primaryResourceType, List<SearchQuery> ftsQueries,
+                                   ChainParam chainParam, int count, List<SortField> sortFields,
+                                   SummaryEnum summaryMode, Set<String> elements,
+                                   String totalMode, String bucketName) {
+        
+        logger.info("🔗 Handling chained search: {} with chain {}", primaryResourceType, chainParam);
+        
+        // Step 1: Execute chain query to find referenced resource IDs
+        List<String> referencedResourceIds = executeChainQuery(
+            chainParam.getTargetResourceType(),
+            chainParam.getSearchParam(),
+            chainParam.getValue(),
+            bucketName
+        );
+        
+        if (referencedResourceIds.isEmpty()) {
+            logger.info("🔗 No referenced resources found for chain query, returning empty bundle");
+            return createEmptyBundle();
+        }
+        
+        logger.info("🔗 Chain query found {} referenced {} resources: {}", 
+                   referencedResourceIds.size(), chainParam.getTargetResourceType(), referencedResourceIds);
+        
+        // Step 2: Execute primary search for resources that reference the found IDs
+        List<Resource> primaryResources = executePrimaryChainSearch(
+            primaryResourceType,
+            chainParam.getReferenceFieldPath(),
+            chainParam.getTargetResourceType(),
+            referencedResourceIds,
+            ftsQueries, // Additional search criteria
+            count,
+            sortFields,
+            bucketName
+        );
+        
+        // Step 3: Get total count for accurate pagination (if needed)
+        int totalPrimaryResourceCount = getTotalChainSearchCount(
+            primaryResourceType,
+            chainParam.getReferenceFieldPath(),
+            chainParam.getTargetResourceType(),
+            referencedResourceIds,
+            ftsQueries,
+            bucketName
+        );
+        
+        // Step 4: Create search state for pagination
+        SearchState searchState = SearchState.builder()
+            .searchType("chain")
+            .primaryResourceType(primaryResourceType)
+            .originalSearchCriteria(Map.of(chainParam.getOriginalParameter(), chainParam.getValue()))
+            .cachedFtsQueries(new ArrayList<>(ftsQueries))
+            .sortFields(sortFields != null ? new ArrayList<>(sortFields) : new ArrayList<>())
+            .totalPrimaryResources(totalPrimaryResourceCount)
+            .currentPrimaryOffset(primaryResources.size())
+            .pageSize(count)
+            .bucketName(bucketName)
+            // Store chain-specific data using existing fields
+            .revIncludeResourceType(chainParam.getTargetResourceType()) // Reuse for chain target type
+            .revIncludeSearchParam(chainParam.getOriginalParameter()) // Store original chain param
+            .primaryResourceIds(referencedResourceIds) // Store referenced resource IDs
+            .build();
+        
+        String continuationToken = searchStateManager.storeSearchState(searchState);
+        
+        // Step 5: Build response bundle
+        Bundle bundle = new Bundle();
+        bundle.setType(Bundle.BundleType.SEARCHSET);
+        bundle.setTotal(totalPrimaryResourceCount);
+        
+        // Add primary resources (search mode = "match")
+        for (Resource resource : primaryResources) {
+            Resource filteredResource = applyResourceFiltering(resource, summaryMode, elements);
+            bundle.addEntry()
+                    .setResource(filteredResource)
+                    .setFullUrl(primaryResourceType + "/" + filteredResource.getIdElement().getIdPart())
+                    .getSearch()
+                    .setMode(Bundle.SearchEntryMode.MATCH);
+        }
+        
+        // Add next link if there are more results
+        if (primaryResources.size() == count && searchState.getCurrentPrimaryOffset() < totalPrimaryResourceCount) {
+            bundle.addLink()
+                    .setRelation("next")
+                    .setUrl(buildNextPageUrl(continuationToken, searchState.getCurrentPrimaryOffset(), primaryResourceType, bucketName, count));
+        }
+        
+        logger.info("🔗 Returning chained search bundle: {} results, total: {}", primaryResources.size(), totalPrimaryResourceCount);
+        return bundle;
+    }
+    
+    /**
      * Handle pagination requests for both regular and _revinclude searches
      */
     public Bundle handleRevIncludePagination(String continuationToken, int offset, int count) {
@@ -818,6 +949,8 @@ public class SearchService {
             return handleRegularPaginationInternal(searchState, continuationToken, offset, count);
         } else if ("include".equals(searchState.getSearchType())) {
             return handleIncludePaginationInternal(searchState, continuationToken, offset, count);
+        } else if ("chain".equals(searchState.getSearchType())) {
+            return handleChainPaginationInternal(searchState, continuationToken, offset, count);
         } else {
             throw new InvalidRequestException("Unknown search type: " + searchState.getSearchType());
         }
@@ -1434,5 +1567,153 @@ public class SearchService {
         }
         
         return bundle;
+    }
+    
+    /**
+     * Handle pagination for chained searches
+     */
+    private Bundle handleChainPaginationInternal(SearchState searchState, String continuationToken, int offset, int count) {
+        logger.info("🔗 Handling chain pagination: offset={}, count={}", offset, count);
+        
+        // Execute primary chain search for next batch using stored referenced IDs
+        List<Resource> primaryResources = executePrimaryChainSearch(
+            searchState.getPrimaryResourceType(),
+            searchState.getRevIncludeSearchParam(), // Reused field stores reference field path
+            searchState.getRevIncludeResourceType(), // Reused field stores target resource type
+            searchState.getPrimaryResourceIds(), // Stored referenced resource IDs
+            searchState.getCachedFtsQueries(), // Additional search criteria
+            count,
+            searchState.getSortFields(),
+            offset, // Add offset parameter
+            searchState.getBucketName()
+        );
+        
+        // Update search state
+        searchState.setCurrentPrimaryOffset(offset + primaryResources.size());
+        
+        // Build response bundle
+        Bundle bundle = new Bundle();
+        bundle.setType(Bundle.BundleType.SEARCHSET);
+        bundle.setTotal(searchState.getTotalPrimaryResources());
+        
+        // Add primary resources (search mode = "match")
+        for (Resource resource : primaryResources) {
+            bundle.addEntry()
+                    .setResource(resource)
+                    .setFullUrl(searchState.getPrimaryResourceType() + "/" + resource.getIdElement().getIdPart())
+                    .getSearch()
+                    .setMode(Bundle.SearchEntryMode.MATCH);
+        }
+        
+        // Add next link if there are more results
+        if (primaryResources.size() == count && searchState.getCurrentPrimaryOffset() < searchState.getTotalPrimaryResources()) {
+            bundle.addLink()
+                    .setRelation("next")
+                    .setUrl(buildNextPageUrl(continuationToken, searchState.getCurrentPrimaryOffset(), searchState.getPrimaryResourceType(), searchState.getBucketName(), searchState.getPageSize()));
+        }
+        
+        logger.info("🔗 Returning chain pagination: {} results", primaryResources.size());
+        return bundle;
+    }
+    
+    // ========== Chain Search Helper Methods ==========
+    
+    /**
+     * Execute chain query to find referenced resource IDs
+     */
+    private List<String> executeChainQuery(String targetResourceType, String searchParam, 
+                                         String searchValue, String bucketName) {
+        logger.info("🔗 Executing chain query: {} where {}={}", targetResourceType, searchParam, searchValue);
+        
+        // Build FTS query for the chain parameter
+        Map<String, String> chainCriteria = Map.of(searchParam, searchValue);
+        List<SearchQuery> chainQueries = buildSearchQueries(targetResourceType, chainCriteria);
+        
+        // Execute ID-only search to get referenced resource IDs (reuse existing method)
+        return executeIdOnlySearch(targetResourceType, chainQueries, 1000, bucketName); // Large limit for chain query
+    }
+    
+    /**
+     * Execute primary search for resources that reference the found IDs
+     */
+    private List<Resource> executePrimaryChainSearch(String primaryResourceType, String referenceFieldPath,
+                                                   String targetResourceType, List<String> referencedIds,
+                                                   List<SearchQuery> additionalQueries, int count,
+                                                   List<SortField> sortFields, String bucketName) {
+        return executePrimaryChainSearch(primaryResourceType, referenceFieldPath, targetResourceType,
+                                       referencedIds, additionalQueries, count, sortFields, 0, bucketName);
+    }
+    
+    /**
+     * Execute primary search for resources that reference the found IDs (with offset)
+     */
+    private List<Resource> executePrimaryChainSearch(String primaryResourceType, String referenceFieldPath,
+                                                   String targetResourceType, List<String> referencedIds,
+                                                   List<SearchQuery> additionalQueries, int count,
+                                                   List<SortField> sortFields, int offset, String bucketName) {
+        
+        logger.info("🔗 Executing primary chain search: {} where {} references {} IDs: {}", 
+                   primaryResourceType, referenceFieldPath, targetResourceType, referencedIds);
+        
+        // Build FTS query for primary resources that reference the found IDs
+        List<SearchQuery> primaryQueries = new ArrayList<>();
+        
+        // Add reference queries (similar to revinclude logic)
+        List<SearchQuery> referenceQueries = new ArrayList<>();
+        for (String referencedId : referencedIds) {
+            String referenceValue = targetResourceType + "/" + referencedId;
+            referenceQueries.add(SearchQuery.match(referenceValue).field(referenceFieldPath));
+        }
+        
+        if (!referenceQueries.isEmpty()) {
+            primaryQueries.add(SearchQuery.disjuncts(referenceQueries.toArray(new SearchQuery[0])));
+        }
+        
+        // Add any additional search criteria
+        if (additionalQueries != null) {
+            primaryQueries.addAll(additionalQueries);
+        }
+        
+        // Execute the query
+        Ftsn1qlQueryBuilder queryBuilder = new Ftsn1qlQueryBuilder();
+        String query = queryBuilder.build(primaryQueries, primaryResourceType, offset, count, sortFields);
+        
+        @SuppressWarnings("unchecked")
+        Class<? extends Resource> resourceClassType = (Class<? extends Resource>) fhirContext.getResourceDefinition(primaryResourceType).getImplementingClass();
+        FhirResourceDaoImpl<?> dao = serviceFactory.getService(resourceClassType);
+        
+        @SuppressWarnings("unchecked")
+        List<Resource> results = (List<Resource>) dao.search(primaryResourceType, query);
+        
+        logger.info("🔗 Primary chain search returned {} {} resources", results.size(), primaryResourceType);
+        return results;
+    }
+    
+    /**
+     * Get total count for chained searches
+     */
+    private int getTotalChainSearchCount(String primaryResourceType, String referenceFieldPath,
+                                       String targetResourceType, List<String> referencedIds,
+                                       List<SearchQuery> additionalQueries, String bucketName) {
+        
+        // Build count query for primary resources that reference the found IDs
+        List<SearchQuery> primaryQueries = new ArrayList<>();
+        
+        List<SearchQuery> referenceQueries = new ArrayList<>();
+        for (String referencedId : referencedIds) {
+            String referenceValue = targetResourceType + "/" + referencedId;
+            referenceQueries.add(SearchQuery.match(referenceValue).field(referenceFieldPath));
+        }
+        
+        if (!referenceQueries.isEmpty()) {
+            primaryQueries.add(SearchQuery.disjuncts(referenceQueries.toArray(new SearchQuery[0])));
+        }
+        
+        // Add any additional search criteria
+        if (additionalQueries != null) {
+            primaryQueries.addAll(additionalQueries);
+        }
+        
+        return getAccurateCount(primaryQueries, primaryResourceType, bucketName);
     }
 }
