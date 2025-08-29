@@ -19,7 +19,7 @@ import com.couchbase.fhir.resources.validation.FhirBucketValidator;
 import com.couchbase.fhir.resources.validation.FhirBucketValidationException;
 import com.couchbase.fhir.resources.search.SearchState;
 import com.couchbase.fhir.resources.search.SearchStateManager;
-import com.couchbase.fhir.resources.search.RevIncludeParam;
+import ca.uhn.fhir.model.api.Include;
 import org.hl7.fhir.r4.model.Bundle;
 import org.hl7.fhir.r4.model.Resource;
 import org.slf4j.Logger;
@@ -171,13 +171,27 @@ public class SearchService {
         List<SortField> sortFields = parseSortParameter(searchParams);
         String totalMode = parseTotalParameter(searchParams);
         
-        // Check for _revinclude parameter
+        // Check for _revinclude parameter using HAPI's Include class
         String revIncludeValue = searchParams.get("_revinclude");
-        RevIncludeParam revIncludeParam = null;
+        Include revInclude = null;
         if (revIncludeValue != null) {
-            revIncludeParam = RevIncludeParam.parse(revIncludeValue);
-            if (revIncludeParam == null || !revIncludeParam.isValid()) {
-                throw new InvalidRequestException("Invalid _revinclude parameter: " + revIncludeValue);
+            try {
+                revInclude = new Include(revIncludeValue, true); // true = reverse include
+                logger.info("🔍 Parsed HAPI RevInclude: {}", revInclude);
+            } catch (Exception e) {
+                throw new InvalidRequestException("Invalid _revinclude parameter: " + revIncludeValue + " - " + e.getMessage());
+            }
+        }
+        
+        // Check for _include parameter using HAPI's Include class
+        String includeValue = searchParams.get("_include");
+        Include include = null;
+        if (includeValue != null) {
+            try {
+                include = new Include(includeValue);
+                logger.info("🔍 Parsed HAPI Include: {}", include);
+            } catch (Exception e) {
+                throw new InvalidRequestException("Invalid _include parameter: " + includeValue + " - " + e.getMessage());
             }
         }
         
@@ -188,6 +202,7 @@ public class SearchService {
         searchParams.remove("_sort");
         searchParams.remove("_total");
         searchParams.remove("_revinclude");
+        searchParams.remove("_include");
         
         // Build search queries
         List<SearchQuery> ftsQueries = buildSearchQueries(resourceType, searchParams);
@@ -197,9 +212,15 @@ public class SearchService {
         }
         
         // Check if this is a _revinclude search
-        if (revIncludeParam != null) {
-            return handleRevIncludeSearch(resourceType, ftsQueries, revIncludeParam, count, 
+        if (revInclude != null) {
+            return handleRevIncludeSearch(resourceType, ftsQueries, revInclude, count, 
                                         summaryMode, elements, totalMode, bucketName);
+        }
+        
+        // Check if this is a _include search
+        if (include != null) {
+            return handleIncludeSearch(resourceType, ftsQueries, include, count, 
+                                     summaryMode, elements, totalMode, bucketName);
         }
         
         // Check if this should be a paginated regular search
@@ -560,12 +581,12 @@ public class SearchService {
      * Handle _revinclude search with two-query strategy
      */
     private Bundle handleRevIncludeSearch(String primaryResourceType, List<SearchQuery> ftsQueries,
-                                        RevIncludeParam revIncludeParam, int count,
+                                        Include revInclude, int count,
                                         SummaryEnum summaryMode, Set<String> elements,
                                         String totalMode, String bucketName) {
         
-        logger.info("🔍 Handling _revinclude search: {} -> {}:{}", 
-                   primaryResourceType, revIncludeParam.getResourceType(), revIncludeParam.getSearchParam());
+        logger.info("🔍 Handling _revinclude search: {} -> {}", 
+                   primaryResourceType, revInclude.getValue());
         
         // Step 1: Execute primary resource search to get IDs only
         List<String> primaryResourceIds = executeIdOnlySearch(primaryResourceType, ftsQueries, count, bucketName);
@@ -581,7 +602,7 @@ public class SearchService {
         
         // Step 3: Search for revinclude resources (sorted by lastUpdated DESC)
         List<Resource> revIncludeResources = executeRevIncludeResourceSearch(
-            revIncludeParam.getResourceType(), revIncludeParam.getSearchParam(), 
+            revInclude.getParamType(), revInclude.getParamName(), 
             primaryResourceIds, revIncludeCount, 0, bucketName);
         
         // Step 4: Get full primary resources
@@ -592,8 +613,8 @@ public class SearchService {
             .searchType("revinclude")
             .primaryResourceType(primaryResourceType)
             .primaryResourceIds(primaryResourceIds)
-            .revIncludeResourceType(revIncludeParam.getResourceType())
-            .revIncludeSearchParam(revIncludeParam.getSearchParam())
+            .revIncludeResourceType(revInclude.getParamType())
+            .revIncludeSearchParam(revInclude.getParamName())
             .totalPrimaryResources(primaryResourceCount)
             .currentPrimaryOffset(primaryResourceCount) // All primary resources returned in first page
             .currentRevIncludeOffset(revIncludeResources.size())  // Next offset = actual number of revinclude resources returned
@@ -603,7 +624,7 @@ public class SearchService {
         
         // Get total count of revinclude resources for accurate pagination
         int totalRevIncludeCount = getTotalRevIncludeCount(
-            revIncludeParam.getResourceType(), revIncludeParam.getSearchParam(), 
+            revInclude.getParamType(), revInclude.getParamName(), 
             primaryResourceIds, bucketName);
         searchState.setTotalRevIncludeResources(totalRevIncludeCount);
         
@@ -629,7 +650,7 @@ public class SearchService {
             Resource filteredResource = applyResourceFiltering(resource, summaryMode, elements);
             bundle.addEntry()
                     .setResource(filteredResource)
-                    .setFullUrl(revIncludeParam.getResourceType() + "/" + filteredResource.getIdElement().getIdPart())
+                    .setFullUrl(revInclude.getParamType() + "/" + filteredResource.getIdElement().getIdPart())
                     .getSearch()
                     .setMode(Bundle.SearchEntryMode.INCLUDE);
         }
@@ -643,6 +664,130 @@ public class SearchService {
         
         logger.info("🔍 Returning _revinclude bundle: {} primary + {} revinclude resources", 
                    primaryResourceCount, revIncludeResources.size());
+        
+        return bundle;
+    }
+    
+    /**
+     * Handle _include search with two-query strategy
+     */
+    private Bundle handleIncludeSearch(String primaryResourceType, List<SearchQuery> ftsQueries,
+                                     Include include, int count,
+                                     SummaryEnum summaryMode, Set<String> elements,
+                                     String totalMode, String bucketName) {
+        
+        logger.info("🔍 Handling _include search: {} -> {}", primaryResourceType, include.getValue());
+        logger.info("🔍 HAPI Include details - ParamType: '{}', ParamName: '{}', ParamTargetType: '{}'", 
+                   include.getParamType(), include.getParamName(), include.getParamTargetType());
+        
+        // Let's see what HAPI knows about this search parameter
+        RuntimeSearchParam searchParam = fhirContext
+                .getResourceDefinition(include.getParamType())
+                .getSearchParam(include.getParamName());
+        if (searchParam != null) {
+            logger.info("🔍 HAPI SearchParam details - Path: '{}', Type: '{}'", 
+                       searchParam.getPath(), searchParam.getParamType());
+        }
+        
+        // HAPI's Include already provides the target resource type
+        String targetResourceType = include.getParamTargetType();
+        if (targetResourceType == null) {
+            // Fallback: use HAPI's search parameter definitions
+            targetResourceType = determineTargetResourceType(include.getParamType(), include.getParamName());
+        }
+        logger.info("🔍 Target resource type for inclusion: '{}'", targetResourceType);
+        
+        // Step 1: Execute primary resource search to get full resources
+        Ftsn1qlQueryBuilder queryBuilder = new Ftsn1qlQueryBuilder();
+        String query = queryBuilder.build(ftsQueries, primaryResourceType, 0, count, null);
+        
+        @SuppressWarnings("unchecked")
+        Class<? extends Resource> primaryResourceClassType = (Class<? extends Resource>) fhirContext.getResourceDefinition(primaryResourceType).getImplementingClass();
+        FhirResourceDaoImpl<?> primaryDao = serviceFactory.getService(primaryResourceClassType);
+        
+        @SuppressWarnings("unchecked")
+        List<Resource> primaryResources = (List<Resource>) primaryDao.search(primaryResourceType, query);
+        
+        if (primaryResources.isEmpty()) {
+            logger.info("🔍 No primary resources found, returning empty bundle");
+            return createEmptyBundle();
+        }
+        
+        // Step 2: Extract reference IDs from primary resources
+        logger.info("🔍 Found {} primary resources, extracting references for parameter '{}'", 
+                   primaryResources.size(), include.getParamName());
+        List<String> includeResourceIds = extractReferenceIds(primaryResources, include.getParamName());
+        
+        if (includeResourceIds.isEmpty()) {
+            logger.warn("🔍 No reference IDs found in {} primary resources for parameter '{}', returning primary resources only", 
+                       primaryResources.size(), include.getParamName());
+            return buildBundleWithPrimaryResourcesOnly(primaryResources, primaryResourceType, summaryMode, elements);
+        }
+        
+        logger.info("🔍 Extracted {} reference IDs: {}", includeResourceIds.size(), includeResourceIds);
+        
+        // Step 3: Get included resources by their IDs  
+        logger.info("🔍 Looking up {} {} resources by IDs: {}", includeResourceIds.size(), targetResourceType, includeResourceIds);
+        List<Resource> includedResources = getResourcesByIds(targetResourceType, includeResourceIds, bucketName);
+        logger.info("🔍 Found {} {} resources", includedResources.size(), targetResourceType);
+        
+        // Step 4: Create search state for pagination (reuse revInclude fields for include)
+        SearchState searchState = SearchState.builder()
+            .searchType("include")
+            .primaryResourceType(primaryResourceType)
+            .originalSearchCriteria(new HashMap<>()) // We'll need the original search criteria
+            .cachedFtsQueries(new ArrayList<>(ftsQueries))
+            .revIncludeResourceType(targetResourceType) // Reuse for include target type
+            .revIncludeSearchParam(include.getParamName()) // Reuse for include param name
+            .totalPrimaryResources(primaryResources.size()) // For now, just current page size
+            .currentPrimaryOffset(primaryResources.size()) // All current primary resources processed
+            .pageSize(count)
+            .bucketName(bucketName)
+            .build();
+        
+        // Get total count of included resources (all Patient IDs that could be included)
+        int totalIncludedCount = includedResources.size(); // For now, just what we found
+        searchState.setTotalRevIncludeResources(totalIncludedCount); // Reuse field
+        searchState.setCurrentRevIncludeOffset(0); // No include resource pagination yet
+        
+        String continuationToken = searchStateManager.storeSearchState(searchState);
+        
+        // Step 5: Build response bundle
+        Bundle bundle = new Bundle();
+        bundle.setType(Bundle.BundleType.SEARCHSET);
+        bundle.setTotal(primaryResources.size() + includedResources.size());
+        
+        // Add primary resources (search mode = "match")
+        for (Resource resource : primaryResources) {
+            Resource filteredResource = applyResourceFiltering(resource, summaryMode, elements);
+            bundle.addEntry()
+                    .setResource(filteredResource)
+                    .setFullUrl(primaryResourceType + "/" + filteredResource.getIdElement().getIdPart())
+                    .getSearch()
+                    .setMode(Bundle.SearchEntryMode.MATCH);
+        }
+        
+        // Add included resources (search mode = "include")
+        for (Resource resource : includedResources) {
+            Resource filteredResource = applyResourceFiltering(resource, summaryMode, elements);
+            bundle.addEntry()
+                    .setResource(filteredResource)
+                    .setFullUrl(targetResourceType + "/" + filteredResource.getIdElement().getIdPart())
+                    .getSearch()
+                    .setMode(Bundle.SearchEntryMode.INCLUDE);
+        }
+        
+        // Add next link if there are more primary resources to paginate through
+        // For _include, we paginate through primary resources and include their references on each page
+        if (primaryResources.size() == count) {
+            // Assume there might be more primary resources (we'd need total count for accuracy)
+            bundle.addLink()
+                    .setRelation("next")
+                    .setUrl(buildNextPageUrl(continuationToken, searchState.getCurrentPrimaryOffset(), primaryResourceType, bucketName, count));
+        }
+        
+        logger.info("🔍 Returning _include bundle: {} primary + {} included resources", 
+                   primaryResources.size(), includedResources.size());
         
         return bundle;
     }
@@ -667,6 +812,8 @@ public class SearchService {
             return handleRevIncludePaginationInternal(searchState, continuationToken, offset, count);
         } else if (searchState.isRegularSearch()) {
             return handleRegularPaginationInternal(searchState, continuationToken, offset, count);
+        } else if ("include".equals(searchState.getSearchType())) {
+            return handleIncludePaginationInternal(searchState, continuationToken, offset, count);
         } else {
             throw new InvalidRequestException("Unknown search type: " + searchState.getSearchType());
         }
@@ -757,6 +904,73 @@ public class SearchService {
         }
         
         logger.info("🔍 Returning regular pagination: {} results", results.size());
+        return bundle;
+    }
+    
+    /**
+     * Handle pagination for _include searches
+     */
+    private Bundle handleIncludePaginationInternal(SearchState searchState, String continuationToken, int offset, int count) {
+        logger.info("🔍 Handling include pagination: offset={}, count={}", offset, count);
+        
+        // Execute query for next batch of primary resources using cached FTS queries
+        Ftsn1qlQueryBuilder queryBuilder = new Ftsn1qlQueryBuilder();
+        String query = queryBuilder.build(searchState.getCachedFtsQueries(), 
+                                        searchState.getPrimaryResourceType(), 
+                                        offset, count, 
+                                        searchState.getSortFields());
+        
+        @SuppressWarnings("unchecked")
+        Class<? extends Resource> primaryResourceClassType = (Class<? extends Resource>) fhirContext.getResourceDefinition(searchState.getPrimaryResourceType()).getImplementingClass();
+        FhirResourceDaoImpl<?> primaryDao = serviceFactory.getService(primaryResourceClassType);
+        
+        @SuppressWarnings("unchecked")
+        List<Resource> primaryResources = (List<Resource>) primaryDao.search(searchState.getPrimaryResourceType(), query);
+        
+        // Extract reference IDs from this batch of primary resources
+        List<String> includeResourceIds = extractReferenceIds(primaryResources, searchState.getRevIncludeSearchParam());
+        
+        // Get included resources by their IDs
+        List<Resource> includedResources = new ArrayList<>();
+        if (!includeResourceIds.isEmpty()) {
+            includedResources = getResourcesByIds(searchState.getRevIncludeResourceType(), includeResourceIds, searchState.getBucketName());
+        }
+        
+        // Update search state
+        searchState.setCurrentPrimaryOffset(offset + primaryResources.size());
+        
+        // Build response bundle
+        Bundle bundle = new Bundle();
+        bundle.setType(Bundle.BundleType.SEARCHSET);
+        bundle.setTotal(searchState.getTotalPrimaryResources() + includedResources.size()); // Approximate total
+        
+        // Add primary resources (search mode = "match")
+        for (Resource resource : primaryResources) {
+            bundle.addEntry()
+                    .setResource(resource)
+                    .setFullUrl(searchState.getPrimaryResourceType() + "/" + resource.getIdElement().getIdPart())
+                    .getSearch()
+                    .setMode(Bundle.SearchEntryMode.MATCH);
+        }
+        
+        // Add included resources (search mode = "include")
+        for (Resource resource : includedResources) {
+            bundle.addEntry()
+                    .setResource(resource)
+                    .setFullUrl(searchState.getRevIncludeResourceType() + "/" + resource.getIdElement().getIdPart())
+                    .getSearch()
+                    .setMode(Bundle.SearchEntryMode.INCLUDE);
+        }
+        
+        // Add next link if there are more primary resources
+        if (primaryResources.size() == count) {
+            // Assume there might be more (we'd need accurate total count)
+            bundle.addLink()
+                    .setRelation("next")
+                    .setUrl(buildNextPageUrl(continuationToken, searchState.getCurrentPrimaryOffset(), searchState.getPrimaryResourceType(), searchState.getBucketName(), searchState.getPageSize()));
+        }
+        
+        logger.info("🔍 Returning include pagination: {} primary + {} included resources", primaryResources.size(), includedResources.size());
         return bundle;
     }
     
@@ -1020,6 +1234,201 @@ public class SearchService {
         }
         
         logger.info("🔍 Returning paginated regular search: {} results, total: {}", results.size(), totalCount);
+        return bundle;
+    }
+    
+    // ========== Include Search Helper Methods ==========
+    
+    /**
+     * Determine target resource type when HAPI's Include doesn't provide it
+     */
+    private String determineTargetResourceType(String paramType, String paramName) {
+        try {
+            RuntimeSearchParam searchParam = fhirContext
+                    .getResourceDefinition(paramType)
+                    .getSearchParam(paramName);
+            
+            if (searchParam != null) {
+                // Extract target types from the path
+                String path = searchParam.getPath();
+                if (path != null) {
+                    if (path.contains("is Patient")) return "Patient";
+                    if (path.contains("is Practitioner")) return "Practitioner";
+                    if (path.contains("is Organization")) return "Organization";
+                }
+            }
+        } catch (Exception e) {
+            logger.debug("Failed to determine target resource type from HAPI: {}", e.getMessage());
+        }
+        
+        // Hardcoded fallback for common cases
+        if ("patient".equals(paramName) || "subject".equals(paramName)) {
+            return "Patient";
+        } else if ("practitioner".equals(paramName)) {
+            return "Practitioner";
+        } else if ("organization".equals(paramName)) {
+            return "Organization";
+        }
+        
+        // Default: capitalize the parameter name
+        return paramName.substring(0, 1).toUpperCase() + paramName.substring(1);
+    }
+    
+    /**
+     * Extract reference IDs from primary resources based on the search parameter
+     */
+    private List<String> extractReferenceIds(List<Resource> primaryResources, String searchParam) {
+        List<String> referenceIds = new ArrayList<>();
+        
+        logger.info("🔍 Extracting reference IDs for parameter '{}' from {} resources", searchParam, primaryResources.size());
+        
+        for (int i = 0; i < primaryResources.size(); i++) {
+            Resource resource = primaryResources.get(i);
+            try {
+                logger.debug("🔍 Processing resource {}/{}: {} (ID: {})", 
+                           i + 1, primaryResources.size(), 
+                           resource.getClass().getSimpleName(), 
+                           resource.getIdElement().getIdPart());
+                
+                // Use reflection to get the field value
+                // For now, we'll handle common cases like "subject", "patient", etc.
+                String referenceValue = extractReferenceFromResource(resource, searchParam);
+                logger.debug("🔍 Reference value for '{}': {}", searchParam, referenceValue);
+                
+                if (referenceValue != null) {
+                    // Extract ID from reference (e.g., "Patient/123" -> "123")
+                    String id = extractIdFromReference(referenceValue);
+                    logger.debug("🔍 Extracted ID: {}", id);
+                    
+                    if (id != null && !referenceIds.contains(id)) {
+                        referenceIds.add(id);
+                        logger.debug("🔍 Added ID to list: {}", id);
+                    }
+                } else {
+                    logger.debug("🔍 No reference value found for parameter '{}' in resource {}", searchParam, resource.getClass().getSimpleName());
+                }
+            } catch (Exception e) {
+                logger.warn("Failed to extract reference from {}: {}", resource.getClass().getSimpleName(), e.getMessage());
+            }
+        }
+        
+        logger.info("🔍 Extracted {} reference IDs from {} primary resources: {}", referenceIds.size(), primaryResources.size(), referenceIds);
+        return referenceIds;
+    }
+    
+    /**
+     * Extract reference value from a resource using the search parameter
+     */
+    private String extractReferenceFromResource(Resource resource, String searchParam) {
+        // This is a simplified implementation - in a full implementation,
+        // you'd use FHIR path expressions or reflection to handle all cases
+        
+        logger.debug("🔍 Looking for reference field '{}' in resource {}", searchParam, resource.getClass().getSimpleName());
+        
+        if ("subject".equals(searchParam)) {
+            // Handle Observation.subject, DiagnosticReport.subject, etc.
+            return tryGetReference(resource, "getSubject");
+        } else if ("patient".equals(searchParam)) {
+            // For "patient" parameter, we need to check multiple possible fields
+            // 1. Try direct patient field first
+            String directPatient = tryGetReference(resource, "getPatient");
+            if (directPatient != null) {
+                return directPatient;
+            }
+            
+            // 2. For resources like Observation, the patient is in the "subject" field
+            String subjectPatient = tryGetReference(resource, "getSubject");
+            if (subjectPatient != null && subjectPatient.contains("Patient/")) {
+                return subjectPatient;
+            }
+        }
+        
+        return null;
+    }
+    
+    /**
+     * Helper method to try getting a reference using reflection
+     */
+    private String tryGetReference(Resource resource, String methodName) {
+        try {
+            java.lang.reflect.Method getMethod = resource.getClass().getMethod(methodName);
+            Object referenceObj = getMethod.invoke(resource);
+            if (referenceObj != null) {
+                java.lang.reflect.Method getReference = referenceObj.getClass().getMethod("getReference");
+                String reference = (String) getReference.invoke(referenceObj);
+                logger.debug("🔍 Found reference via {}: {}", methodName, reference);
+                return reference;
+            }
+        } catch (Exception e) {
+            logger.debug("🔍 No {} method found or error accessing it: {}", methodName, e.getMessage());
+        }
+        return null;
+    }
+    
+    /**
+     * Extract ID from a FHIR reference string
+     */
+    private String extractIdFromReference(String reference) {
+        if (reference == null || reference.isEmpty()) {
+            return null;
+        }
+        
+        // Handle both "Patient/123" and "123" formats
+        int slashIndex = reference.lastIndexOf('/');
+        if (slashIndex != -1 && slashIndex < reference.length() - 1) {
+            return reference.substring(slashIndex + 1);
+        }
+        
+        return reference;
+    }
+    
+    /**
+     * Get resources by their IDs (similar to getPrimaryResourcesByIds but more generic)
+     */
+    private List<Resource> getResourcesByIds(String resourceType, List<String> ids, String bucketName) {
+        if (ids == null || ids.isEmpty()) {
+            return new ArrayList<>();
+        }
+        
+        logger.info("🔍 Getting {} resources by IDs from bucket '{}': {}", resourceType, bucketName, ids);
+        
+        @SuppressWarnings("unchecked")
+        Class<? extends Resource> resourceClassType = (Class<? extends Resource>) fhirContext.getResourceDefinition(resourceType).getImplementingClass();
+        FhirResourceDaoImpl<?> dao = serviceFactory.getService(resourceClassType);
+        
+        try {
+            // Use optimized bulk read instead of individual reads
+            @SuppressWarnings("unchecked")
+            List<Resource> resources = (List<Resource>) dao.readMultiple(resourceType, ids, bucketName);
+            
+            logger.info("🔍 Successfully retrieved {}/{} {} resources", resources.size(), ids.size(), resourceType);
+            return resources;
+            
+        } catch (Exception e) {
+            logger.error("Failed to retrieve multiple {} resources: {}", resourceType, e.getMessage());
+            throw new InvalidRequestException("Failed to retrieve included resources: " + e.getMessage());
+        }
+    }
+    
+    /**
+     * Build bundle with only primary resources (no includes)
+     */
+    private Bundle buildBundleWithPrimaryResourcesOnly(List<Resource> primaryResources, String primaryResourceType,
+                                                     SummaryEnum summaryMode, Set<String> elements) {
+        Bundle bundle = new Bundle();
+        bundle.setType(Bundle.BundleType.SEARCHSET);
+        bundle.setTotal(primaryResources.size());
+        
+        // Add primary resources (search mode = "match")
+        for (Resource resource : primaryResources) {
+            Resource filteredResource = applyResourceFiltering(resource, summaryMode, elements);
+            bundle.addEntry()
+                    .setResource(filteredResource)
+                    .setFullUrl(primaryResourceType + "/" + filteredResource.getIdElement().getIdPart())
+                    .getSearch()
+                    .setMode(Bundle.SearchEntryMode.MATCH);
+        }
+        
         return bundle;
     }
 }
