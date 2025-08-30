@@ -125,7 +125,7 @@ public class FhirBucketService {
             
             // Step 7: Create FTS indexes
             updateStatus(status, "create_fts_indexes", "Creating FTS indexes for collections");
-            createFtsIndexes(connectionName, bucketName);
+//            createFtsIndexes(connectionName, bucketName);
             status.setCompletedSteps(7);
             
             // Step 8: Mark as FHIR bucket with custom configuration

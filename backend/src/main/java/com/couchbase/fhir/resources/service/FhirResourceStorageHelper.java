@@ -7,6 +7,7 @@ import com.couchbase.client.java.Cluster;
 import com.couchbase.client.java.Collection;
 import com.couchbase.client.java.Bucket;
 import com.couchbase.common.fhir.FhirMetaHelper;
+import com.couchbase.fhir.resources.service.CollectionRoutingService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.hl7.fhir.r4.model.Resource;
 import org.slf4j.Logger;
@@ -39,6 +40,9 @@ public class FhirResourceStorageHelper {
 
     @Autowired
     public IParser jsonParser;
+    
+    @Autowired
+    private CollectionRoutingService collectionRoutingService;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -133,9 +137,10 @@ public class FhirResourceStorageHelper {
             // Construct document key: resourceType/id
             String documentKey = resourceType + "/" + resourceId;
 
-            // Get bucket and collection - use Resources scope and resourceType as collection
+            // Get bucket and collection - use routing service to get correct collection
             Bucket bucket = cluster.bucket(bucketName);
-            Collection collection = bucket.scope(DEFAULT_SCOPE).collection(resourceType);
+            String targetCollection = collectionRoutingService.getTargetCollection(resourceType);
+            Collection collection = bucket.scope(DEFAULT_SCOPE).collection(targetCollection);
 
             // Convert enhanced FHIR resource back to JSON for storage
             String enhancedResourceJson = jsonParser.encodeResourceToString(fhirResource);
@@ -152,7 +157,7 @@ public class FhirResourceStorageHelper {
             result.put("operation", operation);
 
             log.debug("Successfully upserted {} resource with ID: {} (with audit metadata) into scope: {}, collection: {}",
-                    resourceType, resourceId, DEFAULT_SCOPE, resourceType);
+                    resourceType, resourceId, DEFAULT_SCOPE, targetCollection);
 
         } catch (Exception e) {
             log.error("Error processing individual resource: {}", e.getMessage());

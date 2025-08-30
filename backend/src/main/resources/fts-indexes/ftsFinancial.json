@@ -22,7 +22,7 @@
       "default_datetime_parser": "dateTimeOptional",
       "default_field": "_all",
       "default_mapping": {
-        "dynamic": false,
+        "dynamic": true,
         "enabled": false
       },
       "default_type": "_default",
@@ -31,7 +31,8 @@
       "store_dynamic": false,
       "type_field": "_type",
       "types": {
-        "Resources.Versions": {
+        "Resources.Financial": {
+          "default_analyzer": "keyword",
           "dynamic": false,
           "enabled": true,
           "properties": {
@@ -40,7 +41,6 @@
               "enabled": true,
               "fields": [
                 {
-                  "analyzer": "keyword",
                   "index": true,
                   "name": "id",
                   "type": "text"
@@ -61,19 +61,19 @@
                       "type": "datetime"
                     }
                   ]
-                },
-                "versionId": {
-                  "dynamic": false,
-                  "enabled": true,
-                  "fields": [
-                    {
-                      "index": true,
-                      "name": "versionId",
-                      "type": "text"
-                    }
-                  ]
                 }
               }
+            },
+            "resourceType": {
+              "dynamic": false,
+              "enabled": true,
+              "fields": [
+                {
+                  "index": true,
+                  "name": "resourceType",
+                  "type": "text"
+                }
+              ]
             }
           }
         }

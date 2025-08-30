@@ -22,7 +22,7 @@
       "default_datetime_parser": "dateTimeOptional",
       "default_field": "_all",
       "default_mapping": {
-        "dynamic": false,
+        "dynamic": true,
         "enabled": false
       },
       "default_type": "_default",
@@ -31,63 +31,54 @@
       "store_dynamic": false,
       "type_field": "_type",
       "types": {
-        "Resources.DocumentReference": {
+        "Resources.ClinicalCare": {
+          "default_analyzer": "keyword",
           "dynamic": false,
           "enabled": true,
           "properties": {
-            "authenticator": {
-              "dynamic": true,
-              "enabled": true
-            },
-            "author": {
-              "dynamic": true,
-              "enabled": true
-            },
-            "category": {
-              "dynamic": true,
-              "enabled": true
-            },
-            "content": {
+            "careTeam": {
               "dynamic": false,
               "enabled": true,
               "properties": {
-                "attachment": {
+                "reference": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "index": true,
+                      "name": "reference",
+                      "type": "text"
+                    }
+                  ]
+                }
+              }
+            },
+            "category": {
+              "dynamic": false,
+              "enabled": true,
+              "properties": {
+                "coding": {
                   "dynamic": false,
                   "enabled": true,
                   "properties": {
-                    "contentType": {
+                    "code": {
                       "dynamic": false,
                       "enabled": true,
                       "fields": [
                         {
                           "index": true,
-                          "name": "contentType",
+                          "name": "code",
                           "type": "text"
                         }
                       ]
                     },
-                    "format": {
-                      "dynamic": true,
-                      "enabled": true
-                    },
-                    "language": {
+                    "system": {
                       "dynamic": false,
                       "enabled": true,
                       "fields": [
                         {
                           "index": true,
-                          "name": "language",
-                          "type": "text"
-                        }
-                      ]
-                    },
-                    "uri": {
-                      "dynamic": false,
-                      "enabled": true,
-                      "fields": [
-                        {
-                          "index": true,
-                          "name": "uri",
+                          "name": "system",
                           "type": "text"
                         }
                       ]
@@ -96,63 +87,89 @@
                 }
               }
             },
-            "context": {
-              "dynamic": true,
-              "enabled": true
-            },
-            "custodian": {
-              "dynamic": true,
-              "enabled": true
-            },
-            "date": {
+            "encounter": {
               "dynamic": false,
               "enabled": true,
-              "fields": [
-                {
-                  "docvalues": true,
-                  "index": true,
-                  "name": "date",
-                  "type": "datetime"
+              "properties": {
+                "reference": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "index": true,
+                      "name": "reference",
+                      "type": "text"
+                    }
+                  ]
                 }
-              ]
+              }
             },
-            "deleted": {
+            "goal": {
               "dynamic": false,
               "enabled": true,
-              "fields": [
-                {
-                  "index": true,
-                  "name": "deleted",
-                  "type": "boolean"
+              "properties": {
+                "reference": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "index": true,
+                      "name": "reference",
+                      "type": "text"
+                    }
+                  ]
                 }
-              ]
-            },
-            "description": {
-              "dynamic": false,
-              "enabled": true,
-              "fields": [
-                {
-                  "index": true,
-                  "name": "description",
-                  "type": "text"
-                }
-              ]
+              }
             },
             "id": {
               "dynamic": false,
               "enabled": true,
               "fields": [
                 {
-                  "analyzer": "keyword",
                   "index": true,
                   "name": "id",
                   "type": "text"
                 }
               ]
             },
-            "masterIdentifier": {
-              "dynamic": true,
-              "enabled": true
+            "identifier": {
+              "dynamic": false,
+              "enabled": true,
+              "properties": {
+                "system": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "index": true,
+                      "name": "system",
+                      "type": "text"
+                    }
+                  ]
+                },
+                "value": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "index": true,
+                      "name": "value",
+                      "type": "text"
+                    }
+                  ]
+                }
+              }
+            },
+            "intent": {
+              "dynamic": false,
+              "enabled": true,
+              "fields": [
+                {
+                  "index": true,
+                  "name": "intent",
+                  "type": "text"
+                }
+              ]
             },
             "meta": {
               "dynamic": false,
@@ -163,23 +180,68 @@
                   "enabled": true,
                   "fields": [
                     {
-                      "docvalues": true,
                       "index": true,
                       "name": "lastUpdated",
                       "type": "datetime"
                     }
                   ]
-                },
-                "versionId": {
+                }
+              }
+            },
+            "participant": {
+              "dynamic": false,
+              "enabled": true,
+              "properties": {
+                "member": {
                   "dynamic": false,
                   "enabled": true,
-                  "fields": [
-                    {
-                      "index": true,
-                      "name": "versionId",
-                      "type": "text"
+                  "properties": {
+                    "reference": {
+                      "dynamic": false,
+                      "enabled": true,
+                      "fields": [
+                        {
+                          "index": true,
+                          "name": "reference",
+                          "type": "text"
+                        }
+                      ]
                     }
-                  ]
+                  }
+                },
+                "role": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "properties": {
+                    "coding": {
+                      "dynamic": false,
+                      "enabled": true,
+                      "properties": {
+                        "code": {
+                          "dynamic": false,
+                          "enabled": true,
+                          "fields": [
+                            {
+                              "index": true,
+                              "name": "code",
+                              "type": "text"
+                            }
+                          ]
+                        },
+                        "system": {
+                          "dynamic": false,
+                          "enabled": true,
+                          "fields": [
+                            {
+                              "index": true,
+                              "name": "system",
+                              "type": "text"
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
                 }
               }
             },
@@ -192,7 +254,6 @@
                   "enabled": true,
                   "fields": [
                     {
-                      "docvalues": true,
                       "index": true,
                       "name": "end",
                       "type": "datetime"
@@ -204,7 +265,6 @@
                   "enabled": true,
                   "fields": [
                     {
-                      "docvalues": true,
                       "index": true,
                       "name": "start",
                       "type": "datetime"
@@ -213,13 +273,16 @@
                 }
               }
             },
-            "relatesTo": {
-              "dynamic": true,
-              "enabled": true
-            },
-            "securityLabel": {
-              "dynamic": true,
-              "enabled": true
+            "resourceType": {
+              "dynamic": false,
+              "enabled": true,
+              "fields": [
+                {
+                  "index": true,
+                  "name": "resourceType",
+                  "type": "text"
+                }
+              ]
             },
             "status": {
               "dynamic": false,
@@ -248,10 +311,6 @@
                   ]
                 }
               }
-            },
-            "type": {
-              "dynamic": true,
-              "enabled": true
             }
           }
         }

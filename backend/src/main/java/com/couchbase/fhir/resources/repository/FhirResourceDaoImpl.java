@@ -6,6 +6,7 @@ import com.couchbase.admin.connections.service.ConnectionService;
 import com.couchbase.client.java.Cluster;
 import com.couchbase.client.java.query.QueryResult;
 import com.couchbase.client.java.json.JsonObject;
+import com.couchbase.fhir.resources.service.CollectionRoutingService;
 import com.google.common.base.Stopwatch;
 import org.hl7.fhir.instance.model.api.IBaseResource;
 import org.slf4j.Logger;
@@ -31,13 +32,15 @@ public class FhirResourceDaoImpl<T extends IBaseResource> implements  FhirResour
 
     private final ConnectionService connectionService;
     private final FhirContext fhirContext;
+    private final CollectionRoutingService collectionRoutingService;
 
     private final Class<T> resourceClass;
 
-    public FhirResourceDaoImpl(Class<T> resourceClass , ConnectionService connectionService , FhirContext fhirContext) {
+    public FhirResourceDaoImpl(Class<T> resourceClass , ConnectionService connectionService , FhirContext fhirContext, CollectionRoutingService collectionRoutingService) {
         this.resourceClass = resourceClass;
         this.connectionService = connectionService;
         this.fhirContext = fhirContext;
+        this.collectionRoutingService = collectionRoutingService;
     }
 
 
@@ -54,12 +57,7 @@ public class FhirResourceDaoImpl<T extends IBaseResource> implements  FhirResour
             }
             // Build N1QL query to get specific document using ResourceType::id format
             String documentKey = resourceType + "/" + id;
-            String query = String.format(
-                    "SELECT c.* " +
-                            "FROM `%s`.`%s`.`%s` c " +
-                            "USE KEYS '%s'",
-                    bucketName, DEFAULT_SCOPE, resourceType, documentKey
-            );
+            String query = collectionRoutingService.buildReadQuery(bucketName, resourceType, documentKey);
 
             logger.info("READ query: {}", query);
             QueryResult result = cluster.query(query, queryOptions()
@@ -101,14 +99,8 @@ public class FhirResourceDaoImpl<T extends IBaseResource> implements  FhirResour
                 documentKeys.add("'" + resourceType + "/" + id + "'");
             }
             
-            // Build N1QL query with USE KEYS array
-            String keysArray = "[" + String.join(", ", documentKeys) + "]";
-            String query = String.format(
-                    "SELECT c.* " +
-                            "FROM `%s`.`%s`.`%s` c " +
-                            "USE KEYS %s",
-                    bucketName, DEFAULT_SCOPE, resourceType, keysArray
-            );
+            // Build N1QL query with USE KEYS array using routing service
+            String query = collectionRoutingService.buildReadMultipleQuery(bucketName, resourceType, documentKeys);
 
             logger.info("READ MULTIPLE query: {}", query);
             QueryResult result = cluster.query(query);
@@ -152,10 +144,7 @@ public class FhirResourceDaoImpl<T extends IBaseResource> implements  FhirResour
             System.out.println(documentKey);
             String resourceJson = fhirContext.newJsonParser().encodeResourceToString(resource);
 
-            String insertQuery = String.format(
-                    "INSERT INTO `%s`.`%s`.`%s` (KEY, VALUE) VALUES ($key, $value)",
-                    bucketName, DEFAULT_SCOPE, resourceType
-            );
+            String insertQuery = collectionRoutingService.buildInsertQuery(bucketName, resourceType);
 
             JsonObject params = JsonObject.create()
                     .put("key", documentKey)
