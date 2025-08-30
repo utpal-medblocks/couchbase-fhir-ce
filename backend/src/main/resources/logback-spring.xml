@@ -46,5 +46,5 @@
     <logger name="ca.uhn.fhir.context.support.DefaultProfileValidationSupport" level="ERROR"/>
     
     <!-- Suppress HAPI FHIR's exception interceptor stack traces - we handle our own clean error logging -->
-    <logger name="ca.uhn.fhir.rest.server.interceptor.ExceptionHandlingInterceptor" level="ERROR"/>
+    <logger name="ca.uhn.fhir.rest.server.interceptor.ExceptionHandlingInterceptor" level="OFF"/>
 </configuration>

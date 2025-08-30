@@ -5,14 +5,21 @@ import com.couchbase.client.java.json.JsonArray;
 import com.couchbase.client.java.json.JsonObject;
 import com.couchbase.client.java.search.SearchQuery;
 import com.couchbase.fhir.resources.config.TenantContextHolder;
+import com.couchbase.fhir.resources.service.CollectionRoutingService;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Collectors;
 
+@Component
 public class Ftsn1qlQueryBuilder {
 
     private static final String DEFAULT_SCOPE = "Resources";
+    
+    @Autowired
+    private CollectionRoutingService collectionRoutingService;
 
     public String build(
             List<SearchQuery> mustQueries,
@@ -26,19 +33,27 @@ public class Ftsn1qlQueryBuilder {
 
         JsonObject queryBody;
         
-        // Simplified query structure - no must_not needed anymore
+        // Always add resource type filter since multiple resource types are in the same collection
+        JsonObject resourceTypeFilter = JsonObject.create()
+            .put("field", "resourceType")
+            .put("match", resourceType);
+        
+        // Build the main query structure
         if (mustQueries.isEmpty()) {
-            // No search criteria - match all
-            queryBody = JsonObject.create().put("match_all", JsonObject.create());
+            // No search criteria - just filter by resource type
+            queryBody = resourceTypeFilter;
         } else if (mustQueries.size() == 1) {
-            // Single query - use simple structure
-            queryBody = mustQueries.get(0).export();
-        } else {
-            // Multiple queries - use conjuncts (AND logic between different parameters)
+            // Single query - combine with resource type filter using conjuncts
             queryBody = JsonObject.create().put(
                 "conjuncts",
-                mustQueries.stream().map(SearchQuery::export).collect(Collectors.toList())
+                List.of(resourceTypeFilter, mustQueries.get(0).export())
             );
+        } else {
+            // Multiple queries - combine resource type filter with all other queries using conjuncts
+            List<JsonObject> allQueries = new ArrayList<>();
+            allQueries.add(resourceTypeFilter);
+            allQueries.addAll(mustQueries.stream().map(SearchQuery::export).collect(Collectors.toList()));
+            queryBody = JsonObject.create().put("conjuncts", allQueries);
         }
 
         JsonObject ftsDsl = JsonObject.create()
@@ -61,15 +76,21 @@ public class Ftsn1qlQueryBuilder {
             ftsDsl.put("sort", sortArray);
         }
 
-        String indexName = bucketName+"."+DEFAULT_SCOPE+".fts"+resourceType;
+        // Get the correct target collection and FTS index for this resource type
+        String targetCollection = collectionRoutingService.getTargetCollection(resourceType);
+        String ftsIndex = collectionRoutingService.getFtsIndex(resourceType);
+        
+        if (ftsIndex == null) {
+            throw new IllegalArgumentException("No FTS index found for resource type: " + resourceType);
+        }
 
         String n1ql = String.format(
                 "SELECT resource.* " +
                         "FROM `%s`.`%s`.`%s` resource " +
                         "WHERE SEARCH(resource, %s, {\"index\":\"%s\"})",
-                bucketName, DEFAULT_SCOPE, resourceType,
+                bucketName, DEFAULT_SCOPE, targetCollection,
                 ftsDsl.toString(),
-                indexName
+                ftsIndex
         );
 
         System.out.println("query "+n1ql);
@@ -99,16 +120,27 @@ public class Ftsn1qlQueryBuilder {
 
         JsonObject queryBody;
         
-        // Use same simplified logic as main build method
+        // Always add resource type filter since multiple resource types are in the same collection
+        JsonObject resourceTypeFilter = JsonObject.create()
+            .put("field", "resourceType")
+            .put("match", resourceType);
+        
+        // Use same logic as main build method
         if (mustQueries.isEmpty()) {
-            queryBody = JsonObject.create().put("match_all", JsonObject.create());
+            // No search criteria - just filter by resource type
+            queryBody = resourceTypeFilter;
         } else if (mustQueries.size() == 1) {
-            queryBody = mustQueries.get(0).export();
-        } else {
+            // Single query - combine with resource type filter using conjuncts
             queryBody = JsonObject.create().put(
                 "conjuncts",
-                mustQueries.stream().map(SearchQuery::export).collect(Collectors.toList())
+                List.of(resourceTypeFilter, mustQueries.get(0).export())
             );
+        } else {
+            // Multiple queries - combine resource type filter with all other queries using conjuncts
+            List<JsonObject> allQueries = new ArrayList<>();
+            allQueries.add(resourceTypeFilter);
+            allQueries.addAll(mustQueries.stream().map(SearchQuery::export).collect(Collectors.toList()));
+            queryBody = JsonObject.create().put("conjuncts", allQueries);
         }
 
         JsonObject ftsDsl = JsonObject.create()
@@ -116,15 +148,21 @@ public class Ftsn1qlQueryBuilder {
                 .put("from", 0)
                 .put("query", queryBody);
 
-        String indexName = bucketName + "." + DEFAULT_SCOPE + ".fts" + resourceType;
+        // Get the correct target collection and FTS index for this resource type
+        String targetCollection = collectionRoutingService.getTargetCollection(resourceType);
+        String ftsIndex = collectionRoutingService.getFtsIndex(resourceType);
+        
+        if (ftsIndex == null) {
+            throw new IllegalArgumentException("No FTS index found for resource type: " + resourceType);
+        }
 
         String n1ql = String.format(
                 "SELECT COUNT(*) as total " +
                         "FROM `%s`.`%s`.`%s` resource " +
                         "WHERE SEARCH(resource, %s, {\"index\":\"%s\"})",
-                bucketName, DEFAULT_SCOPE, resourceType,
+                bucketName, DEFAULT_SCOPE, targetCollection,
                 ftsDsl.toString(),
-                indexName
+                ftsIndex
         );
 
         System.out.println("count query " + n1ql);

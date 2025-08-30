@@ -60,6 +60,9 @@ public class SearchService {
     @Autowired
     private SearchStateManager searchStateManager;
     
+    @Autowired
+    private Ftsn1qlQueryBuilder queryBuilder;
+    
     /**
      * Lightweight resolution for conditional operations.
      * Uses the same search logic but with LIMIT 2 for fast ambiguity detection.
@@ -89,7 +92,6 @@ public class SearchService {
         
         // Execute lightweight search with LIMIT 2
         try {
-            Ftsn1qlQueryBuilder queryBuilder = new Ftsn1qlQueryBuilder();
             String query = queryBuilder.build(ftsQueries, resourceType, 0, 2, null);  // LIMIT 2
             
             logger.debug("🔍 Resolve query: {}", query);
@@ -361,7 +363,6 @@ public class SearchService {
         }
         
         // Use FTS query but project only ID
-        Ftsn1qlQueryBuilder queryBuilder = new Ftsn1qlQueryBuilder();
         String fullQuery = queryBuilder.build(ftsQueries, resourceType, 0, 2);
         
         // Replace SELECT clause to get only META().id
@@ -400,7 +401,6 @@ public class SearchService {
      */
     private int getAccurateCount(List<SearchQuery> ftsQueries, String resourceType, String bucketName) {
         try {
-            Ftsn1qlQueryBuilder queryBuilder = new Ftsn1qlQueryBuilder();
             String countQuery = queryBuilder.buildCountQuery(ftsQueries, resourceType);
             
             Cluster cluster = connectionService.getConnection("default");
@@ -578,7 +578,6 @@ public class SearchService {
                                       List<SortField> sortFields, SummaryEnum summaryMode, 
                                       Set<String> elements, String totalMode, String bucketName) {
         
-        Ftsn1qlQueryBuilder queryBuilder = new Ftsn1qlQueryBuilder();
         String query = queryBuilder.build(ftsQueries, resourceType, 0, count, sortFields);
         
         // Get appropriate DAO for the resource type
@@ -740,7 +739,6 @@ public class SearchService {
         logger.info("🔍 Total primary resources available: {}", totalPrimaryResourceCount);
         
         // Step 2: Execute primary resource search to get full resources
-        Ftsn1qlQueryBuilder queryBuilder = new Ftsn1qlQueryBuilder();
         String query = queryBuilder.build(ftsQueries, primaryResourceType, 0, count, null);
         
         @SuppressWarnings("unchecked")
@@ -1003,7 +1001,6 @@ public class SearchService {
         logger.info("🔍 Handling regular pagination: offset={}, count={}", offset, count);
         
         // Execute query using cached FTS queries and sort fields
-        Ftsn1qlQueryBuilder queryBuilder = new Ftsn1qlQueryBuilder();
         String query = queryBuilder.build(searchState.getCachedFtsQueries(), 
                                         searchState.getPrimaryResourceType(), 
                                         offset, count, 
@@ -1051,7 +1048,6 @@ public class SearchService {
         logger.info("🔍 Handling include pagination: offset={}, count={}", offset, count);
         
         // Execute query for next batch of primary resources using cached FTS queries
-        Ftsn1qlQueryBuilder queryBuilder = new Ftsn1qlQueryBuilder();
         String query = queryBuilder.build(searchState.getCachedFtsQueries(), 
                                         searchState.getPrimaryResourceType(), 
                                         offset, count, 
@@ -1115,7 +1111,6 @@ public class SearchService {
     
     private List<String> executeIdOnlySearch(String resourceType, List<SearchQuery> ftsQueries, 
                                            int count, String bucketName) {
-        Ftsn1qlQueryBuilder queryBuilder = new Ftsn1qlQueryBuilder();
         String query = queryBuilder.build(ftsQueries, resourceType, 0, count, null);
         
         logger.debug("🔍 Original query: {}", query);
@@ -1174,7 +1169,6 @@ public class SearchService {
         sortFields.add(new SortField("meta.lastUpdated", true)); // true = descending
         
         // Execute the query
-        Ftsn1qlQueryBuilder queryBuilder = new Ftsn1qlQueryBuilder();
         String query = queryBuilder.build(revIncludeQueries, resourceType, offset, count, sortFields);
         
         @SuppressWarnings("unchecked")
@@ -1225,7 +1219,6 @@ public class SearchService {
             revIncludeQueries.add(SearchQuery.disjuncts(referenceQueries.toArray(new SearchQuery[0])));
         }
         
-        Ftsn1qlQueryBuilder queryBuilder = new Ftsn1qlQueryBuilder();
         String countQuery = queryBuilder.buildCountQuery(revIncludeQueries, resourceType);
         
         try {
@@ -1319,11 +1312,7 @@ public class SearchService {
         
         logger.info("🔍 Handling paginated regular search for {} with count {}", resourceType, count);
         
-        // Get total count for accurate pagination
-        int totalCount = getAccurateCount(ftsQueries, resourceType, bucketName);
-        
         // Execute first page
-        Ftsn1qlQueryBuilder queryBuilder = new Ftsn1qlQueryBuilder();
         String query = queryBuilder.build(ftsQueries, resourceType, 0, count, sortFields);
         
         @SuppressWarnings("unchecked")
@@ -1332,6 +1321,19 @@ public class SearchService {
         
         @SuppressWarnings("unchecked")
         List<Resource> results = (List<Resource>) dao.search(resourceType, query);
+        
+        // Optimized counting: Only do count query if we got exactly the requested count
+        // (meaning there might be more results)
+        int totalCount;
+        if (results.size() == count) {
+            // We got exactly the requested count, so there might be more - do count query
+            logger.debug("🔍 Got exactly {} results, doing count query to get accurate total", count);
+            totalCount = getAccurateCount(ftsQueries, resourceType, bucketName);
+        } else {
+            // We got fewer results than requested, so this is all of them
+            logger.debug("🔍 Got {} results (less than requested {}), using result count as total", results.size(), count);
+            totalCount = results.size();
+        }
         
         // Create SearchState for regular search
         SearchState searchState = SearchState.builder()
@@ -1675,7 +1677,6 @@ public class SearchService {
         }
         
         // Execute the query
-        Ftsn1qlQueryBuilder queryBuilder = new Ftsn1qlQueryBuilder();
         String query = queryBuilder.build(primaryQueries, primaryResourceType, offset, count, sortFields);
         
         @SuppressWarnings("unchecked")

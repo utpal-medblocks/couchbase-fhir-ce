@@ -64,8 +64,11 @@ public class CollectionRoutingService {
     public String getFtsIndex(String resourceType) {
         Optional<String> ftsIndex = mappingService.getFtsIndex(resourceType);
         if (ftsIndex.isPresent()) {
-            logger.debug("Using FTS index {} for resource type {}", ftsIndex.get(), resourceType);
-            return ftsIndex.get();
+            // Get the bucket name from the tenant context
+            String bucketName = com.couchbase.fhir.resources.config.TenantContextHolder.getTenantId();
+            String fullyQualifiedIndex = bucketName + "." + DEFAULT_SCOPE + "." + ftsIndex.get();
+            logger.debug("Using FTS index {} for resource type {}", fullyQualifiedIndex, resourceType);
+            return fullyQualifiedIndex;
         } else {
             logger.warn("No FTS index found for resource type: {}", resourceType);
             return null;
