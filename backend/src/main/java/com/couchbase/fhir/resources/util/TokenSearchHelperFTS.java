@@ -23,7 +23,7 @@ public class TokenSearchHelperFTS {
         RuntimeResourceDefinition def = fhirContext.getResourceDefinition(resourceType);
         RuntimeSearchParam searchParam = def.getSearchParam(paramName);
         String path = searchParam.getPath();
-
+        
         ConceptInfo conceptInfo = getConceptInfo(path, resourceType, def);
 
         // FTS field names in index (assume "." in FHIRPath is replaced with "."
@@ -98,9 +98,11 @@ public class TokenSearchHelperFTS {
         boolean isArray = false;
         boolean isPrimitive = false;
         BaseRuntimeElementDefinition<?> current = def;
+        
         try {
             String fhirPath = path.replaceFirst("^" + resourceType + "\\.", "");
             String[] pathParts = fhirPath.split("\\.");
+            
             for (String part : pathParts) {
                 if (def != null) {
                     BaseRuntimeChildDefinition child = ((BaseRuntimeElementCompositeDefinition<?>) def).getChildByName(part);
@@ -123,7 +125,6 @@ public class TokenSearchHelperFTS {
         } catch (Exception e) {
             System.out.println(e.getMessage());
         }
-
         return new ConceptInfo(isCodableConcept, isArray, isPrimitive);
     }
 
@@ -148,7 +149,7 @@ public class TokenSearchHelperFTS {
         } else {
             subPath = fhirPath.substring(resourceType.length() + 1);
         }
-
+        
         String ftsPath = subPath
                 .replace(".coding", ".coding") // Keep .coding for FTS mapping
                 .replace(".value", ".value")
@@ -159,7 +160,9 @@ public class TokenSearchHelperFTS {
             return ftsPath;
         }
 
-        if (codableConcept && !isArray) {
+        if (codableConcept) {
+            // For CodeableConcepts, we always need to add .coding
+            // Whether it's a single CodeableConcept or an array of CodeableConcepts
             ftsPath += ".coding";
         }
         return ftsPath;
