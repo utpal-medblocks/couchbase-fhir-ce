@@ -12,6 +12,8 @@ import org.springframework.stereotype.Service;
 import java.time.Instant;
 import java.util.List;
 
+import com.couchbase.fhir.resources.service.CollectionRoutingService;
+
 /**
  * Service for handling FHIR DELETE operations with proper tombstone management.
  * DELETE operations are idempotent and use soft delete with tombstones.
@@ -35,6 +37,9 @@ public class DeleteService {
     
     @Autowired
     private FhirAuditService auditService;
+    
+    @Autowired
+    private CollectionRoutingService collectionRoutingService;
     
     /**
      * Delete a FHIR resource (soft delete with tombstone).
@@ -127,6 +132,9 @@ public class DeleteService {
      */
     private String copyCurrentResourceToVersions(Cluster cluster, String bucketName, String resourceType, String documentKey) {
         try {
+            // Get the correct target collection for this resource type
+            String targetCollection = collectionRoutingService.getTargetCollection(resourceType);
+            
             // Use same efficient N1QL as PUT service with RETURNING to get version ID directly
             String sql = String.format(
                 "INSERT INTO `%s`.`%s`.`%s` (KEY k, VALUE v) " +
@@ -137,7 +145,7 @@ public class DeleteService {
                 "USE KEYS '%s' " +
                 "RETURNING RAW %s.meta.versionId",
                 bucketName, DEFAULT_SCOPE, VERSIONS_COLLECTION,  // INSERT INTO Versions
-                bucketName, DEFAULT_SCOPE, resourceType,         // FROM ResourceType
+                bucketName, DEFAULT_SCOPE, targetCollection,     // FROM TargetCollection
                 documentKey,                                     // USE KEYS 'Patient/04d74bb4-61a9-45f5-8912-3d30d8029fa7'
                 VERSIONS_COLLECTION                              // RETURNING RAW Versions.meta.versionId
             );
@@ -212,9 +220,12 @@ public class DeleteService {
     private void removeFromLiveCollection(com.couchbase.client.java.transactions.TransactionAttemptContext txContext,
                                         Cluster cluster, String bucketName, String resourceType, String documentKey) {
         try {
+            // Get the correct target collection for this resource type
+            String targetCollection = collectionRoutingService.getTargetCollection(resourceType);
+            
             // Get live collection reference
             com.couchbase.client.java.Collection liveCollection = 
-                cluster.bucket(bucketName).scope(DEFAULT_SCOPE).collection(resourceType);
+                cluster.bucket(bucketName).scope(DEFAULT_SCOPE).collection(targetCollection);
             
             try {
                 // Try to remove the document (idempotent - OK if doesn't exist)
