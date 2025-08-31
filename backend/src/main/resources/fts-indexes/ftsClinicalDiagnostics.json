@@ -193,6 +193,17 @@
                 }
               ]
             },
+            "managingOrganization": {
+              "dynamic": false,
+              "enabled": true,
+              "fields": [
+                {
+                  "index": true,
+                  "name": "managingOrganization",
+                  "type": "text"
+                }
+              ]
+            },
             "meta": {
               "dynamic": false,
               "enabled": true,
@@ -205,6 +216,23 @@
                       "index": true,
                       "name": "lastUpdated",
                       "type": "datetime"
+                    }
+                  ]
+                }
+              }
+            },
+            "patient": {
+              "dynamic": false,
+              "enabled": true,
+              "properties": {
+                "reference": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "index": true,
+                      "name": "reference",
+                      "type": "text"
                     }
                   ]
                 }
@@ -314,6 +342,23 @@
                       ]
                     }
                   }
+                }
+              }
+            },
+            "udiCarrier": {
+              "dynamic": false,
+              "enabled": true,
+              "properties": {
+                "deviceIdentifier": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "index": true,
+                      "name": "deviceIdentifier",
+                      "type": "text"
+                    }
+                  ]
                 }
               }
             },

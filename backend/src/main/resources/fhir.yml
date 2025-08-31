@@ -26,10 +26,6 @@ fhir:
       name: "Resources"
       description: "FHIR clinical and administrative resource collections"
       collections:
-        - name: "BaseEntities"
-          description: "Base Entities (Organizations, Locations, Devices) - 9 resources"
-          indexes:
-
         - name: "BaseIndividuals"
           description: "Base Individuals (People & Roles) - 6 resources"
           indexes:
@@ -54,8 +50,8 @@ fhir:
           description: "Clinical Medications (Drugs & Immunizations) - 10 resources"
           indexes:
 
-        - name: "Financial"
-          description: "Financial (Billing, Coverage, Claims) - 16 resources"
+        - name: "General"
+          description: "General (Billing, Coverage, Claims) - 16 resources"
           indexes:
 
         - name: "Versions"
@@ -89,19 +85,10 @@ mapping:
     Practitioner: BaseIndividuals
     PractitionerRole: BaseIndividuals
     RelatedPerson: BaseIndividuals
+    Organization: BaseIndividuals
+    Location: BaseIndividuals
     Person: BaseIndividuals
     Group: BaseIndividuals
-
-    # Base Entities (Organizations, Locations, Devices) - 9 resources
-    Organization: BaseEntities
-    Location: BaseEntities
-    Device: BaseEntities
-    DeviceDefinition: BaseEntities
-    DeviceMetric: BaseEntities
-    DeviceRequest: BaseEntities
-    DeviceUseStatement: BaseEntities
-    HealthcareService: BaseEntities
-    Endpoint: BaseEntities
 
     # Base Management (Encounters & Workflow) - 18 resources
     Encounter: BaseManagement
@@ -154,8 +141,12 @@ mapping:
     Composition: ClinicalDiagnostics
     Contract: ClinicalDiagnostics
     Consent: ClinicalDiagnostics
-    Provenance: ClinicalDiagnostics
     AuditEvent: ClinicalDiagnostics
+    Device: ClinicalDiagnostics
+    DeviceDefinition: ClinicalDiagnostics
+    DeviceMetric: ClinicalDiagnostics
+    DeviceRequest: ClinicalDiagnostics
+    DeviceUseStatement: ClinicalDiagnostics
 
     # Clinical Medications (Drugs & Immunizations) - 10 resources
     MedicationRequest: ClinicalMedications
@@ -181,24 +172,27 @@ mapping:
     PlanDefinition: ClinicalCare
     Measure: ClinicalCare
     MeasureReport: ClinicalCare
+    HealthcareService: ClinicalCare
 
-    # Financial (Billing, Coverage, Claims) - 16 resources
-    Coverage: Financial
-    CoverageEligibilityRequest: Financial
-    CoverageEligibilityResponse: Financial
-    EnrollmentRequest: Financial
-    EnrollmentResponse: Financial
-    Claim: Financial
-    ClaimResponse: Financial
-    Invoice: Financial
-    PaymentNotice: Financial
-    PaymentReconciliation: Financial
-    Account: Financial
-    ChargeItem: Financial
-    ChargeItemDefinition: Financial
-    InsurancePlan: Financial
-    ExplanationOfBenefit: Financial
-    VerificationResult: Financial
+    # General (Billing, Coverage, Claims) - 16 resources
+    Coverage: General
+    CoverageEligibilityRequest: General
+    CoverageEligibilityResponse: General
+    EnrollmentRequest: General
+    EnrollmentResponse: General
+    Endpoint: General
+    Claim: General
+    ClaimResponse: General
+    Invoice: General
+    PaymentNotice: General
+    PaymentReconciliation: General
+    Provenance: General
+    Account: General
+    ChargeItem: General
+    ChargeItemDefinition: General
+    InsurancePlan: General
+    ExplanationOfBenefit: General
+    VerificationResult: General
 
     # Additional Foundation & Infrastructure Resources (46 more)
     # These could be distributed across collections or kept separate
@@ -262,17 +256,16 @@ mapping:
     MedicinalProductPharmaceutical: ClinicalMedications
     MedicinalProductUndesirableEffect: ClinicalMedications
 
-    # Marketing & Manufacturing - Could go in BaseEntities
-    MarketingStatus: BaseEntities
-    ProductShelfLife: BaseEntities
-    ProdCharacteristic: BaseEntities
+    # Marketing & Manufacturing - Could go in General
+    MarketingStatus: General
+    ProductShelfLife: General
+    ProdCharacteristic: General
 
   collection_to_fts_index:
     BaseIndividuals: ftsBaseIndividuals
-    BaseEntities: ftsBaseEntities
     BaseManagement: ftsBaseManagement
     ClinicalSummary: ftsClinicalSummary
     ClinicalDiagnostics: ftsClinicalDiagnostics
     ClinicalMedications: ftsClinicalMedications
     ClinicalCare: ftsClinicalCare
-    Financial: ftsFinancial
+    General: ftsGeneral

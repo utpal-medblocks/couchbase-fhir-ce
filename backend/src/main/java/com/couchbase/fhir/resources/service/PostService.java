@@ -12,6 +12,8 @@ import org.springframework.stereotype.Service;
 
 import java.util.UUID;
 
+import com.couchbase.fhir.resources.service.CollectionRoutingService;
+
 /**
  * Service for handling FHIR POST operations (create new resources).
  * POST operations always generate server-controlled IDs and ignore any client-supplied IDs.
@@ -28,6 +30,9 @@ public class PostService {
     
     @Autowired
     private FhirMetaHelper metaHelper;
+    
+    @Autowired
+    private CollectionRoutingService collectionRoutingService;
     
     /**
      * Create a new FHIR resource via POST operation.
@@ -114,15 +119,18 @@ public class PostService {
     private void insertResource(Cluster cluster, String bucketName, String resourceType, 
                                String documentKey, String resourceJson) {
         try {
+            // Get the correct target collection for this resource type
+            String targetCollection = collectionRoutingService.getTargetCollection(resourceType);
+            
             // Use N1QL UPSERT for consistency
             String sql = String.format(
                 "UPSERT INTO `%s`.`%s`.`%s` (KEY, VALUE) VALUES ('%s', %s)",
-                bucketName, DEFAULT_SCOPE, resourceType, documentKey,
+                bucketName, DEFAULT_SCOPE, targetCollection, documentKey,
                 JsonObject.fromJson(resourceJson).toString()
             );
             
             cluster.query(sql);
-            logger.debug("🔧 Inserted resource: {}", documentKey);
+            logger.debug("🔧 Inserted resource: {} into collection: {}", documentKey, targetCollection);
             
         } catch (Exception e) {
             logger.error("❌ Failed to insert resource {}: {}", documentKey, e.getMessage());
@@ -137,13 +145,16 @@ public class PostService {
                                            Cluster cluster, String bucketName, String resourceType,
                                            String documentKey, String resourceJson) {
         try {
+            // Get the correct target collection for this resource type
+            String targetCollection = collectionRoutingService.getTargetCollection(resourceType);
+            
             // Get collection reference for transaction
             com.couchbase.client.java.Collection collection = 
-                cluster.bucket(bucketName).scope(DEFAULT_SCOPE).collection(resourceType);
+                cluster.bucket(bucketName).scope(DEFAULT_SCOPE).collection(targetCollection);
             
             // Insert using transaction context
             txContext.insert(collection, documentKey, JsonObject.fromJson(resourceJson));
-            logger.debug("🔧 Inserted resource in transaction: {}", documentKey);
+            logger.debug("🔧 Inserted resource in transaction: {} into collection: {}", documentKey, targetCollection);
             
         } catch (Exception e) {
             logger.error("❌ Failed to insert resource {} in transaction: {}", documentKey, e.getMessage());

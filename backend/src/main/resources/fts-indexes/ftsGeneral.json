@@ -31,72 +31,78 @@
       "store_dynamic": false,
       "type_field": "_type",
       "types": {
-        "Resources.BaseEntities": {
+        "Resources.General": {
           "default_analyzer": "keyword",
           "dynamic": false,
           "enabled": true,
           "properties": {
-            "active": {
+            "agent": {
+              "dynamic": false,
+              "enabled": true,
+              "properties": {
+                "type": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "properties": {
+                    "coding": {
+                      "dynamic": false,
+                      "enabled": true,
+                      "properties": {
+                        "code": {
+                          "dynamic": false,
+                          "enabled": true,
+                          "fields": [
+                            {
+                              "index": true,
+                              "name": "code",
+                              "type": "text"
+                            }
+                          ]
+                        },
+                        "system": {
+                          "dynamic": false,
+                          "enabled": true,
+                          "fields": [
+                            {
+                              "index": true,
+                              "name": "system",
+                              "type": "text"
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                },
+                "who": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "properties": {
+                    "reference": {
+                      "dynamic": false,
+                      "enabled": true,
+                      "fields": [
+                        {
+                          "index": true,
+                          "name": "reference",
+                          "type": "text"
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            },
+            "created": {
               "dynamic": false,
               "enabled": true,
               "fields": [
                 {
                   "index": true,
-                  "name": "active",
-                  "type": "boolean"
+                  "name": "created",
+                  "type": "datetime"
                 }
               ]
-            },
-            "address": {
-              "default_analyzer": "standard",
-              "dynamic": false,
-              "enabled": true,
-              "properties": {
-                "city": {
-                  "dynamic": false,
-                  "enabled": true,
-                  "fields": [
-                    {
-                      "index": true,
-                      "name": "city",
-                      "type": "text"
-                    }
-                  ]
-                },
-                "line": {
-                  "dynamic": false,
-                  "enabled": true,
-                  "fields": [
-                    {
-                      "index": true,
-                      "name": "line",
-                      "type": "text"
-                    }
-                  ]
-                },
-                "postalCode": {
-                  "dynamic": false,
-                  "enabled": true,
-                  "fields": [
-                    {
-                      "index": true,
-                      "name": "postalCode",
-                      "type": "text"
-                    }
-                  ]
-                },
-                "state": {
-                  "dynamic": false,
-                  "enabled": true,
-                  "fields": [
-                    {
-                      "index": true,
-                      "name": "state",
-                      "type": "text"
-                    }
-                  ]
-                }
-              }
             },
             "id": {
               "dynamic": false,
@@ -137,34 +143,6 @@
                 }
               }
             },
-            "location": {
-              "dynamic": false,
-              "enabled": true,
-              "properties": {
-                "reference": {
-                  "dynamic": false,
-                  "enabled": true,
-                  "fields": [
-                    {
-                      "index": true,
-                      "name": "reference",
-                      "type": "text"
-                    }
-                  ]
-                }
-              }
-            },
-            "managingOrganization": {
-              "dynamic": false,
-              "enabled": true,
-              "fields": [
-                {
-                  "index": true,
-                  "name": "managingOrganization",
-                  "type": "text"
-                }
-              ]
-            },
             "meta": {
               "dynamic": false,
               "enabled": true,
@@ -199,6 +177,17 @@
                 }
               }
             },
+            "recorded": {
+              "dynamic": false,
+              "enabled": true,
+              "fields": [
+                {
+                  "index": true,
+                  "name": "recorded",
+                  "type": "datetime"
+                }
+              ]
+            },
             "resourceType": {
               "dynamic": false,
               "enabled": true,
@@ -221,79 +210,17 @@
                 }
               ]
             },
-            "telecom": {
+            "target": {
               "dynamic": false,
               "enabled": true,
               "properties": {
-                "system": {
+                "reference": {
                   "dynamic": false,
                   "enabled": true,
                   "fields": [
                     {
                       "index": true,
-                      "name": "system",
-                      "type": "text"
-                    }
-                  ]
-                },
-                "value": {
-                  "dynamic": false,
-                  "enabled": true,
-                  "fields": [
-                    {
-                      "index": true,
-                      "name": "value",
-                      "type": "text"
-                    }
-                  ]
-                }
-              }
-            },
-            "type": {
-              "dynamic": false,
-              "enabled": true,
-              "properties": {
-                "coding": {
-                  "dynamic": false,
-                  "enabled": true,
-                  "properties": {
-                    "code": {
-                      "dynamic": false,
-                      "enabled": true,
-                      "fields": [
-                        {
-                          "index": true,
-                          "name": "code",
-                          "type": "text"
-                        }
-                      ]
-                    },
-                    "system": {
-                      "dynamic": false,
-                      "enabled": true,
-                      "fields": [
-                        {
-                          "index": true,
-                          "name": "system",
-                          "type": "text"
-                        }
-                      ]
-                    }
-                  }
-                }
-              }
-            },
-            "udiCarrier": {
-              "dynamic": false,
-              "enabled": true,
-              "properties": {
-                "deviceIdentifier": {
-                  "dynamic": false,
-                  "enabled": true,
-                  "fields": [
-                    {
-                      "index": true,
-                      "name": "deviceIdentifier",
+                      "name": "reference",
                       "type": "text"
                     }
                   ]
