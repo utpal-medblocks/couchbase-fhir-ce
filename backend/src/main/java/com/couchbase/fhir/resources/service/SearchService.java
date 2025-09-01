@@ -17,6 +17,7 @@ import com.couchbase.fhir.resources.util.*;
 import com.couchbase.fhir.resources.util.Ftsn1qlQueryBuilder.SortField;
 import com.couchbase.fhir.resources.validation.FhirBucketValidator;
 import com.couchbase.fhir.resources.validation.FhirBucketValidationException;
+import com.couchbase.fhir.resources.search.SearchQueryResult;
 import com.couchbase.fhir.resources.search.SearchState;
 import com.couchbase.fhir.resources.search.SearchStateManager;
 import com.couchbase.fhir.resources.search.ChainParam;
@@ -88,7 +89,8 @@ public class SearchService {
         }
         
         // Build search queries using the same logic as regular search
-        List<SearchQuery> ftsQueries = buildSearchQueries(resourceType, criteria);
+        SearchQueryResult searchQueryResult = buildSearchQueries(resourceType, criteria);
+        List<SearchQuery> ftsQueries = searchQueryResult.getFtsQueries();
         
         // Execute lightweight search with LIMIT 2
         try {
@@ -216,7 +218,15 @@ public class SearchService {
         }
         
         // Build search queries
-        List<SearchQuery> ftsQueries = buildSearchQueries(resourceType, searchParams);
+        SearchQueryResult searchQueryResult = buildSearchQueries(resourceType, searchParams);
+        List<SearchQuery> ftsQueries = searchQueryResult.getFtsQueries();
+        List<String> n1qlFilters = searchQueryResult.getN1qlFilters();
+        
+        logger.info("🔍 SearchService: Built {} FTS queries and {} N1QL filters for {}", 
+                   ftsQueries.size(), n1qlFilters.size(), resourceType);
+        if (!n1qlFilters.isEmpty()) {
+            logger.info("🔍 SearchService: N1QL filters: {}", n1qlFilters);
+        }
         // Handle count-only queries
         if ("accurate".equals(totalMode) && count == 0) {
             return handleCountOnlyQuery(ftsQueries, resourceType, bucketName);
@@ -224,7 +234,7 @@ public class SearchService {
         
         // Check if this is a _revinclude search
         if (revInclude != null) {
-            return handleRevIncludeSearch(resourceType, ftsQueries, revInclude, count, 
+            return handleRevIncludeSearch(resourceType, ftsQueries, n1qlFilters, revInclude, count, 
                                         summaryMode, elements, totalMode, bucketName);
         }
         
@@ -247,7 +257,7 @@ public class SearchService {
         }
         
         // Execute regular search (non-paginated)
-        return executeRegularSearch(resourceType, ftsQueries, count, sortFields, 
+        return executeRegularSearch(resourceType, ftsQueries, n1qlFilters, count, sortFields, 
                                   summaryMode, elements, totalMode, bucketName);
     }
     
@@ -279,7 +289,7 @@ public class SearchService {
     /**
      * Build search queries from criteria parameters
      */
-    private List<SearchQuery> buildSearchQueries(String resourceType, Map<String, String> criteria) {
+    private SearchQueryResult buildSearchQueries(String resourceType, Map<String, String> criteria) {
         List<SearchQuery> ftsQueries = new ArrayList<>();
         List<String> filters = new ArrayList<>();
         
@@ -330,9 +340,17 @@ public class SearchService {
                     logger.debug("🔍 Added DATE query for {}: {}", paramName, dateQuery.export());
                     break;
                 case REFERENCE:
-                    String referenceClause = ReferenceSearchHelper.buildReferenceWhereCluse(fhirContext, resourceType, paramName, value, searchParam);
-                    filters.add(referenceClause);
-                    logger.debug("🔍 Added REFERENCE filter for {}: {}", paramName, referenceClause);
+                    // Convert REFERENCE parameters to FTS queries instead of N1QL filters
+                    SearchQuery referenceQuery = ReferenceSearchHelperFTS.buildReferenceFTSQuery(fhirContext, resourceType, paramName, value, searchParam);
+                    if (referenceQuery != null) {
+                        ftsQueries.add(referenceQuery);
+                        logger.debug("🔍 Added REFERENCE FTS query for {}: {}", paramName, referenceQuery.export());
+                    } else {
+                        // Fallback to N1QL filter if FTS conversion fails
+                        String referenceClause = ReferenceSearchHelper.buildReferenceWhereCluse(fhirContext, resourceType, paramName, value, searchParam);
+                        filters.add(referenceClause);
+                        logger.debug("🔍 Added REFERENCE filter for {}: {}", paramName, referenceClause);
+                    }
                     break;
                 case URI:
                 case COMPOSITE:
@@ -346,8 +364,8 @@ public class SearchService {
             }
         }
         
-        logger.debug("🔍 buildSearchQueries: Built {} FTS queries total", ftsQueries.size());
-        return ftsQueries;
+        logger.debug("🔍 buildSearchQueries: Built {} FTS queries and {} N1QL filters", ftsQueries.size(), filters.size());
+        return new SearchQueryResult(ftsQueries, filters);
     }
     
     /**
@@ -574,11 +592,11 @@ public class SearchService {
     /**
      * Execute regular search without _revinclude
      */
-    private Bundle executeRegularSearch(String resourceType, List<SearchQuery> ftsQueries, int count,
+    private Bundle executeRegularSearch(String resourceType, List<SearchQuery> ftsQueries, List<String> n1qlFilters, int count,
                                       List<SortField> sortFields, SummaryEnum summaryMode, 
                                       Set<String> elements, String totalMode, String bucketName) {
         
-        String query = queryBuilder.build(ftsQueries, resourceType, 0, count, sortFields);
+        String query = queryBuilder.build(ftsQueries, n1qlFilters, resourceType, 0, count, sortFields);
         
         // Get appropriate DAO for the resource type
         @SuppressWarnings("unchecked")
@@ -618,38 +636,44 @@ public class SearchService {
      * Handle _revinclude search with two-query strategy
      */
     private Bundle handleRevIncludeSearch(String primaryResourceType, List<SearchQuery> ftsQueries,
-                                        Include revInclude, int count,
+                                        List<String> n1qlFilters, Include revInclude, int count,
                                         SummaryEnum summaryMode, Set<String> elements,
                                         String totalMode, String bucketName) {
         
         logger.info("🔍 Handling _revinclude search: {} -> {}", 
                    primaryResourceType, revInclude.getValue());
         
-        // Step 1: Execute primary resource search to get IDs only
-        List<String> primaryResourceIds = executeIdOnlySearch(primaryResourceType, ftsQueries, count, bucketName);
+        // Step 1: Execute primary resource search to get full documents
+        List<Resource> primaryResources = executePrimaryResourceSearch(primaryResourceType, ftsQueries, n1qlFilters, count, bucketName);
         
-        if (primaryResourceIds.isEmpty()) {
+        if (primaryResources.isEmpty()) {
             logger.info("🔍 No primary resources found, returning empty bundle");
             return createEmptyBundle();
         }
         
-        // Step 2: Calculate how many revinclude resources we need for first page
-        int primaryResourceCount = primaryResourceIds.size();
+        // Step 2: Check if we have too many primary resources
+        int primaryResourceCount = primaryResources.size();
+        if (primaryResourceCount == count) {
+            logger.warn("🔍 Too many primary resources found ({}), asking user to refine search", primaryResourceCount);
+            throw new InvalidRequestException("Too many primary resources found. Please refine your search criteria to reduce the number of matching resources.");
+        }
+        
+        // Step 3: Extract full references from primary resources for revinclude search
+        List<String> primaryResourceReferences = extractResourceReferences(primaryResources);
+        
+        // Step 4: Calculate how many revinclude resources we need for first page
         int revIncludeCount = count - primaryResourceCount;
         
-        // Step 3: Search for revinclude resources (sorted by lastUpdated DESC)
+        // Step 5: Search for revinclude resources (sorted by lastUpdated DESC)
         List<Resource> revIncludeResources = executeRevIncludeResourceSearch(
             revInclude.getParamType(), revInclude.getParamName(), 
-            primaryResourceIds, revIncludeCount, 0, bucketName);
-        
-        // Step 4: Get full primary resources
-        List<Resource> primaryResources = getPrimaryResourcesByIds(primaryResourceType, primaryResourceIds, bucketName);
+            primaryResourceReferences, revIncludeCount, 0, bucketName);
         
         // Step 5: Create search state for pagination
         SearchState searchState = SearchState.builder()
             .searchType("revinclude")
             .primaryResourceType(primaryResourceType)
-            .primaryResourceIds(primaryResourceIds)
+            .primaryResourceIds(primaryResourceReferences)
             .revIncludeResourceType(revInclude.getParamType())
             .revIncludeSearchParam(revInclude.getParamName())
             .totalPrimaryResources(primaryResourceCount)
@@ -662,7 +686,7 @@ public class SearchService {
         // Get total count of revinclude resources for accurate pagination
         int totalRevIncludeCount = getTotalRevIncludeCount(
             revInclude.getParamType(), revInclude.getParamName(), 
-            primaryResourceIds, bucketName);
+            primaryResourceReferences, bucketName);
         searchState.setTotalRevIncludeResources(totalRevIncludeCount);
         
         String continuationToken = searchStateManager.storeSearchState(searchState);
@@ -1109,9 +1133,53 @@ public class SearchService {
     
     // Helper methods for _revinclude implementation
     
+    /**
+     * Execute primary resource search to get full documents
+     */
+    private List<Resource> executePrimaryResourceSearch(String resourceType, List<SearchQuery> ftsQueries, 
+                                                      List<String> n1qlFilters, int count, String bucketName) {
+        String query = queryBuilder.build(ftsQueries, n1qlFilters, resourceType, 0, count, null);
+        
+        logger.debug("🔍 Primary resource query: {}", query);
+        
+        try {
+            @SuppressWarnings("unchecked")
+            Class<? extends Resource> resourceClassType = (Class<? extends Resource>) fhirContext.getResourceDefinition(resourceType).getImplementingClass();
+            FhirResourceDaoImpl<?> dao = serviceFactory.getService(resourceClassType);
+            
+            @SuppressWarnings("unchecked")
+            List<Resource> results = (List<Resource>) dao.search(resourceType, query);
+            
+            logger.debug("🔍 Primary resource search returned {} resources for {}", results.size(), resourceType);
+            return results;
+            
+        } catch (Exception e) {
+            logger.error("Failed to execute primary resource search for {}: {}", resourceType, e.getMessage());
+            throw new InvalidRequestException("Failed to execute search: " + e.getMessage());
+        }
+    }
+    
+    /**
+     * Extract full resource references from a list of resources
+     */
+    private List<String> extractResourceReferences(List<Resource> resources) {
+        return resources.stream()
+                .map(resource -> resource.getClass().getSimpleName() + "/" + resource.getIdElement().getIdPart())
+                .collect(Collectors.toList());
+    }
+    
+    /**
+     * Extract resource IDs from a list of resources
+     */
+    private List<String> extractResourceIds(List<Resource> resources) {
+        return resources.stream()
+                .map(resource -> resource.getIdElement().getIdPart())
+                .collect(Collectors.toList());
+    }
+    
     private List<String> executeIdOnlySearch(String resourceType, List<SearchQuery> ftsQueries, 
-                                           int count, String bucketName) {
-        String query = queryBuilder.build(ftsQueries, resourceType, 0, count, null);
+                                           List<String> n1qlFilters, int count, String bucketName) {
+        String query = queryBuilder.build(ftsQueries, n1qlFilters, resourceType, 0, count, null);
         
         logger.debug("🔍 Original query: {}", query);
         
@@ -1153,11 +1221,9 @@ public class SearchService {
         
         // Create disjunction for all primary resource references
         List<SearchQuery> referenceQueries = new ArrayList<>();
-        for (String primaryId : primaryResourceIds) {
-            String referenceValue = searchParam.equals("subject") ? 
-                "Patient/" + primaryId : // Assuming primary resource is Patient for now
-                primaryId;
-            referenceQueries.add(SearchQuery.match(referenceValue).field(searchParam + ".reference"));
+        for (String primaryReference : primaryResourceIds) {
+            // primaryReference is already in format "CarePlan/1234", use it directly
+            referenceQueries.add(SearchQuery.match(primaryReference).field(searchParam + ".reference"));
         }
         
         if (!referenceQueries.isEmpty()) {
@@ -1168,8 +1234,8 @@ public class SearchService {
         List<SortField> sortFields = new ArrayList<>();
         sortFields.add(new SortField("meta.lastUpdated", true)); // true = descending
         
-        // Execute the query
-        String query = queryBuilder.build(revIncludeQueries, resourceType, offset, count, sortFields);
+        // Execute the query - get full documents, not just IDs
+        String query = queryBuilder.build(revIncludeQueries, new ArrayList<>(), resourceType, offset, count, sortFields);
         
         @SuppressWarnings("unchecked")
         Class<? extends Resource> resourceClassType = (Class<? extends Resource>) fhirContext.getResourceDefinition(resourceType).getImplementingClass();
@@ -1208,11 +1274,9 @@ public class SearchService {
         List<SearchQuery> revIncludeQueries = new ArrayList<>();
         
         List<SearchQuery> referenceQueries = new ArrayList<>();
-        for (String primaryId : primaryResourceIds) {
-            String referenceValue = searchParam.equals("subject") ? 
-                "Patient/" + primaryId :
-                primaryId;
-            referenceQueries.add(SearchQuery.match(referenceValue).field(searchParam + ".reference"));
+        for (String primaryReference : primaryResourceIds) {
+            // primaryReference is already in format "CarePlan/1234", use it directly
+            referenceQueries.add(SearchQuery.match(primaryReference).field(searchParam + ".reference"));
         }
         
         if (!referenceQueries.isEmpty()) {
@@ -1629,10 +1693,11 @@ public class SearchService {
         
         // Build FTS query for the chain parameter
         Map<String, String> chainCriteria = Map.of(searchParam, searchValue);
-        List<SearchQuery> chainQueries = buildSearchQueries(targetResourceType, chainCriteria);
+        SearchQueryResult chainQueryResult = buildSearchQueries(targetResourceType, chainCriteria);
+        List<SearchQuery> chainQueries = chainQueryResult.getFtsQueries();
         
         // Execute ID-only search to get referenced resource IDs (reuse existing method)
-        return executeIdOnlySearch(targetResourceType, chainQueries, 1000, bucketName); // Large limit for chain query
+        return executeIdOnlySearch(targetResourceType, chainQueries, new ArrayList<>(), 1000, bucketName); // Large limit for chain query
     }
     
     /**

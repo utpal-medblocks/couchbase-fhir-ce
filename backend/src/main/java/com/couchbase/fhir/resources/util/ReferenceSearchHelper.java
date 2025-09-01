@@ -9,6 +9,7 @@ public class ReferenceSearchHelper {
 
     public static String buildReferenceWhereCluse(FhirContext fhirContext , String resourceType, String paramName, String value  , RuntimeSearchParam searchParam){
         String path = searchParam.getPath();
+        System.out.println("🔍 ReferenceSearchHelper: paramName=" + paramName + ", HAPI path=" + path + ", value=" + value);
         String jsonPath = toCouchbasePath(path, resourceType);
 
         if (!value.contains("/")) {
