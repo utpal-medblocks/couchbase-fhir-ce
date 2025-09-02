@@ -21,7 +21,7 @@ public class Ftsn1qlQueryBuilder {
     @Autowired
     private CollectionRoutingService collectionRoutingService;
 
-    public String build(
+    public String buildIdOnly(
             List<SearchQuery> mustQueries,
             String resourceType,
             int from,
@@ -198,7 +198,7 @@ public class Ftsn1qlQueryBuilder {
             int from,
             int size
     ) {
-        return build(mustQueries, resourceType, from, size, new ArrayList<>());
+        return buildIdOnly(mustQueries, resourceType, from, size, new ArrayList<>());
     }
     
     /**

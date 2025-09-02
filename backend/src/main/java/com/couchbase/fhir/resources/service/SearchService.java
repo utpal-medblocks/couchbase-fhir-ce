@@ -89,12 +89,17 @@ public class SearchService {
         }
         
         // Build search queries using the same logic as regular search
-        SearchQueryResult searchQueryResult = buildSearchQueries(resourceType, criteria);
+        Map<String, List<String>> criteriaList = criteria.entrySet().stream()
+            .collect(Collectors.toMap(
+                Map.Entry::getKey,
+                e -> List.of(e.getValue())
+            ));
+        SearchQueryResult searchQueryResult = buildSearchQueries(resourceType, criteriaList);
         List<SearchQuery> ftsQueries = searchQueryResult.getFtsQueries();
         
         // Execute lightweight search with LIMIT 2
         try {
-            String query = queryBuilder.build(ftsQueries, resourceType, 0, 2, null);  // LIMIT 2
+            String query = queryBuilder.buildIdOnly(ftsQueries, resourceType, 0, 2, null);  // LIMIT 2
             
             logger.debug("🔍 Resolve query: {}", query);
             
@@ -217,8 +222,8 @@ public class SearchService {
             searchParams.remove(chainParam.getOriginalParameter());
         }
         
-        // Build search queries
-        SearchQueryResult searchQueryResult = buildSearchQueries(resourceType, searchParams);
+        // Build search queries - use allParams to handle multiple values for the same parameter
+        SearchQueryResult searchQueryResult = buildSearchQueries(resourceType, allParams);
         List<SearchQuery> ftsQueries = searchQueryResult.getFtsQueries();
         List<String> n1qlFilters = searchQueryResult.getN1qlFilters();
         
@@ -289,13 +294,13 @@ public class SearchService {
     /**
      * Build search queries from criteria parameters
      */
-    private SearchQueryResult buildSearchQueries(String resourceType, Map<String, String> criteria) {
+    private SearchQueryResult buildSearchQueries(String resourceType, Map<String, List<String>> criteria) {
         List<SearchQuery> ftsQueries = new ArrayList<>();
         List<String> filters = new ArrayList<>();
         
         logger.debug("🔍 buildSearchQueries: Processing {} criteria for {}: {}", criteria.size(), resourceType, criteria);
         
-        for (Map.Entry<String, String> entry : criteria.entrySet()) {
+        for (Map.Entry<String, List<String>> entry : criteria.entrySet()) {
             String rawParamName = entry.getKey();
             String paramName = rawParamName;
             String modifier = null;
@@ -307,7 +312,7 @@ public class SearchService {
             }
             
             // paramName is already resolved by HAPI FHIR's getSearchParam() method below
-            String value = entry.getValue();
+            List<String> values = entry.getValue();
             
             if (paramName.equalsIgnoreCase("_revinclude")) {
                 // Skip _revinclude for now in resolveOne mode
@@ -321,35 +326,32 @@ public class SearchService {
             if (searchParam == null) continue;
             
             // Build appropriate query based on parameter type
-            logger.debug("🔍 Processing parameter: {} = {} (type: {})", paramName, value, searchParam.getParamType());
+            logger.debug("🔍 Processing parameter: {} = {} (type: {})", paramName, values, searchParam.getParamType());
             
             switch (searchParam.getParamType()) {
                 case TOKEN:
-                    SearchQuery tokenQuery = TokenSearchHelperFTS.buildTokenFTSQuery(fhirContext, resourceType, paramName, value);
+                    SearchQuery tokenQuery = TokenSearchHelper.buildTokenFTSQuery(fhirContext, resourceType, paramName, values.get(0));
                     ftsQueries.add(tokenQuery);
                     logger.debug("🔍 Added TOKEN query for {}: {}", paramName, tokenQuery.export());
                     break;
                 case STRING:
-                    SearchQuery stringQuery = StringSearchHelperFTS.buildStringFTSQuery(fhirContext, resourceType, paramName, value, searchParam, modifier);
+                    SearchQuery stringQuery = StringSearchHelper.buildStringFTSQuery(fhirContext, resourceType, paramName, values.get(0), searchParam, modifier);
                     ftsQueries.add(stringQuery);
                     logger.debug("🔍 Added STRING query for {}: {}", paramName, stringQuery.export());
                     break;
                 case DATE:
-                    SearchQuery dateQuery = DateSearchHelperFTS.buildDateFTS(fhirContext, resourceType, paramName, value);
+                    SearchQuery dateQuery = DateSearchHelper.buildDateFTS(fhirContext, resourceType, paramName, values);
                     ftsQueries.add(dateQuery);
                     logger.debug("🔍 Added DATE query for {}: {}", paramName, dateQuery.export());
                     break;
                 case REFERENCE:
-                    // Convert REFERENCE parameters to FTS queries instead of N1QL filters
-                    SearchQuery referenceQuery = ReferenceSearchHelperFTS.buildReferenceFTSQuery(fhirContext, resourceType, paramName, value, searchParam);
+                    // Convert REFERENCE parameters to FTS queries
+                    SearchQuery referenceQuery = ReferenceSearchHelper.buildReferenceFTSQuery(fhirContext, resourceType, paramName, values.get(0), searchParam);
                     if (referenceQuery != null) {
                         ftsQueries.add(referenceQuery);
                         logger.debug("🔍 Added REFERENCE FTS query for {}: {}", paramName, referenceQuery.export());
                     } else {
-                        // Fallback to N1QL filter if FTS conversion fails
-                        String referenceClause = ReferenceSearchHelper.buildReferenceWhereCluse(fhirContext, resourceType, paramName, value, searchParam);
-                        filters.add(referenceClause);
-                        logger.debug("🔍 Added REFERENCE filter for {}: {}", paramName, referenceClause);
+                        logger.warn("🔍 Failed to build FTS query for REFERENCE parameter: {}", paramName);
                     }
                     break;
                 case URI:
@@ -381,7 +383,7 @@ public class SearchService {
         }
         
         // Use FTS query but project only ID
-        String fullQuery = queryBuilder.build(ftsQueries, resourceType, 0, 2);
+        String fullQuery = queryBuilder.buildIdOnly(ftsQueries, resourceType, 0, 2, null);
         
         // Replace SELECT clause to get only META().id
         return fullQuery.replaceFirst(
@@ -763,7 +765,7 @@ public class SearchService {
         logger.info("🔍 Total primary resources available: {}", totalPrimaryResourceCount);
         
         // Step 2: Execute primary resource search to get full resources
-        String query = queryBuilder.build(ftsQueries, primaryResourceType, 0, count, null);
+        String query = queryBuilder.build(ftsQueries, new ArrayList<>(), primaryResourceType, 0, count, null);
         
         @SuppressWarnings("unchecked")
         Class<? extends Resource> primaryResourceClassType = (Class<? extends Resource>) fhirContext.getResourceDefinition(primaryResourceType).getImplementingClass();
@@ -1026,6 +1028,7 @@ public class SearchService {
         
         // Execute query using cached FTS queries and sort fields
         String query = queryBuilder.build(searchState.getCachedFtsQueries(), 
+                                        new ArrayList<>(), 
                                         searchState.getPrimaryResourceType(), 
                                         offset, count, 
                                         searchState.getSortFields());
@@ -1073,6 +1076,7 @@ public class SearchService {
         
         // Execute query for next batch of primary resources using cached FTS queries
         String query = queryBuilder.build(searchState.getCachedFtsQueries(), 
+                                        new ArrayList<>(), 
                                         searchState.getPrimaryResourceType(), 
                                         offset, count, 
                                         searchState.getSortFields());
@@ -1377,7 +1381,7 @@ public class SearchService {
         logger.info("🔍 Handling paginated regular search for {} with count {}", resourceType, count);
         
         // Execute first page
-        String query = queryBuilder.build(ftsQueries, resourceType, 0, count, sortFields);
+        String query = queryBuilder.build(ftsQueries, new ArrayList<>(), resourceType, 0, count, sortFields);
         
         @SuppressWarnings("unchecked")
         Class<? extends Resource> resourceClassType = (Class<? extends Resource>) fhirContext.getResourceDefinition(resourceType).getImplementingClass();
@@ -1692,7 +1696,7 @@ public class SearchService {
         logger.info("🔗 Executing chain query: {} where {}={}", targetResourceType, searchParam, searchValue);
         
         // Build FTS query for the chain parameter
-        Map<String, String> chainCriteria = Map.of(searchParam, searchValue);
+        Map<String, List<String>> chainCriteria = Map.of(searchParam, List.of(searchValue));
         SearchQueryResult chainQueryResult = buildSearchQueries(targetResourceType, chainCriteria);
         List<SearchQuery> chainQueries = chainQueryResult.getFtsQueries();
         
@@ -1742,7 +1746,7 @@ public class SearchService {
         }
         
         // Execute the query
-        String query = queryBuilder.build(primaryQueries, primaryResourceType, offset, count, sortFields);
+        String query = queryBuilder.build(primaryQueries, new ArrayList<>(), primaryResourceType, offset, count, sortFields);
         
         @SuppressWarnings("unchecked")
         Class<? extends Resource> resourceClassType = (Class<? extends Resource>) fhirContext.getResourceDefinition(primaryResourceType).getImplementingClass();
