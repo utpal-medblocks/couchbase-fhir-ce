@@ -392,9 +392,20 @@ public class SearchService {
                     logger.debug("🔍 Added STRING query for {}: {}", paramName, stringQuery.export());
                     break;
                 case DATE:
-                    SearchQuery dateQuery = DateSearchHelper.buildDateFTS(fhirContext, resourceType, paramName, values);
-                    ftsQueries.add(dateQuery);
-                    logger.debug("🔍 Added DATE query for {}: {}", paramName, dateQuery.export());
+                    List<SearchQuery> dateQueries = DateSearchHelper.buildDateFTSQueries(fhirContext, resourceType, paramName, values.get(0));
+                    if (dateQueries.size() == 1) {
+                        // Single query - add directly
+                        ftsQueries.add(dateQueries.get(0));
+                        logger.info("🔍 Added single DATE query for {}: {}", paramName, dateQueries.get(0).export());
+                    } else if (dateQueries.size() > 1) {
+                        // Multiple queries - wrap in disjunction (OR)
+                        SearchQuery disjunctiveQuery = SearchQuery.disjuncts(dateQueries.toArray(new SearchQuery[0]));
+                        ftsQueries.add(disjunctiveQuery);
+                        logger.info("🔍 Added disjunctive DATE query for {} with {} alternatives:", paramName, dateQueries.size());
+                        for (SearchQuery query : dateQueries) {
+                            logger.info("🔍   - {}", query.export());
+                        }
+                    }
                     break;
                 case REFERENCE:
                     // Convert REFERENCE parameters to FTS queries

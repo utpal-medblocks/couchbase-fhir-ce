@@ -7,10 +7,121 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.List;
+import java.util.ArrayList;
 
 public class DateSearchHelper {
 
     private static final Logger logger = LoggerFactory.getLogger(DateSearchHelper.class);
+
+    /**
+     * Build date queries - returns multiple queries for union expressions (like onsetDateTime | onsetPeriod)
+     */
+    public static List<SearchQuery> buildDateFTSQueries(FhirContext fhirContext, String resourceType, String paramName, String searchValue) {
+        if (searchValue == null || searchValue.isEmpty()) {
+            return new ArrayList<>();
+        }
+
+        String start = null;
+        String end = null;
+        boolean inclusiveStart = true;
+        boolean inclusiveEnd = true;
+
+        if (searchValue.startsWith("gt")) {
+            start = searchValue.substring(2);
+            inclusiveStart = false;
+        } else if (searchValue.startsWith("ge")) {
+            start = searchValue.substring(2);
+        } else if (searchValue.startsWith("lt")) {
+            end = searchValue.substring(2);
+            inclusiveEnd = false;
+        } else if (searchValue.startsWith("le")) {
+            end = searchValue.substring(2);
+        } else {
+            // For exact dates, set both start and end
+            start = searchValue;
+            end = searchValue;
+        }
+
+        // Get the HAPI search parameter to check for union expressions
+        List<SearchQuery> queries = new ArrayList<>();
+        try {
+            ca.uhn.fhir.context.RuntimeSearchParam searchParam = fhirContext.getResourceDefinition(resourceType).getSearchParam(paramName);
+            if (searchParam != null && searchParam.getPath() != null) {
+                FHIRPathParser.ParsedExpression parsed = FHIRPathParser.parse(searchParam.getPath());
+                
+                if (parsed.isUnion() && parsed.getFieldPaths().size() > 1) {
+                    logger.info("🔍 DateSearchHelper: Building multiple queries for union with {} alternatives", parsed.getFieldPaths().size());
+                    
+                    // Create a query for each alternative in the union
+                    for (String fieldPath : parsed.getFieldPaths()) {
+                        SearchQuery query = buildDateQueryForField(fieldPath, start, end, inclusiveStart, inclusiveEnd);
+                        if (query != null) {
+                            queries.add(query);
+                            logger.info("🔍 DateSearchHelper: Added query for field: {}", fieldPath);
+                        }
+                    }
+                } else {
+                    // Single field - use primary field path
+                    String fieldPath = parsed.getPrimaryFieldPath();
+                    if (fieldPath == null) {
+                        fieldPath = paramName; // Fallback
+                    }
+                    SearchQuery query = buildDateQueryForField(fieldPath, start, end, inclusiveStart, inclusiveEnd);
+                    if (query != null) {
+                        queries.add(query);
+                    }
+                }
+            } else {
+                // Fallback - create single query with param name
+                SearchQuery query = buildDateQueryForField(paramName, start, end, inclusiveStart, inclusiveEnd);
+                if (query != null) {
+                    queries.add(query);
+                }
+            }
+        } catch (Exception e) {
+            logger.warn("🔍 DateSearchHelper: Failed to parse union expression, using single query: {}", e.getMessage());
+            SearchQuery query = buildDateQueryForField(paramName, start, end, inclusiveStart, inclusiveEnd);
+            if (query != null) {
+                queries.add(query);
+            }
+        }
+
+        return queries;
+    }
+
+    /**
+     * Build a single date query for a specific field
+     */
+    private static SearchQuery buildDateQueryForField(String fieldPath, String start, String end, boolean inclusiveStart, boolean inclusiveEnd) {
+        if (fieldPath == null || fieldPath.isEmpty()) {
+            return null;
+        }
+
+        String dateField = fieldPath;
+        
+        // Handle Period fields by adding .start or .end
+        if (fieldPath.endsWith("Period")) {
+            if (start != null) {
+                dateField = fieldPath + ".start";
+                logger.info("🔍 DateSearchHelper: Period field detected, using start: {}", dateField);
+            } else if (end != null) {
+                dateField = fieldPath + ".end";
+                logger.info("🔍 DateSearchHelper: Period field detected, using end: {}", dateField);
+            } else {
+                // For exact dates on Period fields, use start
+                dateField = fieldPath + ".start";
+                logger.info("🔍 DateSearchHelper: Period field detected, using start for exact date: {}", dateField);
+            }
+        } else {
+            logger.info("🔍 DateSearchHelper: Using DateTime field as-is: {}", dateField);
+        }
+
+        DateRangeQuery query = SearchQuery.dateRange().field(dateField);
+        if (start != null) query = query.start(start, inclusiveStart);
+        if (end != null) query = query.end(end, inclusiveEnd);
+
+        return query;
+    }
 
     public static SearchQuery buildDateFTS(FhirContext fhirContext, String resourceType, String paramName, String searchValue) {
         if (searchValue == null || searchValue.isEmpty()) {
@@ -46,10 +157,24 @@ public class DateSearchHelper {
                 String path = searchParam.getPath();
                 logger.info("🔍 DateSearchHelper: paramName={}, HAPI path={}", paramName, path);
                 
-                // Extract the field name from the path (remove resourceType prefix)
-                if (path != null && path.startsWith(resourceType + ".")) {
-                    actualFieldName = path.substring(resourceType.length() + 1);
-                    logger.info("🔍 DateSearchHelper: Using field name: {}", actualFieldName);
+                // Use FHIRPathParser to handle complex expressions
+                if (path != null) {
+                    FHIRPathParser.ParsedExpression parsed = FHIRPathParser.parse(path);
+                    actualFieldName = parsed.getPrimaryFieldPath();
+                    
+                    if (actualFieldName == null) {
+                        logger.warn("🔍 DateSearchHelper: Could not parse field path from: {}", path);
+                        // Fallback to simple extraction
+                        if (path.startsWith(resourceType + ".")) {
+                            actualFieldName = path.substring(resourceType.length() + 1);
+                        } else {
+                            actualFieldName = paramName;
+                        }
+                    }
+                    
+                    logger.info("🔍 DateSearchHelper: Parsed field name: {}", actualFieldName);
+                } else {
+                    logger.warn("🔍 DateSearchHelper: HAPI path is null for paramName={}", paramName);
                 }
             }
         } catch (Exception e) {
@@ -64,11 +189,44 @@ public class DateSearchHelper {
         logger.info("🔍 DateSearchHelper: paramName={}, fhirPath={}, start={}, end={}", 
                    paramName, actualFieldName, start, end);
 
+        // Use FHIRPathParser to get parsed expression for proper field handling
+        FHIRPathParser.ParsedExpression parsed = null;
+        try {
+            ca.uhn.fhir.context.RuntimeSearchParam searchParam = fhirContext.getResourceDefinition(resourceType).getSearchParam(paramName);
+            if (searchParam != null && searchParam.getPath() != null) {
+                parsed = FHIRPathParser.parse(searchParam.getPath());
+            }
+        } catch (Exception e) {
+            logger.debug("🔍 DateSearchHelper: Could not re-parse expression: {}", e.getMessage());
+        }
+        
+        // Handle union expressions (multiple field paths)
+        if (parsed != null && parsed.isUnion() && parsed.getFieldPaths().size() > 1) {
+            logger.info("🔍 DateSearchHelper: Union expression detected with {} alternatives", parsed.getFieldPaths().size());
+            
+            // For union expressions, we need to create a disjunctive query
+            // For now, use the first DateTime field if available, otherwise the first field
+            String selectedField = actualFieldName;
+            for (String fieldPath : parsed.getFieldPaths()) {
+                if (fieldPath.endsWith("DateTime")) {
+                    selectedField = fieldPath;
+                    logger.info("🔍 DateSearchHelper: Selected DateTime field from union: {}", selectedField);
+                    break;
+                }
+            }
+            
+            if (selectedField.equals(actualFieldName) && !parsed.getFieldPaths().isEmpty()) {
+                selectedField = parsed.getFieldPaths().get(0);
+                logger.info("🔍 DateSearchHelper: Selected first field from union: {}", selectedField);
+            }
+            
+            actualFieldName = selectedField;
+        }
+        
         // Check if this is a Period field and adjust field path accordingly
-        boolean isPeriodField = isPeriodType(fhirContext, resourceType, actualFieldName);
         String dateField = actualFieldName;
-
-        if (isPeriodField) {
+        
+        if (actualFieldName.endsWith("Period")) {
             if (start != null) {
                 dateField = actualFieldName + ".start";
                 logger.info("🔍 DateSearchHelper: Period field detected, using start: {}", dateField);
@@ -81,7 +239,7 @@ public class DateSearchHelper {
                 logger.info("🔍 DateSearchHelper: Period field detected, using start for exact date: {}", dateField);
             }
         } else {
-            logger.info("🔍 DateSearchHelper: Non-Period field, using as-is: {}", dateField);
+            logger.info("🔍 DateSearchHelper: Using field as-is: {}", dateField);
         }
 
         DateRangeQuery query = SearchQuery.dateRange().field(dateField);
@@ -132,10 +290,24 @@ public class DateSearchHelper {
                 String path = searchParam.getPath();
                 logger.info("🔍 DateSearchHelper: paramName={}, HAPI path={}", paramName, path);
                 
-                // Extract the field name from the path (remove resourceType prefix)
-                if (path != null && path.startsWith(resourceType + ".")) {
-                    actualFieldName = path.substring(resourceType.length() + 1);
-                    logger.info("🔍 DateSearchHelper: Using field name: {}", actualFieldName);
+                // Use FHIRPathParser to handle complex expressions
+                if (path != null) {
+                    FHIRPathParser.ParsedExpression parsed = FHIRPathParser.parse(path);
+                    actualFieldName = parsed.getPrimaryFieldPath();
+                    
+                    if (actualFieldName == null) {
+                        logger.warn("🔍 DateSearchHelper: Could not parse field path from: {}", path);
+                        // Fallback to simple extraction
+                        if (path.startsWith(resourceType + ".")) {
+                            actualFieldName = path.substring(resourceType.length() + 1);
+                        } else {
+                            actualFieldName = paramName;
+                        }
+                    }
+                    
+                    logger.info("🔍 DateSearchHelper: Parsed field name: {}", actualFieldName);
+                } else {
+                    logger.warn("🔍 DateSearchHelper: HAPI path is null for paramName={}", paramName);
                 }
             }
         } catch (Exception e) {
@@ -150,11 +322,43 @@ public class DateSearchHelper {
         logger.info("🔍 DateSearchHelper: paramName={}, fhirPath={}, start={}, end={}", 
                    paramName, actualFieldName, start, end);
 
-        // Check if this is a Period field and adjust field path accordingly
-        boolean isPeriodField = isPeriodType(fhirContext, resourceType, actualFieldName);
-        String dateField = actualFieldName;
+        // Use FHIRPathParser to get parsed expression for proper field handling
+        FHIRPathParser.ParsedExpression parsed = null;
+        try {
+            ca.uhn.fhir.context.RuntimeSearchParam searchParam = fhirContext.getResourceDefinition(resourceType).getSearchParam(paramName);
+            if (searchParam != null && searchParam.getPath() != null) {
+                parsed = FHIRPathParser.parse(searchParam.getPath());
+            }
+        } catch (Exception e) {
+            logger.debug("🔍 DateSearchHelper: Could not re-parse expression: {}", e.getMessage());
+        }
+        
+        // Handle union expressions (multiple field paths)
+        if (parsed != null && parsed.isUnion() && parsed.getFieldPaths().size() > 1) {
+            logger.info("🔍 DateSearchHelper: Union expression detected with {} alternatives", parsed.getFieldPaths().size());
+            
+            // For union expressions, use the first DateTime field if available, otherwise the first field
+            String selectedField = actualFieldName;
+            for (String fieldPath : parsed.getFieldPaths()) {
+                if (fieldPath.endsWith("DateTime")) {
+                    selectedField = fieldPath;
+                    logger.info("🔍 DateSearchHelper: Selected DateTime field from union: {}", selectedField);
+                    break;
+                }
+            }
+            
+            if (selectedField.equals(actualFieldName) && !parsed.getFieldPaths().isEmpty()) {
+                selectedField = parsed.getFieldPaths().get(0);
+                logger.info("🔍 DateSearchHelper: Selected first field from union: {}", selectedField);
+            }
+            
+            actualFieldName = selectedField;
+        }
 
-        if (isPeriodField) {
+        // Check if this is a Period field and adjust field path accordingly
+        String dateField = actualFieldName;
+        
+        if (actualFieldName.endsWith("Period")) {
             if (start != null) {
                 dateField = actualFieldName + ".start";
                 logger.info("🔍 DateSearchHelper: Period field detected, using start: {}", dateField);
@@ -167,7 +371,7 @@ public class DateSearchHelper {
                 logger.info("🔍 DateSearchHelper: Period field detected, using start for exact date: {}", dateField);
             }
         } else {
-            logger.info("🔍 DateSearchHelper: Non-Period field, using as-is: {}", dateField);
+            logger.info("🔍 DateSearchHelper: Using field as-is: {}", dateField);
         }
 
         DateRangeQuery query = SearchQuery.dateRange().field(dateField);

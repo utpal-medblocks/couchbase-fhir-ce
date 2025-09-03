@@ -28,19 +28,30 @@ public class ReferenceSearchHelper {
                 String path = searchParam.getPath();
                 logger.info("🔍 ReferenceSearchHelper: paramName={}, HAPI path={}", paramName, path);
                 
-// Extract the field name from the path (remove resourceType prefix)
-if (path != null && path.startsWith(resourceType + ".")) {
-    actualFieldName = path.substring(resourceType.length() + 1);
-    
-    // Remove .where(...) clause if present (e.g., "subject.where(resolve() is Patient)" -> "subject")
-    int whereIndex = actualFieldName.indexOf(".where(");
-    if (whereIndex != -1) {
-        actualFieldName = actualFieldName.substring(0, whereIndex);
-        logger.info("🔍 ReferenceSearchHelper: Stripped .where() clause, using field name: {}", actualFieldName);
-    } else {
-        logger.info("🔍 ReferenceSearchHelper: Using field name: {}", actualFieldName);
-    }
-}            }
+                // Use FHIRPathParser to handle complex expressions
+                if (path != null) {
+                    FHIRPathParser.ParsedExpression parsed = FHIRPathParser.parse(path);
+                    actualFieldName = parsed.getPrimaryFieldPath();
+                    
+                    if (actualFieldName == null) {
+                        logger.warn("🔍 ReferenceSearchHelper: Could not parse field path from: {}", path);
+                        // Fallback to manual parsing
+                        if (path.startsWith(resourceType + ".")) {
+                            actualFieldName = path.substring(resourceType.length() + 1);
+                            int whereIndex = actualFieldName.indexOf(".where(");
+                            if (whereIndex != -1) {
+                                actualFieldName = actualFieldName.substring(0, whereIndex);
+                            }
+                        } else {
+                            actualFieldName = paramName;
+                        }
+                    }
+                    
+                    logger.info("🔍 ReferenceSearchHelper: Parsed field name: {}", actualFieldName);
+                } else {
+                    logger.warn("🔍 ReferenceSearchHelper: HAPI path is null for paramName={}", paramName);
+                }
+            }
         } catch (Exception e) {
             logger.warn("🔍 ReferenceSearchHelper: Failed to get HAPI path for paramName={}, using paramName as field: {}", paramName, e.getMessage());
         }
