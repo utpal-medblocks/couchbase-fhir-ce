@@ -1,6 +1,5 @@
 package com.couchbase.fhir.resources.search.validation;
 
-import org.hl7.fhir.r4.model.OperationOutcome;
 import org.springframework.stereotype.Component;
 import ca.uhn.fhir.context.FhirContext;
 import ca.uhn.fhir.context.RuntimeResourceDefinition;
@@ -9,12 +8,14 @@ import ca.uhn.fhir.rest.api.RestSearchParameterTypeEnum;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import com.couchbase.common.config.FhirConfig;
 
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.time.Instant;
 import java.util.*;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 /**
  * FHIR Search Parameter Preprocessor and Validator for CE
@@ -35,6 +36,9 @@ public class FhirSearchParameterPreprocessor {
     
     @Autowired
     private FhirContext fhirContext;
+    
+    @Autowired
+    private FhirConfig fhirConfig;
     
     // FHIR prefix pattern for validation
     private static final Pattern PREFIX_PATTERN = Pattern.compile("^(eq|ne|gt|lt|ge|le|sa|eb|ap)(.+)");
@@ -71,6 +75,7 @@ public class FhirSearchParameterPreprocessor {
     
     /**
      * Validate that parameters exist for the resource type
+     * Now checks US Core whitelist in addition to HAPI's built-in parameters
      */
     private void validateParameterExistence(String resourceType, Map<String, List<String>> allParams) {
         RuntimeResourceDefinition resourceDef = fhirContext.getResourceDefinition(resourceType);
@@ -85,8 +90,12 @@ public class FhirSearchParameterPreprocessor {
             if (paramName.contains(".")) {
                 // This is a chained parameter like "patient.name" - validate the chain field
                 String chainField = paramName.substring(0, paramName.indexOf("."));
+                
+                // Check both HAPI registry and US Core whitelist for chain field
                 RuntimeSearchParam chainParam = resourceDef.getSearchParam(chainField);
-                if (chainParam == null) {
+                boolean isUSCoreParam = fhirConfig.isValidUSCoreSearchParam(resourceType, chainField);
+                
+                if (chainParam == null && !isUSCoreParam) {
                     logger.warn("⚠️ Unknown chain field '{}' for resource type {}", chainField, resourceType);
                     throw new FhirSearchValidationException(
                         "Unknown chain field: " + chainField + " for resource type " + resourceType, 
@@ -94,8 +103,9 @@ public class FhirSearchParameterPreprocessor {
                         null
                     );
                 }
-                // Validate that the chain field is a reference type
-                if (!chainParam.getParamType().name().equals("REFERENCE")) {
+                
+                // If we have HAPI param, validate it's a reference type
+                if (chainParam != null && !chainParam.getParamType().name().equals("REFERENCE")) {
                     logger.warn("⚠️ Chain field '{}' is not a reference parameter for resource type {}", chainField, resourceType);
                     throw new FhirSearchValidationException(
                         "Chain field " + chainField + " is not a reference parameter for resource type " + resourceType, 
@@ -103,27 +113,67 @@ public class FhirSearchParameterPreprocessor {
                         null
                     );
                 }
-                logger.debug("✅ Validated chain parameter: {}", paramName);
+                
+                // If it's a US Core param, check if it's a reference type
+                if (isUSCoreParam && chainParam == null) {
+                    org.hl7.fhir.r4.model.SearchParameter usCoreParam = fhirConfig.getUSCoreSearchParamDetails(resourceType, chainField);
+                    if (usCoreParam != null && usCoreParam.getType() != org.hl7.fhir.r4.model.Enumerations.SearchParamType.REFERENCE) {
+                        logger.warn("⚠️ US Core chain field '{}' is not a reference parameter for resource type {}", chainField, resourceType);
+                        throw new FhirSearchValidationException(
+                            "Chain field " + chainField + " is not a reference parameter for resource type " + resourceType, 
+                            chainField, 
+                            null
+                        );
+                    }
+                }
+                
+                logger.debug("✅ Validated chain parameter: {} ({})", paramName, 
+                           chainParam != null ? "HAPI" : "US Core");
                 continue; // Skip normal validation for chain parameters
             }
             
             // Extract base parameter name (remove modifiers like :exact)
             String baseParamName = paramName.contains(":") ? paramName.substring(0, paramName.indexOf(":")) : paramName;
             
+            // Check both HAPI registry and US Core whitelist
             RuntimeSearchParam searchParam = resourceDef.getSearchParam(baseParamName);
-            if (searchParam == null) {
-                logger.warn("⚠️ Unknown search parameter '{}' for resource type {}", baseParamName, resourceType);
+            boolean isUSCoreParam = fhirConfig.isValidUSCoreSearchParam(resourceType, baseParamName);
+            
+            if (searchParam == null && !isUSCoreParam) {
+                // Debug logging: show what parameters ARE available
+                Set<String> availableUSCoreParams = fhirConfig.getUSCoreSearchParams(resourceType);
+                logger.warn("⚠️ Unknown search parameter '{}' for resource type {} (not in HAPI registry or US Core whitelist)", 
+                           baseParamName, resourceType);
+                logger.info("🔍 Available US Core parameters for {}: {}", resourceType, availableUSCoreParams);
+                
+                // Also log HAPI parameters for comparison
+                Set<String> hapiParams = resourceDef.getSearchParams().stream()
+                    .map(param -> param.getName())
+                    .collect(Collectors.toSet());
+                logger.info("🔍 Available HAPI parameters for {}: {}", resourceType, hapiParams);
+                
                 throw new FhirSearchValidationException(
-                    "Unknown parameter: " + baseParamName + " for resource type " + resourceType, 
+                    "Unknown parameter: " + baseParamName + " for resource type " + resourceType + 
+                    ". Parameter must be either a standard FHIR parameter or a US Core parameter.", 
                     baseParamName, 
                     null
                 );
+            }
+            
+            // Log which source validated the parameter
+            if (searchParam != null && isUSCoreParam) {
+                logger.debug("✅ Parameter '{}' found in both HAPI registry and US Core whitelist", baseParamName);
+            } else if (searchParam != null) {
+                logger.debug("✅ Parameter '{}' found in HAPI registry", baseParamName);
+            } else {
+                logger.debug("✅ Parameter '{}' found in US Core whitelist", baseParamName);
             }
         }
     }
     
     /**
      * Validate parameter value formats
+     * Now handles both HAPI registry and US Core parameters
      */
     private void validateParameterFormats(String resourceType, Map<String, List<String>> allParams) {
         RuntimeResourceDefinition resourceDef = fhirContext.getResourceDefinition(resourceType);
@@ -144,10 +194,19 @@ public class FhirSearchParameterPreprocessor {
             // Extract base parameter name (remove modifiers)
             String baseParamName = paramName.contains(":") ? paramName.substring(0, paramName.indexOf(":")) : paramName;
             
+            // Try HAPI registry first
             RuntimeSearchParam searchParam = resourceDef.getSearchParam(baseParamName);
             if (searchParam != null) {
                 for (String value : values) {
                     validateParameterFormat(searchParam, value, paramName);
+                }
+            } else {
+                // Check if it's a US Core parameter and validate using US Core details
+                org.hl7.fhir.r4.model.SearchParameter usCoreParam = fhirConfig.getUSCoreSearchParamDetails(resourceType, baseParamName);
+                if (usCoreParam != null) {
+                    for (String value : values) {
+                        validateUSCoreParameterFormat(usCoreParam, value, paramName);
+                    }
                 }
             }
         }
@@ -179,6 +238,42 @@ public class FhirSearchParameterPreprocessor {
     }
     
     /**
+     * Validate US Core parameter format
+     */
+    private void validateUSCoreParameterFormat(org.hl7.fhir.r4.model.SearchParameter usCoreParam, String value, String paramName) {
+        org.hl7.fhir.r4.model.Enumerations.SearchParamType paramType = usCoreParam.getType();
+        
+        try {
+            switch (paramType) {
+                case DATE:
+                    validateDateFormat(value, paramName);
+                    break;
+                case NUMBER:
+                    validateNumberFormat(value, paramName);
+                    break;
+                case TOKEN:
+                    validateTokenFormat(value, paramName);
+                    break;
+                case REFERENCE:
+                    validateReferenceFormat(value, paramName);
+                    break;
+                case STRING:
+                    validateStringFormat(value, paramName);
+                    break;
+                default:
+                    // Other types (URI, QUANTITY, COMPOSITE, SPECIAL) are more flexible
+                    break;
+            }
+        } catch (Exception e) {
+            throw new FhirSearchValidationException(
+                "Invalid format for US Core parameter " + paramName + ": " + e.getMessage(), 
+                paramName, 
+                null
+            );
+        }
+    }
+
+    /**
      * Validate individual parameter format
      */
     private void validateParameterFormat(RuntimeSearchParam searchParam, String value, String paramName) {
@@ -201,7 +296,9 @@ public class FhirSearchParameterPreprocessor {
                 case STRING:
                     validateStringFormat(value, paramName);
                     break;
-                // Other types are more flexible
+                default:
+                    // Other types (URI, QUANTITY, COMPOSITE, SPECIAL, HAS) are more flexible
+                    break;
             }
         } catch (Exception e) {
             throw new FhirSearchValidationException(
@@ -236,7 +333,9 @@ public class FhirSearchParameterPreprocessor {
             case STRING:
                 // STRING parameters with multiple values are usually OR logic (valid)
                 break;
-            // Other types typically allow multiple values as OR logic
+            default:
+                // Other types (URI, QUANTITY, COMPOSITE, SPECIAL, HAS) typically allow multiple values as OR logic
+                break;
         }
     }
     

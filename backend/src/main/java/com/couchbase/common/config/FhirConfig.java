@@ -1,18 +1,18 @@
 package com.couchbase.common.config;
 
 import ca.uhn.fhir.context.FhirContext;
-import ca.uhn.fhir.context.RuntimeSearchParam;
-import ca.uhn.fhir.context.RuntimeResourceDefinition;
-import ca.uhn.fhir.rest.api.RestSearchParameterTypeEnum;
 import ca.uhn.fhir.parser.IParser;
 import ca.uhn.fhir.validation.FhirValidator;
 import org.hl7.fhir.r4.model.SearchParameter;
-import org.hl7.fhir.r4.model.Enumerations;
 import org.hl7.fhir.instance.model.api.IBaseResource;
 import jakarta.annotation.PostConstruct;
+
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.stream.Collectors;
-import org.springframework.beans.factory.annotation.Autowired;
 
 // US Core validation support imports
 import ca.uhn.fhir.context.support.DefaultProfileValidationSupport;
@@ -21,37 +21,31 @@ import org.hl7.fhir.common.hapi.validation.validator.FhirInstanceValidator;
 import org.hl7.fhir.common.hapi.validation.support.NpmPackageValidationSupport;
 import org.hl7.fhir.common.hapi.validation.support.InMemoryTerminologyServerValidationSupport;
 import org.hl7.fhir.common.hapi.validation.support.CommonCodeSystemsTerminologyService;
+import org.hl7.fhir.common.hapi.validation.support.SnapshotGeneratingValidationSupport;
 import org.hl7.fhir.r5.utils.validation.constants.BestPracticeWarningLevel;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Primary;
-
-import java.util.Set;
-import java.util.HashSet;
+import org.springframework.beans.factory.annotation.Qualifier;
 
 @Configuration
 public class FhirConfig {
 
     private static final Logger logger = LoggerFactory.getLogger(FhirConfig.class);
     
-    // Store reference to NPM package support for later use in @PostConstruct
-    private NpmPackageValidationSupport npmPackageSupport;
-    
-    // Store reference to FhirContext for @PostConstruct to use
-    private FhirContext fhirContext;
+    // US Core search parameter whitelist - populated at startup
+    private final Map<String, Set<String>> usCoreSearchParams = new HashMap<>();
+    private final Map<String, SearchParameter> usCoreSearchParamDetails = new HashMap<>();
 
     /**
-     * Create FHIR R4 context bean for dependency injection
-     * Configured to support US Core validation
+     * Create FHIR R4 context bean - CLEAN VERSION without search parameter mutation
      */
     @Bean
     public FhirContext fhirContext() {
-        logger.info("🚀 Initializing FHIR R4 Context for US Core support");
+        logger.info("Initializing FHIR R4 Context for US Core support");
         
         FhirContext fhirContext = FhirContext.forR4();
         
@@ -59,31 +53,159 @@ public class FhirConfig {
         fhirContext.getParserOptions().setStripVersionsFromReferences(false);
         fhirContext.getParserOptions().setDontStripVersionsFromReferencesAtPaths("meta");
         
-        logger.info("✅ FHIR R4 Context initialized successfully");
-        logger.info("📋 FHIR Version: {}", fhirContext.getVersion().getVersion().getFhirVersionString());
-        logger.info("🇺🇸 Ready for US Core validation");
+        logger.info("FHIR R4 Context initialized successfully");
+        logger.info("FHIR Version: {}", fhirContext.getVersion().getVersion().getFhirVersionString());
         
         return fhirContext;
     }
 
     /**
+     * Build US Core search parameter whitelist at startup
+     * This runs after Spring context initialization
+     */
+    @PostConstruct
+    public void buildUSCoreSearchParamWhitelist() {
+        logger.info("Building US Core search parameter whitelist...");
+        
+        try {
+            // Create NPM package support to extract US Core search parameters
+            FhirContext tempContext = FhirContext.forR4();
+            NpmPackageValidationSupport npmPackageSupport = new NpmPackageValidationSupport(tempContext);
+            
+            // Load US Core 6.1.0 package
+            logger.info("Loading US Core 6.1.0 package for search parameter extraction...");
+            npmPackageSupport.loadPackageFromClasspath("classpath:hl7.fhir.us.core-6.1.0.tgz");
+            logger.info("US Core package loaded successfully");
+            
+            // Extract search parameters
+            List<IBaseResource> searchParams = npmPackageSupport.fetchAllSearchParameters();
+            logger.info("Found {} SearchParameter resources in US Core package", searchParams.size());
+            
+            int whitelistedCount = 0;
+            
+            for (IBaseResource resource : searchParams) {
+                if (!(resource instanceof SearchParameter)) {
+                    continue;
+                }
+                
+                SearchParameter searchParam = (SearchParameter) resource;
+                
+                // Only process US Core search parameters
+                if (searchParam.getUrl() == null || !searchParam.getUrl().contains("us/core")) {
+                    continue;
+                }
+                
+                // Skip problematic search parameters
+                if (shouldSkipSearchParameter(searchParam)) {
+                    continue;
+                }
+                
+                // Add to whitelist per resource type using the CODE field (not name)
+                for (org.hl7.fhir.r4.model.CodeType baseType : searchParam.getBase()) {
+                    String resourceType = baseType.getCode();
+                    String paramCode = searchParam.getCode(); // Use code instead of name
+                    
+                    usCoreSearchParams.computeIfAbsent(resourceType, k -> new HashSet<>())
+                        .add(paramCode);
+                    
+                    // Store search parameter details for later use (key by code)
+                    String key = resourceType + "." + paramCode;
+                    usCoreSearchParamDetails.put(key, searchParam);
+                    
+                    whitelistedCount++;
+                    logger.debug("Whitelisted US Core search parameter: {} (code: {}) for {}", 
+                               searchParam.getName(), paramCode, resourceType);
+                }
+            }
+            
+            logger.info("US Core search parameter whitelist built successfully: {} parameters across {} resource types", 
+                       whitelistedCount, usCoreSearchParams.size());
+            
+            // Log summary of whitelisted parameters by resource type
+            for (Map.Entry<String, Set<String>> entry : usCoreSearchParams.entrySet()) {
+                logger.info("  - {}: {} parameters", entry.getKey(), entry.getValue().size());
+            }
+                       
+        } catch (Exception e) {
+            logger.warn("Failed to build US Core search parameter whitelist: {}. US Core search parameters will not be available.", e.getMessage());
+        }
+    }
+    
+    /**
+     * Check if a search parameter is a valid US Core parameter for the given resource type
+     */
+    public boolean isValidUSCoreSearchParam(String resourceType, String paramName) {
+        Set<String> paramsForResource = usCoreSearchParams.get(resourceType);
+        return paramsForResource != null && paramsForResource.contains(paramName);
+    }
+    
+    /**
+     * Get all US Core search parameters for a resource type
+     */
+    public Set<String> getUSCoreSearchParams(String resourceType) {
+        return usCoreSearchParams.getOrDefault(resourceType, new HashSet<>());
+    }
+    
+    /**
+     * Get US Core search parameter details
+     */
+    public SearchParameter getUSCoreSearchParamDetails(String resourceType, String paramName) {
+        String key = resourceType + "." + paramName;
+        return usCoreSearchParamDetails.get(key);
+    }
+    
+    /**
+     * Get all whitelisted US Core search parameters (for capability statement)
+     */
+    public Map<String, Set<String>> getAllUSCoreSearchParams() {
+        return new HashMap<>(usCoreSearchParams);
+    }
+    
+    /**
+     * Determine if a search parameter should be skipped
+     */
+    private boolean shouldSkipSearchParameter(SearchParameter searchParam) {
+        // Skip if essential fields are missing
+        if (searchParam.getName() == null || searchParam.getName().trim().isEmpty()) {
+            return true;
+        }
+        
+        if (searchParam.getBase() == null || searchParam.getBase().isEmpty()) {
+            return true;
+        }
+        
+        if (searchParam.getType() == null) {
+            return true;
+        }
+        
+        // Skip if no expression (these cause issues)
+        if (searchParam.getExpression() == null || searchParam.getExpression().trim().isEmpty()) {
+            return true;
+        }
+        
+        // Skip HAS type if it exists
+        if ("HAS".equals(searchParam.getType().toCode())) {
+            return true;
+        }
+        
+        return false;
+    }
+
+    /**
      * Create JSON parser bean for dependency injection
-     * Optimized for US Core resource processing (lenient by default)
      */
     @Bean
     public IParser jsonParser(FhirContext fhirContext) {
-        logger.info("🔧 Configuring FHIR JSON Parser for US Core (lenient)");
+        logger.info("Configuring FHIR JSON Parser for US Core (lenient)");
         
         IParser parser = fhirContext.newJsonParser();
-        
-        // Configure parser for US Core compliance
-        parser.setPrettyPrint(false); // Set to true for debugging
+        parser.setPrettyPrint(false);
         parser.setStripVersionsFromReferences(false);
         parser.setOmitResourceId(false);
         parser.setSummaryMode(false);
         parser.setEncodeElementsAppliesToChildResourcesOnly(false);
         
-        logger.info("✅ FHIR JSON Parser configured for US Core (lenient)");
+        logger.info("FHIR JSON Parser configured for US Core (lenient)");
         return parser;
     }
     
@@ -93,21 +215,17 @@ public class FhirConfig {
     @Bean
     @Qualifier("strictJsonParser")
     public IParser strictJsonParser(FhirContext fhirContext) {
-        logger.info("🔧 Configuring strict FHIR JSON Parser");
+        logger.info("Configuring strict FHIR JSON Parser");
         
         IParser parser = fhirContext.newJsonParser();
-        
-        // Configure parser for strict validation
         parser.setPrettyPrint(false);
         parser.setStripVersionsFromReferences(false);
         parser.setOmitResourceId(false);
         parser.setSummaryMode(false);
         parser.setEncodeElementsAppliesToChildResourcesOnly(false);
-        
-        // Use strict error handler that fails on unknown elements
         parser.setParserErrorHandler(new ca.uhn.fhir.parser.StrictErrorHandler());
         
-        logger.info("✅ Strict FHIR JSON Parser configured");
+        logger.info("Strict FHIR JSON Parser configured");
         return parser;
     }
 
@@ -117,71 +235,62 @@ public class FhirConfig {
     @Bean
     @Primary
     public FhirValidator fhirValidator(FhirContext fhirContext) {
-        // Store the context for @PostConstruct to use
-        this.fhirContext = fhirContext;
-        
-        logger.info("🔍 Configuring FHIR Validator with US Core support");
+        logger.info("Configuring FHIR Validator with US Core support");
         
         try {
             // Create NPM package support for US Core
-            this.npmPackageSupport = new NpmPackageValidationSupport(fhirContext);
+            NpmPackageValidationSupport npmPackageSupport = new NpmPackageValidationSupport(fhirContext);
             
             // Load US Core 6.1.0 package
-            logger.info("📦 Loading US Core 6.1.0 package...");
-            this.npmPackageSupport.loadPackageFromClasspath("classpath:hl7.fhir.us.core-6.1.0.tgz");
-            logger.info("✅ US Core package loaded successfully");
+            logger.info("Loading US Core 6.1.0 package for validation...");
+            npmPackageSupport.loadPackageFromClasspath("classpath:hl7.fhir.us.core-6.1.0.tgz");
+            logger.info("US Core package loaded successfully for validation");
             
             // Create validation support chain with US Core profiles
             ValidationSupportChain validationSupportChain = new ValidationSupportChain(
-                new DefaultProfileValidationSupport(fhirContext),  // Base FHIR R4
-                this.npmPackageSupport,  // US Core package
+                new DefaultProfileValidationSupport(fhirContext),
+                new SnapshotGeneratingValidationSupport(fhirContext),
+                npmPackageSupport,
                 new InMemoryTerminologyServerValidationSupport(fhirContext),
                 new CommonCodeSystemsTerminologyService(fhirContext)
             );
             
-            logger.info("✅ US Core validation support configured successfully");
+            logger.info("US Core validation support configured successfully");
             
             // Create validator with instance validator
             FhirValidator validator = fhirContext.newValidator();
             FhirInstanceValidator instanceValidator = new FhirInstanceValidator(validationSupportChain);
             
             // Configure for strict US Core validation
-            instanceValidator.setErrorForUnknownProfiles(true);  // Require known profiles
-            instanceValidator.setAnyExtensionsAllowed(false);    // Validate extensions
-            instanceValidator.setNoTerminologyChecks(false);     // Enable terminology validation
+            instanceValidator.setErrorForUnknownProfiles(true);
+            instanceValidator.setAnyExtensionsAllowed(false);
+            instanceValidator.setNoTerminologyChecks(false);
             instanceValidator.setBestPracticeWarningLevel(BestPracticeWarningLevel.Warning);
-            instanceValidator.setNoExtensibleWarnings(false);    // Show extension warnings
+            instanceValidator.setNoExtensibleWarnings(false);
             validator.registerValidatorModule(instanceValidator);
 
-            logger.info("✅ FHIR Validator with US Core support configured (strict mode)");
-            
-            // Register US Core search parameters after the package is loaded
-            logger.info("🔍 Extracting and registering US Core search parameters...");
-            registerSearchParametersFromPackage(fhirContext, this.npmPackageSupport);
-            logger.info("✅ US Core search parameters registered successfully");
+            logger.info("FHIR Validator with US Core support configured (strict mode)");
             
             return validator;
             
         } catch (Exception e) {
-            logger.error("❌ Failed to configure US Core validator: {}", e.getMessage(), e);
-            logger.info("🔄 Falling back to basic FHIR validator");
+            logger.error("Failed to configure US Core validator: {}", e.getMessage(), e);
+            logger.info("Falling back to basic FHIR validator");
             
             // Fallback to basic validator
-            FhirValidator validator = fhirContext.newValidator();
-            return validator;
+            return fhirContext.newValidator();
         }
     }
     
     /**
      * Create basic FHIR R4 validator for sample data loading (lenient, no US Core enforcement)
-     * This validator is used for loading Synthea and other sample data that may not be US Core compliant
      */
     @Bean
     @Qualifier("basicFhirValidator")
     public FhirValidator basicFhirValidator(FhirContext fhirContext) {
-        logger.info("🔧 Configuring basic FHIR R4 validator for sample data loading");
+        logger.info("Configuring basic FHIR R4 validator for sample data loading");
         
-        // Create basic validation support (FHIR R4 base only, no US Core profiles)
+        // Create basic validation support
         DefaultProfileValidationSupport defaultSupport = new DefaultProfileValidationSupport(fhirContext);
         InMemoryTerminologyServerValidationSupport terminologySupport = new InMemoryTerminologyServerValidationSupport(fhirContext);
         
@@ -203,108 +312,7 @@ public class FhirConfig {
         
         validator.registerValidatorModule(instanceValidator);
         
-        logger.info("✅ Basic FHIR R4 validator configured for sample data loading");
+        logger.info("Basic FHIR R4 validator configured for sample data loading");
         return validator;
-    }
-    
-    /**
-     * Extract and register search parameters from the US Core package
-     * This is necessary because NpmPackageValidationSupport only loads for validation
-     * but doesn't register search parameters with HAPI's search parameter registry
-     */
-    private void registerSearchParametersFromPackage(FhirContext fhirContext, NpmPackageValidationSupport npmPackageSupport) {
-        try {
-            // Get the NPM package support that was created during validator setup
-            if (npmPackageSupport == null) {
-                logger.warn("Could not find NpmPackageValidationSupport to extract search parameters");
-                return;
-            }
-            
-            // Extract and register search parameters from the loaded US Core package
-            int registeredCount = 0;
-            
-            // Get all SearchParameter resources from the package
-            List<IBaseResource> searchParams = npmPackageSupport.fetchAllConformanceResources()
-                .stream()
-                .filter(resource -> resource instanceof SearchParameter)
-                .collect(Collectors.toList());
-                
-            for (IBaseResource resource : searchParams) {
-                SearchParameter searchParam = (SearchParameter) resource;
-                
-                // Only register US Core search parameters
-                if (searchParam.getUrl() != null && searchParam.getUrl().contains("us/core")) {
-                    registerSearchParameterWithHAPI(fhirContext, searchParam);
-                    registeredCount++;
-                    logger.debug("Registered US Core search parameter: {}", searchParam.getName());
-                }
-            }
-            
-            logger.info("Successfully registered {} US Core search parameters with HAPI", registeredCount);
-            
-        } catch (Exception e) {
-            logger.warn("Failed to register US Core search parameters: {}", e.getMessage());
-        }
-    }
-
-    private void registerSearchParameterWithHAPI(FhirContext fhirContext, SearchParameter searchParam) {
-    try {
-        String[] resourceTypes = searchParam.getBase().stream()
-            .map(t -> t.getCode())
-            .toArray(String[]::new);
-            
-        for (String resourceType : resourceTypes) {
-            RuntimeResourceDefinition resourceDef = fhirContext.getResourceDefinition(resourceType);
-            
-            if (resourceDef.getSearchParam(searchParam.getName()) == null) {
-                // Convert base resource types to Set<String>
-                Set<String> baseTypes = searchParam.getBase().stream()
-                    .map(t -> t.getCode())
-                    .collect(Collectors.toSet());
-                
-                // Convert targets to Set<String> if they exist
-                Set<String> targets = new HashSet<>();
-                if (searchParam.hasTarget()) {
-                    targets = searchParam.getTarget().stream()
-                        .map(t -> t.getCode())
-                        .collect(Collectors.toSet());
-                }
-                
-                RuntimeSearchParam runtimeParam = new RuntimeSearchParam(
-                    null, // IIdType theId
-                    searchParam.getUrl(), // String theUri
-                    searchParam.getName(), // String theName
-                    searchParam.getDescription(), // String theDescription
-                    searchParam.getExpression(), // String thePath
-                    convertParamType(searchParam.getType()), // RestSearchParameterTypeEnum theParamType
-                    new HashSet<>(), // Set<String> theProvidesMembershipInCompartments
-                    targets, // Set<String> theTargets
-                    RuntimeSearchParam.RuntimeSearchParamStatusEnum.ACTIVE, // RuntimeSearchParamStatusEnum theStatus
-                    baseTypes // Collection<String> theBase
-                );
-                
-                resourceDef.addSearchParam(runtimeParam);
-                logger.debug("Successfully registered search parameter {} for resource {}", 
-                           searchParam.getName(), resourceType);
-            }
-        }
-    } catch (Exception e) {
-        logger.warn("Failed to register search parameter {}: {}", searchParam.getName(), e.getMessage());
-    }
-}    
-    private RestSearchParameterTypeEnum convertParamType(Enumerations.SearchParamType type) {
-        return switch (type) {
-            case STRING -> RestSearchParameterTypeEnum.STRING;
-            case TOKEN -> RestSearchParameterTypeEnum.TOKEN;
-            case DATE -> RestSearchParameterTypeEnum.DATE;
-            case REFERENCE -> RestSearchParameterTypeEnum.REFERENCE;
-            case NUMBER -> RestSearchParameterTypeEnum.NUMBER;
-            case URI -> RestSearchParameterTypeEnum.URI;
-            case COMPOSITE -> RestSearchParameterTypeEnum.COMPOSITE;
-            case QUANTITY -> RestSearchParameterTypeEnum.QUANTITY;
-            //case HAS -> RestSearchParameterTypeEnum.HAS;
-            case SPECIAL -> RestSearchParameterTypeEnum.SPECIAL;
-            default -> RestSearchParameterTypeEnum.STRING;
-        };
     }
 }

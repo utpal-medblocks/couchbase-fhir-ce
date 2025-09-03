@@ -33,6 +33,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import ca.uhn.fhir.parser.IParser;
+import com.couchbase.common.config.FhirConfig;
 
 import java.util.*;
 import java.util.stream.Collectors;
@@ -67,6 +68,9 @@ public class SearchService {
     
     @Autowired
     private Ftsn1qlQueryBuilder queryBuilder;
+    
+    @Autowired
+    private FhirConfig fhirConfig;
     
     /**
      * Lightweight resolution for conditional operations.
@@ -341,7 +345,37 @@ public class SearchService {
                     .getResourceDefinition(resourceType)
                     .getSearchParam(paramName);
             
-            if (searchParam == null) continue;
+            // Check for US Core parameters when HAPI doesn't know about them
+            if (searchParam == null) {
+                // Check if it's a US Core parameter
+                boolean isUSCoreParam = fhirConfig.isValidUSCoreSearchParam(resourceType, paramName);
+                if (isUSCoreParam) {
+                    org.hl7.fhir.r4.model.SearchParameter usCoreParam = fhirConfig.getUSCoreSearchParamDetails(resourceType, paramName);
+                    if (usCoreParam != null) {
+                        logger.info("🔍 Found US Core parameter: {} for {}", paramName, resourceType);
+                        logger.info("🔍 US Core parameter details:");
+                        logger.info("   - Name: {}", usCoreParam.getName());
+                        logger.info("   - Code: {}", usCoreParam.getCode());
+                        logger.info("   - Expression: {}", usCoreParam.getExpression());
+                        logger.info("   - Type: {}", usCoreParam.getType());
+                        
+                        // Try to build US Core queries using the new helper
+                        List<SearchQuery> usCoreQueries = USCoreSearchHelper.buildUSCoreFTSQueries(
+                            fhirContext, resourceType, paramName, values, usCoreParam);
+                        
+                        if (usCoreQueries != null && !usCoreQueries.isEmpty()) {
+                            ftsQueries.addAll(usCoreQueries);
+                            logger.info("🔍 Added {} US Core queries for {}", usCoreQueries.size(), paramName);
+                            for (SearchQuery query : usCoreQueries) {
+                                logger.info("🔍   - {}", query.export());
+                            }
+                        } else {
+                            logger.warn("🔍 Failed to build US Core queries for parameter: {}", paramName);
+                        }
+                    }
+                }
+                continue; // Still skip for now, just log what we found
+            }
             
             // Build appropriate query based on parameter type
             logger.debug("🔍 Processing parameter: {} = {} (type: {})", paramName, values, searchParam.getParamType());
