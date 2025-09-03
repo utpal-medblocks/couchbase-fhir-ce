@@ -2,6 +2,7 @@ package com.couchbase.fhir.resources.util;
 
 import ca.uhn.fhir.context.FhirContext;
 import ca.uhn.fhir.context.RuntimeSearchParam;
+import ca.uhn.fhir.context.RuntimeResourceDefinition;
 import ca.uhn.fhir.context.BaseRuntimeElementCompositeDefinition;
 import ca.uhn.fhir.context.BaseRuntimeElementDefinition;
 import ca.uhn.fhir.context.BaseRuntimeChildDefinition;
@@ -14,88 +15,61 @@ import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Arrays;
+import java.util.stream.Collectors;
 
 public class TokenSearchHelper {
 
     private static final Logger logger = LoggerFactory.getLogger(TokenSearchHelper.class);
 
-    public static SearchQuery buildTokenFTSQuery(FhirContext fhirContext, String resourceType, String paramName, String searchValue) {
-        // Get the actual FHIR path from HAPI search parameter
-        String actualFieldName = paramName;
-        try {
-            RuntimeSearchParam searchParam = fhirContext.getResourceDefinition(resourceType).getSearchParam(paramName);
-            if (searchParam != null) {
-                String path = searchParam.getPath();
-                logger.info("🔍 TokenSearchHelper: paramName={}, HAPI path={}", paramName, path);
-                
-                // Extract the field name from the path (remove resourceType prefix)
-                if (path != null && path.startsWith(resourceType + ".")) {
-                    actualFieldName = path.substring(resourceType.length() + 1);
-                    logger.info("🔍 TokenSearchHelper: Using field name: {}", actualFieldName);
-                }
-            }
-        } catch (Exception e) {
-            logger.warn("🔍 TokenSearchHelper: Failed to get HAPI path for paramName={}, using paramName as field: {}", paramName, e.getMessage());
-        }
+    public static SearchQuery buildTokenFTSQuery(FhirContext fhirContext,
+                                                 String resourceType,
+                                                 String paramName,
+                                                 String tokenValue) {
 
-        // Parse the search value (format: system|code or just code)
-        String[] parts = searchValue.split("\\|");
-        String system = null;
-        String code = null;
-
-        if (parts.length == 2) {
-            system = parts[0];
-            code = parts[1];
-        } else if (parts.length == 1) {
-            code = parts[0];
-        }
-
-        // Get concept info to determine the type of field
-        ConceptInfo conceptInfo = getConceptInfo(fhirContext, resourceType, actualFieldName);
-        logger.info("🔍 TokenSearchHelper: paramName={}, conceptInfo={}", paramName, conceptInfo);
-
-        if (conceptInfo.isPrimitive) {
-            // Handle primitive types (boolean, string, etc.)
-            return createPrimitiveQuery(code, actualFieldName);
-        }
-
-        // Get sub-fields for complex token parameters using HAPI reflection
-        List<String> subFields = getSubFields(fhirContext, resourceType, actualFieldName);
+        TokenParam token = new TokenParam(tokenValue);
+        boolean isMultipleValues = token.code.contains(",");
         
-        if (subFields.isEmpty()) {
-            logger.warn("🔍 TokenSearchHelper: No sub-fields found for paramName={}, using base field: {}", paramName, actualFieldName);
-            subFields.add(actualFieldName);
-        }
-
-        logger.info("🔍 TokenSearchHelper: paramName={}, fhirPath={}, subFields={}", paramName, actualFieldName, subFields);
-
-        List<SearchQuery> queries = new ArrayList<>();
-
-        // Build queries for each sub-field
-        for (String field : subFields) {
-            if (code != null && !code.isEmpty()) {
-                queries.add(SearchQuery.match(code).field(field));
+        logger.info("🔍 TokenSearchHelper: paramName={}, tokenValue={}, parsed system={}, code={}", 
+                    paramName, tokenValue, token.system, token.code);
+    
+        RuntimeResourceDefinition def = fhirContext.getResourceDefinition(resourceType);
+        RuntimeSearchParam searchParam = def.getSearchParam(paramName);
+        String path = searchParam.getPath();
+        
+        logger.info("🔍 TokenSearchHelper: HAPI path={}, paramType={}", 
+                    path, searchParam.getParamType());
+        
+        ConceptInfo conceptInfo = getConceptInfo(path, resourceType, def);
+        logger.info("🔍 TokenSearchHelper: conceptInfo={}", conceptInfo);
+    
+        String ftsFieldPath = toFTSFieldPath(path, resourceType, conceptInfo.isCodableConcept,
+                conceptInfo.isArray, conceptInfo.isPrimitive);
+        logger.info("🔍 TokenSearchHelper: ftsFieldPath={}", ftsFieldPath);
+        if (conceptInfo.isPrimitive) {
+            // Primitive tokens like gender, id, status, etc.
+            if (isMultipleValues) {
+                List<SearchQuery> termQueries = Arrays.stream(token.code.split(","))
+                        .map(String::trim)
+                        .map(val -> createPrimitiveQuery(val, ftsFieldPath))
+                        .collect(Collectors.toList());
+                return SearchQuery.disjuncts(termQueries.toArray(new SearchQuery[0]));
+            } else {
+                return createPrimitiveQuery(token.code, ftsFieldPath);
             }
-
-            if (system != null && !system.isEmpty()) {
-                // For system, we need to match the system field
-                String systemField = field.replace(".code", ".system");
-                if (!systemField.equals(field)) {
-                    queries.add(SearchQuery.match(system).field(systemField));
-                }
-            }
         }
 
-        if (queries.isEmpty()) {
-            return null;
+        // Handle CodeableConcept arrays or single
+        if (conceptInfo.isCodableConcept && conceptInfo.isArray) {
+            // Example: ANY cat IN ... SATISFIES ANY coding...
+            return buildCodeableConceptQuery(ftsFieldPath, token);
+        } else if (conceptInfo.isCodableConcept) {
+            // Single CodeableConcept
+            return buildCodeableConceptQuery(ftsFieldPath, token);
+        } else {
+            // Other complex type with system/value
+            return buildSystemValueQuery(ftsFieldPath, token);
         }
-
-        if (queries.size() == 1) {
-            return queries.get(0);
-        }
-
-        // Multiple conditions: use AND (conjunction) for more precise matching
-        return SearchQuery.conjuncts(queries.toArray(new SearchQuery[0]));
     }
 
     /**
@@ -112,88 +86,101 @@ public class TokenSearchHelper {
         return SearchQuery.match(value).field(ftsFieldPath);
     }
 
-    private static List<String> getSubFields(FhirContext ctx, String resource, String fieldName) {
-        List<String> fields = new ArrayList<>();
-        BaseRuntimeElementCompositeDefinition<?> resourceDef =
-                (BaseRuntimeElementCompositeDefinition<?>) ctx.getResourceDefinition(resource);
-        BaseRuntimeChildDefinition fieldChild = resourceDef.getChildByName(fieldName);
-
-        if (fieldChild == null) return fields;
-
-        BaseRuntimeElementDefinition<?> fieldType = fieldChild.getChildByName(fieldName);
-        if (fieldType instanceof BaseRuntimeElementCompositeDefinition<?>) {
-            BaseRuntimeElementCompositeDefinition<?> compDef =
-                    (BaseRuntimeElementCompositeDefinition<?>) fieldType;
-
-            for (BaseRuntimeChildDefinition sub : compDef.getChildren()) {
-                if (sub.getChildNameByDatatype(StringType.class) != null) {
-                    String subName = sub.getElementName();
-                    if (skipCommonIgnoredFields(subName)) continue;
-                    fields.add(fieldName + "." + subName);
-                }
-            }
+    private static SearchQuery buildCodeableConceptQuery(String ftsFieldPath, TokenParam token) {
+        // For FTS index: field might be like "name.coding.code" and "name.coding.system"
+        if (token.system != null) {
+            return SearchQuery.conjuncts(
+                    SearchQuery.match(token.system).field(ftsFieldPath + ".system"),
+                    SearchQuery.match(token.code).field(ftsFieldPath + ".code")
+            );
+        } else {
+            return SearchQuery.match(token.code).field(ftsFieldPath + ".code");
         }
-        return fields;
     }
 
-    private static boolean skipCommonIgnoredFields(String name) {
-        return name.equals("id") || name.equals("extension") || name.equals("period") || name.equals("use");
+    private static SearchQuery buildSystemValueQuery(String ftsFieldPath, TokenParam token) {
+        if (token.system != null) {
+            return SearchQuery.conjuncts(
+                    SearchQuery.match(token.system).field(ftsFieldPath + ".system"),
+                    SearchQuery.match(token.code).field(ftsFieldPath + ".value")
+            );
+        } else {
+            return SearchQuery.match(token.code).field(ftsFieldPath + ".value");
+        }
     }
 
-    /**
-     * Get concept info to determine the type of field
-     */
-    private static ConceptInfo getConceptInfo(FhirContext ctx, String resourceType, String fieldName) {
+    public static ConceptInfo getConceptInfo(String path, String resourceType, RuntimeResourceDefinition def) {
         boolean isCodableConcept = false;
         boolean isArray = false;
         boolean isPrimitive = false;
+        BaseRuntimeElementDefinition<?> current = def;
         
         try {
-            BaseRuntimeElementCompositeDefinition<?> resourceDef =
-                    (BaseRuntimeElementCompositeDefinition<?>) ctx.getResourceDefinition(resourceType);
-            BaseRuntimeChildDefinition fieldChild = resourceDef.getChildByName(fieldName);
+            String fhirPath = path.replaceFirst("^" + resourceType + "\\.", "");
+            String[] pathParts = fhirPath.split("\\.");
+            
+            for (String part : pathParts) {
+                if (def != null) {
+                    BaseRuntimeChildDefinition child = ((BaseRuntimeElementCompositeDefinition<?>) def).getChildByName(part);
+                    if (child != null) {
+                        if (child.getMax() == -1) {
+                            isArray = true;
+                        }
+                        if (child.getChildByName(part).getImplementingClass().getSimpleName().equalsIgnoreCase("CodeableConcept")) {
+                            isCodableConcept = true;
+                        }
 
-            if (fieldChild != null) {
-                if (fieldChild.getMax() == -1) {
-                    isArray = true;
-                }
-                
-                BaseRuntimeElementDefinition<?> fieldType = fieldChild.getChildByName(fieldName);
-                if (fieldType != null) {
-                    if (fieldType.getImplementingClass().getSimpleName().equalsIgnoreCase("CodeableConcept")) {
-                        isCodableConcept = true;
-                    }
-                    
-                    if (fieldType.isStandardType() && !(fieldType instanceof BaseRuntimeElementCompositeDefinition<?>)) {
-                        isPrimitive = true;
+                        current = child.getChildByName(part);
+                        if (current.isStandardType() && !(current instanceof BaseRuntimeElementCompositeDefinition)) {
+                            isPrimitive = true;
+                        }
                     }
                 }
             }
+
         } catch (Exception e) {
-            logger.debug("Failed to get concept info for field {}: {}", fieldName, e.getMessage());
+            System.out.println(e.getMessage());
         }
-        
         return new ConceptInfo(isCodableConcept, isArray, isPrimitive);
     }
 
     /**
-     * Simple class to hold concept information
+     * Convert FHIRPath to the FTS field path used in the Couchbase index mapping.
      */
-    private static class ConceptInfo {
-        public final boolean isCodableConcept;
-        public final boolean isArray;
-        public final boolean isPrimitive;
-        
-        public ConceptInfo(boolean isCodableConcept, boolean isArray, boolean isPrimitive) {
-            this.isCodableConcept = isCodableConcept;
-            this.isArray = isArray;
-            this.isPrimitive = isPrimitive;
+    private static String toFTSFieldPath(String fhirPath,
+                                         String resourceType,
+                                         boolean codableConcept,
+                                         boolean isArray,
+                                         boolean isPrimitive) {
+        if (fhirPath == null) {
+            throw new IllegalArgumentException("FHIRPath is null");
+        }
+
+        if (!fhirPath.startsWith(resourceType + ".") && !fhirPath.startsWith("Resource.")) {
+            throw new IllegalArgumentException("Invalid FHIRPath: " + fhirPath);
+        }
+        String subPath;
+        if (fhirPath.contains("Resource")) {
+            subPath = fhirPath.substring(9);
+        } else {
+            subPath = fhirPath.substring(resourceType.length() + 1);
         }
         
-        @Override
-        public String toString() {
-            return String.format("ConceptInfo{isCodableConcept=%s, isArray=%s, isPrimitive=%s}", 
-                               isCodableConcept, isArray, isPrimitive);
+        String ftsPath = subPath
+                .replace(".coding", ".coding") // Keep .coding for FTS mapping
+                .replace(".value", ".value")
+                .replace(".code", ".code")
+                .replace(".system", ".system");
+
+        if (isPrimitive) {
+            return ftsPath;
         }
+
+        if (codableConcept) {
+            // For CodeableConcepts, we always need to add .coding
+            // Whether it's a single CodeableConcept or an array of CodeableConcepts
+            ftsPath += ".coding";
+        }
+        return ftsPath;
     }
 }

@@ -2,6 +2,10 @@ package com.couchbase.fhir.resources.service;
 
 import ca.uhn.fhir.context.FhirContext;
 import ca.uhn.fhir.context.RuntimeSearchParam;
+import ca.uhn.fhir.context.RuntimeResourceDefinition;
+import ca.uhn.fhir.rest.api.RestSearchParameterTypeEnum;
+import jakarta.annotation.PostConstruct;
+import java.util.Collections;
 import ca.uhn.fhir.rest.api.SummaryEnum;
 import ca.uhn.fhir.rest.api.server.RequestDetails;
 import ca.uhn.fhir.rest.server.exceptions.InvalidRequestException;
@@ -158,6 +162,20 @@ public class SearchService {
                         Map.Entry::getKey,
                         e -> Arrays.asList(e.getValue())
                 ));
+
+        // Debug: Log what HAPI knows about this resource type's search parameters
+        // Commented out after confirming CareTeam search parameters - no longer needed
+        /*
+        try {
+            RuntimeResourceDefinition resourceDef = fhirContext.getResourceDefinition(resourceType);
+            logger.info("🔍 {} search parameters known by HAPI:", resourceType);
+            for (RuntimeSearchParam param : resourceDef.getSearchParams()) {
+                logger.info("  - {} (type: {}, path: {})", param.getName(), param.getParamType(), param.getPath());
+            }
+        } catch (Exception e) {
+            logger.warn("🔍 Failed to get HAPI search parameters for {}: {}", resourceType, e.getMessage());
+        }
+        */
         
         // Validate search parameters
         try {

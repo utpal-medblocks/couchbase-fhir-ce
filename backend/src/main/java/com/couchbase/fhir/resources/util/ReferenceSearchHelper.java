@@ -13,6 +13,8 @@ import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
+import java.util.Arrays;
 
 public class ReferenceSearchHelper {
 
@@ -26,12 +28,19 @@ public class ReferenceSearchHelper {
                 String path = searchParam.getPath();
                 logger.info("🔍 ReferenceSearchHelper: paramName={}, HAPI path={}", paramName, path);
                 
-                // Extract the field name from the path (remove resourceType prefix)
-                if (path != null && path.startsWith(resourceType + ".")) {
-                    actualFieldName = path.substring(resourceType.length() + 1);
-                    logger.info("🔍 ReferenceSearchHelper: Using field name: {}", actualFieldName);
-                }
-            }
+// Extract the field name from the path (remove resourceType prefix)
+if (path != null && path.startsWith(resourceType + ".")) {
+    actualFieldName = path.substring(resourceType.length() + 1);
+    
+    // Remove .where(...) clause if present (e.g., "subject.where(resolve() is Patient)" -> "subject")
+    int whereIndex = actualFieldName.indexOf(".where(");
+    if (whereIndex != -1) {
+        actualFieldName = actualFieldName.substring(0, whereIndex);
+        logger.info("🔍 ReferenceSearchHelper: Stripped .where() clause, using field name: {}", actualFieldName);
+    } else {
+        logger.info("🔍 ReferenceSearchHelper: Using field name: {}", actualFieldName);
+    }
+}            }
         } catch (Exception e) {
             logger.warn("🔍 ReferenceSearchHelper: Failed to get HAPI path for paramName={}, using paramName as field: {}", paramName, e.getMessage());
         }
@@ -54,17 +63,40 @@ public class ReferenceSearchHelper {
         }
 
         // Get sub-fields for the reference parameter using HAPI reflection
-        List<String> subFields = getSubFields(fhirContext, resourceType, actualFieldName);
-        
+        List<String> subFields = Arrays.asList(actualFieldName + ".reference");        
         if (subFields.isEmpty()) {
             logger.warn("🔍 ReferenceSearchHelper: No sub-fields found for paramName={}, using base field: {}", paramName, actualFieldName);
             subFields.add(actualFieldName);
         }
 
+        // If no target resource type provided, try to determine it from HAPI using getTargets()
+        if (targetResourceType == null && searchParam != null) {
+            try {
+                Set<String> targets = searchParam.getTargets();
+                if (targets.size() == 1) {
+                    targetResourceType = targets.iterator().next();
+                    logger.info("🔍 ReferenceSearchHelper: Found single target type from HAPI: {}", targetResourceType);
+                } else if (targets.size() > 1) {
+                    // Ambiguous target types — can't infer
+                    String errorMsg = String.format(
+                        "The reference parameter '%s' is ambiguous. Expected format: 'ResourceType/id', e.g., 'Patient/123'. Allowed targets: %s",
+                        paramName, targets
+                    );
+                    logger.error("🔍 ReferenceSearchHelper: {}", errorMsg);
+                    throw new IllegalArgumentException(errorMsg);
+                } else {
+                    logger.warn("🔍 ReferenceSearchHelper: No target types found in HAPI for parameter: {}", paramName);
+                }
+            } catch (Exception e) {
+                logger.warn("🔍 ReferenceSearchHelper: Failed to get target types from HAPI: {}", e.getMessage());
+            }
+        }
+
         logger.info("🔍 ReferenceSearchHelper: paramName={}, fhirPath={}, subFields={}", paramName, actualFieldName, subFields);
 
-        // Build the reference value
+        // Build the reference value - always use full reference format
         String referenceValue = targetResourceType != null ? targetResourceType + "/" + targetId : targetId;
+        logger.info("🔍 ReferenceSearchHelper: Final reference value: {}", referenceValue);
         
         List<SearchQuery> queries = new ArrayList<>();
         
@@ -83,33 +115,5 @@ public class ReferenceSearchHelper {
 
         // Multiple sub-fields: use OR (disjunction) to match any of them
         return SearchQuery.disjuncts(queries.toArray(new SearchQuery[0]));
-    }
-
-    private static List<String> getSubFields(FhirContext ctx, String resource, String fieldName) {
-        List<String> fields = new ArrayList<>();
-        BaseRuntimeElementCompositeDefinition<?> resourceDef =
-                (BaseRuntimeElementCompositeDefinition<?>) ctx.getResourceDefinition(resource);
-        BaseRuntimeChildDefinition fieldChild = resourceDef.getChildByName(fieldName);
-
-        if (fieldChild == null) return fields;
-
-        BaseRuntimeElementDefinition<?> fieldType = fieldChild.getChildByName(fieldName);
-        if (fieldType instanceof BaseRuntimeElementCompositeDefinition<?>) {
-            BaseRuntimeElementCompositeDefinition<?> compDef =
-                    (BaseRuntimeElementCompositeDefinition<?>) fieldType;
-
-            for (BaseRuntimeChildDefinition sub : compDef.getChildren()) {
-                if (sub.getChildNameByDatatype(StringType.class) != null) {
-                    String subName = sub.getElementName();
-                    if (skipCommonIgnoredFields(subName)) continue;
-                    fields.add(fieldName + "." + subName);
-                }
-            }
-        }
-        return fields;
-    }
-
-    private static boolean skipCommonIgnoredFields(String name) {
-        return name.equals("id") || name.equals("extension") || name.equals("period") || name.equals("use");
     }
 }

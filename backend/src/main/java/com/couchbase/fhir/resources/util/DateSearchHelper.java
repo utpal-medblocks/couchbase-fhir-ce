@@ -64,8 +64,27 @@ public class DateSearchHelper {
         logger.info("🔍 DateSearchHelper: paramName={}, fhirPath={}, start={}, end={}", 
                    paramName, actualFieldName, start, end);
 
-        DateRangeQuery query = SearchQuery.dateRange().field(actualFieldName);
+        // Check if this is a Period field and adjust field path accordingly
+        boolean isPeriodField = isPeriodType(fhirContext, resourceType, actualFieldName);
+        String dateField = actualFieldName;
 
+        if (isPeriodField) {
+            if (start != null) {
+                dateField = actualFieldName + ".start";
+                logger.info("🔍 DateSearchHelper: Period field detected, using start: {}", dateField);
+            } else if (end != null) {
+                dateField = actualFieldName + ".end";
+                logger.info("🔍 DateSearchHelper: Period field detected, using end: {}", dateField);
+            } else {
+                // For exact dates on Period fields, use start
+                dateField = actualFieldName + ".start";
+                logger.info("🔍 DateSearchHelper: Period field detected, using start for exact date: {}", dateField);
+            }
+        } else {
+            logger.info("🔍 DateSearchHelper: Non-Period field, using as-is: {}", dateField);
+        }
+
+        DateRangeQuery query = SearchQuery.dateRange().field(dateField);
         if (start != null) query = query.start(start, inclusiveStart);
         if (end != null) query = query.end(end, inclusiveEnd);
 
@@ -131,11 +150,54 @@ public class DateSearchHelper {
         logger.info("🔍 DateSearchHelper: paramName={}, fhirPath={}, start={}, end={}", 
                    paramName, actualFieldName, start, end);
 
-        DateRangeQuery query = SearchQuery.dateRange().field(actualFieldName);
+        // Check if this is a Period field and adjust field path accordingly
+        boolean isPeriodField = isPeriodType(fhirContext, resourceType, actualFieldName);
+        String dateField = actualFieldName;
+
+        if (isPeriodField) {
+            if (start != null) {
+                dateField = actualFieldName + ".start";
+                logger.info("🔍 DateSearchHelper: Period field detected, using start: {}", dateField);
+            } else if (end != null) {
+                dateField = actualFieldName + ".end";
+                logger.info("🔍 DateSearchHelper: Period field detected, using end: {}", dateField);
+            } else {
+                // For exact dates on Period fields, use start
+                dateField = actualFieldName + ".start";
+                logger.info("🔍 DateSearchHelper: Period field detected, using start for exact date: {}", dateField);
+            }
+        } else {
+            logger.info("🔍 DateSearchHelper: Non-Period field, using as-is: {}", dateField);
+        }
+
+        DateRangeQuery query = SearchQuery.dateRange().field(dateField);
 
         if (start != null) query = query.start(start, inclusiveStart);
         if (end != null) query = query.end(end, inclusiveEnd);
 
         return query;
+    }
+
+    /**
+     * Check if a field is a Period type using HAPI reflection
+     */
+    private static boolean isPeriodType(FhirContext fhirContext, String resourceType, String fieldName) {
+        try {
+            ca.uhn.fhir.context.RuntimeResourceDefinition resourceDef = fhirContext.getResourceDefinition(resourceType);
+            ca.uhn.fhir.context.BaseRuntimeChildDefinition fieldChild = resourceDef.getChildByName(fieldName);
+            
+            if (fieldChild != null) {
+                ca.uhn.fhir.context.BaseRuntimeElementDefinition<?> fieldType = fieldChild.getChildByName(fieldName);
+                if (fieldType != null) {
+                    String className = fieldType.getImplementingClass().getSimpleName();
+                    boolean isPeriod = "Period".equalsIgnoreCase(className);
+                    logger.debug("🔍 DateSearchHelper: Field {} has type: {} (isPeriod: {})", fieldName, className, isPeriod);
+                    return isPeriod;
+                }
+            }
+        } catch (Exception e) {
+            logger.debug("🔍 DateSearchHelper: Failed to check if field {} is a Period type: {}", fieldName, e.getMessage());
+        }
+        return false;
     }
 }
