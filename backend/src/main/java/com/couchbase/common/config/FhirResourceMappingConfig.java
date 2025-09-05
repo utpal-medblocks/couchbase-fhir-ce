@@ -42,7 +42,12 @@ public class FhirResourceMappingConfig {
      * @return The collection name where this resource should be stored
      */
     public String getCollectionForResource(String resourceType) {
-        return resourceToCollection.get(resourceType);
+        String collection = resourceToCollection.get(resourceType);
+        if (collection == null) {
+            // Use _default fallback if resource type is not explicitly mapped
+            collection = resourceToCollection.get("_default");
+        }
+        return collection;
     }
     
     /**
@@ -73,7 +78,9 @@ public class FhirResourceMappingConfig {
      * @return true if the resource type is mapped to a collection
      */
     public boolean isResourceSupported(String resourceType) {
-        return resourceToCollection.containsKey(resourceType);
+        // Resource is supported if explicitly mapped OR if _default fallback exists
+        return resourceToCollection.containsKey(resourceType) || 
+               resourceToCollection.containsKey("_default");
     }
     
     /**

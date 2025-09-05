@@ -62,6 +62,10 @@ fhir:
           description: "Immunization - 1 resource"
           indexes:
 
+        - name: "ServiceRequest"
+          description: "ServiceRequest - 1 resource"
+          indexes:
+
         - name: "General"
           description: "All other resources"
           indexes:
@@ -102,6 +106,7 @@ mapping:
     DiagnosticReport: DiagnosticReport
     DocumentReference: DocumentReference
     Immunization: Immunization
+    ServiceRequest: ServiceRequest
 
     # Default fallback - any resource not explicitly listed above goes to General collection
     _default: General
@@ -116,5 +121,6 @@ mapping:
     DiagnosticReport: ftsDiagnosticReport
     DocumentReference: ftsDocumentReference
     Immunization: ftsImmunization
+    ServiceRequest: ftsServiceRequest
     General: ftsGeneral
     Versions: ftsVersions

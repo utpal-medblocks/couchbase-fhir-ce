@@ -31,7 +31,7 @@
       "store_dynamic": false,
       "type_field": "_type",
       "types": {
-        "Resources.serviceRequest": {
+        "Resources.ServiceRequest": {
           "default_analyzer": "keyword",
           "dynamic": false,
           "enabled": true,
