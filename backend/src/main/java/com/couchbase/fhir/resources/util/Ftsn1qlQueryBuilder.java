@@ -20,6 +20,18 @@ public class Ftsn1qlQueryBuilder {
     
     @Autowired
     private CollectionRoutingService collectionRoutingService;
+    
+    /**
+     * Determine if resourceType filter is needed based on collection type
+     * @param resourceType The FHIR resource type
+     * @return true if resourceType filter should be added (for General collection), false for dedicated collections
+     */
+    private boolean shouldIncludeResourceTypeFilter(String resourceType) {
+        String targetCollection = collectionRoutingService.getTargetCollection(resourceType);
+        // Only add resourceType filter if going to General collection (mixed resource types)
+        // Dedicated collections (Patient, Observation, etc.) don't need resourceType filter
+        return "General".equals(targetCollection);
+    }
 
     public String buildIdOnly(
             List<SearchQuery> mustQueries,
@@ -33,25 +45,44 @@ public class Ftsn1qlQueryBuilder {
 
         JsonObject queryBody;
         
-        // Always add resource type filter since multiple resource types are in the same collection
-        JsonObject resourceTypeFilter = JsonObject.create()
-            .put("field", "resourceType")
-            .put("match", resourceType);
+        // Only add resource type filter for General collection (mixed resource types)
+        // Dedicated collections don't need resourceType filter since they contain only one resource type
+        boolean needsResourceTypeFilter = shouldIncludeResourceTypeFilter(resourceType);
+        JsonObject resourceTypeFilter = null;
+        
+        if (needsResourceTypeFilter) {
+            resourceTypeFilter = JsonObject.create()
+                .put("field", "resourceType")
+                .put("match", resourceType);
+        }
         
         // Build the main query structure
         if (mustQueries.isEmpty()) {
-            // No search criteria - just filter by resource type
-            queryBody = resourceTypeFilter;
+            if (needsResourceTypeFilter) {
+                // No search criteria - just filter by resource type (General collection only)
+                queryBody = resourceTypeFilter;
+            } else {
+                // No search criteria and no resourceType filter needed (dedicated collection)
+                // Use match_all query
+                queryBody = JsonObject.create().put("match_all", JsonObject.create());
+            }
         } else if (mustQueries.size() == 1) {
-            // Single query - combine with resource type filter using conjuncts
-            queryBody = JsonObject.create().put(
-                "conjuncts",
-                List.of(resourceTypeFilter, mustQueries.get(0).export())
-            );
+            if (needsResourceTypeFilter) {
+                // Single query - combine with resource type filter using conjuncts
+                queryBody = JsonObject.create().put(
+                    "conjuncts",
+                    List.of(resourceTypeFilter, mustQueries.get(0).export())
+                );
+            } else {
+                // Single query - no resourceType filter needed
+                queryBody = mustQueries.get(0).export();
+            }
         } else {
-            // Multiple queries - combine resource type filter with all other queries using conjuncts
+            // Multiple queries
             List<JsonObject> allQueries = new ArrayList<>();
-            allQueries.add(resourceTypeFilter);
+            if (needsResourceTypeFilter) {
+                allQueries.add(resourceTypeFilter);
+            }
             allQueries.addAll(mustQueries.stream().map(SearchQuery::export).collect(Collectors.toList()));
             queryBody = JsonObject.create().put("conjuncts", allQueries);
         }
@@ -115,25 +146,44 @@ public class Ftsn1qlQueryBuilder {
 
         JsonObject queryBody;
         
-        // Always add resource type filter since multiple resource types are in the same collection
-        JsonObject resourceTypeFilter = JsonObject.create()
-            .put("field", "resourceType")
-            .put("match", resourceType);
+        // Only add resource type filter for General collection (mixed resource types)
+        // Dedicated collections don't need resourceType filter since they contain only one resource type
+        boolean needsResourceTypeFilter = shouldIncludeResourceTypeFilter(resourceType);
+        JsonObject resourceTypeFilter = null;
+        
+        if (needsResourceTypeFilter) {
+            resourceTypeFilter = JsonObject.create()
+                .put("field", "resourceType")
+                .put("match", resourceType);
+        }
         
         // Build the main query structure
         if (mustQueries.isEmpty()) {
-            // No search criteria - just filter by resource type
-            queryBody = resourceTypeFilter;
+            if (needsResourceTypeFilter) {
+                // No search criteria - just filter by resource type (General collection only)
+                queryBody = resourceTypeFilter;
+            } else {
+                // No search criteria and no resourceType filter needed (dedicated collection)
+                // Use match_all query
+                queryBody = JsonObject.create().put("match_all", JsonObject.create());
+            }
         } else if (mustQueries.size() == 1) {
-            // Single query - combine with resource type filter using conjuncts
-            queryBody = JsonObject.create().put(
-                "conjuncts",
-                List.of(resourceTypeFilter, mustQueries.get(0).export())
-            );
+            if (needsResourceTypeFilter) {
+                // Single query - combine with resource type filter using conjuncts
+                queryBody = JsonObject.create().put(
+                    "conjuncts",
+                    List.of(resourceTypeFilter, mustQueries.get(0).export())
+                );
+            } else {
+                // Single query - no resourceType filter needed
+                queryBody = mustQueries.get(0).export();
+            }
         } else {
-            // Multiple queries - combine resource type filter with all other queries using conjuncts
+            // Multiple queries
             List<JsonObject> allQueries = new ArrayList<>();
-            allQueries.add(resourceTypeFilter);
+            if (needsResourceTypeFilter) {
+                allQueries.add(resourceTypeFilter);
+            }
             allQueries.addAll(mustQueries.stream().map(SearchQuery::export).collect(Collectors.toList()));
             queryBody = JsonObject.create().put("conjuncts", allQueries);
         }
@@ -212,25 +262,44 @@ public class Ftsn1qlQueryBuilder {
 
         JsonObject queryBody;
         
-        // Always add resource type filter since multiple resource types are in the same collection
-        JsonObject resourceTypeFilter = JsonObject.create()
-            .put("field", "resourceType")
-            .put("match", resourceType);
+        // Only add resource type filter for General collection (mixed resource types)
+        // Dedicated collections don't need resourceType filter since they contain only one resource type
+        boolean needsResourceTypeFilter = shouldIncludeResourceTypeFilter(resourceType);
+        JsonObject resourceTypeFilter = null;
+        
+        if (needsResourceTypeFilter) {
+            resourceTypeFilter = JsonObject.create()
+                .put("field", "resourceType")
+                .put("match", resourceType);
+        }
         
         // Use same logic as main build method
         if (mustQueries.isEmpty()) {
-            // No search criteria - just filter by resource type
-            queryBody = resourceTypeFilter;
+            if (needsResourceTypeFilter) {
+                // No search criteria - just filter by resource type (General collection only)
+                queryBody = resourceTypeFilter;
+            } else {
+                // No search criteria and no resourceType filter needed (dedicated collection)
+                // Use match_all query
+                queryBody = JsonObject.create().put("match_all", JsonObject.create());
+            }
         } else if (mustQueries.size() == 1) {
-            // Single query - combine with resource type filter using conjuncts
-            queryBody = JsonObject.create().put(
-                "conjuncts",
-                List.of(resourceTypeFilter, mustQueries.get(0).export())
-            );
+            if (needsResourceTypeFilter) {
+                // Single query - combine with resource type filter using conjuncts
+                queryBody = JsonObject.create().put(
+                    "conjuncts",
+                    List.of(resourceTypeFilter, mustQueries.get(0).export())
+                );
+            } else {
+                // Single query - no resourceType filter needed
+                queryBody = mustQueries.get(0).export();
+            }
         } else {
-            // Multiple queries - combine resource type filter with all other queries using conjuncts
+            // Multiple queries
             List<JsonObject> allQueries = new ArrayList<>();
-            allQueries.add(resourceTypeFilter);
+            if (needsResourceTypeFilter) {
+                allQueries.add(resourceTypeFilter);
+            }
             allQueries.addAll(mustQueries.stream().map(SearchQuery::export).collect(Collectors.toList()));
             queryBody = JsonObject.create().put("conjuncts", allQueries);
         }
