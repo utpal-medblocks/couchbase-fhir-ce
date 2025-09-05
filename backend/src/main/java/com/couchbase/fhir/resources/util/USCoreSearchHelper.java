@@ -43,7 +43,7 @@ public class USCoreSearchHelper {
             case DATE:
                 return buildUSCoreDateQueries(paramName, values.get(0), expression);
             case TOKEN:
-                SearchQuery tokenQuery = buildUSCoreTokenQuery(paramName, values.get(0), expression);
+                SearchQuery tokenQuery = buildUSCoreTokenQuery(fhirContext, resourceType, paramName, values.get(0), expression);
                 return List.of(tokenQuery);
             case STRING:
                 SearchQuery stringQuery = buildUSCoreStringQuery(paramName, values.get(0), expression);
@@ -128,20 +128,11 @@ public class USCoreSearchHelper {
     /**
      * Build token query for US Core parameters
      */
-    private static SearchQuery buildUSCoreTokenQuery(String paramName, String searchValue, String expression) {
+    private static SearchQuery buildUSCoreTokenQuery(FhirContext fhirContext, String resourceType, String paramName, String searchValue, String expression) {
         logger.info("🔍 USCoreSearchHelper: Building TOKEN query for {}", paramName);
         
-        // Use FHIRPathParser to parse the expression
-        FHIRPathParser.ParsedExpression parsed = FHIRPathParser.parse(expression);
-        String fieldPath = parsed.getPrimaryFieldPath();
-        
-        if (fieldPath == null) {
-            logger.warn("🔍 USCoreSearchHelper: Could not extract field path from: {}", expression);
-            fieldPath = "unknown";
-        }
-        
-        logger.info("🔍 USCoreSearchHelper: Extracted field path: {}", fieldPath);
-        return SearchQuery.match(searchValue).field(fieldPath);
+        // Delegate to enhanced TokenSearchHelper for comprehensive TOKEN type support
+        return TokenSearchHelper.buildTokenFTSQueryFromExpression(fhirContext, resourceType, expression, searchValue);
     }
 
     /**
@@ -181,7 +172,5 @@ public class USCoreSearchHelper {
         logger.info("🔍 USCoreSearchHelper: Extracted field path: {}", fieldPath);
         return SearchQuery.match(searchValue).field(fieldPath);
     }
-
-
 
 }

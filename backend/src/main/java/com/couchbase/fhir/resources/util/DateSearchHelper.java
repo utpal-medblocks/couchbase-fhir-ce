@@ -66,6 +66,24 @@ public class DateSearchHelper {
                     if (fieldPath == null) {
                         fieldPath = paramName; // Fallback
                     }
+                    
+                    // Check if this is a Period field using HAPI reflection
+                    boolean isPeriodField = fieldPath.endsWith("Period") || isPeriodType(fhirContext, resourceType, fieldPath);
+                    if (isPeriodField) {
+                        // Handle Period fields by adding .start or .end
+                        if (start != null && end == null) {
+                            fieldPath = fieldPath + ".start";
+                            logger.info("🔍 DateSearchHelper: Period field detected, using start: {}", fieldPath);
+                        } else if (end != null && start == null) {
+                            fieldPath = fieldPath + ".end";
+                            logger.info("🔍 DateSearchHelper: Period field detected, using end: {}", fieldPath);
+                        } else {
+                            // For exact dates or range queries, use start
+                            fieldPath = fieldPath + ".start";
+                            logger.info("🔍 DateSearchHelper: Period field detected, using start for exact/range date: {}", fieldPath);
+                        }
+                    }
+                    
                     SearchQuery query = buildDateQueryForField(fieldPath, start, end, inclusiveStart, inclusiveEnd);
                     if (query != null) {
                         queries.add(query);
@@ -215,7 +233,7 @@ public class DateSearchHelper {
                 }
             }
             
-            if (selectedField.equals(actualFieldName) && !parsed.getFieldPaths().isEmpty()) {
+            if (selectedField != null && selectedField.equals(actualFieldName) && !parsed.getFieldPaths().isEmpty()) {
                 selectedField = parsed.getFieldPaths().get(0);
                 logger.info("🔍 DateSearchHelper: Selected first field from union: {}", selectedField);
             }
@@ -226,7 +244,11 @@ public class DateSearchHelper {
         // Check if this is a Period field and adjust field path accordingly
         String dateField = actualFieldName;
         
-        if (actualFieldName.endsWith("Period")) {
+        // Check both field name ending and actual HAPI type
+        boolean isPeriodField = (actualFieldName != null) && 
+                               (actualFieldName.endsWith("Period") || isPeriodType(fhirContext, resourceType, actualFieldName));
+        
+        if (isPeriodField) {
             if (start != null) {
                 dateField = actualFieldName + ".start";
                 logger.info("🔍 DateSearchHelper: Period field detected, using start: {}", dateField);
@@ -347,7 +369,7 @@ public class DateSearchHelper {
                 }
             }
             
-            if (selectedField.equals(actualFieldName) && !parsed.getFieldPaths().isEmpty()) {
+            if (selectedField != null && selectedField.equals(actualFieldName) && !parsed.getFieldPaths().isEmpty()) {
                 selectedField = parsed.getFieldPaths().get(0);
                 logger.info("🔍 DateSearchHelper: Selected first field from union: {}", selectedField);
             }

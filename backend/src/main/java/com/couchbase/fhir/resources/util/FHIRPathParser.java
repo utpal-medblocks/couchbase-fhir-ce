@@ -226,12 +226,49 @@ public class FHIRPathParser {
     
     /**
      * Extract simple field path from expression like "Condition.assertedDate" -> "assertedDate"
+     * Also handles casting expressions like "(Patient.deceased as dateTime)" -> "deceasedDateTime"
      */
     private static String extractSimpleFieldPath(String expression) {
+        // Handle parenthetical casting expressions like "(Patient.deceased as dateTime)"
+        if (expression.startsWith("(") && expression.endsWith(")")) {
+            String inner = expression.substring(1, expression.length() - 1);
+            logger.info("🔍 FHIRPathParser: Handling parenthetical expression: {}", inner);
+            
+            // Handle "as dateTime" casting
+            if (inner.contains(" as dateTime")) {
+                String withoutCast = inner.replace(" as dateTime", "");
+                if (withoutCast.contains(".")) {
+                    String[] parts = withoutCast.split("\\.");
+                    if (parts.length >= 2) {
+                        String fieldName = parts[1] + "DateTime";
+                        logger.info("🔍 FHIRPathParser: Converted cast expression to: {}", fieldName);
+                        return fieldName;
+                    }
+                }
+            }
+            
+            // Handle "as Period" casting
+            if (inner.contains(" as Period")) {
+                String withoutCast = inner.replace(" as Period", "");
+                if (withoutCast.contains(".")) {
+                    String[] parts = withoutCast.split("\\.");
+                    if (parts.length >= 2) {
+                        String fieldName = parts[1] + "Period";
+                        logger.info("🔍 FHIRPathParser: Converted cast expression to: {}", fieldName);
+                        return fieldName;
+                    }
+                }
+            }
+            
+            // Fallback to processing the inner expression
+            return extractSimpleFieldPath(inner);
+        }
+        
         if (expression.contains(".") && !expression.contains("(")) {
             String[] parts = expression.split("\\.");
             if (parts.length >= 2) {
-                return parts[1]; // Return the field name after resource type
+                // Return everything after the resource type (e.g., CareTeam.participant.role -> participant.role)
+                return String.join(".", java.util.Arrays.copyOfRange(parts, 1, parts.length));
             }
         }
         

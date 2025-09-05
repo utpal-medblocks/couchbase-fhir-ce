@@ -734,27 +734,44 @@ public class SearchService {
             revInclude.getParamType(), revInclude.getParamName(), 
             primaryResourceReferences, revIncludeCount, 0, bucketName);
         
-        // Step 5: Create search state for pagination
-        SearchState searchState = SearchState.builder()
-            .searchType("revinclude")
-            .primaryResourceType(primaryResourceType)
-            .primaryResourceIds(primaryResourceReferences)
-            .revIncludeResourceType(revInclude.getParamType())
-            .revIncludeSearchParam(revInclude.getParamName())
-            .totalPrimaryResources(primaryResourceCount)
-            .currentPrimaryOffset(primaryResourceCount) // All primary resources returned in first page
-            .currentRevIncludeOffset(revIncludeResources.size())  // Next offset = actual number of revinclude resources returned
-            .pageSize(count)
-            .bucketName(bucketName)
-            .build();
+        // Only create SearchState if pagination is actually needed
+        String continuationToken = null;
+        int totalRevIncludeCount = 0;
+        boolean needsPagination = (revIncludeResources.size() == revIncludeCount); // Got exactly what we requested
         
-        // Get total count of revinclude resources for accurate pagination
-        int totalRevIncludeCount = getTotalRevIncludeCount(
-            revInclude.getParamType(), revInclude.getParamName(), 
-            primaryResourceReferences, bucketName);
-        searchState.setTotalRevIncludeResources(totalRevIncludeCount);
-        
-        String continuationToken = searchStateManager.storeSearchState(searchState);
+        if (needsPagination) {
+            // Get total count of revinclude resources for accurate pagination
+            totalRevIncludeCount = getTotalRevIncludeCount(
+                revInclude.getParamType(), revInclude.getParamName(), 
+                primaryResourceReferences, bucketName);
+            
+            // Only create SearchState if there are actually more results to paginate
+            if (totalRevIncludeCount > revIncludeResources.size()) {
+                SearchState searchState = SearchState.builder()
+                    .searchType("revinclude")
+                    .primaryResourceType(primaryResourceType)
+                    .primaryResourceIds(primaryResourceReferences)
+                    .revIncludeResourceType(revInclude.getParamType())
+                    .revIncludeSearchParam(revInclude.getParamName())
+                    .totalPrimaryResources(primaryResourceCount)
+                    .currentPrimaryOffset(primaryResourceCount) // All primary resources returned in first page
+                    .currentRevIncludeOffset(revIncludeResources.size())  // Next offset = actual number of revinclude resources returned
+                    .pageSize(count)
+                    .bucketName(bucketName)
+                    .totalRevIncludeResources(totalRevIncludeCount)
+                    .build();
+                
+                continuationToken = searchStateManager.storeSearchState(searchState);
+                logger.info("✅ Created SearchState for _revinclude pagination: token={}, totalRevInclude={}", 
+                           continuationToken, totalRevIncludeCount);
+            } else {
+                logger.debug("🔍 _revinclude: Got all results, no pagination needed");
+            }
+        } else {
+            logger.debug("🔍 _revinclude: Got {} results (less than requested {}), no pagination needed", 
+                        revIncludeResources.size(), revIncludeCount);
+            totalRevIncludeCount = revIncludeResources.size();
+        }
         
         // Step 6: Build response bundle
         Bundle bundle = new Bundle();
@@ -781,11 +798,11 @@ public class SearchService {
                     .setMode(Bundle.SearchEntryMode.INCLUDE);
         }
         
-        // Add next link if there are more revinclude resources
-        if (searchState.hasMoreRevIncludeResources()) {
+        // Add next link only if we have a continuation token and more resources
+        if (continuationToken != null && totalRevIncludeCount > revIncludeResources.size()) {
             bundle.addLink()
                     .setRelation("next")
-                    .setUrl(buildNextPageUrl(continuationToken, searchState.getCurrentRevIncludeOffset(), primaryResourceType, bucketName, searchState.getPageSize()));
+                    .setUrl(buildNextPageUrl(continuationToken, revIncludeResources.size(), primaryResourceType, bucketName, count));
         }
         
         logger.info("🔍 Returning _revinclude bundle: {} primary + {} revinclude resources", 
@@ -1388,21 +1405,25 @@ public class SearchService {
     // ========== Regular Search Pagination Methods ==========
     
     /**
-     * Determine if a search should use pagination
+     * Determine if a search should use pagination-ready flow
+     * This determines if we should use the flow that CAN create SearchState if needed,
+     * but SearchState will only be created if results.size() == count
      */
     private boolean shouldPaginate(Map<String, String> searchParams, int count) {
-        // Always paginate if _count is explicitly set and reasonable
-        if (count > 0 && count <= 100) {
+        // Use pagination-ready flow if _count is explicitly set and reasonable
+        // This allows us to create SearchState ONLY if we get exactly 'count' results
+        if (count > 0 && count <= 1000) {
             return true;
         }
         
-        // Paginate for potentially large result sets
+        // Use pagination-ready flow for potentially large result sets
+        // But SearchState will only be created if results indicate more data exists
         if (hasLargeResultPotential(searchParams)) {
             return true;
         }
         
-        // Configuration-driven pagination (future enhancement)
-        return isAutoPaginationEnabled();
+        // Default to non-paginated for simple, specific searches
+        return false;
     }
     
     /**
@@ -1425,13 +1446,6 @@ public class SearchService {
         return false;
     }
     
-    /**
-     * Check if auto-pagination is enabled (configuration-driven)
-     */
-    private boolean isAutoPaginationEnabled() {
-        // For now, default to true - this can be made configurable later
-        return true;
-    }
     
     /**
      * Handle paginated regular search (first page)
@@ -1453,33 +1467,36 @@ public class SearchService {
         @SuppressWarnings("unchecked")
         List<Resource> results = (List<Resource>) dao.search(resourceType, query);
         
-        // Optimized counting: Only do count query if we got exactly the requested count
-        // (meaning there might be more results)
+        // Optimized counting and SearchState creation: Only create SearchState if pagination is actually needed
         int totalCount;
-        if (results.size() == count) {
-            // We got exactly the requested count, so there might be more - do count query
-            logger.debug("🔍 Got exactly {} results, doing count query to get accurate total", count);
+        String continuationToken = null;
+        boolean needsPagination = (results.size() == count); // Only paginate if we got exactly the requested count
+        
+        if (needsPagination) {
+            // We got exactly the requested count, so there might be more - do count query and create SearchState
+            logger.debug("🔍 Got exactly {} results, enabling pagination (doing count query)", count);
             totalCount = getAccurateCount(ftsQueries, resourceType, bucketName);
+            
+            // Only create SearchState when pagination is actually needed
+            SearchState searchState = SearchState.builder()
+                .searchType("regular")
+                .primaryResourceType(resourceType)
+                .originalSearchCriteria(new HashMap<>(searchParams))
+                .cachedFtsQueries(new ArrayList<>(ftsQueries))
+                .sortFields(sortFields != null ? new ArrayList<>(sortFields) : new ArrayList<>())
+                .totalPrimaryResources(totalCount)
+                .currentPrimaryOffset(results.size())
+                .pageSize(count)
+                .bucketName(bucketName)
+                .build();
+            
+            continuationToken = searchStateManager.storeSearchState(searchState);
+            logger.info("✅ Created SearchState for pagination: token={}, total={}", continuationToken, totalCount);
         } else {
-            // We got fewer results than requested, so this is all of them
-            logger.debug("🔍 Got {} results (less than requested {}), using result count as total", results.size(), count);
+            // We got fewer results than requested, so this is all of them - no pagination needed
+            logger.debug("🔍 Got {} results (less than requested {}), no pagination needed", results.size(), count);
             totalCount = results.size();
         }
-        
-        // Create SearchState for regular search
-        SearchState searchState = SearchState.builder()
-            .searchType("regular")
-            .primaryResourceType(resourceType)
-            .originalSearchCriteria(new HashMap<>(searchParams))
-            .cachedFtsQueries(new ArrayList<>(ftsQueries))
-            .sortFields(sortFields != null ? new ArrayList<>(sortFields) : new ArrayList<>())
-            .totalPrimaryResources(totalCount)
-            .currentPrimaryOffset(results.size())
-            .pageSize(count)
-            .bucketName(bucketName)
-            .build();
-        
-        String continuationToken = searchStateManager.storeSearchState(searchState);
         
         // Build Bundle response
         Bundle bundle = new Bundle();
@@ -1496,11 +1513,11 @@ public class SearchService {
                     .setMode(Bundle.SearchEntryMode.MATCH);
         }
         
-        // Add next link if there are more results
-        if (results.size() == count && searchState.getCurrentPrimaryOffset() < totalCount) {
+        // Add next link only if we have a continuation token (pagination enabled) and there are more results
+        if (continuationToken != null && totalCount > results.size()) {
             bundle.addLink()
                     .setRelation("next")
-                    .setUrl(buildNextPageUrl(continuationToken, searchState.getCurrentPrimaryOffset(), resourceType, bucketName, count));
+                    .setUrl(buildNextPageUrl(continuationToken, results.size(), resourceType, bucketName, count));
         }
         
         logger.info("🔍 Returning paginated regular search: {} results, total: {}", results.size(), totalCount);
