@@ -26,32 +26,44 @@ fhir:
       name: "Resources"
       description: "FHIR clinical and administrative resource collections"
       collections:
-        - name: "BaseIndividuals"
-          description: "Base Individuals (People & Roles) - 6 resources"
+        - name: "Patient"
+          description: "Patient - 1 resource"
           indexes:
 
-        - name: "BaseManagement"
-          description: "Base Management (Encounters & Workflow) - 18 resources"
+        - name: "Observation"
+          description: "Observation - 1 resource"
           indexes:
 
-        - name: "ClinicalSummary"
-          description: "Clinical Summary (Conditions & History) - 14 resources"
+        - name: "Encounter"
+          description: "Encounter - 1 resource"
           indexes:
 
-        - name: "ClinicalDiagnostics"
-          description: "Clinical Diagnostics (Tests, Results, Reports) - 16 resources"
+        - name: "Condition"
+          description: "Condition - 1 resource"
           indexes:
 
-        - name: "ClinicalCare"
-          description: "Clinical Care (Care Planning & Services) - 11 resources"
+        - name: "Procedure"
+          description: "Procedure - 1 resource"
           indexes:
 
-        - name: "ClinicalMedications"
-          description: "Clinical Medications (Drugs & Immunizations) - 10 resources"
+        - name: "MedicationRequest"
+          description: "MedicationRequest - 1 resource"
+          indexes:
+
+        - name: "DiagnosticReport"
+          description: "DiagnosticReport - 1 resource"
+          indexes:
+
+        - name: "DocumentReference"
+          description: "DocumentReference - 1 resource"
+          indexes:
+
+        - name: "Immunization"
+          description: "Immunization - 1 resource"
           indexes:
 
         - name: "General"
-          description: "General (Billing, Coverage, Claims) - 16 resources"
+          description: "All other resources"
           indexes:
 
         - name: "Versions"
@@ -80,192 +92,29 @@ fhir:
 # FHIR Resource to Collection Mapping Configuration
 mapping:
   resource_to_collection:
-    # Base Individuals (People & Roles) - 6 resources
-    Patient: BaseIndividuals
-    Practitioner: BaseIndividuals
-    PractitionerRole: BaseIndividuals
-    RelatedPerson: BaseIndividuals
-    Organization: BaseIndividuals
-    Location: BaseIndividuals
-    Person: BaseIndividuals
-    Group: BaseIndividuals
+    # Dedicated collections for high-volume/important resources
+    Patient: Patient
+    Observation: Observation
+    Encounter: Encounter
+    Condition: Condition
+    Procedure: Procedure
+    MedicationRequest: MedicationRequest
+    DiagnosticReport: DiagnosticReport
+    DocumentReference: DocumentReference
+    Immunization: Immunization
 
-    # Base Management (Encounters & Workflow) - 18 resources
-    Encounter: BaseManagement
-    EpisodeOfCare: BaseManagement
-    Flag: BaseManagement
-    List: BaseManagement
-    Appointment: BaseManagement
-    AppointmentResponse: BaseManagement
-    Schedule: BaseManagement
-    Slot: BaseManagement
-    Task: BaseManagement
-    Communication: BaseManagement
-    CommunicationRequest: BaseManagement
-    MessageHeader: BaseManagement
-    MessageDefinition: BaseManagement
-    Subscription: BaseManagement
-    SupplyRequest: BaseManagement
-    SupplyDelivery: BaseManagement
-    CatalogEntry: BaseManagement
-    Basic: BaseManagement
-
-    # Clinical Summary (Conditions & History) - 14 resources
-    AllergyIntolerance: ClinicalSummary
-    Condition: ClinicalSummary
-    Procedure: ClinicalSummary
-    FamilyMemberHistory: ClinicalSummary
-    ClinicalImpression: ClinicalSummary
-    DetectedIssue: ClinicalSummary
-    RiskAssessment: ClinicalSummary
-    AdverseEvent: ClinicalSummary
-    BodyStructure: ClinicalSummary
-    ImagingStudy: ClinicalSummary
-    MolecularSequence: ClinicalSummary
-    ResearchSubject: ClinicalSummary
-    ResearchStudy: ClinicalSummary
-    GuidanceResponse: ClinicalSummary
-
-    # Clinical Diagnostics (Tests, Results, Reports) - 16 resources
-    Observation: ClinicalDiagnostics
-    DiagnosticReport: ClinicalDiagnostics
-    Specimen: ClinicalDiagnostics
-    SpecimenDefinition: ClinicalDiagnostics
-    QuestionnaireResponse: ClinicalDiagnostics
-    Questionnaire: ClinicalDiagnostics
-    DocumentReference: ClinicalDiagnostics
-    DocumentManifest: ClinicalDiagnostics
-    Media: ClinicalDiagnostics
-    Binary: ClinicalDiagnostics
-    Bundle: ClinicalDiagnostics
-    Composition: ClinicalDiagnostics
-    Contract: ClinicalDiagnostics
-    Consent: ClinicalDiagnostics
-    AuditEvent: ClinicalDiagnostics
-    Device: ClinicalDiagnostics
-    DeviceDefinition: ClinicalDiagnostics
-    DeviceMetric: ClinicalDiagnostics
-    DeviceRequest: ClinicalDiagnostics
-    DeviceUseStatement: ClinicalDiagnostics
-
-    # Clinical Medications (Drugs & Immunizations) - 10 resources
-    MedicationRequest: ClinicalMedications
-    MedicationDispense: ClinicalMedications
-    MedicationAdministration: ClinicalMedications
-    MedicationStatement: ClinicalMedications
-    Medication: ClinicalMedications
-    MedicationKnowledge: ClinicalMedications
-    Immunization: ClinicalMedications
-    ImmunizationEvaluation: ClinicalMedications
-    ImmunizationRecommendation: ClinicalMedications
-    BiologicallyDerivedProduct: ClinicalMedications
-
-    # Clinical Care (Care Planning & Services) - 11 resources
-    CarePlan: ClinicalCare
-    CareTeam: ClinicalCare
-    Goal: ClinicalCare
-    ServiceRequest: ClinicalCare
-    NutritionOrder: ClinicalCare
-    VisionPrescription: ClinicalCare
-    RequestGroup: ClinicalCare
-    ActivityDefinition: ClinicalCare
-    PlanDefinition: ClinicalCare
-    Measure: ClinicalCare
-    MeasureReport: ClinicalCare
-    HealthcareService: ClinicalCare
-
-    # General (Billing, Coverage, Claims) - 16 resources
-    Coverage: General
-    CoverageEligibilityRequest: General
-    CoverageEligibilityResponse: General
-    EnrollmentRequest: General
-    EnrollmentResponse: General
-    Endpoint: General
-    Claim: General
-    ClaimResponse: General
-    Invoice: General
-    PaymentNotice: General
-    PaymentReconciliation: General
-    Provenance: General
-    Account: General
-    ChargeItem: General
-    ChargeItemDefinition: General
-    InsurancePlan: General
-    ExplanationOfBenefit: General
-    VerificationResult: General
-
-    # Additional Foundation & Infrastructure Resources (46 more)
-    # These could be distributed across collections or kept separate
-
-    # Terminology & Knowledge Resources - Could go in BaseManagement
-    ConceptMap: BaseManagement
-    ValueSet: BaseManagement
-    CodeSystem: BaseManagement
-    NamingSystem: BaseManagement
-    TerminologyCapabilities: BaseManagement
-
-    # Structure & Conformance - Could go in BaseManagement
-    StructureDefinition: BaseManagement
-    StructureMap: BaseManagement
-    ImplementationGuide: BaseManagement
-    CapabilityStatement: BaseManagement
-    OperationDefinition: BaseManagement
-    SearchParameter: BaseManagement
-    CompartmentDefinition: BaseManagement
-    GraphDefinition: BaseManagement
-
-    # Testing & Quality - Could go in ClinicalCare
-    TestScript: ClinicalCare
-    TestReport: ClinicalCare
-
-    # Libraries & Logic - Could go in ClinicalCare
-    Library: ClinicalCare
-    EventDefinition: ClinicalCare
-
-    # Research & Evidence - Could go in ClinicalSummary
-    Evidence: ClinicalSummary
-    EvidenceVariable: ClinicalSummary
-    EffectEvidenceSynthesis: ClinicalSummary
-    RiskEvidenceSynthesis: ClinicalSummary
-
-    # Operations & Parameters - Could go in BaseManagement
-    Parameters: BaseManagement
-    OperationOutcome: BaseManagement
-
-    # Linkage & Relationships - Could go in BaseManagement
-    Linkage: BaseManagement
-
-    # Substance & Materials - Could go in ClinicalMedications
-    Substance: ClinicalMedications
-    SubstanceSpecification: ClinicalMedications
-    SubstancePolymer: ClinicalMedications
-    SubstanceReferenceInformation: ClinicalMedications
-    SubstanceSourceMaterial: ClinicalMedications
-    SubstanceProtein: ClinicalMedications
-    SubstanceNucleicAcid: ClinicalMedications
-
-    # Regulatory & Manufacturing - Could go in ClinicalMedications
-    MedicinalProduct: ClinicalMedications
-    MedicinalProductAuthorization: ClinicalMedications
-    MedicinalProductContraindication: ClinicalMedications
-    MedicinalProductIndication: ClinicalMedications
-    MedicinalProductIngredient: ClinicalMedications
-    MedicinalProductInteraction: ClinicalMedications
-    MedicinalProductManufactured: ClinicalMedications
-    MedicinalProductPackaged: ClinicalMedications
-    MedicinalProductPharmaceutical: ClinicalMedications
-    MedicinalProductUndesirableEffect: ClinicalMedications
-
-    # Marketing & Manufacturing - Could go in General
-    MarketingStatus: General
-    ProductShelfLife: General
-    ProdCharacteristic: General
+    # Default fallback - any resource not explicitly listed above goes to General collection
+    _default: General
 
   collection_to_fts_index:
-    BaseIndividuals: ftsBaseIndividuals
-    BaseManagement: ftsBaseManagement
-    ClinicalSummary: ftsClinicalSummary
-    ClinicalDiagnostics: ftsClinicalDiagnostics
-    ClinicalMedications: ftsClinicalMedications
-    ClinicalCare: ftsClinicalCare
+    Patient: ftsPatient
+    Observation: ftsObservation
+    Encounter: ftsEncounter
+    Condition: ftsCondition
+    Procedure: ftsProcedure
+    MedicationRequest: ftsMedicationRequest
+    DiagnosticReport: ftsDiagnosticReport
+    DocumentReference: ftsDocumentReference
+    Immunization: ftsImmunization
     General: ftsGeneral
+    Versions: ftsVersions

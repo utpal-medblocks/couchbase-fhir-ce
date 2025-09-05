@@ -1,0 +1,354 @@
+{
+  "type": "fulltext-index",
+  "name": "",
+  "uuid": "",
+  "sourceType": "gocbcore",
+  "sourceName": "",
+  "sourceUUID": "",
+  "planParams": {
+    "maxPartitionsPerPIndex": 171,
+    "indexPartitions": 6
+  },
+  "params": {
+    "doc_config": {
+      "docid_prefix_delim": "",
+      "docid_regexp": "",
+      "mode": "scope.collection.type_field",
+      "type_field": "type"
+    },
+    "mapping": {
+      "analysis": {},
+      "default_analyzer": "keyword",
+      "default_datetime_parser": "dateTimeOptional",
+      "default_field": "_all",
+      "default_mapping": {
+        "dynamic": true,
+        "enabled": false
+      },
+      "default_type": "_default",
+      "docvalues_dynamic": false,
+      "index_dynamic": true,
+      "store_dynamic": false,
+      "type_field": "_type",
+      "types": {
+        "Resources.Procedure": {
+          "default_analyzer": "keyword",
+          "dynamic": false,
+          "enabled": true,
+          "properties": {
+            "basedOn": {
+              "dynamic": false,
+              "enabled": true,
+              "properties": {
+                "reference": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "index": true,
+                      "name": "reference",
+                      "type": "text"
+                    }
+                  ]
+                }
+              }
+            },
+            "category": {
+              "dynamic": false,
+              "enabled": true,
+              "fields": [
+                {
+                  "index": true,
+                  "name": "category",
+                  "type": "text"
+                }
+              ]
+            },
+            "code": {
+              "dynamic": false,
+              "enabled": true,
+              "properties": {
+                "coding": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "properties": {
+                    "system": {
+                      "dynamic": false,
+                      "enabled": true,
+                      "fields": [
+                        {
+                          "index": true,
+                          "name": "system",
+                          "type": "text"
+                        }
+                      ]
+                    },
+                    "value": {
+                      "dynamic": false,
+                      "enabled": true,
+                      "fields": [
+                        {
+                          "index": true,
+                          "name": "value",
+                          "type": "text"
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            },
+            "encounter": {
+              "dynamic": false,
+              "enabled": true,
+              "properties": {
+                "reference": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "index": true,
+                      "name": "reference",
+                      "type": "text"
+                    }
+                  ]
+                }
+              }
+            },
+            "id": {
+              "dynamic": false,
+              "enabled": true,
+              "fields": [
+                {
+                  "index": true,
+                  "name": "id",
+                  "type": "text"
+                }
+              ]
+            },
+            "identifier": {
+              "dynamic": false,
+              "enabled": true,
+              "properties": {
+                "system": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "index": true,
+                      "name": "system",
+                      "type": "text"
+                    }
+                  ]
+                },
+                "use": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "index": true,
+                      "name": "use",
+                      "type": "text"
+                    }
+                  ]
+                },
+                "value": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "index": true,
+                      "name": "value",
+                      "type": "text"
+                    }
+                  ]
+                }
+              }
+            },
+            "location": {
+              "dynamic": false,
+              "enabled": true,
+              "properties": {
+                "reference": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "index": true,
+                      "name": "reference",
+                      "type": "text"
+                    }
+                  ]
+                }
+              }
+            },
+            "meta": {
+              "dynamic": false,
+              "enabled": true,
+              "properties": {
+                "lastUpdated": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "docvalues": true,
+                      "index": true,
+                      "name": "lastUpdated",
+                      "type": "datetime"
+                    }
+                  ]
+                }
+              }
+            },
+            "partOf": {
+              "dynamic": false,
+              "enabled": true,
+              "properties": {
+                "reference": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "index": true,
+                      "name": "reference",
+                      "type": "text"
+                    }
+                  ]
+                }
+              }
+            },
+            "patient": {
+              "dynamic": false,
+              "enabled": true,
+              "properties": {
+                "reference": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "index": true,
+                      "name": "reference",
+                      "type": "text"
+                    }
+                  ]
+                }
+              }
+            },
+            "performedPeriod": {
+              "dynamic": false,
+              "enabled": true,
+              "properties": {
+                "end": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "index": true,
+                      "name": "end",
+                      "type": "datetime"
+                    }
+                  ]
+                },
+                "start": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "index": true,
+                      "name": "start",
+                      "type": "datetime"
+                    }
+                  ]
+                }
+              }
+            },
+            "performer": {
+              "dynamic": false,
+              "enabled": true,
+              "properties": {
+                "actor": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "properties": {
+                    "reference": {
+                      "dynamic": false,
+                      "enabled": true,
+                      "fields": [
+                        {
+                          "index": true,
+                          "name": "reference",
+                          "type": "text"
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            },
+            "reasonCode": {
+              "dynamic": false,
+              "enabled": true,
+              "fields": [
+                {
+                  "index": true,
+                  "name": "reasonCode",
+                  "type": "text"
+                }
+              ]
+            },
+            "reasonReference": {
+              "dynamic": false,
+              "enabled": true,
+              "properties": {
+                "reference": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "index": true,
+                      "name": "reference",
+                      "type": "text"
+                    }
+                  ]
+                }
+              }
+            },
+            "status": {
+              "dynamic": false,
+              "enabled": true,
+              "fields": [
+                {
+                  "index": true,
+                  "name": "status",
+                  "type": "text"
+                }
+              ]
+            },
+            "subject": {
+              "dynamic": false,
+              "enabled": true,
+              "properties": {
+                "reference": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "index": true,
+                      "name": "reference",
+                      "type": "text"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "store": {
+      "indexType": "scorch",
+      "segmentVersion": 15
+    }
+  },
+  "sourceParams": {}
+}

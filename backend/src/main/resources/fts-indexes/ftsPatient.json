@@ -6,8 +6,8 @@
   "sourceName": "",
   "sourceUUID": "",
   "planParams": {
-    "maxPartitionsPerPIndex": 1024,
-    "indexPartitions": 1
+    "maxPartitionsPerPIndex": 171,
+    "indexPartitions": 6
   },
   "params": {
     "doc_config": {
@@ -31,7 +31,7 @@
       "store_dynamic": false,
       "type_field": "_type",
       "types": {
-        "Resources.BaseIndividuals": {
+        "Resources.Patient": {
           "default_analyzer": "keyword",
           "dynamic": false,
           "enabled": true,
@@ -171,6 +171,68 @@
                 }
               ]
             },
+            "extension": {
+              "dynamic": false,
+              "enabled": true,
+              "properties": {
+                "extension": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "properties": {
+                    "url": {
+                      "dynamic": false,
+                      "enabled": true,
+                      "fields": [
+                        {
+                          "index": true,
+                          "name": "url",
+                          "type": "text"
+                        }
+                      ]
+                    },
+                    "valueCoding": {
+                      "dynamic": false,
+                      "enabled": true,
+                      "properties": {
+                        "code": {
+                          "dynamic": false,
+                          "enabled": true,
+                          "fields": [
+                            {
+                              "index": true,
+                              "name": "code",
+                              "type": "text"
+                            }
+                          ]
+                        },
+                        "system": {
+                          "dynamic": false,
+                          "enabled": true,
+                          "fields": [
+                            {
+                              "index": true,
+                              "name": "system",
+                              "type": "text"
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                },
+                "url": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "index": true,
+                      "name": "url",
+                      "type": "text"
+                    }
+                  ]
+                }
+              }
+            },
             "gender": {
               "dynamic": false,
               "enabled": true,
@@ -208,6 +270,51 @@
                     }
                   ]
                 },
+                "type": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "properties": {
+                    "coding": {
+                      "dynamic": false,
+                      "enabled": true,
+                      "properties": {
+                        "code": {
+                          "dynamic": false,
+                          "enabled": true,
+                          "fields": [
+                            {
+                              "index": true,
+                              "name": "code",
+                              "type": "text"
+                            }
+                          ]
+                        },
+                        "system": {
+                          "dynamic": false,
+                          "enabled": true,
+                          "fields": [
+                            {
+                              "index": true,
+                              "name": "system",
+                              "type": "text"
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                },
+                "use": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "index": true,
+                      "name": "use",
+                      "type": "text"
+                    }
+                  ]
+                },
                 "value": {
                   "dynamic": false,
                   "enabled": true,
@@ -230,6 +337,7 @@
                   "enabled": true,
                   "fields": [
                     {
+                      "docvalues": true,
                       "index": true,
                       "name": "lastUpdated",
                       "type": "datetime"
@@ -298,20 +406,14 @@
                   "enabled": true,
                   "fields": [
                     {
+                      "index": true,
+                      "name": "suffixExact",
+                      "type": "text"
+                    },
+                    {
                       "analyzer": "standard",
                       "index": true,
                       "name": "suffix",
-                      "type": "text"
-                    }
-                  ]
-                },
-                "suffixExact": {
-                  "dynamic": false,
-                  "enabled": true,
-                  "fields": [
-                    {
-                      "index": true,
-                      "name": "suffixExact",
                       "type": "text"
                     }
                   ]
@@ -334,34 +436,6 @@
                   ]
                 }
               }
-            },
-            "patient": {
-              "dynamic": false,
-              "enabled": true,
-              "properties": {
-                "reference": {
-                  "dynamic": false,
-                  "enabled": true,
-                  "fields": [
-                    {
-                      "index": true,
-                      "name": "reference",
-                      "type": "text"
-                    }
-                  ]
-                }
-              }
-            },
-            "resourceType": {
-              "dynamic": false,
-              "enabled": true,
-              "fields": [
-                {
-                  "index": true,
-                  "name": "resourceType",
-                  "type": "text"
-                }
-              ]
             },
             "telecom": {
               "dynamic": false,

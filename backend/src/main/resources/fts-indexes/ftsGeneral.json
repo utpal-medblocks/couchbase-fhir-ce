@@ -6,8 +6,8 @@
   "sourceName": "",
   "sourceUUID": "",
   "planParams": {
-    "maxPartitionsPerPIndex": 1024,
-    "indexPartitions": 1
+    "maxPartitionsPerPIndex": 171,
+    "indexPartitions": 6
   },
   "params": {
     "doc_config": {
@@ -36,6 +36,113 @@
           "dynamic": false,
           "enabled": true,
           "properties": {
+            "_questionnaire": {
+              "dynamic": false,
+              "enabled": true,
+              "properties": {
+                "extension": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "properties": {
+                    "url": {
+                      "dynamic": false,
+                      "enabled": true,
+                      "fields": [
+                        {
+                          "index": true,
+                          "name": "url",
+                          "type": "text"
+                        }
+                      ]
+                    },
+                    "valueUri": {
+                      "dynamic": false,
+                      "enabled": true,
+                      "fields": [
+                        {
+                          "index": true,
+                          "name": "valueUri",
+                          "type": "text"
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            },
+            "active": {
+              "dynamic": false,
+              "enabled": true,
+              "fields": [
+                {
+                  "index": true,
+                  "name": "active",
+                  "type": "boolean"
+                }
+              ]
+            },
+            "address": {
+              "default_analyzer": "standard",
+              "dynamic": false,
+              "enabled": true,
+              "properties": {
+                "city": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "index": true,
+                      "name": "city",
+                      "type": "text"
+                    }
+                  ]
+                },
+                "line": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "index": true,
+                      "name": "line",
+                      "type": "text"
+                    }
+                  ]
+                },
+                "postalCode": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "index": true,
+                      "name": "postalCode",
+                      "type": "text"
+                    }
+                  ]
+                },
+                "state": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "index": true,
+                      "name": "state",
+                      "type": "text"
+                    }
+                  ]
+                },
+                "use": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "index": true,
+                      "name": "use",
+                      "type": "text"
+                    }
+                  ]
+                }
+              }
+            },
             "agent": {
               "dynamic": false,
               "enabled": true,
@@ -73,18 +180,115 @@
                       }
                     }
                   }
-                },
-                "who": {
+                }
+              }
+            },
+            "author": {
+              "dynamic": false,
+              "enabled": true,
+              "properties": {
+                "reference": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "index": true,
+                      "name": "reference",
+                      "type": "text"
+                    }
+                  ]
+                }
+              }
+            },
+            "authored": {
+              "dynamic": false,
+              "enabled": true,
+              "fields": [
+                {
+                  "index": true,
+                  "name": "authored",
+                  "type": "datetime"
+                }
+              ]
+            },
+            "authorizingPrescription": {
+              "dynamic": false,
+              "enabled": true,
+              "properties": {
+                "reference": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "index": true,
+                      "name": "reference",
+                      "type": "text"
+                    }
+                  ]
+                }
+              }
+            },
+            "beneficiary": {
+              "dynamic": false,
+              "enabled": true,
+              "properties": {
+                "reference": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "index": true,
+                      "name": "reference",
+                      "type": "text"
+                    }
+                  ]
+                }
+              }
+            },
+            "birthDate": {
+              "dynamic": false,
+              "enabled": true,
+              "fields": [
+                {
+                  "index": true,
+                  "name": "birthDate",
+                  "type": "datetime"
+                }
+              ]
+            },
+            "category": {
+              "dynamic": false,
+              "enabled": true,
+              "fields": [
+                {
+                  "index": true,
+                  "name": "category",
+                  "type": "text"
+                }
+              ],
+              "properties": {
+                "coding": {
                   "dynamic": false,
                   "enabled": true,
                   "properties": {
-                    "reference": {
+                    "code": {
                       "dynamic": false,
                       "enabled": true,
                       "fields": [
                         {
                           "index": true,
-                          "name": "reference",
+                          "name": "code",
+                          "type": "text"
+                        }
+                      ]
+                    },
+                    "system": {
+                      "dynamic": false,
+                      "enabled": true,
+                      "fields": [
+                        {
+                          "index": true,
+                          "name": "system",
                           "type": "text"
                         }
                       ]
@@ -93,14 +297,267 @@
                 }
               }
             },
-            "created": {
+            "class": {
+              "dynamic": false,
+              "enabled": true,
+              "properties": {
+                "type": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "properties": {
+                    "coding": {
+                      "dynamic": false,
+                      "enabled": true,
+                      "properties": {
+                        "code": {
+                          "dynamic": false,
+                          "enabled": true,
+                          "fields": [
+                            {
+                              "index": true,
+                              "name": "code",
+                              "type": "text"
+                            }
+                          ]
+                        },
+                        "system": {
+                          "dynamic": false,
+                          "enabled": true,
+                          "fields": [
+                            {
+                              "index": true,
+                              "name": "system",
+                              "type": "text"
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "clinicalStatus": {
+              "dynamic": false,
+              "enabled": true,
+              "properties": {
+                "coding": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "properties": {
+                    "code": {
+                      "dynamic": false,
+                      "enabled": true,
+                      "fields": [
+                        {
+                          "index": true,
+                          "name": "code",
+                          "type": "text"
+                        }
+                      ]
+                    },
+                    "system": {
+                      "dynamic": false,
+                      "enabled": true,
+                      "fields": [
+                        {
+                          "index": true,
+                          "name": "system",
+                          "type": "text"
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            },
+            "code": {
+              "dynamic": false,
+              "enabled": true,
+              "properties": {
+                "coding": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "properties": {
+                    "code": {
+                      "dynamic": false,
+                      "enabled": true,
+                      "fields": [
+                        {
+                          "index": true,
+                          "name": "code",
+                          "type": "text"
+                        }
+                      ]
+                    },
+                    "system": {
+                      "dynamic": false,
+                      "enabled": true,
+                      "fields": [
+                        {
+                          "index": true,
+                          "name": "system",
+                          "type": "text"
+                        }
+                      ]
+                    },
+                    "version": {
+                      "dynamic": false,
+                      "enabled": true,
+                      "fields": [
+                        {
+                          "index": true,
+                          "name": "version",
+                          "type": "text"
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            },
+            "communication": {
+              "dynamic": false,
+              "enabled": true,
+              "properties": {
+                "language": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "properties": {
+                    "coding": {
+                      "dynamic": false,
+                      "enabled": true,
+                      "properties": {
+                        "code": {
+                          "dynamic": false,
+                          "enabled": true,
+                          "fields": [
+                            {
+                              "index": true,
+                              "name": "code",
+                              "type": "text"
+                            }
+                          ]
+                        },
+                        "system": {
+                          "dynamic": false,
+                          "enabled": true,
+                          "fields": [
+                            {
+                              "index": true,
+                              "name": "system",
+                              "type": "text"
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "content": {
+              "dynamic": false,
+              "enabled": true,
+              "properties": {
+                "contentType": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "index": true,
+                      "name": "contentType",
+                      "type": "text"
+                    }
+                  ]
+                },
+                "creation": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "index": true,
+                      "name": "creation",
+                      "type": "datetime"
+                    }
+                  ]
+                },
+                "id": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "index": true,
+                      "name": "id",
+                      "type": "text"
+                    }
+                  ]
+                },
+                "url": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "index": true,
+                      "name": "url",
+                      "type": "text"
+                    }
+                  ]
+                }
+              }
+            },
+            "createdDateTime": {
               "dynamic": false,
               "enabled": true,
               "fields": [
                 {
                   "index": true,
-                  "name": "created",
+                  "name": "createdDateTime",
                   "type": "datetime"
+                }
+              ]
+            },
+            "criticality": {
+              "dynamic": false,
+              "enabled": true,
+              "fields": [
+                {
+                  "index": true,
+                  "name": "criticality",
+                  "type": "text"
+                }
+              ]
+            },
+            "deceasedDateTime": {
+              "dynamic": false,
+              "enabled": true,
+              "fields": [
+                {
+                  "index": true,
+                  "name": "deceasedDateTime",
+                  "type": "datetime"
+                }
+              ]
+            },
+            "expirationDate": {
+              "dynamic": false,
+              "enabled": true,
+              "fields": [
+                {
+                  "index": true,
+                  "name": "expirationDate",
+                  "type": "datetime"
+                }
+              ]
+            },
+            "gender": {
+              "dynamic": false,
+              "enabled": true,
+              "fields": [
+                {
+                  "index": true,
+                  "name": "gender",
+                  "type": "text"
                 }
               ]
             },
@@ -130,6 +587,40 @@
                     }
                   ]
                 },
+                "type": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "properties": {
+                    "coding": {
+                      "dynamic": false,
+                      "enabled": true,
+                      "properties": {
+                        "code": {
+                          "dynamic": false,
+                          "enabled": true,
+                          "fields": [
+                            {
+                              "index": true,
+                              "name": "code",
+                              "type": "text"
+                            }
+                          ]
+                        },
+                        "system": {
+                          "dynamic": false,
+                          "enabled": true,
+                          "fields": [
+                            {
+                              "index": true,
+                              "name": "system",
+                              "type": "text"
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                },
                 "value": {
                   "dynamic": false,
                   "enabled": true,
@@ -137,6 +628,67 @@
                     {
                       "index": true,
                       "name": "value",
+                      "type": "text"
+                    }
+                  ]
+                }
+              }
+            },
+            "intent": {
+              "dynamic": false,
+              "enabled": true,
+              "fields": [
+                {
+                  "index": true,
+                  "name": "intent",
+                  "type": "text"
+                }
+              ]
+            },
+            "issued": {
+              "dynamic": false,
+              "enabled": true,
+              "fields": [
+                {
+                  "index": true,
+                  "name": "issued",
+                  "type": "datetime"
+                }
+              ]
+            },
+            "lifecycleStatus": {
+              "dynamic": false,
+              "enabled": true,
+              "fields": [
+                {
+                  "index": true,
+                  "name": "lifecycleStatus",
+                  "type": "text"
+                }
+              ]
+            },
+            "lotNumber": {
+              "dynamic": false,
+              "enabled": true,
+              "fields": [
+                {
+                  "index": true,
+                  "name": "lotNumber",
+                  "type": "text"
+                }
+              ]
+            },
+            "managingOrganization": {
+              "dynamic": false,
+              "enabled": true,
+              "properties": {
+                "reference": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "index": true,
+                      "name": "reference",
                       "type": "text"
                     }
                   ]
@@ -152,11 +704,222 @@
                   "enabled": true,
                   "fields": [
                     {
+                      "docvalues": true,
                       "index": true,
                       "name": "lastUpdated",
-                      "type": "datetime"
+                      "type": "text"
                     }
                   ]
+                }
+              }
+            },
+            "modality": {
+              "dynamic": false,
+              "enabled": true,
+              "properties": {
+                "coding": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "properties": {
+                    "code": {
+                      "dynamic": false,
+                      "enabled": true,
+                      "fields": [
+                        {
+                          "index": true,
+                          "name": "code",
+                          "type": "text"
+                        }
+                      ]
+                    },
+                    "system": {
+                      "dynamic": false,
+                      "enabled": true,
+                      "fields": [
+                        {
+                          "index": true,
+                          "name": "system",
+                          "type": "text"
+                        }
+                      ]
+                    },
+                    "version": {
+                      "dynamic": false,
+                      "enabled": true,
+                      "fields": [
+                        {
+                          "index": true,
+                          "name": "version",
+                          "type": "text"
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            },
+            "name": {
+              "dynamic": false,
+              "enabled": true,
+              "properties": {
+                "family": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "index": true,
+                      "name": "familyExact",
+                      "type": "text"
+                    },
+                    {
+                      "analyzer": "standard",
+                      "index": true,
+                      "name": "family",
+                      "type": "text"
+                    }
+                  ]
+                },
+                "given": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "index": true,
+                      "name": "givenExact",
+                      "type": "text"
+                    },
+                    {
+                      "analyzer": "standard",
+                      "index": true,
+                      "name": "given",
+                      "type": "text"
+                    }
+                  ]
+                },
+                "prefix": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "index": true,
+                      "name": "prefixExact",
+                      "type": "text"
+                    },
+                    {
+                      "analyzer": "standard",
+                      "index": true,
+                      "name": "prefix",
+                      "type": "text"
+                    }
+                  ]
+                },
+                "suffix": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "index": true,
+                      "name": "suffixExact",
+                      "type": "text"
+                    },
+                    {
+                      "analyzer": "standard",
+                      "index": true,
+                      "name": "suffix",
+                      "type": "text"
+                    }
+                  ]
+                },
+                "text": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "index": true,
+                      "name": "textExact",
+                      "type": "text"
+                    },
+                    {
+                      "analyzer": "standard",
+                      "index": true,
+                      "name": "text",
+                      "type": "text"
+                    }
+                  ]
+                }
+              }
+            },
+            "organization": {
+              "dynamic": false,
+              "enabled": true,
+              "properties": {
+                "reference": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "index": true,
+                      "name": "reference",
+                      "type": "text"
+                    }
+                  ]
+                }
+              }
+            },
+            "participant": {
+              "dynamic": false,
+              "enabled": true,
+              "properties": {
+                "member": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "properties": {
+                    "reference": {
+                      "dynamic": false,
+                      "enabled": true,
+                      "fields": [
+                        {
+                          "index": true,
+                          "name": "reference",
+                          "type": "text"
+                        }
+                      ]
+                    }
+                  }
+                },
+                "role": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "properties": {
+                    "coding": {
+                      "dynamic": false,
+                      "enabled": true,
+                      "properties": {
+                        "code": {
+                          "dynamic": false,
+                          "enabled": true,
+                          "fields": [
+                            {
+                              "index": true,
+                              "name": "code",
+                              "type": "text"
+                            }
+                          ]
+                        },
+                        "system": {
+                          "dynamic": false,
+                          "enabled": true,
+                          "fields": [
+                            {
+                              "index": true,
+                              "name": "system",
+                              "type": "text"
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
                 }
               }
             },
@@ -177,40 +940,35 @@
                 }
               }
             },
-            "recorded": {
+            "period": {
               "dynamic": false,
               "enabled": true,
-              "fields": [
-                {
-                  "index": true,
-                  "name": "recorded",
-                  "type": "datetime"
+              "properties": {
+                "end": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "index": true,
+                      "name": "end",
+                      "type": "datetime"
+                    }
+                  ]
+                },
+                "start": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "index": true,
+                      "name": "start",
+                      "type": "datetime"
+                    }
+                  ]
                 }
-              ]
+              }
             },
-            "resourceType": {
-              "dynamic": false,
-              "enabled": true,
-              "fields": [
-                {
-                  "index": true,
-                  "name": "resourceType",
-                  "type": "text"
-                }
-              ]
-            },
-            "status": {
-              "dynamic": false,
-              "enabled": true,
-              "fields": [
-                {
-                  "index": true,
-                  "name": "status",
-                  "type": "text"
-                }
-              ]
-            },
-            "target": {
+            "practitioner": {
               "dynamic": false,
               "enabled": true,
               "properties": {
@@ -226,6 +984,410 @@
                   ]
                 }
               }
+            },
+            "quantity": {
+              "dynamic": false,
+              "enabled": true,
+              "properties": {
+                "code": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "index": true,
+                      "name": "code",
+                      "type": "text"
+                    }
+                  ]
+                },
+                "system": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "index": true,
+                      "name": "system",
+                      "type": "text"
+                    }
+                  ]
+                },
+                "unit": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "index": true,
+                      "name": "unit",
+                      "type": "text"
+                    }
+                  ]
+                },
+                "value": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "index": true,
+                      "name": "value",
+                      "type": "number"
+                    }
+                  ]
+                }
+              }
+            },
+            "reaction": {
+              "dynamic": false,
+              "enabled": true,
+              "properties": {
+                "manifestation": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "properties": {
+                    "coding": {
+                      "dynamic": false,
+                      "enabled": true,
+                      "properties": {
+                        "code": {
+                          "dynamic": false,
+                          "enabled": true,
+                          "fields": [
+                            {
+                              "index": true,
+                              "name": "code",
+                              "type": "text"
+                            }
+                          ]
+                        },
+                        "system": {
+                          "dynamic": false,
+                          "enabled": true,
+                          "fields": [
+                            {
+                              "index": true,
+                              "name": "system",
+                              "type": "text"
+                            }
+                          ]
+                        },
+                        "version": {
+                          "dynamic": false,
+                          "enabled": true,
+                          "fields": [
+                            {
+                              "index": true,
+                              "name": "version",
+                              "type": "text"
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                },
+                "severity": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "index": true,
+                      "name": "severity",
+                      "type": "text"
+                    }
+                  ]
+                }
+              }
+            },
+            "recorded": {
+              "dynamic": false,
+              "enabled": true,
+              "fields": [
+                {
+                  "index": true,
+                  "name": "recorded",
+                  "type": "datetime"
+                }
+              ]
+            },
+            "relationship": {
+              "dynamic": false,
+              "enabled": true,
+              "properties": {
+                "coding": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "properties": {
+                    "code": {
+                      "dynamic": false,
+                      "enabled": true,
+                      "fields": [
+                        {
+                          "index": true,
+                          "name": "code",
+                          "type": "text"
+                        }
+                      ]
+                    },
+                    "system": {
+                      "dynamic": false,
+                      "enabled": true,
+                      "fields": [
+                        {
+                          "index": true,
+                          "name": "system",
+                          "type": "text"
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            },
+            "resourceType": {
+              "dynamic": false,
+              "enabled": true,
+              "fields": [
+                {
+                  "analyzer": "keyword",
+                  "index": true,
+                  "name": "resourceType",
+                  "type": "text"
+                }
+              ]
+            },
+            "serialNumber": {
+              "dynamic": false,
+              "enabled": true,
+              "fields": [
+                {
+                  "index": true,
+                  "name": "serialNumber",
+                  "type": "text"
+                }
+              ]
+            },
+            "severity": {
+              "dynamic": false,
+              "enabled": true,
+              "fields": [
+                {
+                  "index": true,
+                  "name": "severity",
+                  "type": "text"
+                }
+              ]
+            },
+            "specialty": {
+              "dynamic": false,
+              "enabled": true,
+              "properties": {
+                "coding": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "properties": {
+                    "code": {
+                      "dynamic": false,
+                      "enabled": true,
+                      "fields": [
+                        {
+                          "index": true,
+                          "name": "code",
+                          "type": "text"
+                        }
+                      ]
+                    },
+                    "system": {
+                      "dynamic": false,
+                      "enabled": true,
+                      "fields": [
+                        {
+                          "index": true,
+                          "name": "system",
+                          "type": "text"
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            },
+            "status": {
+              "dynamic": false,
+              "enabled": true,
+              "fields": [
+                {
+                  "index": true,
+                  "name": "status",
+                  "type": "text"
+                }
+              ]
+            },
+            "subject": {
+              "dynamic": false,
+              "enabled": true,
+              "properties": {
+                "reference": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "index": true,
+                      "name": "reference",
+                      "type": "text"
+                    }
+                  ]
+                }
+              }
+            },
+            "subscriberId": {
+              "dynamic": false,
+              "enabled": true,
+              "fields": [
+                {
+                  "index": true,
+                  "name": "subscriberId",
+                  "type": "text"
+                }
+              ]
+            },
+            "target": {
+              "dynamic": false,
+              "enabled": true,
+              "properties": {
+                "dueDate": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "index": true,
+                      "name": "dueDate",
+                      "type": "datetime"
+                    }
+                  ]
+                },
+                "reference": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "index": true,
+                      "name": "reference",
+                      "type": "text"
+                    }
+                  ]
+                }
+              }
+            },
+            "telecom": {
+              "dynamic": false,
+              "enabled": true,
+              "properties": {
+                "system": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "index": true,
+                      "name": "system",
+                      "type": "text"
+                    }
+                  ]
+                },
+                "use": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "index": true,
+                      "name": "use",
+                      "type": "text"
+                    }
+                  ]
+                },
+                "value": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "index": true,
+                      "name": "value",
+                      "type": "text"
+                    }
+                  ]
+                }
+              }
+            },
+            "type": {
+              "dynamic": false,
+              "enabled": true,
+              "properties": {
+                "coding": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "properties": {
+                    "code": {
+                      "dynamic": false,
+                      "enabled": true,
+                      "fields": [
+                        {
+                          "index": true,
+                          "name": "code",
+                          "type": "text"
+                        }
+                      ]
+                    },
+                    "system": {
+                      "dynamic": false,
+                      "enabled": true,
+                      "fields": [
+                        {
+                          "index": true,
+                          "name": "system",
+                          "type": "text"
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            },
+            "udiCarrier": {
+              "dynamic": false,
+              "enabled": true,
+              "properties": {
+                "carrierHRF": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "index": true,
+                      "name": "carrierHRF",
+                      "type": "text"
+                    }
+                  ]
+                },
+                "deviceIdentifier": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "index": true,
+                      "name": "deviceIdentifier",
+                      "type": "text"
+                    }
+                  ]
+                }
+              }
+            },
+            "whenHandedOver": {
+              "dynamic": false,
+              "enabled": true,
+              "fields": [
+                {
+                  "index": true,
+                  "name": "whenHandedOver",
+                  "type": "datetime"
+                }
+              ]
             }
           }
         }
