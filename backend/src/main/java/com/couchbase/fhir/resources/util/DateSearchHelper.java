@@ -67,6 +67,13 @@ public class DateSearchHelper {
                         fieldPath = paramName; // Fallback
                     }
                     
+                    // For DATE parameters, suggest DateTime field for choice types
+                    String suggestedField = FHIRPathParser.suggestDateTimeFieldPath(searchParam.getPath());
+                    if (suggestedField != null && !suggestedField.equals(fieldPath)) {
+                        logger.info("🔍 DateSearchHelper: Choice type detected, using DateTime field: {} -> {}", fieldPath, suggestedField);
+                        fieldPath = suggestedField;
+                    }
+                    
                     // Check if this is a Period field using HAPI reflection
                     boolean isPeriodField = fieldPath.endsWith("Period") || isPeriodType(fhirContext, resourceType, fieldPath);
                     if (isPeriodField) {
@@ -188,6 +195,13 @@ public class DateSearchHelper {
                         } else {
                             actualFieldName = paramName;
                         }
+                    }
+                    
+                    // For DATE parameters, suggest DateTime field for choice types
+                    String suggestedField = FHIRPathParser.suggestDateTimeFieldPath(path);
+                    if (suggestedField != null && !suggestedField.equals(actualFieldName)) {
+                        logger.info("🔍 DateSearchHelper: Choice type detected, using DateTime field: {} -> {}", actualFieldName, suggestedField);
+                        actualFieldName = suggestedField;
                     }
                     
                     logger.info("🔍 DateSearchHelper: Parsed field name: {}", actualFieldName);
@@ -327,6 +341,13 @@ public class DateSearchHelper {
                         }
                     }
                     
+                    // For DATE parameters, suggest DateTime field for choice types
+                    String suggestedField = FHIRPathParser.suggestDateTimeFieldPath(path);
+                    if (suggestedField != null && !suggestedField.equals(actualFieldName)) {
+                        logger.info("🔍 DateSearchHelper: Choice type detected, using DateTime field: {} -> {}", actualFieldName, suggestedField);
+                        actualFieldName = suggestedField;
+                    }
+                    
                     logger.info("🔍 DateSearchHelper: Parsed field name: {}", actualFieldName);
                 } else {
                     logger.warn("🔍 DateSearchHelper: HAPI path is null for paramName={}", paramName);
@@ -406,23 +427,40 @@ public class DateSearchHelper {
 
     /**
      * Check if a field is a Period type using HAPI reflection
+     * Handles nested paths like "context.period"
      */
-    private static boolean isPeriodType(FhirContext fhirContext, String resourceType, String fieldName) {
+    private static boolean isPeriodType(FhirContext fhirContext, String resourceType, String fieldPath) {
         try {
             ca.uhn.fhir.context.RuntimeResourceDefinition resourceDef = fhirContext.getResourceDefinition(resourceType);
-            ca.uhn.fhir.context.BaseRuntimeChildDefinition fieldChild = resourceDef.getChildByName(fieldName);
+            String[] pathParts = fieldPath.split("\\.");
             
-            if (fieldChild != null) {
-                ca.uhn.fhir.context.BaseRuntimeElementDefinition<?> fieldType = fieldChild.getChildByName(fieldName);
-                if (fieldType != null) {
-                    String className = fieldType.getImplementingClass().getSimpleName();
-                    boolean isPeriod = "Period".equalsIgnoreCase(className);
-                    logger.debug("🔍 DateSearchHelper: Field {} has type: {} (isPeriod: {})", fieldName, className, isPeriod);
-                    return isPeriod;
+            ca.uhn.fhir.context.BaseRuntimeElementDefinition<?> currentDef = resourceDef;
+            
+            // Navigate through each part of the path
+            for (String part : pathParts) {
+                if (currentDef instanceof ca.uhn.fhir.context.BaseRuntimeElementCompositeDefinition) {
+                    ca.uhn.fhir.context.BaseRuntimeChildDefinition childDef = 
+                        ((ca.uhn.fhir.context.BaseRuntimeElementCompositeDefinition<?>) currentDef).getChildByName(part);
+                    if (childDef != null) {
+                        currentDef = childDef.getChildByName(part);
+                    } else {
+                        logger.debug("🔍 DateSearchHelper: Could not find field part '{}' in path '{}'", part, fieldPath);
+                        return false;
+                    }
+                } else {
+                    logger.debug("🔍 DateSearchHelper: Field part '{}' is not composite in path '{}'", part, fieldPath);
+                    return false;
                 }
             }
+            
+            if (currentDef != null) {
+                String className = currentDef.getImplementingClass().getSimpleName();
+                boolean isPeriod = "Period".equalsIgnoreCase(className);
+                logger.debug("🔍 DateSearchHelper: Field {} has type: {} (isPeriod: {})", fieldPath, className, isPeriod);
+                return isPeriod;
+            }
         } catch (Exception e) {
-            logger.debug("🔍 DateSearchHelper: Failed to check if field {} is a Period type: {}", fieldName, e.getMessage());
+            logger.debug("🔍 DateSearchHelper: Failed to check if field {} is a Period type: {}", fieldPath, e.getMessage());
         }
         return false;
     }

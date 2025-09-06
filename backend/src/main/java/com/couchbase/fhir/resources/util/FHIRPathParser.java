@@ -199,6 +199,40 @@ public class FHIRPathParser {
     }
     
     /**
+     * Suggest field name for DATE parameters on choice types
+     * For expressions like "DiagnosticReport.effective", suggests "effectiveDateTime"
+     */
+    public static String suggestDateTimeFieldPath(String expression) {
+        String fieldPath = extractSimpleFieldPath(expression);
+        if (fieldPath == null) {
+            return null;
+        }
+        
+        // Check if this is a known choice type that should have DateTime suffix for DATE searches
+        if (isKnownChoiceTypeForDateTime(fieldPath)) {
+            String dateTimeField = fieldPath + "DateTime";
+            logger.info("🔍 FHIRPathParser: Suggesting DateTime field for choice type: {} -> {}", fieldPath, dateTimeField);
+            return dateTimeField;
+        }
+        
+        return fieldPath;
+    }
+    
+    /**
+     * Check if field is a known choice type that commonly has DateTime variant
+     */
+    private static boolean isKnownChoiceTypeForDateTime(String fieldName) {
+        // Common FHIR choice types that have [x] suffix and DateTime variants
+        return fieldName.equals("effective") ||     // DiagnosticReport.effective[x]
+               fieldName.equals("onset") ||         // Condition.onset[x] 
+               fieldName.equals("occurrence") ||    // Various resources with occurrence[x]
+               fieldName.equals("performed") ||     // Procedure.performed[x]
+               fieldName.equals("value") ||         // Observation.value[x]
+               fieldName.equals("deceased") ||      // Patient.deceased[x] (though this is usually cast correctly)
+               fieldName.equals("created");         // Various resources with created[x] (e.g., DocumentReference)
+    }
+    
+    /**
      * Parse individual alternative in union expression
      */
     private static String parseAlternative(String alternative) {
@@ -227,6 +261,7 @@ public class FHIRPathParser {
     /**
      * Extract simple field path from expression like "Condition.assertedDate" -> "assertedDate"
      * Also handles casting expressions like "(Patient.deceased as dateTime)" -> "deceasedDateTime"
+     * Detects choice types and suggests appropriate suffixes for DATE parameters
      */
     private static String extractSimpleFieldPath(String expression) {
         // Handle parenthetical casting expressions like "(Patient.deceased as dateTime)"
