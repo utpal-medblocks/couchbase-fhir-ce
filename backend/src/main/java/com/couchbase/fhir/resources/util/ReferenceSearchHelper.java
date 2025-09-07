@@ -73,8 +73,19 @@ public class ReferenceSearchHelper {
             return null;
         }
 
-        // Get sub-fields for the reference parameter using HAPI reflection
-        List<String> subFields = Arrays.asList(actualFieldName + ".reference");        
+        // Get sub-fields for the reference parameter
+        List<String> subFields = new ArrayList<>();
+        
+        // If field already ends with "Reference" (from casting like "medicationReference"), use as-is
+        if (actualFieldName.endsWith("Reference")) {
+            subFields.add(actualFieldName);
+            logger.info("🔍 ReferenceSearchHelper: Using cast reference field as-is: {}", actualFieldName);
+        } else {
+            // Otherwise append ".reference" to the field name
+            subFields.add(actualFieldName + ".reference");
+            logger.info("🔍 ReferenceSearchHelper: Using standard reference field: {}", actualFieldName + ".reference");
+        }
+        
         if (subFields.isEmpty()) {
             logger.warn("🔍 ReferenceSearchHelper: No sub-fields found for paramName={}, using base field: {}", paramName, actualFieldName);
             subFields.add(actualFieldName);

@@ -223,6 +223,63 @@
                 }
               }
             },
+            "participant": {
+              "dynamic": false,
+              "enabled": true,
+              "properties": {
+                "individual": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "properties": {
+                    "reference": {
+                      "dynamic": false,
+                      "enabled": true,
+                      "fields": [
+                        {
+                          "index": true,
+                          "name": "reference",
+                          "type": "text"
+                        }
+                      ]
+                    }
+                  }
+                },
+                "type": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "properties": {
+                    "coding": {
+                      "dynamic": false,
+                      "enabled": true,
+                      "properties": {
+                        "code": {
+                          "dynamic": false,
+                          "enabled": true,
+                          "fields": [
+                            {
+                              "index": true,
+                              "name": "code",
+                              "type": "text"
+                            }
+                          ]
+                        },
+                        "system": {
+                          "dynamic": false,
+                          "enabled": true,
+                          "fields": [
+                            {
+                              "index": true,
+                              "name": "system",
+                              "type": "text"
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
             "patient": {
               "dynamic": false,
               "enabled": true,

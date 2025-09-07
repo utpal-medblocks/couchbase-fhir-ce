@@ -65,36 +65,8 @@ public class TokenSearchHelper {
         logger.info("🔍 TokenSearchHelper: HAPI path={}, paramType={}", 
                     path, searchParam.getParamType());
         
-        ConceptInfo conceptInfo = getConceptInfo(path, resourceType, def);
-        logger.info("🔍 TokenSearchHelper: conceptInfo={}", conceptInfo);
-    
-        String ftsFieldPath = toFTSFieldPath(path, resourceType, conceptInfo.isCodableConcept,
-                conceptInfo.isArray, conceptInfo.isPrimitive);
-        logger.info("🔍 TokenSearchHelper: ftsFieldPath={}", ftsFieldPath);
-        if (conceptInfo.isPrimitive) {
-            // Primitive tokens like gender, id, status, etc.
-            if (isMultipleValues) {
-                List<SearchQuery> termQueries = Arrays.stream(token.code.split(","))
-                        .map(String::trim)
-                        .map(val -> createPrimitiveQuery(val, ftsFieldPath))
-                        .collect(Collectors.toList());
-                return SearchQuery.disjuncts(termQueries.toArray(new SearchQuery[0]));
-            } else {
-                return createPrimitiveQuery(token.code, ftsFieldPath);
-            }
-        }
-
-        // Handle CodeableConcept arrays or single
-        if (conceptInfo.isCodableConcept && conceptInfo.isArray) {
-            // Example: ANY cat IN ... SATISFIES ANY coding...
-            return buildCodeableConceptQuery(ftsFieldPath, token);
-        } else if (conceptInfo.isCodableConcept) {
-            // Single CodeableConcept
-            return buildCodeableConceptQuery(ftsFieldPath, token);
-        } else {
-            // Other complex type with system/value
-            return buildSystemValueQuery(ftsFieldPath, token);
-        }
+        // Use enhanced type introspection instead of old ConceptInfo logic
+        return buildTokenFTSQueryFromExpression(fhirContext, resourceType, path, tokenValue);
     }
 
     /**
@@ -218,6 +190,37 @@ public class TokenSearchHelper {
         TokenFieldType fieldType = introspectTokenFieldType(fhirContext, resourceType, fieldPath);
         logger.info("🔍 TokenSearchHelper: Field {} resolved to type: {}", fieldPath, fieldType);
         
+        // Handle comma-separated values (OR logic)
+        boolean hasMultipleValues = token.code.contains(",");
+        if (hasMultipleValues) {
+            String[] codes = token.code.split(",");
+            List<SearchQuery> queries = new ArrayList<>();
+            
+            for (String code : codes) {
+                String trimmedCode = code.trim();
+                TokenParam singleToken = new TokenParam(token.system != null ? token.system + "|" + trimmedCode : trimmedCode);
+                SearchQuery singleQuery = buildSingleTokenQuery(fieldType, fieldPath, singleToken);
+                if (singleQuery != null) {
+                    queries.add(singleQuery);
+                }
+            }
+            
+            if (queries.size() > 1) {
+                logger.info("🔍 TokenSearchHelper: Created disjunctive query with {} alternatives for field {}", queries.size(), fieldPath);
+                return SearchQuery.disjuncts(queries.toArray(new SearchQuery[0]));
+            } else if (queries.size() == 1) {
+                return queries.get(0);
+            }
+        }
+        
+        // Single value - use existing logic
+        return buildSingleTokenQuery(fieldType, fieldPath, token);
+    }
+    
+    /**
+     * Build a single TOKEN query for a specific field type
+     */
+    private static SearchQuery buildSingleTokenQuery(TokenFieldType fieldType, String fieldPath, TokenParam token) {
         switch (fieldType) {
             case CODEABLE_CONCEPT:
                 return buildCodeableConceptQuery(fieldPath + ".coding", token);

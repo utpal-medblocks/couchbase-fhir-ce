@@ -236,22 +236,33 @@ public class FHIRPathParser {
      * Parse individual alternative in union expression
      */
     private static String parseAlternative(String alternative) {
-        // Handle type casting: "onset.as(dateTime)" -> "onsetDateTime"
-        if (alternative.contains(".as(dateTime)")) {
-            String withoutCast = alternative.replace(".as(dateTime)", "");
-            String baseField = extractSimpleFieldPath(withoutCast);
-            String dateTimeField = baseField + "DateTime";
-            logger.info("🔍 FHIRPathParser: dateTime alternative: {} -> {}", alternative, dateTimeField);
-            return dateTimeField;
-        }
-        
-        // Handle Period type: "Condition.onset.as(Period)" -> "onsetPeriod"
-        if (alternative.contains(".as(Period)")) {
-            String withoutCast = alternative.replace(".as(Period)", "");
-            String baseField = extractSimpleFieldPath(withoutCast);
-            String periodField = baseField + "Period";
-            logger.info("🔍 FHIRPathParser: Period alternative: {} -> {}", alternative, periodField);
-            return periodField;
+        // Handle generic type casting: "Resource.field.as(SomeType)" -> "field.SomeType"
+        if (alternative.contains(".as(") && alternative.endsWith(")")) {
+            int asIndex = alternative.indexOf(".as(");
+            int closeParenIndex = alternative.lastIndexOf(")");
+            
+            if (asIndex != -1 && closeParenIndex != -1) {
+                String pathPart = alternative.substring(0, asIndex);
+                String typePart = alternative.substring(asIndex + 4, closeParenIndex); // +4 for ".as("
+                
+                if (pathPart.contains(".")) {
+                    String[] pathParts = pathPart.split("\\.");
+                    if (pathParts.length >= 2) {
+                        // Remove resource type (first part) and preserve the rest of the path
+                        String[] fieldParts = new String[pathParts.length - 1];
+                        System.arraycopy(pathParts, 1, fieldParts, 0, pathParts.length - 1);
+                        
+                        // Replace last field with field + capitalizedType
+                        String lastField = fieldParts[fieldParts.length - 1];
+                        String capitalizedType = typePart.substring(0, 1).toUpperCase() + typePart.substring(1);
+                        fieldParts[fieldParts.length - 1] = lastField + capitalizedType;
+                        
+                        String result = String.join(".", fieldParts);
+                        logger.info("🔍 FHIRPathParser: Generic cast alternative: {} -> {}", alternative, result);
+                        return result;
+                    }
+                }
+            }
         }
         
         // Default to simple field extraction
@@ -269,28 +280,29 @@ public class FHIRPathParser {
             String inner = expression.substring(1, expression.length() - 1);
             logger.info("🔍 FHIRPathParser: Handling parenthetical expression: {}", inner);
             
-            // Handle "as dateTime" casting
-            if (inner.contains(" as dateTime")) {
-                String withoutCast = inner.replace(" as dateTime", "");
-                if (withoutCast.contains(".")) {
-                    String[] parts = withoutCast.split("\\.");
-                    if (parts.length >= 2) {
-                        String fieldName = parts[1] + "DateTime";
-                        logger.info("🔍 FHIRPathParser: Converted cast expression to: {}", fieldName);
-                        return fieldName;
-                    }
-                }
-            }
-            
-            // Handle "as Period" casting
-            if (inner.contains(" as Period")) {
-                String withoutCast = inner.replace(" as Period", "");
-                if (withoutCast.contains(".")) {
-                    String[] parts = withoutCast.split("\\.");
-                    if (parts.length >= 2) {
-                        String fieldName = parts[1] + "Period";
-                        logger.info("🔍 FHIRPathParser: Converted cast expression to: {}", fieldName);
-                        return fieldName;
+            // Handle generic "as SomeType" casting
+            if (inner.contains(" as ")) {
+                String[] asParts = inner.split(" as ");
+                if (asParts.length == 2) {
+                    String pathPart = asParts[0].trim();
+                    String typePart = asParts[1].trim();
+                    
+                    if (pathPart.contains(".")) {
+                        String[] pathParts = pathPart.split("\\.");
+                        if (pathParts.length >= 2) {
+                            // Remove resource type (first part) and preserve the rest of the path
+                            String[] fieldParts = new String[pathParts.length - 1];
+                            System.arraycopy(pathParts, 1, fieldParts, 0, pathParts.length - 1);
+                            
+                            // Replace last field with field + capitalizedType
+                            String lastField = fieldParts[fieldParts.length - 1];
+                            String capitalizedType = typePart.substring(0, 1).toUpperCase() + typePart.substring(1);
+                            fieldParts[fieldParts.length - 1] = lastField + capitalizedType;
+                            
+                            String result = String.join(".", fieldParts);
+                            logger.info("🔍 FHIRPathParser: Converted generic cast expression: {} as {} -> {}", pathPart, typePart, result);
+                            return result;
+                        }
                     }
                 }
             }

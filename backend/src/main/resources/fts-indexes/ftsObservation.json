@@ -138,14 +138,14 @@
                 }
               }
             },
-            "effectiveDatetime": {
+            "effectiveDateTime": {
               "dynamic": false,
               "enabled": true,
               "fields": [
                 {
                   "index": true,
-                  "name": "effectiveDatetime",
-                  "type": "text"
+                  "name": "effectiveDateTime",
+                  "type": "datetime"
                 }
               ]
             },

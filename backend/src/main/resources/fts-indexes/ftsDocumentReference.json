@@ -464,31 +464,33 @@
               "dynamic": false,
               "enabled": true,
               "properties": {
-                "code": {
-                  "dynamic": false,
-                  "enabled": true,
-                  "fields": [
-                    {
-                      "index": true,
-                      "name": "code",
-                      "type": "text"
-                    }
-                  ]
-                },
                 "coding": {
                   "dynamic": false,
-                  "enabled": true
-                },
-                "system": {
-                  "dynamic": false,
                   "enabled": true,
-                  "fields": [
-                    {
-                      "index": true,
-                      "name": "system",
-                      "type": "text"
+                  "properties": {
+                    "code": {
+                      "dynamic": false,
+                      "enabled": true,
+                      "fields": [
+                        {
+                          "index": true,
+                          "name": "code",
+                          "type": "text"
+                        }
+                      ]
+                    },
+                    "system": {
+                      "dynamic": false,
+                      "enabled": true,
+                      "fields": [
+                        {
+                          "index": true,
+                          "name": "system",
+                          "type": "text"
+                        }
+                      ]
                     }
-                  ]
+                  }
                 }
               }
             }

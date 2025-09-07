@@ -840,11 +840,7 @@ public class SearchService {
         }
         logger.info("🔍 Target resource type for inclusion: '{}'", targetResourceType);
         
-        // Step 1: Get total count of primary resources (like we do for _revinclude)
-        int totalPrimaryResourceCount = getAccurateCount(ftsQueries, primaryResourceType, bucketName);
-        logger.info("🔍 Total primary resources available: {}", totalPrimaryResourceCount);
-        
-        // Step 2: Execute primary resource search to get full resources
+        // Step 1: Execute primary resource search to get full resources (no count needed for _include)
         String query = queryBuilder.build(ftsQueries, new ArrayList<>(), primaryResourceType, 0, count, null);
         
         @SuppressWarnings("unchecked")
@@ -885,7 +881,7 @@ public class SearchService {
             .cachedFtsQueries(new ArrayList<>(ftsQueries))
             .revIncludeResourceType(targetResourceType) // Reuse for include target type
             .revIncludeSearchParam(include.getParamName()) // Reuse for include param name
-            .totalPrimaryResources(totalPrimaryResourceCount) // Use real total count
+            .totalPrimaryResources(primaryResources.size()) // Use current primary resources count
             .currentPrimaryOffset(primaryResources.size()) // Current primary resources processed
             .pageSize(count)
             .bucketName(bucketName)
@@ -901,7 +897,7 @@ public class SearchService {
         // Step 5: Build response bundle
         Bundle bundle = new Bundle();
         bundle.setType(Bundle.BundleType.SEARCHSET);
-        bundle.setTotal(totalPrimaryResourceCount); // Only count primary resources, not included ones
+        bundle.setTotal(primaryResources.size()); // Only count primary resources, not included ones
         
         // Add primary resources (search mode = "match")
         for (Resource resource : primaryResources) {
@@ -1607,23 +1603,47 @@ public class SearchService {
      * Extract reference value from a resource using the search parameter
      */
     private String extractReferenceFromResource(Resource resource, String searchParam) {
-        // This is a simplified implementation - in a full implementation,
-        // you'd use FHIR path expressions or reflection to handle all cases
-        
         logger.debug("🔍 Looking for reference field '{}' in resource {}", searchParam, resource.getClass().getSimpleName());
         
+        // Get the HAPI search parameter to resolve the correct field path
+        try {
+            RuntimeSearchParam hapiSearchParam = fhirContext
+                    .getResourceDefinition(resource.getClass().getSimpleName())
+                    .getSearchParam(searchParam);
+            
+            if (hapiSearchParam != null && hapiSearchParam.getPath() != null) {
+                String path = hapiSearchParam.getPath();
+                logger.info("🔍 HAPI path for '{}': {}", searchParam, path);
+                
+                // Use FHIRPathParser to resolve casting expressions
+                FHIRPathParser.ParsedExpression parsed = FHIRPathParser.parse(path);
+                String fieldPath = parsed.getPrimaryFieldPath();
+                
+                if (fieldPath != null) {
+                    logger.info("🔍 Resolved field path: {}", fieldPath);
+                    
+                    // Convert field path to getter method name
+                    String methodName = fieldPathToGetterMethod(fieldPath);
+                    logger.info("🔍 Trying getter method: {}", methodName);
+                    
+                    return tryGetReference(resource, methodName);
+                }
+            }
+        } catch (Exception e) {
+            logger.debug("🔍 Failed to resolve field path for '{}': {}", searchParam, e.getMessage());
+        }
+        
+        // Fallback to hardcoded mappings for common cases
         if ("subject".equals(searchParam)) {
-            // Handle Observation.subject, DiagnosticReport.subject, etc.
             return tryGetReference(resource, "getSubject");
         } else if ("patient".equals(searchParam)) {
-            // For "patient" parameter, we need to check multiple possible fields
-            // 1. Try direct patient field first
+            // Try direct patient field first
             String directPatient = tryGetReference(resource, "getPatient");
             if (directPatient != null) {
                 return directPatient;
             }
             
-            // 2. For resources like Observation, the patient is in the "subject" field
+            // For resources like Observation, the patient is in the "subject" field
             String subjectPatient = tryGetReference(resource, "getSubject");
             if (subjectPatient != null && subjectPatient.contains("Patient/")) {
                 return subjectPatient;
@@ -1631,6 +1651,24 @@ public class SearchService {
         }
         
         return null;
+    }
+    
+    /**
+     * Convert field path to getter method name
+     * Examples: "medicationReference" -> "getMedicationReference"
+     *           "subject" -> "getSubject"
+     */
+    private String fieldPathToGetterMethod(String fieldPath) {
+        if (fieldPath == null || fieldPath.isEmpty()) {
+            return null;
+        }
+        
+        // Handle nested paths by taking only the first part
+        String[] parts = fieldPath.split("\\.");
+        String fieldName = parts[0];
+        
+        // Convert to getter method name: capitalize first letter and prepend "get"
+        return "get" + fieldName.substring(0, 1).toUpperCase() + fieldName.substring(1);
     }
     
     /**
@@ -1643,11 +1681,13 @@ public class SearchService {
             if (referenceObj != null) {
                 java.lang.reflect.Method getReference = referenceObj.getClass().getMethod("getReference");
                 String reference = (String) getReference.invoke(referenceObj);
-                logger.debug("🔍 Found reference via {}: {}", methodName, reference);
+                logger.info("🔍 Found reference via {}: {}", methodName, reference);
                 return reference;
+            } else {
+                logger.info("🔍 Method {} returned null reference object", methodName);
             }
         } catch (Exception e) {
-            logger.debug("🔍 No {} method found or error accessing it: {}", methodName, e.getMessage());
+            logger.info("🔍 No {} method found or error accessing it: {}", methodName, e.getMessage());
         }
         return null;
     }
