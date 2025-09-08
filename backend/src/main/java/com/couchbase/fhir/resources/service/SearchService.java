@@ -662,7 +662,7 @@ public class SearchService {
         
         // Step 3: Search for revinclude resources (sorted by lastUpdated DESC)
         List<Resource> revIncludeResources = executeRevIncludeResourceSearch(
-            revInclude.getParamType(), revInclude.getParamName(), 
+                primaryResourceType , revInclude.getParamType(), revInclude.getParamName(),
             primaryResourceIds, revIncludeCount, 0, bucketName);
         
         // Step 4: Get full primary resources
@@ -984,6 +984,7 @@ public class SearchService {
     private Bundle handleRevIncludePaginationInternal(SearchState searchState, String continuationToken, int offset, int count) {
         // Execute revinclude query for next batch
         List<Resource> revIncludeResources = executeRevIncludeResourceSearch(
+                searchState.getPrimaryResourceType(),
             searchState.getRevIncludeResourceType(), 
             searchState.getRevIncludeSearchParam(),
             searchState.getPrimaryResourceIds(),
@@ -1168,10 +1169,10 @@ public class SearchService {
     private List<Resource> executeRevIncludeResourceSearch(String resourceType, String searchParam,
                                                          List<String> primaryResourceIds, int count, 
                                                          String bucketName) {
-        return executeRevIncludeResourceSearch(resourceType, searchParam, primaryResourceIds, count, 0, bucketName);
+        return executeRevIncludeResourceSearch("" , resourceType, searchParam, primaryResourceIds, count, 0, bucketName);
     }
     
-    private List<Resource> executeRevIncludeResourceSearch(String resourceType, String searchParam,
+    private List<Resource> executeRevIncludeResourceSearch(String primaryResourceType , String resourceType, String searchParam,
                                                          List<String> primaryResourceIds, int count,
                                                          int offset, String bucketName) {
         
@@ -1182,7 +1183,7 @@ public class SearchService {
         List<SearchQuery> referenceQueries = new ArrayList<>();
         for (String primaryId : primaryResourceIds) {
             String referenceValue = searchParam.equals("subject") || searchParam.equals("target") ?
-                "Patient/" + primaryId : // Assuming primary resource is Patient for now
+                    primaryResourceType+"/" + primaryId : // Assuming primary resource is Patient for now
                 primaryId;
             referenceQueries.add(SearchQuery.match(referenceValue).field(searchParam + ".reference"));
         }
