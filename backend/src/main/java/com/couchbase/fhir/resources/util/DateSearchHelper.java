@@ -185,14 +185,24 @@ public class DateSearchHelper {
     public static List<String> expandDateChoicePaths(FhirContext fhirContext, String resourceType, String elementName) {
         try {
             ca.uhn.fhir.context.RuntimeResourceDefinition resDef = fhirContext.getResourceDefinition(resourceType);
-            ca.uhn.fhir.context.BaseRuntimeChildDefinition child = resDef.getChildByName(elementName);
+            
+            // Handle nested paths like "context.period"
+            ca.uhn.fhir.context.BaseRuntimeChildDefinition child = null;
+            if (elementName.contains(".")) {
+                // Navigate nested path to find the actual child definition
+                child = findNestedChild(resDef, elementName);
+                logger.info("🔍 DateSearchHelper: Nested child '{}' found: {}", elementName, (child != null));
+            } else {
+                // Simple field name
+                child = resDef.getChildByName(elementName);
+                if (child == null) {
+                    child = resDef.getChildByName(elementName + "[x]");
+                    logger.info("🔍 DateSearchHelper: Child '{}[x]' found: {}", elementName, (child != null));
+                }
+            }
             
             if (child == null) {
-                child = resDef.getChildByName(elementName + "[x]");
-                logger.info("🔍 DateSearchHelper: Child '{}[x]' found: {}", elementName, (child != null));
-            }
-            if (child == null) {
-                logger.info("🔍 DateSearchHelper: Neither '{}' nor '{}[x]' found in {}", elementName, elementName, resourceType);
+                logger.info("🔍 DateSearchHelper: Field '{}' not found in {}", elementName, resourceType);
                 return List.of(elementName);
             }            
             if (!(child instanceof ca.uhn.fhir.context.RuntimeChildChoiceDefinition)) {
@@ -289,5 +299,47 @@ public class DateSearchHelper {
             logger.debug("🔍 DateSearchHelper: Failed to check if field {} is a Period type: {}", fieldPath, e.getMessage());
         }
         return false;
+    }
+
+    /**
+     * Navigate nested field paths to find the actual child definition
+     * For example: "context.period" -> navigate to context, then find period child
+     */
+    private static ca.uhn.fhir.context.BaseRuntimeChildDefinition findNestedChild(
+            ca.uhn.fhir.context.RuntimeResourceDefinition resDef, String nestedPath) {
+        try {
+            String[] pathParts = nestedPath.split("\\.");
+            ca.uhn.fhir.context.BaseRuntimeElementDefinition<?> currentDef = resDef;
+            ca.uhn.fhir.context.BaseRuntimeChildDefinition lastChild = null;
+            
+            // Navigate through each part of the path except the last one
+            for (int i = 0; i < pathParts.length; i++) {
+                String part = pathParts[i];
+                
+                if (currentDef instanceof ca.uhn.fhir.context.BaseRuntimeElementCompositeDefinition) {
+                    ca.uhn.fhir.context.BaseRuntimeChildDefinition childDef = 
+                        ((ca.uhn.fhir.context.BaseRuntimeElementCompositeDefinition<?>) currentDef).getChildByName(part);
+                    
+                    if (childDef != null) {
+                        lastChild = childDef;
+                        if (i < pathParts.length - 1) {
+                            // Not the last part, continue navigation
+                            currentDef = childDef.getChildByName(part);
+                        }
+                    } else {
+                        logger.debug("🔍 DateSearchHelper: Could not find nested field part '{}' in path '{}'", part, nestedPath);
+                        return null;
+                    }
+                } else {
+                    logger.debug("🔍 DateSearchHelper: Field part '{}' is not composite in nested path '{}'", part, nestedPath);
+                    return null;
+                }
+            }
+            
+            return lastChild;
+        } catch (Exception e) {
+            logger.debug("🔍 DateSearchHelper: Failed to navigate nested path {}: {}", nestedPath, e.getMessage());
+            return null;
+        }
     }
 }
