@@ -1181,7 +1181,7 @@ public class SearchService {
         // Create disjunction for all primary resource references
         List<SearchQuery> referenceQueries = new ArrayList<>();
         for (String primaryId : primaryResourceIds) {
-            String referenceValue = searchParam.equals("subject") ? 
+            String referenceValue = searchParam.equals("subject") || searchParam.equals("target") ?
                 "Patient/" + primaryId : // Assuming primary resource is Patient for now
                 primaryId;
             referenceQueries.add(SearchQuery.match(referenceValue).field(searchParam + ".reference"));
