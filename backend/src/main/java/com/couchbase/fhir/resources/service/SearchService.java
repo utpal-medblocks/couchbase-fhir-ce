@@ -1,6 +1,8 @@
 package com.couchbase.fhir.resources.service;
 
+import ca.uhn.fhir.context.BaseRuntimeChildDefinition;
 import ca.uhn.fhir.context.FhirContext;
+import ca.uhn.fhir.context.RuntimeResourceDefinition;
 import ca.uhn.fhir.context.RuntimeSearchParam;
 import ca.uhn.fhir.rest.api.SummaryEnum;
 import ca.uhn.fhir.rest.api.server.RequestDetails;
@@ -307,28 +309,31 @@ public class SearchService {
                     .getSearchParam(paramName);
             
             if (searchParam == null) continue;
-            
+
+            String fhirParamName = getActualFieldName(fhirContext , resourceType, paramName);
+
             // Build appropriate query based on parameter type
             logger.debug("🔍 Processing parameter: {} = {} (type: {})", paramName, value, searchParam.getParamType());
-            
+
+
             switch (searchParam.getParamType()) {
                 case TOKEN:
-                    SearchQuery tokenQuery = TokenSearchHelperFTS.buildTokenFTSQuery(fhirContext, resourceType, paramName, value);
+                    SearchQuery tokenQuery = TokenSearchHelperFTS.buildTokenFTSQuery(fhirContext, resourceType, fhirParamName, value);
                     ftsQueries.add(tokenQuery);
                     logger.debug("🔍 Added TOKEN query for {}: {}", paramName, tokenQuery.export());
                     break;
                 case STRING:
-                    SearchQuery stringQuery = StringSearchHelperFTS.buildStringFTSQuery(fhirContext, resourceType, paramName, value, searchParam, modifier);
+                    SearchQuery stringQuery = StringSearchHelperFTS.buildStringFTSQuery(fhirContext, resourceType, fhirParamName, value, searchParam, modifier);
                     ftsQueries.add(stringQuery);
                     logger.debug("🔍 Added STRING query for {}: {}", paramName, stringQuery.export());
                     break;
                 case DATE:
-                    SearchQuery dateQuery = DateSearchHelperFTS.buildDateFTS(fhirContext, resourceType, paramName, value);
+                    SearchQuery dateQuery = DateSearchHelperFTS.buildDateFTS(fhirContext, resourceType, fhirParamName, value);
                     ftsQueries.add(dateQuery);
                     logger.debug("🔍 Added DATE query for {}: {}", paramName, dateQuery.export());
                     break;
                 case REFERENCE:
-                    String referenceClause = ReferenceSearchHelper.buildReferenceWhereCluse(fhirContext, resourceType, paramName, value, searchParam);
+                    String referenceClause = ReferenceSearchHelper.buildReferenceWhereCluse(fhirContext, resourceType, fhirParamName, value, searchParam);
                     filters.add(referenceClause);
                     logger.debug("🔍 Added REFERENCE filter for {}: {}", paramName, referenceClause);
                     break;
@@ -415,6 +420,23 @@ public class SearchService {
             logger.warn("Failed to get accurate count for {}: {}", resourceType, e.getMessage());
             return 0;
         }
+    }
+
+
+    /**
+     * Get actual SearchField (case sensitive) as per json stucture
+     */
+
+    public static String getActualFieldName(FhirContext ctx, String resourceName, String searchParam) {
+        RuntimeResourceDefinition def = ctx.getResourceDefinition(resourceName);
+        for (BaseRuntimeChildDefinition child : def.getChildren()) {
+            String elementName = child.getElementName();
+
+            if (elementName.equalsIgnoreCase(searchParam)) {
+                return elementName;
+            }
+        }
+        return searchParam;
     }
     
     // ========== Parameter Parsing Methods (extracted from ResourceProvider) ==========
