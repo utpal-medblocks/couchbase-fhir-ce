@@ -1,9 +1,13 @@
 package com.couchbase.common.config;
 
 import ca.uhn.fhir.context.FhirContext;
+import ca.uhn.fhir.context.RuntimeResourceDefinition;
+import ca.uhn.fhir.context.RuntimeSearchParam;
 import ca.uhn.fhir.parser.IParser;
+import ca.uhn.fhir.rest.api.RestSearchParameterTypeEnum;
 import ca.uhn.fhir.validation.FhirValidator;
 import org.hl7.fhir.r4.model.CodeSystem;
+import org.hl7.fhir.r4.model.SearchParameter;
 import org.hl7.fhir.r4.model.ValueSet;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.support.PathMatchingResourcePatternResolver;
@@ -27,6 +31,8 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Primary;
 
+import java.io.InputStream;
+import java.util.Collections;
 
 
 @Configuration
@@ -41,17 +47,18 @@ public class FhirConfig {
     @Bean
     public FhirContext fhirContext() {
         logger.info("🚀 Initializing FHIR R4 Context for US Core support");
-        
+
         FhirContext fhirContext = FhirContext.forR4();
-        
+
         // Configure for better performance and US Core compatibility
         fhirContext.getParserOptions().setStripVersionsFromReferences(false);
         fhirContext.getParserOptions().setDontStripVersionsFromReferencesAtPaths("meta");
-        
+
         logger.info("✅ FHIR R4 Context initialized successfully");
         logger.info("📋 FHIR Version: {}", fhirContext.getVersion().getVersion().getFhirVersionString());
         logger.info("🇺🇸 Ready for US Core validation");
-        
+
+
         return fhirContext;
     }
 
@@ -62,20 +69,20 @@ public class FhirConfig {
     @Bean
     public IParser jsonParser(FhirContext fhirContext) {
         logger.info("🔧 Configuring FHIR JSON Parser for US Core (lenient)");
-        
+
         IParser parser = fhirContext.newJsonParser();
-        
+
         // Configure parser for US Core compliance
         parser.setPrettyPrint(false); // Set to true for debugging
         parser.setStripVersionsFromReferences(false);
         parser.setOmitResourceId(false);
         parser.setSummaryMode(false);
         parser.setEncodeElementsAppliesToChildResourcesOnly(false);
-        
+
         logger.info("✅ FHIR JSON Parser configured for US Core (lenient)");
         return parser;
     }
-    
+
     /**
      * Create strict JSON parser for strict validation buckets
      */
@@ -83,19 +90,19 @@ public class FhirConfig {
     @Qualifier("strictJsonParser")
     public IParser strictJsonParser(FhirContext fhirContext) {
         logger.info("🔧 Configuring strict FHIR JSON Parser");
-        
+
         IParser parser = fhirContext.newJsonParser();
-        
+
         // Configure parser for strict validation
         parser.setPrettyPrint(false);
         parser.setStripVersionsFromReferences(false);
         parser.setOmitResourceId(false);
         parser.setSummaryMode(false);
         parser.setEncodeElementsAppliesToChildResourcesOnly(false);
-        
+
         // Use strict error handler that fails on unknown elements
         parser.setParserErrorHandler(new ca.uhn.fhir.parser.StrictErrorHandler());
-        
+
         logger.info("✅ Strict FHIR JSON Parser configured");
         return parser;
     }
@@ -103,98 +110,104 @@ public class FhirConfig {
     /**
      * Create FHIR validator with US Core support (primary validator for normal operations)
      */
+
+
     @Bean
     @Primary
-    public FhirValidator fhirValidator(FhirContext fhirContext) {
+    public FhirValidator fhirValidator(FhirContext fhirContext,
+                                       ValidationSupportChain validationSupportChain) {
         logger.info("🔍 Configuring FHIR Validator with US Core support");
-        
+
+        FhirValidator validator = fhirContext.newValidator();
+        FhirInstanceValidator instanceValidator = new FhirInstanceValidator(validationSupportChain);
+
+        // Strict US Core validation configuration
+        instanceValidator.setErrorForUnknownProfiles(true);
+        instanceValidator.setAnyExtensionsAllowed(false);
+        instanceValidator.setNoTerminologyChecks(false);
+        instanceValidator.setBestPracticeWarningLevel(BestPracticeWarningLevel.Warning);
+        instanceValidator.setNoExtensibleWarnings(false);
+
+        validator.registerValidatorModule(instanceValidator);
+
+        logger.info("✅ FHIR Validator configured with US Core support (strict mode)");
+        return validator;
+    }
+
+
+    @Bean
+    public ValidationSupportChain validationSupportChain(FhirContext fhirContext) {
+        logger.info("🔍 Creating ValidationSupportChain with US Core support");
+
+        PrePopulatedValidationSupport usCoreSupport = new PrePopulatedValidationSupport(fhirContext);
+        PathMatchingResourcePatternResolver resolver = new PathMatchingResourcePatternResolver();
+
         try {
-            // Create validation support chain with US Core structure definitions
-            logger.info("📦 Loading US Core structure definitions from resources...");
-            
-            // Load US Core structure definitions from classpath
-            PrePopulatedValidationSupport usCoreSupport = new PrePopulatedValidationSupport(fhirContext);
-            PathMatchingResourcePatternResolver resolver = new PathMatchingResourcePatternResolver();
-            Resource[] usCoreResources = resolver.getResources("classpath:us_core_6.1.0/StructureDefinition-*.json");
+            // Load US Core StructureDefinitions
+            Resource[] structureDefs = resolver.getResources("classpath:us_core_6.1.0/StructureDefinition-*.json");
+            for (Resource r : structureDefs) {
+                try (InputStream is = r.getInputStream()) {
+                    StructureDefinition sd = fhirContext.newJsonParser()
+                            .parseResource(StructureDefinition.class, is);
+                    usCoreSupport.addStructureDefinition(sd);
+                } catch (Exception e) {
+                    logger.warn("⚠ Failed to load StructureDefinition {}: {}", r.getFilename(), e.getMessage());
+                }
+            }
+
+            // Load US Core ValueSets
             Resource[] valueSets = resolver.getResources("classpath:us_core_6.1.0/ValueSet-*.json");
+            for (Resource r : valueSets) {
+                try (InputStream is = r.getInputStream()) {
+                    ValueSet vs = fhirContext.newJsonParser()
+                            .parseResource(ValueSet.class, is);
+                    usCoreSupport.addValueSet(vs);
+                } catch (Exception e) {
+                    logger.warn("⚠ Failed to load ValueSet {}: {}", r.getFilename(), e.getMessage());
+                }
+            }
+
+            // Load US Core CodeSystems
             Resource[] codeSystems = resolver.getResources("classpath:us_core_6.1.0/CodeSystem-*.json");
-
-            logger.info("🔍 Found {} US Core structure definition files", usCoreResources.length);
-            
-            int loadedCount = 0;
-            for (Resource resource : usCoreResources) {
-                try {
-                    String json = new String(resource.getInputStream().readAllBytes());
-                    StructureDefinition structureDefinition = fhirContext.newJsonParser().parseResource(StructureDefinition.class, json);
-                    usCoreSupport.addStructureDefinition(structureDefinition);
-                    loadedCount++;
-                    // logger.debug("✅ Loaded US Core profile: {}", structureDefinition.getUrl());
+            for (Resource r : codeSystems) {
+                try (InputStream is = r.getInputStream()) {
+                    CodeSystem cs = fhirContext.newJsonParser()
+                            .parseResource(CodeSystem.class, is);
+                    usCoreSupport.addCodeSystem(cs);
                 } catch (Exception e) {
-                    logger.warn("⚠️  Failed to load US Core resource {}: {}", resource.getFilename(), e.getMessage());
+                    logger.warn("⚠ Failed to load CodeSystem {}: {}", r.getFilename(), e.getMessage());
                 }
             }
 
-            logger.info("🔍 Found {} US Core ValueSet files", valueSets.length);
-
-            for (Resource resource : valueSets) {
-                try {
-                    String json = new String(resource.getInputStream().readAllBytes());
-                    ValueSet valueSet = fhirContext.newJsonParser().parseResource(ValueSet.class, json);
-                    usCoreSupport.addValueSet(valueSet);
-                    loadedCount++;
+            // Load US Core SearchParameters
+            Resource[] searchParams = resolver.getResources("classpath:us_core_6.1.0/SearchParameter-*.json");
+            for (Resource r : searchParams) {
+                try (InputStream is = r.getInputStream()) {
+                    SearchParameter sp = fhirContext.newJsonParser()
+                            .parseResource(SearchParameter.class, is);
+                    usCoreSupport.addSearchParameter(sp);
                 } catch (Exception e) {
-                    logger.warn("⚠️  Failed to load US Core ValueSet {}: {}", resource.getFilename(), e.getMessage());
-                }
-            }
-            logger.info("🔍 Found {} US Core CodeSystem files", codeSystems.length);
-            for (Resource resource : codeSystems) {
-                try {
-                    String json = new String(resource.getInputStream().readAllBytes());
-                    CodeSystem codeSystem = fhirContext.newJsonParser().parseResource(CodeSystem.class, json);
-                    usCoreSupport.addCodeSystem(codeSystem);
-                    loadedCount++;
-                } catch (Exception e) {
-                    logger.warn("⚠️  Failed to load US Core CodeSystem {}: {}", resource.getFilename(), e.getMessage());
+                    logger.warn("⚠ Failed to load SearchParameter {}: {}", r.getFilename(), e.getMessage());
                 }
             }
 
-            logger.info("✅ Successfully loaded {} US Core structure definitions , valueSets and CodeSystems ", loadedCount);
-            
-            // Create validation support chain with US Core profiles
-            ValidationSupportChain validationSupportChain = new ValidationSupportChain(
-                new DefaultProfileValidationSupport(fhirContext),  // Base FHIR R4
-                usCoreSupport,  // US Core profiles
+        } catch (Exception e) {
+            logger.error("❌ Failed to load US Core resources: {}", e.getMessage(), e);
+        }
+
+        // Create the chain
+        ValidationSupportChain chain = new ValidationSupportChain(
+                new DefaultProfileValidationSupport(fhirContext),
+                usCoreSupport,
                 new InMemoryTerminologyServerValidationSupport(fhirContext),
                 new CommonCodeSystemsTerminologyService(fhirContext)
-            );
-            
-            logger.info("✅ US Core validation support configured with {} structure definitions", loadedCount);
-            
-            // Create validator with instance validator
-            FhirValidator validator = fhirContext.newValidator();
-            FhirInstanceValidator instanceValidator = new FhirInstanceValidator(validationSupportChain);
-            
-            // Configure for strict US Core validation
-            instanceValidator.setErrorForUnknownProfiles(true);  // Require known profiles
-            instanceValidator.setAnyExtensionsAllowed(false);    // Validate extensions
-            instanceValidator.setNoTerminologyChecks(false);     // Enable terminology validation
-            instanceValidator.setBestPracticeWarningLevel(BestPracticeWarningLevel.Warning);
-            instanceValidator.setNoExtensibleWarnings(false);    // Show extension warnings
-            validator.registerValidatorModule(instanceValidator);
+        );
 
-            logger.info("✅ FHIR Validator with US Core support configured (strict mode)");
-            return validator;
-            
-        } catch (Exception e) {
-            logger.error("❌ Failed to configure US Core validator: {}", e.getMessage(), e);
-            logger.info("🔄 Falling back to basic FHIR validator");
-            
-            // Fallback to basic validator
-            FhirValidator validator = fhirContext.newValidator();
-            return validator;
-        }
+        logger.info("✅ ValidationSupportChain configured with US Core support");
+        return chain;
     }
-    
+
+
     /**
      * Create basic FHIR R4 validator for sample data loading (lenient, no US Core enforcement)
      * This validator is used for loading Synthea and other sample data that may not be US Core compliant

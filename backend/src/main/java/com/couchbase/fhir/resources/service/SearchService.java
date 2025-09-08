@@ -4,6 +4,7 @@ import ca.uhn.fhir.context.BaseRuntimeChildDefinition;
 import ca.uhn.fhir.context.FhirContext;
 import ca.uhn.fhir.context.RuntimeResourceDefinition;
 import ca.uhn.fhir.context.RuntimeSearchParam;
+import ca.uhn.fhir.rest.api.RestSearchParameterTypeEnum;
 import ca.uhn.fhir.rest.api.SummaryEnum;
 import ca.uhn.fhir.rest.api.server.RequestDetails;
 import ca.uhn.fhir.rest.server.exceptions.InvalidRequestException;
@@ -23,8 +24,11 @@ import com.couchbase.fhir.resources.search.SearchState;
 import com.couchbase.fhir.resources.search.SearchStateManager;
 import com.couchbase.fhir.resources.search.ChainParam;
 import ca.uhn.fhir.model.api.Include;
+import org.hl7.fhir.common.hapi.validation.support.ValidationSupportChain;
+import org.hl7.fhir.instance.model.api.IBaseResource;
 import org.hl7.fhir.r4.model.Bundle;
 import org.hl7.fhir.r4.model.Resource;
+import org.hl7.fhir.r4.model.SearchParameter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -61,7 +65,10 @@ public class SearchService {
     
     @Autowired
     private SearchStateManager searchStateManager;
-    
+
+    @Autowired
+    private ValidationSupportChain validationSupportChain;
+
     /**
      * Lightweight resolution for conditional operations.
      * Uses the same search logic but with LIMIT 2 for fast ambiguity detection.
@@ -304,10 +311,10 @@ public class SearchService {
                 continue;
             }
             
-            RuntimeSearchParam searchParam = fhirContext
-                    .getResourceDefinition(resourceType)
-                    .getSearchParam(paramName);
-            
+          //  RuntimeSearchParam searchParam = fhirContext.getResourceDefinition(resourceType).getSearchParam(paramName);
+            SearchHelper searchHelper = new SearchHelper();
+            RuntimeSearchParam searchParam = searchHelper.getSearchParam( fhirContext.getResourceDefinition(resourceType) , validationSupportChain , paramName);
+
             if (searchParam == null) continue;
 
             String fhirParamName = getActualFieldName(fhirContext , resourceType, paramName);
@@ -318,7 +325,7 @@ public class SearchService {
 
             switch (searchParam.getParamType()) {
                 case TOKEN:
-                    SearchQuery tokenQuery = TokenSearchHelperFTS.buildTokenFTSQuery(fhirContext, resourceType, fhirParamName, value);
+                    SearchQuery tokenQuery = TokenSearchHelperFTS.buildTokenFTSQuery(fhirContext, resourceType, fhirParamName, value , validationSupportChain);
                     ftsQueries.add(tokenQuery);
                     logger.debug("🔍 Added TOKEN query for {}: {}", paramName, tokenQuery.export());
                     break;
@@ -1739,4 +1746,6 @@ public class SearchService {
         
         return getAccurateCount(primaryQueries, primaryResourceType, bucketName);
     }
+
+
 }

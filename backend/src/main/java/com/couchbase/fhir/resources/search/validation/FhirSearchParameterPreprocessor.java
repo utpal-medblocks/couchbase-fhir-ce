@@ -1,6 +1,12 @@
 package com.couchbase.fhir.resources.search.validation;
 
+import com.couchbase.fhir.resources.service.SearchService;
+import com.couchbase.fhir.resources.util.SearchHelper;
+import org.hl7.fhir.common.hapi.validation.support.ValidationSupportChain;
+import org.hl7.fhir.instance.model.api.IBaseReference;
+import org.hl7.fhir.instance.model.api.IBaseResource;
 import org.hl7.fhir.r4.model.OperationOutcome;
+import org.hl7.fhir.r4.model.SearchParameter;
 import org.springframework.stereotype.Component;
 import ca.uhn.fhir.context.FhirContext;
 import ca.uhn.fhir.context.RuntimeResourceDefinition;
@@ -35,7 +41,10 @@ public class FhirSearchParameterPreprocessor {
     
     @Autowired
     private FhirContext fhirContext;
-    
+
+    @Autowired
+    private ValidationSupportChain validationSupportChain;
+
     // FHIR prefix pattern for validation
     private static final Pattern PREFIX_PATTERN = Pattern.compile("^(eq|ne|gt|lt|ge|le|sa|eb|ap)(.+)");
     
@@ -74,7 +83,7 @@ public class FhirSearchParameterPreprocessor {
      */
     private void validateParameterExistence(String resourceType, Map<String, List<String>> allParams) {
         RuntimeResourceDefinition resourceDef = fhirContext.getResourceDefinition(resourceType);
-        
+
         for (String paramName : allParams.keySet()) {
             // Skip control parameters and framework parameters
             if (paramName.startsWith("_") || isFrameworkParameter(paramName)) {
@@ -110,7 +119,11 @@ public class FhirSearchParameterPreprocessor {
             // Extract base parameter name (remove modifiers like :exact)
             String baseParamName = paramName.contains(":") ? paramName.substring(0, paramName.indexOf(":")) : paramName;
             
-            RuntimeSearchParam searchParam = resourceDef.getSearchParam(baseParamName);
+         //   RuntimeSearchParam searchParam = resourceDef.getSearchParam(baseParamName);
+
+            SearchHelper searchHelper = new SearchHelper();
+            RuntimeSearchParam searchParam = searchHelper.getSearchParam(resourceDef , validationSupportChain ,baseParamName );
+
             if (searchParam == null) {
                 logger.warn("⚠️ Unknown search parameter '{}' for resource type {}", baseParamName, resourceType);
                 throw new FhirSearchValidationException(
@@ -144,7 +157,10 @@ public class FhirSearchParameterPreprocessor {
             // Extract base parameter name (remove modifiers)
             String baseParamName = paramName.contains(":") ? paramName.substring(0, paramName.indexOf(":")) : paramName;
             
-            RuntimeSearchParam searchParam = resourceDef.getSearchParam(baseParamName);
+        //    RuntimeSearchParam searchParam = resourceDef.getSearchParam(baseParamName);
+            SearchHelper searchHelper = new SearchHelper();
+            RuntimeSearchParam searchParam = searchHelper.getSearchParam(resourceDef , validationSupportChain ,baseParamName );
+
             if (searchParam != null) {
                 for (String value : values) {
                     validateParameterFormat(searchParam, value, paramName);
@@ -171,7 +187,10 @@ public class FhirSearchParameterPreprocessor {
             // Extract base parameter name (remove modifiers)
             String baseParamName = paramName.contains(":") ? paramName.substring(0, paramName.indexOf(":")) : paramName;
             
-            RuntimeSearchParam searchParam = resourceDef.getSearchParam(baseParamName);
+        //    RuntimeSearchParam searchParam = resourceDef.getSearchParam(baseParamName);
+            SearchHelper searchHelper = new SearchHelper();
+            RuntimeSearchParam searchParam = searchHelper.getSearchParam(resourceDef , validationSupportChain ,baseParamName );
+
             if (searchParam != null && values.size() > 1) {
                 validateMultipleParameterValues(searchParam, values, paramName);
             }

@@ -2,8 +2,7 @@ package com.couchbase.fhir.resources.util;
 
 import ca.uhn.fhir.context.*;
 import com.couchbase.client.java.search.SearchQuery;
-import com.couchbase.fhir.resources.util.ConceptInfo;
-import com.couchbase.fhir.resources.util.TokenParam;
+import org.hl7.fhir.common.hapi.validation.support.ValidationSupportChain;
 
 
 import java.util.Arrays;
@@ -15,13 +14,16 @@ public class TokenSearchHelperFTS {
     public static SearchQuery buildTokenFTSQuery(FhirContext fhirContext,
                                                  String resourceType,
                                                  String paramName,
-                                                 String tokenValue) {
+                                                 String tokenValue , ValidationSupportChain validationSupportChain) {
 
         TokenParam token = new TokenParam(tokenValue);
         boolean isMultipleValues = token.code.contains(",");
 
         RuntimeResourceDefinition def = fhirContext.getResourceDefinition(resourceType);
-        RuntimeSearchParam searchParam = def.getSearchParam(paramName);
+    //    RuntimeSearchParam searchParam = def.getSearchParam(paramName);
+        SearchHelper searchHelper = new SearchHelper();
+        RuntimeSearchParam searchParam = searchHelper.getSearchParam(def , validationSupportChain , paramName);
+
         String path = searchParam.getPath();
         
         ConceptInfo conceptInfo = getConceptInfo(path, resourceType, def);
@@ -117,6 +119,11 @@ public class TokenSearchHelperFTS {
                         current = child.getChildByName(part);
                         if (current.isStandardType() && !(current instanceof BaseRuntimeElementCompositeDefinition)) {
                             isPrimitive = true;
+                        }
+                    }else{
+                        //TODO use backbone structure
+                        if(part.equalsIgnoreCase("role")){
+                            isCodableConcept = true;
                         }
                     }
                 }
