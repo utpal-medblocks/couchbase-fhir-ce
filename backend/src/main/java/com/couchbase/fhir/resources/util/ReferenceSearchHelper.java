@@ -56,16 +56,32 @@ public class ReferenceSearchHelper {
             logger.warn("🔍 ReferenceSearchHelper: Failed to get HAPI path for paramName={}, using paramName as field: {}", paramName, e.getMessage());
         }
 
-        // Parse the reference value (format: ResourceType/id or just id)
-        String[] parts = searchValue.split("/");
+        // Parse the reference value (format: ResourceType/id, just id, or canonical URL)
         String targetResourceType = null;
         String targetId = null;
-
-        if (parts.length == 2) {
-            targetResourceType = parts[0];
-            targetId = parts[1];
-        } else if (parts.length == 1) {
-            targetId = parts[0];
+        
+        if (searchValue.startsWith("http://") || searchValue.startsWith("https://")) {
+            // Handle canonical URLs - these should be matched as direct string values, not parsed as references
+            logger.info("🔍 ReferenceSearchHelper: Detected canonical URL, treating as direct string match: {}", searchValue);
+            
+            // For canonical URLs, create a direct string match query on the field
+            List<SearchQuery> queries = new ArrayList<>();
+            queries.add(SearchQuery.match(searchValue).field(actualFieldName));
+            
+            if (queries.size() == 1) {
+                return queries.get(0);
+            } else {
+                return SearchQuery.disjuncts(queries.toArray(new SearchQuery[0]));
+            }
+        } else {
+            // Handle simple references like "ResourceType/id" or just "id"
+            String[] parts = searchValue.split("/");
+            if (parts.length == 2) {
+                targetResourceType = parts[0];
+                targetId = parts[1];
+            } else if (parts.length == 1) {
+                targetId = parts[0];
+            }
         }
 
         if (targetId == null || targetId.isEmpty()) {

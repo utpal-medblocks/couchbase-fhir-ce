@@ -149,6 +149,34 @@
                 }
               ]
             },
+            "effectivePeriod": {
+              "dynamic": false,
+              "enabled": true,
+              "properties": {
+                "end": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "index": true,
+                      "name": "end",
+                      "type": "datetime"
+                    }
+                  ]
+                },
+                "start": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "index": true,
+                      "name": "start",
+                      "type": "datetime"
+                    }
+                  ]
+                }
+              }
+            },
             "encounter": {
               "dynamic": false,
               "enabled": true,

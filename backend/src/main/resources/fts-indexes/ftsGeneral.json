@@ -36,40 +36,6 @@
           "dynamic": false,
           "enabled": true,
           "properties": {
-            "_questionnaire": {
-              "dynamic": false,
-              "enabled": true,
-              "properties": {
-                "extension": {
-                  "dynamic": false,
-                  "enabled": true,
-                  "properties": {
-                    "url": {
-                      "dynamic": false,
-                      "enabled": true,
-                      "fields": [
-                        {
-                          "index": true,
-                          "name": "url",
-                          "type": "text"
-                        }
-                      ]
-                    },
-                    "valueUri": {
-                      "dynamic": false,
-                      "enabled": true,
-                      "fields": [
-                        {
-                          "index": true,
-                          "name": "valueUri",
-                          "type": "text"
-                        }
-                      ]
-                    }
-                  }
-                }
-              }
-            },
             "active": {
               "dynamic": false,
               "enabled": true,
@@ -1068,6 +1034,17 @@
                   ]
                 }
               }
+            },
+            "questionnaire": {
+              "dynamic": false,
+              "enabled": true,
+              "fields": [
+                {
+                  "index": true,
+                  "name": "questionnaire",
+                  "type": "text"
+                }
+              ]
             },
             "reaction": {
               "dynamic": false,
