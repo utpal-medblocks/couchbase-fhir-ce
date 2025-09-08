@@ -196,8 +196,15 @@ public class DateSearchHelper {
                 return List.of(elementName);
             }            
             if (!(child instanceof ca.uhn.fhir.context.RuntimeChildChoiceDefinition)) {
-                // Not a choice – try fallback first
-                logger.info("🔍 DateSearchHelper: {} is not a choice type, trying fallback", elementName);
+                // Not a choice type - check if it's a Period field
+                logger.info("🔍 DateSearchHelper: {} is not a choice type, checking if it's a Period", elementName);
+                
+                if (isPeriodType(fhirContext, resourceType, elementName)) {
+                    logger.info("🔍 DateSearchHelper: {} is a Period type, expanding to start/end", elementName);
+                    return List.of(elementName + ".start", elementName + ".end");
+                }
+                
+                // Try fallback for choice types
                 String suggestedField = FHIRPathParser.suggestDateTimeFieldPath(elementName);
                 if (suggestedField != null && !suggestedField.equals(elementName)) {
                     logger.info("🔍 DateSearchHelper: Using fallback suggestion: {} -> {}", elementName, suggestedField);
@@ -242,5 +249,45 @@ public class DateSearchHelper {
             // Fallback to original element name
             return List.of(elementName);
         }
+    }
+
+    /**
+     * Check if a field is a Period type using HAPI reflection
+     * Handles nested paths like "context.period"
+     */
+    private static boolean isPeriodType(FhirContext fhirContext, String resourceType, String fieldPath) {
+        try {
+            ca.uhn.fhir.context.RuntimeResourceDefinition resourceDef = fhirContext.getResourceDefinition(resourceType);
+            String[] pathParts = fieldPath.split("\\.");
+            
+            ca.uhn.fhir.context.BaseRuntimeElementDefinition<?> currentDef = resourceDef;
+            
+            // Navigate through each part of the path
+            for (String part : pathParts) {
+                if (currentDef instanceof ca.uhn.fhir.context.BaseRuntimeElementCompositeDefinition) {
+                    ca.uhn.fhir.context.BaseRuntimeChildDefinition childDef = 
+                        ((ca.uhn.fhir.context.BaseRuntimeElementCompositeDefinition<?>) currentDef).getChildByName(part);
+                    if (childDef != null) {
+                        currentDef = childDef.getChildByName(part);
+                    } else {
+                        logger.debug("🔍 DateSearchHelper: Could not find field part '{}' in path '{}'", part, fieldPath);
+                        return false;
+                    }
+                } else {
+                    logger.debug("🔍 DateSearchHelper: Field part '{}' is not composite in path '{}'", part, fieldPath);
+                    return false;
+                }
+            }
+            
+            if (currentDef != null) {
+                String className = currentDef.getImplementingClass().getSimpleName();
+                boolean isPeriod = "Period".equalsIgnoreCase(className);
+                logger.debug("🔍 DateSearchHelper: Field {} has type: {} (isPeriod: {})", fieldPath, className, isPeriod);
+                return isPeriod;
+            }
+        } catch (Exception e) {
+            logger.debug("🔍 DateSearchHelper: Failed to check if field {} is a Period type: {}", fieldPath, e.getMessage());
+        }
+        return false;
     }
 }
