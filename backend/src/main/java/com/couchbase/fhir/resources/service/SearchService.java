@@ -335,7 +335,7 @@ public class SearchService {
                     logger.debug("🔍 Added STRING query for {}: {}", paramName, stringQuery.export());
                     break;
                 case DATE:
-                    SearchQuery dateQuery = DateSearchHelperFTS.buildDateFTS(fhirContext, resourceType, fhirParamName, value);
+                    SearchQuery dateQuery = DateSearchHelperFTS.buildDateFTS(fhirContext, resourceType, fhirParamName, value , validationSupportChain);
                     ftsQueries.add(dateQuery);
                     logger.debug("🔍 Added DATE query for {}: {}", paramName, dateQuery.export());
                     break;
