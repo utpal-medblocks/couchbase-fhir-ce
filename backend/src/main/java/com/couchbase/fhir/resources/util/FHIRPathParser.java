@@ -73,17 +73,17 @@ public class FHIRPathParser {
         logger.info("🔍 FHIRPathParser: Parsing expression: {}", trimmed);
         
         // Check for extension expressions first (most complex)
-        if (isExtensionExpression(trimmed)) {
+        if (trimmed.contains("extension.where")) {
             return parseExtensionExpression(trimmed);
         }
         
         // Check for reference where expressions
-        if (isReferenceWhereExpression(trimmed)) {
+        if (trimmed.contains(".where(resolve()")) {
             return parseReferenceWhereExpression(trimmed);
         }
         
         // Check for union expressions (HAPI complex paths)
-        if (isUnionExpression(trimmed)) {
+        if (trimmed.contains(" | ")) {
             return parseUnionExpression(trimmed);
         }
         
@@ -92,28 +92,7 @@ public class FHIRPathParser {
     }
     
     /**
-     * Check if expression is an extension-based expression
-     */
-    private static boolean isExtensionExpression(String expression) {
-        return expression.contains("extension.where");
-    }
-    
-    /**
-     * Check if expression is a reference where expression
-     */
-    private static boolean isReferenceWhereExpression(String expression) {
-        return expression.contains(".where(resolve()") || expression.contains(".where(");
-    }
-    
-    /**
-     * Check if expression is a union expression (contains |)
-     */
-    private static boolean isUnionExpression(String expression) {
-        return expression.contains(" | ");
-    }
-    
-    /**
-     * Parse extension expressions like "Condition.extension.where(url='...').valueDateTime"
+     * Parse extension-based expressions for US Core parameters
      */
     private static ParsedExpression parseExtensionExpression(String expression) {
         logger.info("🔍 FHIRPathParser: Parsing extension expression");
@@ -121,14 +100,10 @@ public class FHIRPathParser {
         String extensionUrl = extractExtensionUrl(expression);
         String valueField = extractExtensionValueField(expression);
         
-        List<String> fieldPaths = new ArrayList<>();
-        if (valueField != null) {
-            fieldPaths.add(valueField);
-        }
-        
         logger.info("🔍 FHIRPathParser: Extension URL: {}, Value field: {}", extensionUrl, valueField);
         
-        return new ParsedExpression(expression, ExpressionType.EXTENSION, fieldPaths, extensionUrl, valueField);
+        return new ParsedExpression(expression, ExpressionType.EXTENSION, 
+                                  null, extensionUrl, valueField);
     }
     
     /**
@@ -138,47 +113,47 @@ public class FHIRPathParser {
         logger.info("🔍 FHIRPathParser: Parsing reference where expression");
         
         // Extract the base field before .where()
-        String baseField = expression;
+        String baseField = null;
         int whereIndex = expression.indexOf(".where(");
-        if (whereIndex != -1) {
-            baseField = expression.substring(0, whereIndex);
-            
-            // Remove resource type prefix if present
-            if (baseField.contains(".")) {
-                String[] parts = baseField.split("\\.");
-                if (parts.length >= 2) {
-                    baseField = parts[1]; // Take the field after resource type
-                }
-            }
+        if (whereIndex > 0) {
+            String beforeWhere = expression.substring(0, whereIndex);
+            baseField = extractSimpleFieldPath(beforeWhere);
         }
+        
+        if (baseField == null) {
+            logger.warn("🔍 FHIRPathParser: Could not extract base field from reference where expression: {}", expression);
+            baseField = "unknown";
+        }
+        
+        logger.info("🔍 FHIRPathParser: Reference base field: {}", baseField);
         
         List<String> fieldPaths = new ArrayList<>();
         fieldPaths.add(baseField);
         
-        logger.info("🔍 FHIRPathParser: Reference base field: {}", baseField);
-        
-        return new ParsedExpression(expression, ExpressionType.REFERENCE_WHERE, fieldPaths, null, null);
+        return new ParsedExpression(expression, ExpressionType.REFERENCE_WHERE, 
+                                  fieldPaths, null, null);
     }
     
     /**
-     * Parse union expressions like "onset.as(dateTime) | Condition.onset.as(Period)"
+     * Parse union expressions like "onsetDateTime | onsetPeriod"
      */
     private static ParsedExpression parseUnionExpression(String expression) {
         logger.info("🔍 FHIRPathParser: Parsing union expression");
         
-        String[] alternatives = expression.split(" \\| ");
+        String[] alternatives = expression.split("\\s*\\|\\s*");
         List<String> fieldPaths = new ArrayList<>();
         
         for (String alternative : alternatives) {
-            String fieldPath = parseAlternative(alternative.trim());
-            if (fieldPath != null && !fieldPaths.contains(fieldPath)) {
+            String fieldPath = parseAlternativeExpression(alternative.trim());
+            if (fieldPath != null && !fieldPath.isEmpty()) {
                 fieldPaths.add(fieldPath);
             }
         }
         
         logger.info("🔍 FHIRPathParser: Union alternatives: {}", fieldPaths);
         
-        return new ParsedExpression(expression, ExpressionType.UNION, fieldPaths, null, null);
+        return new ParsedExpression(expression, ExpressionType.UNION, 
+                                  fieldPaths, null, null);
     }
     
     /**
@@ -188,19 +163,21 @@ public class FHIRPathParser {
         logger.info("🔍 FHIRPathParser: Parsing simple field expression");
         
         String fieldPath = extractSimpleFieldPath(expression);
-        List<String> fieldPaths = new ArrayList<>();
-        if (fieldPath != null) {
-            fieldPaths.add(fieldPath);
+        if (fieldPath == null) {
+            fieldPath = expression; // Fallback to original
         }
         
         logger.info("🔍 FHIRPathParser: Simple field: {}", fieldPath);
         
-        return new ParsedExpression(expression, ExpressionType.SIMPLE_FIELD, fieldPaths, null, null);
+        List<String> fieldPaths = new ArrayList<>();
+        fieldPaths.add(fieldPath);
+        
+        return new ParsedExpression(expression, ExpressionType.SIMPLE_FIELD, 
+                                  fieldPaths, null, null);
     }
     
     /**
-     * Suggest field name for DATE parameters on choice types
-     * For expressions like "DiagnosticReport.effective", suggests "effectiveDateTime"
+     * Suggest field name for DATE parameters on choice types (fallback when HAPI introspection fails)
      */
     public static String suggestDateTimeFieldPath(String expression) {
         String fieldPath = extractSimpleFieldPath(expression);
@@ -233,46 +210,56 @@ public class FHIRPathParser {
     }
     
     /**
-     * Parse individual alternative in union expression
+     * Parse individual alternative in union expression or casting expression
      */
-    private static String parseAlternative(String alternative) {
-        // Handle generic type casting: "Resource.field.as(SomeType)" -> "field.SomeType"
+    private static String parseAlternativeExpression(String alternative) {
+        // Handle casting expressions like "Resource.field.as(SomeType)" -> "fieldSomeType"
         if (alternative.contains(".as(") && alternative.endsWith(")")) {
-            int asIndex = alternative.indexOf(".as(");
-            int closeParenIndex = alternative.lastIndexOf(")");
-            
-            if (asIndex != -1 && closeParenIndex != -1) {
-                String pathPart = alternative.substring(0, asIndex);
-                String typePart = alternative.substring(asIndex + 4, closeParenIndex); // +4 for ".as("
-                
-                if (pathPart.contains(".")) {
-                    String[] pathParts = pathPart.split("\\.");
-                    if (pathParts.length >= 2) {
-                        // Remove resource type (first part) and preserve the rest of the path
-                        String[] fieldParts = new String[pathParts.length - 1];
-                        System.arraycopy(pathParts, 1, fieldParts, 0, pathParts.length - 1);
-                        
-                        // Replace last field with field + capitalizedType
-                        String lastField = fieldParts[fieldParts.length - 1];
-                        String capitalizedType = typePart.substring(0, 1).toUpperCase() + typePart.substring(1);
-                        fieldParts[fieldParts.length - 1] = lastField + capitalizedType;
-                        
-                        String result = String.join(".", fieldParts);
-                        logger.info("🔍 FHIRPathParser: Generic cast alternative: {} -> {}", alternative, result);
-                        return result;
-                    }
-                }
-            }
+            return parseCastingExpression(alternative);
         }
         
-        // Default to simple field extraction
+        // Handle simple field extraction
         return extractSimpleFieldPath(alternative);
     }
     
     /**
+     * Parse casting expressions like "Goal.target.due.as(date)" -> "target.dueDate"
+     */
+    private static String parseCastingExpression(String expression) {
+        int asIndex = expression.indexOf(".as(");
+        int closeParenIndex = expression.lastIndexOf(")");
+        
+        if (asIndex == -1 || closeParenIndex == -1) {
+            return extractSimpleFieldPath(expression);
+        }
+        
+        String pathPart = expression.substring(0, asIndex);
+        String typePart = expression.substring(asIndex + 4, closeParenIndex); // +4 for ".as("
+        
+        if (pathPart.contains(".")) {
+            String[] pathParts = pathPart.split("\\.");
+            if (pathParts.length >= 2) {
+                // Remove resource type (first part) and preserve the rest of the path
+                String[] fieldParts = new String[pathParts.length - 1];
+                System.arraycopy(pathParts, 1, fieldParts, 0, pathParts.length - 1);
+                
+                // Replace last field with field + capitalizedType
+                String lastField = fieldParts[fieldParts.length - 1];
+                String capitalizedType = typePart.substring(0, 1).toUpperCase() + typePart.substring(1);
+                fieldParts[fieldParts.length - 1] = lastField + capitalizedType;
+                
+                String result = String.join(".", fieldParts);
+                logger.info("🔍 FHIRPathParser: Converted cast expression: {} -> {}", expression, result);
+                return result;
+            }
+        }
+        
+        return extractSimpleFieldPath(expression);
+    }
+    
+    /**
      * Extract simple field path from expression like "Condition.assertedDate" -> "assertedDate"
-     * Also handles casting expressions like "(Patient.deceased as dateTime)" -> "deceasedDateTime"
-     * Detects choice types and suggests appropriate suffixes for DATE parameters
+     * Also handles parenthetical casting expressions like "(Patient.deceased as dateTime)" -> "deceasedDateTime"
      */
     private static String extractSimpleFieldPath(String expression) {
         // Handle parenthetical casting expressions like "(Patient.deceased as dateTime)"
@@ -280,37 +267,16 @@ public class FHIRPathParser {
             String inner = expression.substring(1, expression.length() - 1);
             logger.info("🔍 FHIRPathParser: Handling parenthetical expression: {}", inner);
             
-            // Handle generic "as SomeType" casting
+            // Handle "as Type" casting
             if (inner.contains(" as ")) {
-                String[] asParts = inner.split(" as ");
-                if (asParts.length == 2) {
-                    String pathPart = asParts[0].trim();
-                    String typePart = asParts[1].trim();
-                    
-                    if (pathPart.contains(".")) {
-                        String[] pathParts = pathPart.split("\\.");
-                        if (pathParts.length >= 2) {
-                            // Remove resource type (first part) and preserve the rest of the path
-                            String[] fieldParts = new String[pathParts.length - 1];
-                            System.arraycopy(pathParts, 1, fieldParts, 0, pathParts.length - 1);
-                            
-                            // Replace last field with field + capitalizedType
-                            String lastField = fieldParts[fieldParts.length - 1];
-                            String capitalizedType = typePart.substring(0, 1).toUpperCase() + typePart.substring(1);
-                            fieldParts[fieldParts.length - 1] = lastField + capitalizedType;
-                            
-                            String result = String.join(".", fieldParts);
-                            logger.info("🔍 FHIRPathParser: Converted generic cast expression: {} as {} -> {}", pathPart, typePart, result);
-                            return result;
-                        }
-                    }
-                }
+                return parseCastingExpression(inner.replace(" as ", ".as(") + ")");
             }
             
             // Fallback to processing the inner expression
             return extractSimpleFieldPath(inner);
         }
         
+        // Handle simple dot notation like "Resource.field" or "Resource.nested.field"
         if (expression.contains(".") && !expression.contains("(")) {
             String[] parts = expression.split("\\.");
             if (parts.length >= 2) {

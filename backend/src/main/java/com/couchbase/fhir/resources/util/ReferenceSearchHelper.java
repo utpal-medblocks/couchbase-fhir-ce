@@ -2,19 +2,13 @@ package com.couchbase.fhir.resources.util;
 
 import ca.uhn.fhir.context.FhirContext;
 import ca.uhn.fhir.context.RuntimeSearchParam;
-import ca.uhn.fhir.context.BaseRuntimeElementCompositeDefinition;
-import ca.uhn.fhir.context.BaseRuntimeElementDefinition;
-import ca.uhn.fhir.context.BaseRuntimeChildDefinition;
 import com.couchbase.client.java.search.SearchQuery;
-import com.couchbase.client.java.search.queries.MatchQuery;
-import org.hl7.fhir.r4.model.StringType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
-import java.util.Arrays;
 
 public class ReferenceSearchHelper {
 
@@ -93,18 +87,20 @@ public class ReferenceSearchHelper {
         List<String> subFields = new ArrayList<>();
         
         // If field already ends with "Reference" (from casting like "medicationReference"), use as-is
-        if (actualFieldName.endsWith("Reference")) {
+        if (actualFieldName != null && actualFieldName.endsWith("Reference")) {
             subFields.add(actualFieldName);
             logger.info("🔍 ReferenceSearchHelper: Using cast reference field as-is: {}", actualFieldName);
         } else {
-            // Otherwise append ".reference" to the field name
-            subFields.add(actualFieldName + ".reference");
-            logger.info("🔍 ReferenceSearchHelper: Using standard reference field: {}", actualFieldName + ".reference");
+            // Otherwise append ".reference" to the field name (use paramName as fallback if actualFieldName is null)
+            String fieldName = actualFieldName != null ? actualFieldName : paramName;
+            subFields.add(fieldName + ".reference");
+            logger.info("🔍 ReferenceSearchHelper: Using standard reference field: {}", fieldName + ".reference");
         }
         
         if (subFields.isEmpty()) {
-            logger.warn("🔍 ReferenceSearchHelper: No sub-fields found for paramName={}, using base field: {}", paramName, actualFieldName);
-            subFields.add(actualFieldName);
+            String fallbackField = actualFieldName != null ? actualFieldName : paramName;
+            logger.warn("🔍 ReferenceSearchHelper: No sub-fields found for paramName={}, using base field: {}", paramName, fallbackField);
+            subFields.add(fallbackField);
         }
 
         // If no target resource type provided, try to determine it from HAPI using getTargets()

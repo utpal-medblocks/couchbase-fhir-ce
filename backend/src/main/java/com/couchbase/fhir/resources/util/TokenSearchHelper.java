@@ -7,20 +7,41 @@ import ca.uhn.fhir.context.BaseRuntimeElementCompositeDefinition;
 import ca.uhn.fhir.context.BaseRuntimeElementDefinition;
 import ca.uhn.fhir.context.BaseRuntimeChildDefinition;
 import com.couchbase.client.java.search.SearchQuery;
-import com.couchbase.client.java.search.queries.MatchQuery;
-import com.couchbase.client.java.search.queries.DisjunctionQuery;
-import org.hl7.fhir.r4.model.StringType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Arrays;
-import java.util.stream.Collectors;
 
 public class TokenSearchHelper {
 
     private static final Logger logger = LoggerFactory.getLogger(TokenSearchHelper.class);
+
+    /**
+     * Build TOKEN query - main entry point handling both HAPI parameters and direct expressions
+     */
+    public static SearchQuery buildTokenFTSQuery(FhirContext fhirContext,
+                                                String resourceType,
+                                                String paramName,
+                                                String tokenValue) {
+        try {
+            // Get HAPI search parameter
+            RuntimeResourceDefinition def = fhirContext.getResourceDefinition(resourceType);
+            RuntimeSearchParam searchParam = def.getSearchParam(paramName);
+            
+            if (searchParam != null && searchParam.getPath() != null) {
+                logger.info("🔍 TokenSearchHelper: HAPI path={}", searchParam.getPath());
+                return buildTokenFTSQueryFromExpression(fhirContext, resourceType, searchParam.getPath(), tokenValue);
+            } else {
+                // Fallback for parameters without HAPI definition
+                logger.warn("🔍 TokenSearchHelper: No HAPI path found for {}, using parameter name", paramName);
+                return buildTokenQueryForField(resourceType, paramName, tokenValue);
+            }
+        } catch (Exception e) {
+            logger.warn("🔍 TokenSearchHelper: Failed to get HAPI path for {}: {}", paramName, e.getMessage());
+            return buildTokenQueryForField(resourceType, paramName, tokenValue);
+        }
+    }
 
     /**
      * Build TOKEN query from FHIR expression (for US Core and custom parameters)
@@ -40,272 +61,141 @@ public class TokenSearchHelper {
             return SearchQuery.match(tokenValue).field("unknown");
         }
         
+        // Introspect field type and build appropriate query
+        return buildTokenQueryForField(fhirContext, resourceType, fieldPath, tokenValue);
+    }
+
+    /**
+     * Build TOKEN query for a specific field path with type introspection
+     */
+    private static SearchQuery buildTokenQueryForField(FhirContext fhirContext, String resourceType, String fieldPath, String tokenValue) {
         // Parse token value
         TokenParam token = new TokenParam(tokenValue);
         
-        // Introspect field type and build appropriate query
-        return buildTokenQueryForFieldPath(fhirContext, resourceType, fieldPath, token);
-    }
-
-    public static SearchQuery buildTokenFTSQuery(FhirContext fhirContext,
-                                                 String resourceType,
-                                                 String paramName,
-                                                 String tokenValue) {
-
-        TokenParam token = new TokenParam(tokenValue);
-        boolean isMultipleValues = token.code.contains(",");
-        
-        logger.info("🔍 TokenSearchHelper: paramName={}, tokenValue={}, parsed system={}, code={}", 
-                    paramName, tokenValue, token.system, token.code);
-    
-        RuntimeResourceDefinition def = fhirContext.getResourceDefinition(resourceType);
-        RuntimeSearchParam searchParam = def.getSearchParam(paramName);
-        String path = searchParam.getPath();
-        
-        logger.info("🔍 TokenSearchHelper: HAPI path={}, paramType={}", 
-                    path, searchParam.getParamType());
-        
-        // Use enhanced type introspection instead of old ConceptInfo logic
-        return buildTokenFTSQueryFromExpression(fhirContext, resourceType, path, tokenValue);
-    }
-
-    /**
-     * Create appropriate query for primitive values (boolean, string, etc.)
-     */
-    private static SearchQuery createPrimitiveQuery(String value, String ftsFieldPath) {
-        // Check if the value is a boolean
-        if ("true".equalsIgnoreCase(value) || "false".equalsIgnoreCase(value)) {
-            boolean boolValue = Boolean.parseBoolean(value);
-            return SearchQuery.booleanField(boolValue).field(ftsFieldPath);
-        }
-        
-        // Default to match query for strings
-        return SearchQuery.match(value).field(ftsFieldPath);
-    }
-
-    private static SearchQuery buildCodeableConceptQuery(String ftsFieldPath, TokenParam token) {
-        // For FTS index: field might be like "name.coding.code" and "name.coding.system"
-        if (token.system != null) {
-            return SearchQuery.conjuncts(
-                    SearchQuery.match(token.system).field(ftsFieldPath + ".system"),
-                    SearchQuery.match(token.code).field(ftsFieldPath + ".code")
-            );
-        } else {
-            return SearchQuery.match(token.code).field(ftsFieldPath + ".code");
-        }
-    }
-
-    private static SearchQuery buildSystemValueQuery(String ftsFieldPath, TokenParam token) {
-        if (token.system != null) {
-            return SearchQuery.conjuncts(
-                    SearchQuery.match(token.system).field(ftsFieldPath + ".system"),
-                    SearchQuery.match(token.code).field(ftsFieldPath + ".value")
-            );
-        } else {
-            return SearchQuery.match(token.code).field(ftsFieldPath + ".value");
-        }
-    }
-
-    public static ConceptInfo getConceptInfo(String path, String resourceType, RuntimeResourceDefinition def) {
-        boolean isCodableConcept = false;
-        boolean isArray = false;
-        boolean isPrimitive = false;
-        BaseRuntimeElementDefinition<?> current = def;
-        
-        try {
-            String fhirPath = path.replaceFirst("^" + resourceType + "\\.", "");
-            String[] pathParts = fhirPath.split("\\.");
-            
-            for (String part : pathParts) {
-                if (def != null) {
-                    BaseRuntimeChildDefinition child = ((BaseRuntimeElementCompositeDefinition<?>) def).getChildByName(part);
-                    if (child != null) {
-                        if (child.getMax() == -1) {
-                            isArray = true;
-                        }
-                        if (child.getChildByName(part).getImplementingClass().getSimpleName().equalsIgnoreCase("CodeableConcept")) {
-                            isCodableConcept = true;
-                        }
-
-                        current = child.getChildByName(part);
-                        if (current.isStandardType() && !(current instanceof BaseRuntimeElementCompositeDefinition)) {
-                            isPrimitive = true;
-                        }
-                    }
-                }
-            }
-
-        } catch (Exception e) {
-            System.out.println(e.getMessage());
-        }
-        return new ConceptInfo(isCodableConcept, isArray, isPrimitive);
-    }
-
-    /**
-     * Convert FHIRPath to the FTS field path used in the Couchbase index mapping.
-     */
-    private static String toFTSFieldPath(String fhirPath,
-                                         String resourceType,
-                                         boolean codableConcept,
-                                         boolean isArray,
-                                         boolean isPrimitive) {
-        if (fhirPath == null) {
-            throw new IllegalArgumentException("FHIRPath is null");
-        }
-
-        if (!fhirPath.startsWith(resourceType + ".") && !fhirPath.startsWith("Resource.")) {
-            throw new IllegalArgumentException("Invalid FHIRPath: " + fhirPath);
-        }
-        String subPath;
-        if (fhirPath.contains("Resource")) {
-            subPath = fhirPath.substring(9);
-        } else {
-            subPath = fhirPath.substring(resourceType.length() + 1);
-        }
-        
-        String ftsPath = subPath
-                .replace(".coding", ".coding") // Keep .coding for FTS mapping
-                .replace(".value", ".value")
-                .replace(".code", ".code")
-                .replace(".system", ".system");
-
-        if (isPrimitive) {
-            return ftsPath;
-        }
-
-        if (codableConcept) {
-            // For CodeableConcepts, we always need to add .coding
-            // Whether it's a single CodeableConcept or an array of CodeableConcepts
-            ftsPath += ".coding";
-        }
-        return ftsPath;
-    }
-
-    /**
-     * Build TOKEN query for a specific field path using comprehensive type introspection
-     */
-    private static SearchQuery buildTokenQueryForFieldPath(FhirContext fhirContext, String resourceType, 
-                                                          String fieldPath, TokenParam token) {
-        // Introspect the field type
-        TokenFieldType fieldType = introspectTokenFieldType(fhirContext, resourceType, fieldPath);
-        logger.info("🔍 TokenSearchHelper: Field {} resolved to type: {}", fieldPath, fieldType);
-        
-        // Handle comma-separated values (OR logic)
-        boolean hasMultipleValues = token.code.contains(",");
-        if (hasMultipleValues) {
+        // Handle comma-separated values (e.g., "DF,EM,SO")
+        if (token.code.contains(",")) {
             String[] codes = token.code.split(",");
             List<SearchQuery> queries = new ArrayList<>();
             
             for (String code : codes) {
-                String trimmedCode = code.trim();
-                TokenParam singleToken = new TokenParam(token.system != null ? token.system + "|" + trimmedCode : trimmedCode);
-                SearchQuery singleQuery = buildSingleTokenQuery(fieldType, fieldPath, singleToken);
-                if (singleQuery != null) {
-                    queries.add(singleQuery);
+                TokenParam singleToken = new TokenParam(token.system != null ? token.system + "|" + code.trim() : code.trim());
+                SearchQuery query = buildSingleTokenQuery(fhirContext, resourceType, fieldPath, singleToken);
+                if (query != null) {
+                    queries.add(query);
                 }
             }
             
-            if (queries.size() > 1) {
-                logger.info("🔍 TokenSearchHelper: Created disjunctive query with {} alternatives for field {}", queries.size(), fieldPath);
-                return SearchQuery.disjuncts(queries.toArray(new SearchQuery[0]));
-            } else if (queries.size() == 1) {
-                return queries.get(0);
-            }
+            logger.info("🔍 TokenSearchHelper: Created {} disjunctive queries for comma-separated values", queries.size());
+            return queries.isEmpty() ? null : SearchQuery.disjuncts(queries.toArray(new SearchQuery[0]));
         }
         
-        // Single value - use existing logic
-        return buildSingleTokenQuery(fieldType, fieldPath, token);
+        // Single value
+        return buildSingleTokenQuery(fhirContext, resourceType, fieldPath, token);
     }
-    
+
     /**
-     * Build a single TOKEN query for a specific field type
+     * Simple fallback for fields without HAPI introspection
      */
-    private static SearchQuery buildSingleTokenQuery(TokenFieldType fieldType, String fieldPath, TokenParam token) {
-        switch (fieldType) {
-            case CODEABLE_CONCEPT:
-                return buildCodeableConceptQuery(fieldPath + ".coding", token);
-                
-            case CODING:
-                return buildCodingQuery(fieldPath, token);
-                
-            case IDENTIFIER:
-                return buildIdentifierQuery(fieldPath, token);
-                
-            case PRIMITIVE_CODE:
-            case PRIMITIVE_BOOLEAN:
-            case PRIMITIVE_URI:
-            case PRIMITIVE_STRING:
-                return buildPrimitiveQuery(fieldPath, token);
-                
-            default:
-                logger.warn("🔍 TokenSearchHelper: Unknown field type for {}, using as-is", fieldPath);
-                return SearchQuery.match(token.code).field(fieldPath);
+    private static SearchQuery buildTokenQueryForField(String resourceType, String fieldPath, String tokenValue) {
+        TokenParam token = new TokenParam(tokenValue);
+        
+        // Handle comma-separated values
+        if (token.code.contains(",")) {
+            String[] codes = token.code.split(",");
+            List<SearchQuery> queries = new ArrayList<>();
+            
+            for (String code : codes) {
+                queries.add(SearchQuery.match(code.trim()).field(fieldPath));
+            }
+            
+            return SearchQuery.disjuncts(queries.toArray(new SearchQuery[0]));
+        }
+        
+        // Simple match query
+        return SearchQuery.match(token.code).field(fieldPath);
+    }
+
+    /**
+     * Build a single token query based on HAPI field type introspection
+     */
+    private static SearchQuery buildSingleTokenQuery(FhirContext fhirContext, String resourceType, String fieldPath, TokenParam token) {
+        try {
+            // Introspect field type using HAPI
+            String fieldType = introspectFieldType(fhirContext, resourceType, fieldPath);
+            
+            switch (fieldType.toLowerCase()) {
+                case "codeableconcept":
+                    return buildCodeableConceptQuery(fieldPath, token);
+                case "coding":
+                    return buildCodingQuery(fieldPath, token);
+                case "identifier":
+                    return buildIdentifierQuery(fieldPath, token);
+                case "code":
+                case "boolean":
+                case "string":
+                case "uri":
+                case "canonical":
+                case "oid":
+                    return buildPrimitiveQuery(fieldPath, token);
+                default:
+                    logger.warn("🔍 TokenSearchHelper: Unknown field type '{}' for {}, using primitive query", fieldType, fieldPath);
+                    return buildPrimitiveQuery(fieldPath, token);
+            }
+        } catch (Exception e) {
+            logger.warn("🔍 TokenSearchHelper: Failed to introspect field type for {}: {}", fieldPath, e.getMessage());
+            return buildPrimitiveQuery(fieldPath, token);
         }
     }
 
     /**
-     * Introspect field type using HAPI reflection
+     * Introspect FHIR field type using HAPI reflection
      */
-    private static TokenFieldType introspectTokenFieldType(FhirContext fhirContext, String resourceType, String fieldPath) {
+    private static String introspectFieldType(FhirContext fhirContext, String resourceType, String fieldPath) {
         try {
-            ca.uhn.fhir.context.RuntimeResourceDefinition resourceDef = fhirContext.getResourceDefinition(resourceType);
+            RuntimeResourceDefinition resourceDef = fhirContext.getResourceDefinition(resourceType);
             String[] pathParts = fieldPath.split("\\.");
             
-            ca.uhn.fhir.context.BaseRuntimeElementDefinition<?> currentDef = resourceDef;
+            BaseRuntimeElementDefinition<?> currentDef = resourceDef;
             
+            // Navigate through each part of the path
             for (String part : pathParts) {
-                if (currentDef instanceof ca.uhn.fhir.context.BaseRuntimeElementCompositeDefinition) {
-                    ca.uhn.fhir.context.BaseRuntimeChildDefinition childDef = 
-                        ((ca.uhn.fhir.context.BaseRuntimeElementCompositeDefinition<?>) currentDef).getChildByName(part);
+                if (currentDef instanceof BaseRuntimeElementCompositeDefinition) {
+                    BaseRuntimeChildDefinition childDef = 
+                        ((BaseRuntimeElementCompositeDefinition<?>) currentDef).getChildByName(part);
                     if (childDef != null) {
                         currentDef = childDef.getChildByName(part);
                     } else {
-                        return TokenFieldType.UNKNOWN;
+                        logger.debug("🔍 TokenSearchHelper: Could not find field part '{}' in path '{}'", part, fieldPath);
+                        return "unknown";
                     }
                 } else {
-                    return TokenFieldType.UNKNOWN;
+                    logger.debug("🔍 TokenSearchHelper: Field part '{}' is not composite in path '{}'", part, fieldPath);
+                    return "unknown";
                 }
             }
             
             if (currentDef != null) {
                 String className = currentDef.getImplementingClass().getSimpleName();
-                return mapClassNameToFieldType(className);
+                logger.debug("🔍 TokenSearchHelper: Field {} has type: {}", fieldPath, className);
+                return className;
             }
         } catch (Exception e) {
-            logger.debug("🔍 TokenSearchHelper: Failed to introspect field {}: {}", fieldPath, e.getMessage());
+            logger.debug("🔍 TokenSearchHelper: Failed to introspect field type for {}: {}", fieldPath, e.getMessage());
         }
-        return TokenFieldType.UNKNOWN;
+        return "unknown";
     }
 
     /**
-     * Map HAPI class names to our field types
+     * Build query for CodeableConcept type (path.coding.code + path.coding.system)
      */
-    private static TokenFieldType mapClassNameToFieldType(String className) {
-        switch (className) {
-            case "CodeableConcept":
-                return TokenFieldType.CODEABLE_CONCEPT;
-            case "Coding":
-                return TokenFieldType.CODING;
-            case "Identifier":
-                return TokenFieldType.IDENTIFIER;
-            case "CodeType":
-            case "Code":
-                return TokenFieldType.PRIMITIVE_CODE;
-            case "BooleanType":
-            case "Boolean":
-                return TokenFieldType.PRIMITIVE_BOOLEAN;
-            case "UriType":
-            case "CanonicalType":
-            case "OidType":
-            case "Uri":
-            case "Canonical":
-            case "Oid":
-                return TokenFieldType.PRIMITIVE_URI;
-            case "StringType":
-            case "String":
-                return TokenFieldType.PRIMITIVE_STRING;
-            default:
-                return TokenFieldType.UNKNOWN;
+    private static SearchQuery buildCodeableConceptQuery(String fieldPath, TokenParam token) {
+        if (token.system != null) {
+            return SearchQuery.conjuncts(
+                    SearchQuery.match(token.system).field(fieldPath + ".coding.system"),
+                    SearchQuery.match(token.code).field(fieldPath + ".coding.code")
+            );
+        } else {
+            return SearchQuery.match(token.code).field(fieldPath + ".coding.code");
         }
     }
 
@@ -346,16 +236,27 @@ public class TokenSearchHelper {
     }
 
     /**
-     * Enum for TOKEN field types
+     * Token parameter parser - handles system|code format
      */
-    private enum TokenFieldType {
-        CODEABLE_CONCEPT,
-        CODING,
-        IDENTIFIER,
-        PRIMITIVE_CODE,
-        PRIMITIVE_BOOLEAN,
-        PRIMITIVE_URI,
-        PRIMITIVE_STRING,
-        UNKNOWN
+    private static class TokenParam {
+        final String system;
+        final String code;
+
+        TokenParam(String tokenValue) {
+            if (tokenValue == null || tokenValue.isEmpty()) {
+                this.system = null;
+                this.code = "";
+                return;
+            }
+
+            if (tokenValue.contains("|")) {
+                String[] parts = tokenValue.split("\\|", 2);
+                this.system = parts[0].isEmpty() ? null : parts[0];
+                this.code = parts.length > 1 ? parts[1] : "";
+            } else {
+                this.system = null;
+                this.code = tokenValue;
+            }
+        }
     }
 }

@@ -41,7 +41,7 @@ public class USCoreSearchHelper {
 
         switch (paramType) {
             case DATE:
-                return buildUSCoreDateQueries(paramName, values.get(0), expression);
+                return buildUSCoreDateQueries(fhirContext, resourceType, paramName, values.get(0), expression);
             case TOKEN:
                 SearchQuery tokenQuery = buildUSCoreTokenQuery(fhirContext, resourceType, paramName, values.get(0), expression);
                 return List.of(tokenQuery);
@@ -58,13 +58,37 @@ public class USCoreSearchHelper {
     }
 
     /**
-     * Build date queries for US Core parameters (may return multiple queries for extensions)
+     * Build date queries for US Core parameters - leverages sophisticated DateSearchHelper
      */
-    private static List<SearchQuery> buildUSCoreDateQueries(String paramName, String searchValue, String expression) {
+    private static List<SearchQuery> buildUSCoreDateQueries(FhirContext fhirContext, String resourceType, 
+                                                           String paramName, String searchValue, String expression) {
         logger.info("🔍 USCoreSearchHelper: Building DATE queries for {}", paramName);
+        
+        // Use FHIRPathParser to parse the expression
+        FHIRPathParser.ParsedExpression parsed = FHIRPathParser.parse(expression);
+        
+        if (parsed.isExtension()) {
+            // Handle extension-based expressions - these need special US Core handling
+            return buildExtensionDateQueries(paramName, searchValue, parsed);
+        } else {
+            // Handle regular field expressions - delegate to sophisticated DateSearchHelper
+            logger.info("🔍 USCoreSearchHelper: Delegating to DateSearchHelper for regular field: {}", expression);
+            
+            // Use DateSearchHelper's sophisticated logic for choice types, Period handling, etc.
+            SearchQuery query = DateSearchHelper.buildDateFTS(fhirContext, resourceType, paramName, searchValue);
+            return query != null ? List.of(query) : new ArrayList<>();
+        }
+    }
+
+    /**
+     * Build extension-based date queries (US Core specific)
+     */
+    private static List<SearchQuery> buildExtensionDateQueries(String paramName, String searchValue, 
+                                                              FHIRPathParser.ParsedExpression parsed) {
+        logger.info("🔍 USCoreSearchHelper: Building extension DATE queries for {}", paramName);
         List<SearchQuery> queries = new ArrayList<>();
 
-        // Parse date value and prefixes
+        // Parse date value and prefixes (reuse DateSearchHelper logic would be ideal, but extensions are special)
         String start = null;
         String end = null;
         boolean inclusiveStart = true;
@@ -86,42 +110,23 @@ public class USCoreSearchHelper {
             end = searchValue;
         }
 
-        // Use FHIRPathParser to parse the expression
-        FHIRPathParser.ParsedExpression parsed = FHIRPathParser.parse(expression);
+        String extensionUrl = parsed.getExtensionUrl();
+        String valueField = parsed.getExtensionValueField();
         
-        if (parsed.isExtension()) {
-            // Handle extension-based expressions
-            String extensionUrl = parsed.getExtensionUrl();
-            String valueField = parsed.getExtensionValueField();
-            
-            if (extensionUrl != null) {
-                // Add query for extension URL
-                SearchQuery urlQuery = SearchQuery.match(extensionUrl).field("extension.url");
-                queries.add(urlQuery);
-                logger.info("🔍 USCoreSearchHelper: Added extension URL query: {}", urlQuery.export());
-            }
-            
-            // Add query for extension value
-            DateRangeQuery valueQuery = SearchQuery.dateRange().field(valueField);
-            if (start != null) valueQuery = valueQuery.start(start, inclusiveStart);
-            if (end != null) valueQuery = valueQuery.end(end, inclusiveEnd);
-            queries.add(valueQuery);
-            logger.info("🔍 USCoreSearchHelper: Added extension value query: {}", valueQuery.export());
-            
-        } else {
-            // Handle simple field expressions
-            String fieldPath = parsed.getPrimaryFieldPath();
-            if (fieldPath == null) {
-                logger.warn("🔍 USCoreSearchHelper: Could not extract field path from: {}", expression);
-                fieldPath = "unknown";
-            }
-            
-            DateRangeQuery query = SearchQuery.dateRange().field(fieldPath);
-            if (start != null) query = query.start(start, inclusiveStart);
-            if (end != null) query = query.end(end, inclusiveEnd);
-            queries.add(query);
+        if (extensionUrl != null) {
+            // Add query for extension URL
+            SearchQuery urlQuery = SearchQuery.match(extensionUrl).field("extension.url");
+            queries.add(urlQuery);
+            logger.info("🔍 USCoreSearchHelper: Added extension URL query: {}", urlQuery.export());
         }
-
+        
+        // Add query for extension value
+        DateRangeQuery valueQuery = SearchQuery.dateRange().field(valueField);
+        if (start != null) valueQuery = valueQuery.start(start, inclusiveStart);
+        if (end != null) valueQuery = valueQuery.end(end, inclusiveEnd);
+        queries.add(valueQuery);
+        logger.info("🔍 USCoreSearchHelper: Added extension value query: {}", valueQuery.export());
+        
         return queries;
     }
 
@@ -172,5 +177,4 @@ public class USCoreSearchHelper {
         logger.info("🔍 USCoreSearchHelper: Extracted field path: {}", fieldPath);
         return SearchQuery.match(searchValue).field(fieldPath);
     }
-
 }
