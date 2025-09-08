@@ -2,12 +2,8 @@ package com.couchbase.fhir.resources.util;
 
 import ca.uhn.fhir.context.FhirContext;
 import ca.uhn.fhir.context.RuntimeSearchParam;
-import ca.uhn.fhir.context.BaseRuntimeElementCompositeDefinition;
-import ca.uhn.fhir.context.BaseRuntimeElementDefinition;
-import ca.uhn.fhir.context.BaseRuntimeChildDefinition;
 import com.couchbase.client.java.search.SearchQuery;
 import com.couchbase.client.java.search.queries.DisjunctionQuery;
-import org.hl7.fhir.r4.model.StringType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -25,27 +21,39 @@ public class StringSearchHelper {
                                                  RuntimeSearchParam searchParam, String modifier) {
 
         String rawPath = searchParam.getPath();
-        String fhirPath = rawPath.replaceFirst("^" + resourceType + "\\.", "");
-        String[] pathParts = fhirPath.split("\\.");
-
-        List<String> subFields;
-        if (pathParts.length == 1) {
-            subFields = getSubFields(fhirContext, resourceType, paramName);
+        logger.info("🔍 StringSearchHelper: paramName={}, rawPath={}", paramName, rawPath);
+        
+        // Use FHIRPathParser to properly handle union expressions
+        FHIRPathParser.ParsedExpression parsed = FHIRPathParser.parse(rawPath);
+        List<String> fieldPaths = new ArrayList<>();
+        
+        if (parsed.isUnion() && parsed.getFieldPaths().size() > 1) {
+            // Union expression like "name | Organization.alias"
+            fieldPaths.addAll(parsed.getFieldPaths());
+            logger.info("🔍 StringSearchHelper: Parsed union expression into {} fields: {}", fieldPaths.size(), fieldPaths);
         } else {
-            subFields = getCompositeSubFields(fhirContext, resourceType, fhirPath);
+            // Single field
+            String fieldPath = parsed.getPrimaryFieldPath();
+            if (fieldPath == null) {
+                // Fallback to legacy parsing
+                String fhirPath = rawPath.replaceFirst("^" + resourceType + "\\.", "");
+                fieldPath = fhirPath;
+            }
+            fieldPaths.add(fieldPath);
+            logger.info("🔍 StringSearchHelper: Parsed single field: {}", fieldPath);
         }
 
-        if (subFields.isEmpty()) {
-            logger.warn("🔍 StringSearchHelper: No sub-fields found for paramName={}, fhirPath={}", paramName, fhirPath);
+        if (fieldPaths.isEmpty()) {
+            logger.warn("🔍 StringSearchHelper: No field paths found for paramName={}, rawPath={}", paramName, rawPath);
             return null;
         }
 
-        logger.info("🔍 StringSearchHelper: paramName={}, fhirPath={}, subFields={}", paramName, fhirPath, subFields);
+        logger.info("🔍 StringSearchHelper: paramName={}, fieldPaths={}", paramName, fieldPaths);
 
         List<SearchQuery> fieldQueries = new ArrayList<>();
         boolean isExact = "exact".equalsIgnoreCase(modifier);
 
-        for (String field : subFields) {
+        for (String field : fieldPaths) {
             if (isExact) {
                 String exactField = field + "Exact";
                 fieldQueries.add(SearchQuery.match(searchValue).field(exactField));
@@ -60,42 +68,6 @@ public class StringSearchHelper {
         return disjunction;
     }
 
-    private static List<String> getSubFields(FhirContext ctx, String resource, String fieldName) {
-        List<String> fields = new ArrayList<>();
-        BaseRuntimeElementCompositeDefinition<?> resourceDef =
-                (BaseRuntimeElementCompositeDefinition<?>) ctx.getResourceDefinition(resource);
-        BaseRuntimeChildDefinition fieldChild = resourceDef.getChildByName(fieldName);
-
-        if (fieldChild == null) return fields;
-
-        BaseRuntimeElementDefinition<?> fieldType = fieldChild.getChildByName(fieldName);
-        if (fieldType instanceof BaseRuntimeElementCompositeDefinition<?>) {
-            BaseRuntimeElementCompositeDefinition<?> compDef =
-                    (BaseRuntimeElementCompositeDefinition<?>) fieldType;
-
-            for (BaseRuntimeChildDefinition sub : compDef.getChildren()) {
-                if (sub.getChildNameByDatatype(StringType.class) != null) {
-                    String subName = sub.getElementName();
-                    if (skipCommonIgnoredFields(subName)) continue;
-                    fields.add(fieldName + "." + subName);
-                }
-            }
-        }
-        return fields;
-    }
-
-    private static List<String> getCompositeSubFields(FhirContext ctx, String resource, String fhirPath) {
-        List<String> fields = new ArrayList<>();
-        String[] parts = fhirPath.split("\\.");
-        String parent = parts[0];
-        String child = parts[1];
-        fields.add(parent + "." + child);
-        return fields;
-    }
-
-    private static boolean skipCommonIgnoredFields(String name) {
-        return name.equals("id") || name.equals("extension") || name.equals("period") || name.equals("use");
-    }
 
     public static SearchQuery buildStringFTSQueryWithMultipleValues(FhirContext fhirContext, String resourceType, String paramName, List<String> searchValues, RuntimeSearchParam searchParam, String modifier) {
         if (searchValues == null || searchValues.isEmpty()) {

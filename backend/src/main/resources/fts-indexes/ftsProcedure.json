@@ -72,6 +72,17 @@
                   "dynamic": false,
                   "enabled": true,
                   "properties": {
+                    "code": {
+                      "dynamic": false,
+                      "enabled": true,
+                      "fields": [
+                        {
+                          "index": true,
+                          "name": "code",
+                          "type": "text"
+                        }
+                      ]
+                    },
                     "system": {
                       "dynamic": false,
                       "enabled": true,
@@ -83,13 +94,13 @@
                         }
                       ]
                     },
-                    "value": {
+                    "version": {
                       "dynamic": false,
                       "enabled": true,
                       "fields": [
                         {
                           "index": true,
-                          "name": "value",
+                          "name": "version",
                           "type": "text"
                         }
                       ]
@@ -233,6 +244,17 @@
                   ]
                 }
               }
+            },
+            "performedDateTime": {
+              "dynamic": false,
+              "enabled": true,
+              "fields": [
+                {
+                  "index": true,
+                  "name": "performedDateTime",
+                  "type": "datetime"
+                }
+              ]
             },
             "performedPeriod": {
               "dynamic": false,
