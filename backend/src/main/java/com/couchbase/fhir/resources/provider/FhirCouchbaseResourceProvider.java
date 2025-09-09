@@ -234,13 +234,13 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
             logger.info("🔄 ResourceProvider: Processing conditional PUT for {}", resourceType);
             
             Map<String, String[]> rawParams = requestDetails.getParameters();
-            Map<String, String> searchCriteria = new LinkedHashMap<>();
+            Map<String, List<String>> searchCriteria = new LinkedHashMap<>();
             for (Map.Entry<String, String[]> e : rawParams.entrySet()) {
                 String key = e.getKey();
                 if (key.startsWith("_")) continue;      // skip control params
                 String[] vals = e.getValue();
                 if (vals != null && vals.length > 0) {
-                    searchCriteria.put(key, vals[0]);   // first value OK for now
+                    searchCriteria.put(key, Arrays.asList(vals));   // preserve all values
                 }
             }
             
@@ -327,7 +327,7 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
             
             // Extract search parameters from request
             Map<String, String[]> rawParams = requestDetails.getParameters();
-            Map<String, String> searchCriteria = new HashMap<>();
+            Map<String, List<String>> searchCriteria = new HashMap<>();
             
             for (Map.Entry<String, String[]> entry : rawParams.entrySet()) {
                 String paramName = entry.getKey();
@@ -339,7 +339,7 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
                 }
                 
                 if (values != null && values.length > 0) {
-                    searchCriteria.put(paramName, values[0]); // Use first value
+                    searchCriteria.put(paramName, Arrays.asList(values)); // Preserve all values
                 }
             }
             

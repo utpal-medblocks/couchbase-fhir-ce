@@ -84,7 +84,7 @@ public class SearchService {
      * @param criteria Search criteria as key-value pairs
      * @return ResolveResult indicating ZERO, ONE(id), or MANY matches
      */
-    public ResolveResult resolveOne(String resourceType, Map<String, String> criteria) {
+    public ResolveResult resolveOne(String resourceType, Map<String, List<String>> criteria) {
         String bucketName = TenantContextHolder.getTenantId();
         
         logger.info("🔍 SearchService.resolveOne: {} with criteria: {}", resourceType, criteria);
@@ -97,12 +97,8 @@ public class SearchService {
         }
         
         // Build search queries using the same logic as regular search
-        Map<String, List<String>> criteriaList = criteria.entrySet().stream()
-            .collect(Collectors.toMap(
-                Map.Entry::getKey,
-                e -> List.of(e.getValue())
-            ));
-        SearchQueryResult searchQueryResult = buildSearchQueries(resourceType, criteriaList);
+        // criteria is already Map<String, List<String>> so we can use it directly
+        SearchQueryResult searchQueryResult = buildSearchQueries(resourceType, criteria);
         List<SearchQuery> ftsQueries = searchQueryResult.getFtsQueries();
         
         // Execute lightweight search with LIMIT 2
@@ -392,19 +388,10 @@ public class SearchService {
                     logger.debug("🔍 Added STRING query for {}: {}", paramName, stringQuery.export());
                     break;
                 case DATE:
-                    List<SearchQuery> dateQueries = DateSearchHelper.buildDateFTSQueries(fhirContext, resourceType, paramName, values.get(0));
-                    if (dateQueries.size() == 1) {
-                        // Single query - add directly
-                        ftsQueries.add(dateQueries.get(0));
-                        logger.info("🔍 Added single DATE query for {}: {}", paramName, dateQueries.get(0).export());
-                    } else if (dateQueries.size() > 1) {
-                        // Multiple queries - wrap in disjunction (OR)
-                        SearchQuery disjunctiveQuery = SearchQuery.disjuncts(dateQueries.toArray(new SearchQuery[0]));
-                        ftsQueries.add(disjunctiveQuery);
-                        logger.info("🔍 Added disjunctive DATE query for {} with {} alternatives:", paramName, dateQueries.size());
-                        for (SearchQuery query : dateQueries) {
-                            logger.info("🔍   - {}", query.export());
-                        }
+                    SearchQuery dateQuery = DateSearchHelper.buildDateFTS(fhirContext, resourceType, paramName, values);
+                    if (dateQuery != null) {
+                        ftsQueries.add(dateQuery);
+                        logger.info("🔍 Added DATE query for {}: {}", paramName, dateQuery.export());
                     }
                     break;
                 case REFERENCE:
@@ -995,7 +982,7 @@ public class SearchService {
             .bucketName(bucketName)
             // Store chain-specific data using existing fields
             .revIncludeResourceType(chainParam.getTargetResourceType()) // Reuse for chain target type
-            .revIncludeSearchParam(chainParam.getOriginalParameter()) // Store original chain param
+            .revIncludeSearchParam(chainParam.getReferenceFieldPath()) // Store resolved reference field path for pagination
             .primaryResourceIds(referencedResourceIds) // Store referenced resource IDs
             .build();
         

@@ -4,7 +4,7 @@
   "uuid": "",
   "sourceType": "gocbcore",
   "sourceName": "",
-  "sourceUUID": "62af6616945184ef06257b0b8899ec9",
+  "sourceUUID": "",
   "planParams": {
     "maxPartitionsPerPIndex": 171,
     "indexPartitions": 6
@@ -96,6 +96,23 @@
                     }
                   ]
                 },
+                "performer": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "properties": {
+                    "reference": {
+                      "dynamic": false,
+                      "enabled": true,
+                      "fields": [
+                        {
+                          "index": true,
+                          "name": "reference",
+                          "type": "text"
+                        }
+                      ]
+                    }
+                  }
+                },
                 "quantity": {
                   "dynamic": false,
                   "enabled": true,
@@ -141,6 +158,29 @@
                           "index": true,
                           "name": "value",
                           "type": "number"
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            },
+            "dosageInstruction": {
+              "dynamic": false,
+              "enabled": true,
+              "properties": {
+                "timing": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "properties": {
+                    "event": {
+                      "dynamic": false,
+                      "enabled": true,
+                      "fields": [
+                        {
+                          "index": true,
+                          "name": "event",
+                          "type": "datetime"
                         }
                       ]
                     }

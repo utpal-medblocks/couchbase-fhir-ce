@@ -20,6 +20,8 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
+import java.util.List;
+
 /**
  * Service for handling FHIR PATCH operations using JSON Patch.
  * This is a thin wrapper that applies JSON Patch operations and delegates 
@@ -146,7 +148,7 @@ public class PatchService {
      * @param searchService SearchService for conditional resolution
      * @return MethodOutcome with updated resource
      */
-    public <T extends Resource> MethodOutcome patchResourceConditional(String resourceType, java.util.Map<String, String> criteria, String patchBody, Class<T> resourceClass, SearchService searchService) {
+    public <T extends Resource> MethodOutcome patchResourceConditional(String resourceType, java.util.Map<String, List<String>> criteria, String patchBody, Class<T> resourceClass, SearchService searchService) {
         logger.info("🔧 PatchService: Processing conditional JSON Patch for {} with criteria: {}", resourceType, criteria);
         
         // Resolve resource using SearchService

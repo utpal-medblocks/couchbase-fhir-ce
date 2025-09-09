@@ -63,7 +63,7 @@ public class ConditionalPutService {
      * @param resourceType FHIR resource type (e.g., "Patient")
      * @return MethodOutcome with created/updated resource
      */
-    public <T extends Resource> MethodOutcome conditionalPut(T resource, Map<String, String> searchCriteria, String resourceType) throws IOException {
+    public <T extends Resource> MethodOutcome conditionalPut(T resource, Map<String, List<String>> searchCriteria, String resourceType) throws IOException {
         String bucketName = TenantContextHolder.getTenantId();
         
         logger.info("🔄 ConditionalPutService: Processing conditional PUT for {}", resourceType);

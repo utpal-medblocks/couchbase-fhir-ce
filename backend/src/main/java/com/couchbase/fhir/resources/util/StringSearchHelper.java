@@ -8,6 +8,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 public class StringSearchHelper {
@@ -29,7 +30,10 @@ public class StringSearchHelper {
         
         if (parsed.isUnion() && parsed.getFieldPaths().size() > 1) {
             // Union expression like "name | Organization.alias"
-            fieldPaths.addAll(parsed.getFieldPaths());
+            for (String path : parsed.getFieldPaths()) {
+                List<String> expandedPaths = expandStringField(fhirContext, resourceType, path);
+                fieldPaths.addAll(expandedPaths);
+            }
             logger.info("🔍 StringSearchHelper: Parsed union expression into {} fields: {}", fieldPaths.size(), fieldPaths);
         } else {
             // Single field
@@ -39,8 +43,11 @@ public class StringSearchHelper {
                 String fhirPath = rawPath.replaceFirst("^" + resourceType + "\\.", "");
                 fieldPath = fhirPath;
             }
-            fieldPaths.add(fieldPath);
-            logger.info("🔍 StringSearchHelper: Parsed single field: {}", fieldPath);
+            
+            // Expand the field to handle complex types like name -> name.family, name.given, etc.
+            List<String> expandedPaths = expandStringField(fhirContext, resourceType, fieldPath);
+            fieldPaths.addAll(expandedPaths);
+            logger.info("🔍 StringSearchHelper: Parsed single field '{}' expanded to: {}", fieldPath, expandedPaths);
         }
 
         if (fieldPaths.isEmpty()) {
@@ -96,6 +103,90 @@ public class StringSearchHelper {
         }
 
         return SearchQuery.disjuncts(queries.toArray(new SearchQuery[0]));
+    }
+    
+    /**
+     * Expand string fields to handle complex types like HumanName, Address, etc.
+     * This method identifies fields that have nested string components and expands them accordingly.
+     */
+    public static List<String> expandStringField(FhirContext fhirContext, String resourceType, String fieldPath) {
+        logger.info("🔍 StringSearchHelper: Expanding field: {} for resource: {}", fieldPath, resourceType);
+        
+        // Handle known complex string field patterns
+        if ("name".equals(fieldPath)) {
+            // HumanName has family, given, prefix, suffix components
+            List<String> expandedFields = Arrays.asList(
+                "name.family", 
+                "name.given", 
+                "name.prefix", 
+                "name.suffix"
+            );
+            logger.info("🔍 StringSearchHelper: Expanded 'name' to: {}", expandedFields);
+            return expandedFields;
+        }
+        
+        if ("address".equals(fieldPath)) {
+            // Address has line, city, district, state, postalCode, country components
+            List<String> expandedFields = Arrays.asList(
+                "address.line",
+                "address.city", 
+                "address.district", 
+                "address.state", 
+                "address.postalCode", 
+                "address.country"
+            );
+            logger.info("🔍 StringSearchHelper: Expanded 'address' to: {}", expandedFields);
+            return expandedFields;
+        }
+        
+        if ("telecom".equals(fieldPath)) {
+            // ContactPoint has value component for string searches
+            List<String> expandedFields = Arrays.asList("telecom.value");
+            logger.info("🔍 StringSearchHelper: Expanded 'telecom' to: {}", expandedFields);
+            return expandedFields;
+        }
+        
+        // Handle nested complex fields like "contact.name" -> "contact.name.family", "contact.name.given", etc.
+        if (fieldPath.endsWith(".name")) {
+            List<String> expandedFields = Arrays.asList(
+                fieldPath + ".family", 
+                fieldPath + ".given", 
+                fieldPath + ".prefix", 
+                fieldPath + ".suffix"
+            );
+            logger.info("🔍 StringSearchHelper: Expanded nested name field '{}' to: {}", fieldPath, expandedFields);
+            return expandedFields;
+        }
+        
+        if (fieldPath.endsWith(".address")) {
+            List<String> expandedFields = Arrays.asList(
+                fieldPath + ".line",
+                fieldPath + ".city", 
+                fieldPath + ".district", 
+                fieldPath + ".state", 
+                fieldPath + ".postalCode", 
+                fieldPath + ".country"
+            );
+            logger.info("🔍 StringSearchHelper: Expanded nested address field '{}' to: {}", fieldPath, expandedFields);
+            return expandedFields;
+        }
+        
+        if (fieldPath.endsWith(".telecom")) {
+            List<String> expandedFields = Arrays.asList(fieldPath + ".value");
+            logger.info("🔍 StringSearchHelper: Expanded nested telecom field '{}' to: {}", fieldPath, expandedFields);
+            return expandedFields;
+        }
+        
+        // For Organization-specific fields
+        if ("alias".equals(fieldPath)) {
+            // Organization.alias is already a simple string array, no expansion needed
+            logger.info("🔍 StringSearchHelper: Field 'alias' needs no expansion");
+            return Arrays.asList(fieldPath);
+        }
+        
+        // Default: no expansion needed
+        logger.info("🔍 StringSearchHelper: Field '{}' needs no expansion", fieldPath);
+        return Arrays.asList(fieldPath);
     }
 }
 

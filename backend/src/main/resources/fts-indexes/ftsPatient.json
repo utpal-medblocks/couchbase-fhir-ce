@@ -17,7 +17,15 @@
       "type_field": "type"
     },
     "mapping": {
-      "analysis": {},
+      "analysis": {
+        "analyzers": {
+          "keyword_lowercase": {
+            "token_filters": ["to_lower"],
+            "tokenizer": "single",
+            "type": "custom"
+          }
+        }
+      },
       "default_analyzer": "keyword",
       "default_datetime_parser": "dateTimeOptional",
       "default_field": "_all",
@@ -48,7 +56,7 @@
               ]
             },
             "address": {
-              "default_analyzer": "standard",
+              "default_analyzer": "keyword_lowercase",
               "dynamic": false,
               "enabled": true,
               "properties": {
@@ -57,8 +65,33 @@
                   "enabled": true,
                   "fields": [
                     {
+                      "include_term_vectors": true,
                       "index": true,
                       "name": "city",
+                      "type": "text"
+                    }
+                  ]
+                },
+                "country": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "include_term_vectors": true,
+                      "index": true,
+                      "name": "country",
+                      "type": "text"
+                    }
+                  ]
+                },
+                "district": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "include_term_vectors": true,
+                      "index": true,
+                      "name": "district",
                       "type": "text"
                     }
                   ]
@@ -68,6 +101,7 @@
                   "enabled": true,
                   "fields": [
                     {
+                      "include_term_vectors": true,
                       "index": true,
                       "name": "line",
                       "type": "text"
@@ -79,6 +113,7 @@
                   "enabled": true,
                   "fields": [
                     {
+                      "include_term_vectors": true,
                       "index": true,
                       "name": "postalCode",
                       "type": "text"
@@ -90,6 +125,7 @@
                   "enabled": true,
                   "fields": [
                     {
+                      "include_term_vectors": true,
                       "index": true,
                       "name": "state",
                       "type": "text"
@@ -101,6 +137,7 @@
                   "enabled": true,
                   "fields": [
                     {
+                      "include_term_vectors": true,
                       "index": true,
                       "name": "use",
                       "type": "text"
@@ -328,6 +365,23 @@
                 }
               }
             },
+            "managingOrganization": {
+              "dynamic": false,
+              "enabled": true,
+              "properties": {
+                "reference": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "index": true,
+                      "name": "reference",
+                      "type": "text"
+                    }
+                  ]
+                }
+              }
+            },
             "meta": {
               "dynamic": false,
               "enabled": true,
@@ -360,7 +414,8 @@
                       "type": "text"
                     },
                     {
-                      "analyzer": "standard",
+                      "analyzer": "keyword_lowercase",
+                      "include_term_vectors": true,
                       "index": true,
                       "name": "family",
                       "type": "text"
@@ -377,7 +432,8 @@
                       "type": "text"
                     },
                     {
-                      "analyzer": "standard",
+                      "analyzer": "keyword_lowercase",
+                      "include_term_vectors": true,
                       "index": true,
                       "name": "given",
                       "type": "text"
@@ -394,7 +450,8 @@
                       "type": "text"
                     },
                     {
-                      "analyzer": "standard",
+                      "analyzer": "keyword_lowercase",
+                      "include_term_vectors": true,
                       "index": true,
                       "name": "prefix",
                       "type": "text"
@@ -411,7 +468,8 @@
                       "type": "text"
                     },
                     {
-                      "analyzer": "standard",
+                      "analyzer": "keyword_lowercase",
+                      "include_term_vectors": true,
                       "index": true,
                       "name": "suffix",
                       "type": "text"
@@ -428,7 +486,8 @@
                       "type": "text"
                     },
                     {
-                      "analyzer": "standard",
+                      "analyzer": "keyword_lowercase",
+                      "include_term_vectors": true,
                       "index": true,
                       "name": "text",
                       "type": "text"
