@@ -1,53 +1,82 @@
 package com.couchbase.fhir.resources.util;
 
+import ca.uhn.fhir.context.BaseRuntimeElementCompositeDefinition;
+import ca.uhn.fhir.context.BaseRuntimeElementDefinition;
 import ca.uhn.fhir.context.FhirContext;
+import ca.uhn.fhir.context.BaseRuntimeChildDefinition;
+import ca.uhn.fhir.context.RuntimePrimitiveDatatypeDefinition;
+import ca.uhn.fhir.context.RuntimeResourceDefinition;
 import ca.uhn.fhir.context.RuntimeSearchParam;
 import com.couchbase.client.java.search.SearchQuery;
-import com.couchbase.client.java.search.queries.DisjunctionQuery;
+import org.hl7.fhir.instance.model.api.IBase;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
+import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 
+/**
+ * Builds Couchbase FTS queries for FHIR string search parameters using HAPI runtime introspection.
+ * - Supports FHIRPath union expressions via FHIRPathParser (provided elsewhere in your codebase).
+ * - Dynamically expands composite elements (HumanName, Address, ContactPoint, etc.) to their
+ *   string-bearing children (e.g., name.family, address.city, telecom.value, alias).
+ * - Handles :exact modifier by mapping field -> fieldExact.
+ */
 public class StringSearchHelper {
 
     private static final Logger logger = LoggerFactory.getLogger(StringSearchHelper.class);
 
-    public static SearchQuery buildStringFTSQuery(FhirContext fhirContext,
-                                                 String resourceType,
-                                                 String paramName,
-                                                 String searchValue,
-                                                 RuntimeSearchParam searchParam, String modifier) {
+    /** Primitive datatypes we consider "string-like" for search. */
+    private static final Set<Class<?>> STRINGY_PRIMITIVES = new HashSet<>(Arrays.asList(
+        org.hl7.fhir.r4.model.StringType.class,
+        org.hl7.fhir.r4.model.MarkdownType.class,
+        org.hl7.fhir.r4.model.CodeType.class,
+        org.hl7.fhir.r4.model.UriType.class
+        // Explicitly NOT including: IdType, DateType, BooleanType, IntegerType, Period, Extension, etc.
+    ));
 
-        String rawPath = searchParam.getPath();
+    /** Simple cache for expansions: key = resourceType + "|" + fieldPath (post-FHIRPath parse). */
+    private static final Map<String, List<String>> EXPANSION_CACHE = new ConcurrentHashMap<>();
+
+    /**
+     * Build an FTS query for a single string value.
+     */
+    public static SearchQuery buildStringFTSQuery(
+        FhirContext fhirContext,
+        String resourceType,
+        String paramName,
+        String searchValue,
+        RuntimeSearchParam searchParam,
+        String modifier
+    ) {
+        String rawPath = (searchParam != null) ? searchParam.getPath() : null;
         logger.info("🔍 StringSearchHelper: paramName={}, rawPath={}", paramName, rawPath);
-        
-        // Use FHIRPathParser to properly handle union expressions
+
+        if (rawPath == null || rawPath.isEmpty()) {
+            logger.warn("🔍 StringSearchHelper: Empty/unknown path for paramName={}", paramName);
+            return null;
+        }
+
+        // Parse FHIRPath (supports unions like "name | Organization.alias")
         FHIRPathParser.ParsedExpression parsed = FHIRPathParser.parse(rawPath);
+
         List<String> fieldPaths = new ArrayList<>();
-        
         if (parsed.isUnion() && parsed.getFieldPaths().size() > 1) {
-            // Union expression like "name | Organization.alias"
             for (String path : parsed.getFieldPaths()) {
-                List<String> expandedPaths = expandStringField(fhirContext, resourceType, path);
-                fieldPaths.addAll(expandedPaths);
+                fieldPaths.addAll(expandStringField(fhirContext, resourceType, normalizeFieldPath(resourceType, path)));
             }
-            logger.info("🔍 StringSearchHelper: Parsed union expression into {} fields: {}", fieldPaths.size(), fieldPaths);
+            logger.info("🔍 StringSearchHelper: Parsed union -> {} fields: {}", fieldPaths.size(), fieldPaths);
         } else {
-            // Single field
             String fieldPath = parsed.getPrimaryFieldPath();
             if (fieldPath == null) {
-                // Fallback to legacy parsing
+                // Fallback to legacy parsing: strip "ResourceType." prefix if present
                 String fhirPath = rawPath.replaceFirst("^" + resourceType + "\\.", "");
                 fieldPath = fhirPath;
             }
-            
-            // Expand the field to handle complex types like name -> name.family, name.given, etc.
-            List<String> expandedPaths = expandStringField(fhirContext, resourceType, fieldPath);
-            fieldPaths.addAll(expandedPaths);
-            logger.info("🔍 StringSearchHelper: Parsed single field '{}' expanded to: {}", fieldPath, expandedPaths);
+            fieldPath = normalizeFieldPath(resourceType, fieldPath);
+            List<String> expanded = expandStringField(fhirContext, resourceType, fieldPath);
+            fieldPaths.addAll(expanded);
+            logger.info("🔍 StringSearchHelper: Single field '{}' expanded to: {}", fieldPath, expanded);
         }
 
         if (fieldPaths.isEmpty()) {
@@ -55,138 +84,198 @@ public class StringSearchHelper {
             return null;
         }
 
-        logger.info("🔍 StringSearchHelper: paramName={}, fieldPaths={}", paramName, fieldPaths);
-
-        List<SearchQuery> fieldQueries = new ArrayList<>();
         boolean isExact = "exact".equalsIgnoreCase(modifier);
-
+        List<SearchQuery> perFieldQueries = new ArrayList<>(fieldPaths.size());
         for (String field : fieldPaths) {
             if (isExact) {
                 String exactField = field + "Exact";
-                fieldQueries.add(SearchQuery.match(searchValue).field(exactField));
+                perFieldQueries.add(SearchQuery.match(searchValue).field(exactField));
             } else {
-                fieldQueries.add(SearchQuery.prefix(searchValue.toLowerCase()).field(field));
+                // Lowercase for prefix search consistency; ensure your indexing normalizes similarly.
+                perFieldQueries.add(SearchQuery.prefix(searchValue == null ? "" : searchValue.toLowerCase()).field(field));
             }
         }
 
-        DisjunctionQuery disjunction = SearchQuery.disjuncts(fieldQueries.toArray(new SearchQuery[0]));
-        
-        // Return the disjunction directly - no need for nested conjunctions
-        return disjunction;
+        // OR across all expanded fields for this parameter
+        return SearchQuery.disjuncts(perFieldQueries.toArray(new SearchQuery[0]));
     }
 
-
-    public static SearchQuery buildStringFTSQueryWithMultipleValues(FhirContext fhirContext, String resourceType, String paramName, List<String> searchValues, RuntimeSearchParam searchParam, String modifier) {
+    /**
+     * Build an FTS query for multiple values (OR between values).
+     */
+    public static SearchQuery buildStringFTSQueryWithMultipleValues(
+        FhirContext fhirContext,
+        String resourceType,
+        String paramName,
+        List<String> searchValues,
+        RuntimeSearchParam searchParam,
+        String modifier
+    ) {
         if (searchValues == null || searchValues.isEmpty()) {
             return null;
         }
-
         if (searchValues.size() == 1) {
             return buildStringFTSQuery(fhirContext, resourceType, paramName, searchValues.get(0), searchParam, modifier);
         }
 
-        // Multiple values: create OR query
-        List<SearchQuery> queries = new ArrayList<>();
+        List<SearchQuery> valueQueries = new ArrayList<>();
         for (String value : searchValues) {
-            SearchQuery query = buildStringFTSQuery(fhirContext, resourceType, paramName, value, searchParam, modifier);
-            if (query != null) {
-                queries.add(query);
+            SearchQuery q = buildStringFTSQuery(fhirContext, resourceType, paramName, value, searchParam, modifier);
+            if (q != null) valueQueries.add(q);
+        }
+
+        if (valueQueries.isEmpty()) return null;
+        if (valueQueries.size() == 1) return valueQueries.get(0);
+        return SearchQuery.disjuncts(valueQueries.toArray(new SearchQuery[0]));
+    }
+
+    /**
+     * Expand a field path to actual string-bearing leaf field paths using HAPI runtime introspection.
+     * Rules:
+     * - If the path resolves to a string primitive -> return it as-is.
+     * - If the path resolves to a composite -> return its string-bearing children (one level deep).
+     * - If nothing found, attempt a common ".text" child on composites (e.g., HumanName.text, Address.text).
+     * - If still nothing found, return the original path to avoid losing the signal.
+     */
+    public static List<String> expandStringField(FhirContext fhirContext, String resourceType, String fieldPath) {
+        String cacheKey = resourceType + "|" + fieldPath;
+        List<String> cached = EXPANSION_CACHE.get(cacheKey);
+        if (cached != null) return cached;
+
+        logger.info("🔍 StringSearchHelper(dynamic): Expanding '{}' for {}", fieldPath, resourceType);
+
+        RuntimeResourceDefinition rrd = fhirContext.getResourceDefinition(resourceType);
+        if (rrd == null) {
+            logger.warn("No resource definition for type {}", resourceType);
+            List<String> fallback = Collections.singletonList(fieldPath);
+            EXPANSION_CACHE.put(cacheKey, fallback);
+            return fallback;
+        }
+
+        String[] tokens = fieldPath.split("\\.");
+        BaseRuntimeElementDefinition<?> currentDef = rrd;
+        BaseRuntimeElementCompositeDefinition<?> currentComposite = rrd;
+
+        for (String token : tokens) {
+            if (currentComposite == null) {
+                // We hit a primitive earlier; remaining tokens can't be resolved
+                logger.warn("Path '{}' cannot be resolved beyond primitive at '{}'", fieldPath, token);
+                List<String> fallback = Collections.singletonList(fieldPath);
+                EXPANSION_CACHE.put(cacheKey, fallback);
+                return fallback;
+            }
+
+            BaseRuntimeChildDefinition child = currentComposite.getChildByName(token);
+            if (child == null) {
+                logger.warn("Child '{}' not found under '{}'", token, currentComposite.getName());
+                List<String> fallback = Collections.singletonList(fieldPath);
+                EXPANSION_CACHE.put(cacheKey, fallback);
+                return fallback;
+            }
+
+            BaseRuntimeElementDefinition<?> chosen = chooseElementDef(fhirContext, child);
+            if (chosen == null) {
+                logger.warn("No usable child type for '{}'", token);
+                List<String> fallback = Collections.singletonList(fieldPath);
+                EXPANSION_CACHE.put(cacheKey, fallback);
+                return fallback;
+            }
+
+            currentDef = chosen;
+            currentComposite = (chosen instanceof BaseRuntimeElementCompositeDefinition)
+                ? (BaseRuntimeElementCompositeDefinition<?>) chosen
+                : null;
+        }
+
+        // If we ended on a primitive:
+        if (!(currentDef instanceof BaseRuntimeElementCompositeDefinition)) {
+            if (isStringyPrimitive(currentDef)) {
+                List<String> out = Collections.singletonList(fieldPath);
+                EXPANSION_CACHE.put(cacheKey, out);
+                return out;
+            } else {
+                // Not a string primitive -> nothing to index for a "string" search
+                List<String> out = Collections.emptyList();
+                EXPANSION_CACHE.put(cacheKey, out);
+                return out;
             }
         }
 
-        if (queries.isEmpty()) {
-            return null;
+        // We ended on a composite: collect its string-bearing children (one level deep).
+        BaseRuntimeElementCompositeDefinition<?> composite = (BaseRuntimeElementCompositeDefinition<?>) currentDef;
+        List<String> expanded = new ArrayList<>();
+
+        for (BaseRuntimeChildDefinition child : composite.getChildren()) {
+            String elementName = child.getElementName();
+            
+            // Skip inherited Element fields that aren't relevant for string search
+            if ("id".equals(elementName) || "extension".equals(elementName)) {
+                continue;
+            }
+            
+            BaseRuntimeElementDefinition<?> childDef = chooseElementDef(fhirContext, child);
+            if (childDef == null) continue;
+
+            if (isStringyPrimitive(childDef)) {
+                expanded.add(fieldPath + "." + elementName); // e.g., name.family, address.city, telecom.value, alias
+            }
+            // Skip composite types (Extension, Period, etc.) - they contain non-string fields
         }
 
-        if (queries.size() == 1) {
-            return queries.get(0);
+        // Fallback: try a common ".text" property if nothing found yet (e.g., HumanName.text, Address.text)
+        if (expanded.isEmpty()) {
+            BaseRuntimeChildDefinition textChild = composite.getChildByName("text");
+            if (textChild != null) {
+                BaseRuntimeElementDefinition<?> textDef = chooseElementDef(fhirContext, textChild);
+                if (isStringyPrimitive(textDef)) {
+                    expanded.add(fieldPath + ".text");
+                }
+            }
         }
 
-        return SearchQuery.disjuncts(queries.toArray(new SearchQuery[0]));
+        // Final fallback: keep the original path so callers still index something (important for alias-like fields)
+        if (expanded.isEmpty()) {
+            expanded.add(fieldPath);
+        }
+
+        List<String> immutable = Collections.unmodifiableList(expanded);
+        EXPANSION_CACHE.put(cacheKey, immutable);
+        return immutable;
     }
-    
-    /**
-     * Expand string fields to handle complex types like HumanName, Address, etc.
-     * This method identifies fields that have nested string components and expands them accordingly.
-     */
-    public static List<String> expandStringField(FhirContext fhirContext, String resourceType, String fieldPath) {
-        logger.info("🔍 StringSearchHelper: Expanding field: {} for resource: {}", fieldPath, resourceType);
-        
-        // Handle known complex string field patterns
-        if ("name".equals(fieldPath)) {
-            // HumanName has family, given, prefix, suffix components
-            List<String> expandedFields = Arrays.asList(
-                "name.family", 
-                "name.given", 
-                "name.prefix", 
-                "name.suffix"
-            );
-            logger.info("🔍 StringSearchHelper: Expanded 'name' to: {}", expandedFields);
-            return expandedFields;
+
+    // ---------- Helpers ----------
+
+    private static boolean isStringyPrimitive(BaseRuntimeElementDefinition<?> def) {
+        if (def == null) return false;
+        if (!(def instanceof RuntimePrimitiveDatatypeDefinition)) return false;
+        Class<?> clazz = def.getImplementingClass();
+        for (Class<?> s : STRINGY_PRIMITIVES) {
+            if (s.isAssignableFrom(clazz)) return true;
         }
+        return false;
+    }
+
+    private static BaseRuntimeElementDefinition<?> chooseElementDef(FhirContext ctx, BaseRuntimeChildDefinition child) {
+        // Try to get the child definition directly
+        BaseRuntimeElementDefinition<?> childDef = child.getChildByName(child.getElementName());
+        if (childDef != null) return childDef;
         
-        if ("address".equals(fieldPath)) {
-            // Address has line, city, district, state, postalCode, country components
-            List<String> expandedFields = Arrays.asList(
-                "address.line",
-                "address.city", 
-                "address.district", 
-                "address.state", 
-                "address.postalCode", 
-                "address.country"
-            );
-            logger.info("🔍 StringSearchHelper: Expanded 'address' to: {}", expandedFields);
-            return expandedFields;
+        // For choice elements, get the first valid type
+        if (child instanceof ca.uhn.fhir.context.RuntimeChildChoiceDefinition) {
+            ca.uhn.fhir.context.RuntimeChildChoiceDefinition choiceDef = 
+                (ca.uhn.fhir.context.RuntimeChildChoiceDefinition) child;
+            for (Class<? extends IBase> type : choiceDef.getValidChildTypes()) {
+                return ctx.getElementDefinition(type);
+            }
         }
-        
-        if ("telecom".equals(fieldPath)) {
-            // ContactPoint has value component for string searches
-            List<String> expandedFields = Arrays.asList("telecom.value");
-            logger.info("🔍 StringSearchHelper: Expanded 'telecom' to: {}", expandedFields);
-            return expandedFields;
+        return null;
+    }
+
+    private static String normalizeFieldPath(String resourceType, String path) {
+        if (path == null) return "";
+        if (path.startsWith(resourceType + ".")) {
+            return path.substring(resourceType.length() + 1);
         }
-        
-        // Handle nested complex fields like "contact.name" -> "contact.name.family", "contact.name.given", etc.
-        if (fieldPath.endsWith(".name")) {
-            List<String> expandedFields = Arrays.asList(
-                fieldPath + ".family", 
-                fieldPath + ".given", 
-                fieldPath + ".prefix", 
-                fieldPath + ".suffix"
-            );
-            logger.info("🔍 StringSearchHelper: Expanded nested name field '{}' to: {}", fieldPath, expandedFields);
-            return expandedFields;
-        }
-        
-        if (fieldPath.endsWith(".address")) {
-            List<String> expandedFields = Arrays.asList(
-                fieldPath + ".line",
-                fieldPath + ".city", 
-                fieldPath + ".district", 
-                fieldPath + ".state", 
-                fieldPath + ".postalCode", 
-                fieldPath + ".country"
-            );
-            logger.info("🔍 StringSearchHelper: Expanded nested address field '{}' to: {}", fieldPath, expandedFields);
-            return expandedFields;
-        }
-        
-        if (fieldPath.endsWith(".telecom")) {
-            List<String> expandedFields = Arrays.asList(fieldPath + ".value");
-            logger.info("🔍 StringSearchHelper: Expanded nested telecom field '{}' to: {}", fieldPath, expandedFields);
-            return expandedFields;
-        }
-        
-        // For Organization-specific fields
-        if ("alias".equals(fieldPath)) {
-            // Organization.alias is already a simple string array, no expansion needed
-            logger.info("🔍 StringSearchHelper: Field 'alias' needs no expansion");
-            return Arrays.asList(fieldPath);
-        }
-        
-        // Default: no expansion needed
-        logger.info("🔍 StringSearchHelper: Field '{}' needs no expansion", fieldPath);
-        return Arrays.asList(fieldPath);
+        return path;
     }
 }
-
