@@ -60,65 +60,19 @@ public class DateSearchHelper {
             // Single field - create simple query
             return buildDateQueryForField(fieldPaths.get(0), start, end, inclusiveStart, inclusiveEnd);
         } else if (fieldPaths.size() > 1) {
-            // Multiple fields - filter Period fields based on comparison operator
-            List<String> filteredPaths = filterPeriodFieldsForComparison(fieldPaths, start, end);
-            
-            if (filteredPaths.size() == 1) {
-                return buildDateQueryForField(filteredPaths.get(0), start, end, inclusiveStart, inclusiveEnd);
-            } else {
-                // Create disjunctive (OR) query for remaining fields
-                List<SearchQuery> queries = new ArrayList<>();
-                for (String fieldPath : filteredPaths) {
-                    SearchQuery query = buildDateQueryForField(fieldPath, start, end, inclusiveStart, inclusiveEnd);
-                    if (query != null) {
-                        queries.add(query);
-                    }
+            // Multiple fields - create disjunctive (OR) query for all fields
+            // Period logic is now handled directly in buildDateQueryForField
+            List<SearchQuery> queries = new ArrayList<>();
+            for (String fieldPath : fieldPaths) {
+                SearchQuery query = buildDateQueryForField(fieldPath, start, end, inclusiveStart, inclusiveEnd);
+                if (query != null) {
+                    queries.add(query);
                 }
-                return queries.isEmpty() ? null : SearchQuery.disjuncts(queries.toArray(new SearchQuery[0]));
             }
+            return queries.isEmpty() ? null : SearchQuery.disjuncts(queries.toArray(new SearchQuery[0]));
         }
         
         return null;
-    }
-
-    /**
-     * Filter Period fields based on comparison operator to avoid redundant queries
-     * For gt/ge: use .start fields, for lt/le: use .end fields
-     */
-    private static List<String> filterPeriodFieldsForComparison(List<String> fieldPaths, String start, String end) {
-        List<String> filtered = new ArrayList<>();
-        
-        for (String fieldPath : fieldPaths) {
-            if (fieldPath.endsWith(".start") || fieldPath.endsWith(".end")) {
-                // This is a Period field variant
-                if (start != null && end == null) {
-                    // gt/ge comparison - keep .start fields (periods that start after the date)
-                    if (fieldPath.endsWith(".start")) {
-                        filtered.add(fieldPath);
-                        logger.debug("🔍 DateSearchHelper: Using Period start field for gt/ge: {}", fieldPath);
-                    }
-                    // Skip .end fields for gt/ge
-                } else if (end != null && start == null) {
-                    // lt/le comparison - keep .end fields (periods that end before the date)
-                    if (fieldPath.endsWith(".end")) {
-                        filtered.add(fieldPath);
-                        logger.debug("🔍 DateSearchHelper: Using Period end field for lt/le: {}", fieldPath);
-                    }
-                    // Skip .start fields for lt/le
-                } else {
-                    // Exact date or range - use both start and end
-                    filtered.add(fieldPath);
-                    logger.debug("🔍 DateSearchHelper: Using Period field for exact/range: {}", fieldPath);
-                }
-            } else {
-                // Non-Period field (DateTime, Instant) - always include
-                filtered.add(fieldPath);
-                logger.debug("🔍 DateSearchHelper: Using non-Period field: {}", fieldPath);
-            }
-        }
-
-        logger.debug("🔍 DateSearchHelper: Filtered {} paths to {} based on comparison", fieldPaths.size(), filtered.size());
-        return filtered;
     }
 
     /**
@@ -170,13 +124,56 @@ public class DateSearchHelper {
             return null;
         }
 
-        logger.debug("🔍 DateSearchHelper: Using DateTime field as-is: {}", fieldPath);
-
-        DateRangeQuery query = SearchQuery.dateRange().field(fieldPath);
-        if (start != null) query = query.start(start, inclusiveStart);
-        if (end != null) query = query.end(end, inclusiveEnd);
-
-        return query;
+        // Check if this is a Period field
+        if (fieldPath.endsWith("Period")) {
+            return buildPeriodOverlapQuery(fieldPath, start, end, inclusiveStart, inclusiveEnd);
+        } else {
+            // Regular DateTime field
+            logger.debug("🔍 DateSearchHelper: Using DateTime field: {}", fieldPath);
+            DateRangeQuery query = SearchQuery.dateRange().field(fieldPath);
+            if (start != null) query = query.start(start, inclusiveStart);
+            if (end != null) query = query.end(end, inclusiveEnd);
+            return query;
+        }
+    }
+    
+    /**
+     * Build Period overlap query based on search criteria
+     * Handles Period fields by creating appropriate overlap conditions using .start and .end
+     */
+    private static SearchQuery buildPeriodOverlapQuery(String periodField, String start, String end, boolean inclusiveStart, boolean inclusiveEnd) {
+        logger.debug("🔍 DateSearchHelper: Building Period overlap query for: {}", periodField);
+        
+        String startField = periodField + ".start";
+        String endField = periodField + ".end";
+        
+        if (start != null && end != null) {
+            // Range query: find periods that overlap with [start, end]
+            // Period overlaps if: period.start <= searchEnd AND period.end >= searchStart
+            logger.debug("🔍 DateSearchHelper: Period range overlap: {} to {}", start, end);
+            
+            SearchQuery startOverlap = SearchQuery.dateRange().field(startField).end(end, inclusiveEnd);
+            SearchQuery endOverlap = SearchQuery.dateRange().field(endField).start(start, inclusiveStart);
+            
+            return SearchQuery.conjuncts(startOverlap, endOverlap);
+            
+        } else if (start != null) {
+            // Greater than query: find periods that start after the date
+            // For gt/ge: period.start > searchDate (periods that start after the search date)
+            logger.debug("🔍 DateSearchHelper: Period gt/ge query: periods starting after {}", start);
+            return SearchQuery.dateRange().field(startField).start(start, inclusiveStart);
+            
+        } else if (end != null) {
+            // Less than query: find periods that end before the date  
+            // For lt/le: period.end < searchDate (periods that end before the search date)
+            logger.debug("🔍 DateSearchHelper: Period lt/le query: periods ending before {}", end);
+            return SearchQuery.dateRange().field(endField).end(end, inclusiveEnd);
+            
+        } else {
+            // No search criteria - shouldn't happen, but return null
+            logger.warn("🔍 DateSearchHelper: No search criteria provided for Period field: {}", periodField);
+            return null;
+        }
     }
 
     
