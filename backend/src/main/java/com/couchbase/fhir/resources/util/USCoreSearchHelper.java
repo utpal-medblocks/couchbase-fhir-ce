@@ -31,9 +31,9 @@ public class USCoreSearchHelper {
             return new ArrayList<>();
         }
 
-        logger.info("🔍 USCoreSearchHelper: Building query for {} parameter: {}", resourceType, paramName);
-        logger.info("🔍 USCoreSearchHelper: Expression: {}", usCoreParam.getExpression());
-        logger.info("🔍 USCoreSearchHelper: Type: {}", usCoreParam.getType());
+        logger.debug("🔍 USCoreSearchHelper: Building query for {} parameter: {}", resourceType, paramName);
+        logger.debug("🔍 USCoreSearchHelper: Expression: {}", usCoreParam.getExpression());
+        logger.debug("🔍 USCoreSearchHelper: Type: {}", usCoreParam.getType());
 
         // Handle based on parameter type
         Enumerations.SearchParamType paramType = usCoreParam.getType();
@@ -62,8 +62,8 @@ public class USCoreSearchHelper {
      */
     private static List<SearchQuery> buildUSCoreDateQueries(FhirContext fhirContext, String resourceType, 
                                                            String paramName, String searchValue, String expression) {
-        logger.info("🔍 USCoreSearchHelper: Building DATE queries for {}", paramName);
-        
+        logger.debug("🔍 USCoreSearchHelper: Building DATE queries for {}", paramName);
+
         // Use FHIRPathParser to parse the expression
         FHIRPathParser.ParsedExpression parsed = FHIRPathParser.parse(expression);
         
@@ -72,8 +72,8 @@ public class USCoreSearchHelper {
             return buildExtensionDateQueries(paramName, searchValue, parsed);
         } else {
             // Handle regular field expressions - delegate to sophisticated DateSearchHelper
-            logger.info("🔍 USCoreSearchHelper: Delegating to DateSearchHelper for regular field: {}", expression);
-            
+            logger.debug("🔍 USCoreSearchHelper: Delegating to DateSearchHelper for regular field: {}", expression);
+
             // Use DateSearchHelper's sophisticated logic for choice types, Period handling, etc.
             SearchQuery query = DateSearchHelper.buildDateFTS(fhirContext, resourceType, paramName, searchValue);
             return query != null ? List.of(query) : new ArrayList<>();
@@ -85,7 +85,7 @@ public class USCoreSearchHelper {
      */
     private static List<SearchQuery> buildExtensionDateQueries(String paramName, String searchValue, 
                                                               FHIRPathParser.ParsedExpression parsed) {
-        logger.info("🔍 USCoreSearchHelper: Building extension DATE queries for {}", paramName);
+        logger.debug("🔍 USCoreSearchHelper: Building extension DATE queries for {}", paramName);
         List<SearchQuery> queries = new ArrayList<>();
 
         // Parse date value and prefixes (reuse DateSearchHelper logic would be ideal, but extensions are special)
@@ -117,7 +117,7 @@ public class USCoreSearchHelper {
             // Add query for extension URL
             SearchQuery urlQuery = SearchQuery.match(extensionUrl).field("extension.url");
             queries.add(urlQuery);
-            logger.info("🔍 USCoreSearchHelper: Added extension URL query: {}", urlQuery.export());
+            logger.debug("🔍 USCoreSearchHelper: Added extension URL query: {}", urlQuery.export());
         }
         
         // Add query for extension value
@@ -125,8 +125,8 @@ public class USCoreSearchHelper {
         if (start != null) valueQuery = valueQuery.start(start, inclusiveStart);
         if (end != null) valueQuery = valueQuery.end(end, inclusiveEnd);
         queries.add(valueQuery);
-        logger.info("🔍 USCoreSearchHelper: Added extension value query: {}", valueQuery.export());
-        
+        logger.debug("🔍 USCoreSearchHelper: Added extension value query: {}", valueQuery.export());
+
         return queries;
     }
 
@@ -134,8 +134,8 @@ public class USCoreSearchHelper {
      * Build token query for US Core parameters
      */
     private static SearchQuery buildUSCoreTokenQuery(FhirContext fhirContext, String resourceType, String paramName, String searchValue, String expression) {
-        logger.info("🔍 USCoreSearchHelper: Building TOKEN query for {}", paramName);
-        
+        logger.debug("🔍 USCoreSearchHelper: Building TOKEN query for {}", paramName);
+
         // Delegate to enhanced TokenSearchHelper for comprehensive TOKEN type support
         return TokenSearchHelper.buildTokenFTSQueryFromExpression(fhirContext, resourceType, expression, searchValue);
     }
@@ -144,8 +144,8 @@ public class USCoreSearchHelper {
      * Build string query for US Core parameters
      */
     private static SearchQuery buildUSCoreStringQuery(String paramName, String searchValue, String expression) {
-        logger.info("🔍 USCoreSearchHelper: Building STRING query for {}", paramName);
-        
+        logger.debug("🔍 USCoreSearchHelper: Building STRING query for {}", paramName);
+
         // Use FHIRPathParser to parse the expression
         FHIRPathParser.ParsedExpression parsed = FHIRPathParser.parse(expression);
         String fieldPath = parsed.getPrimaryFieldPath();
@@ -155,7 +155,7 @@ public class USCoreSearchHelper {
             fieldPath = "unknown";
         }
         
-        logger.info("🔍 USCoreSearchHelper: Extracted field path: {}", fieldPath);
+        logger.debug("🔍 USCoreSearchHelper: Extracted field path: {}", fieldPath);
         return SearchQuery.match(searchValue).field(fieldPath);
     }
 
@@ -163,8 +163,8 @@ public class USCoreSearchHelper {
      * Build reference query for US Core parameters
      */
     private static SearchQuery buildUSCoreReferenceQuery(String paramName, String searchValue, String expression) {
-        logger.info("🔍 USCoreSearchHelper: Building REFERENCE query for {}", paramName);
-        
+        logger.debug("🔍 USCoreSearchHelper: Building REFERENCE query for {}", paramName);
+
         // Use FHIRPathParser to parse the expression
         FHIRPathParser.ParsedExpression parsed = FHIRPathParser.parse(expression);
         String fieldPath = parsed.getPrimaryFieldPath();
@@ -174,7 +174,7 @@ public class USCoreSearchHelper {
             fieldPath = "unknown";
         }
         
-        logger.info("🔍 USCoreSearchHelper: Extracted field path: {}", fieldPath);
+        logger.debug("🔍 USCoreSearchHelper: Extracted field path: {}", fieldPath);
         return SearchQuery.match(searchValue).field(fieldPath);
     }
 }

@@ -50,7 +50,7 @@ public class FhirSearchParameterPreprocessor {
      * @throws FhirSearchValidationException if validation fails
      */
     public void validateSearchParameters(String resourceType, Map<String, List<String>> allParams) {
-        logger.info("🔍 Validating search parameters for {} - {} parameters", resourceType, allParams.size());
+        logger.debug("🔍 Validating search parameters for {} - {} parameters", resourceType, allParams.size());
         
         try {
             // Step 1: Validate parameter existence and basic format
@@ -62,7 +62,7 @@ public class FhirSearchParameterPreprocessor {
             // Step 3: Validate parameter consistency (main use case)
             validateParameterConsistency(resourceType, allParams);
             
-            logger.info("✅ Parameter validation passed for {}", resourceType);
+            logger.debug("✅ Parameter validation passed for {}", resourceType);
             
         } catch (FhirSearchValidationException e) {
             logger.warn("❌ Parameter validation failed: {}", e.getMessage());
@@ -144,13 +144,13 @@ public class FhirSearchParameterPreprocessor {
                 Set<String> availableUSCoreParams = fhirConfig.getUSCoreSearchParams(resourceType);
                 logger.warn("⚠️ Unknown search parameter '{}' for resource type {} (not in HAPI registry or US Core whitelist)", 
                            baseParamName, resourceType);
-                logger.info("🔍 Available US Core parameters for {}: {}", resourceType, availableUSCoreParams);
+                logger.debug("🔍 Available US Core parameters for {}: {}", resourceType, availableUSCoreParams);
                 
                 // Also log HAPI parameters for comparison
                 Set<String> hapiParams = resourceDef.getSearchParams().stream()
                     .map(param -> param.getName())
                     .collect(Collectors.toSet());
-                logger.info("🔍 Available HAPI parameters for {}: {}", resourceType, hapiParams);
+                logger.debug("🔍 Available HAPI parameters for {}: {}", resourceType, hapiParams);
                 
                 throw new FhirSearchValidationException(
                     "Unknown parameter: " + baseParamName + " for resource type " + resourceType + 

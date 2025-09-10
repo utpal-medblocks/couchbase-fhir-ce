@@ -50,7 +50,7 @@ public class StringSearchHelper {
         String modifier
     ) {
         String rawPath = (searchParam != null) ? searchParam.getPath() : null;
-        logger.info("🔍 StringSearchHelper: paramName={}, rawPath={}", paramName, rawPath);
+        logger.debug("🔍 StringSearchHelper: paramName={}, rawPath={}", paramName, rawPath);
 
         if (rawPath == null || rawPath.isEmpty()) {
             logger.warn("🔍 StringSearchHelper: Empty/unknown path for paramName={}", paramName);
@@ -65,7 +65,7 @@ public class StringSearchHelper {
             for (String path : parsed.getFieldPaths()) {
                 fieldPaths.addAll(expandStringField(fhirContext, resourceType, normalizeFieldPath(resourceType, path)));
             }
-            logger.info("🔍 StringSearchHelper: Parsed union -> {} fields: {}", fieldPaths.size(), fieldPaths);
+            logger.debug("🔍 StringSearchHelper: Parsed union -> {} fields: {}", fieldPaths.size(), fieldPaths);
         } else {
             String fieldPath = parsed.getPrimaryFieldPath();
             if (fieldPath == null) {
@@ -76,7 +76,7 @@ public class StringSearchHelper {
             fieldPath = normalizeFieldPath(resourceType, fieldPath);
             List<String> expanded = expandStringField(fhirContext, resourceType, fieldPath);
             fieldPaths.addAll(expanded);
-            logger.info("🔍 StringSearchHelper: Single field '{}' expanded to: {}", fieldPath, expanded);
+            logger.debug("🔍 StringSearchHelper: Single field '{}' expanded to: {}", fieldPath, expanded);
         }
 
         if (fieldPaths.isEmpty()) {
@@ -142,7 +142,7 @@ public class StringSearchHelper {
         List<String> cached = EXPANSION_CACHE.get(cacheKey);
         if (cached != null) return cached;
 
-        logger.info("🔍 StringSearchHelper(dynamic): Expanding '{}' for {}", fieldPath, resourceType);
+        logger.debug("🔍 StringSearchHelper(dynamic): Expanding '{}' for {}", fieldPath, resourceType);
 
         RuntimeResourceDefinition rrd = fhirContext.getResourceDefinition(resourceType);
         if (rrd == null) {

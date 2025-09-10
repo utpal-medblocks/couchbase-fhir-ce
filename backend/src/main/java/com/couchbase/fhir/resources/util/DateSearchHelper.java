@@ -95,29 +95,29 @@ public class DateSearchHelper {
                     // gt/ge comparison - keep .start fields (periods that start after the date)
                     if (fieldPath.endsWith(".start")) {
                         filtered.add(fieldPath);
-                        logger.info("🔍 DateSearchHelper: Using Period start field for gt/ge: {}", fieldPath);
+                        logger.debug("🔍 DateSearchHelper: Using Period start field for gt/ge: {}", fieldPath);
                     }
                     // Skip .end fields for gt/ge
                 } else if (end != null && start == null) {
                     // lt/le comparison - keep .end fields (periods that end before the date)
                     if (fieldPath.endsWith(".end")) {
                         filtered.add(fieldPath);
-                        logger.info("🔍 DateSearchHelper: Using Period end field for lt/le: {}", fieldPath);
+                        logger.debug("🔍 DateSearchHelper: Using Period end field for lt/le: {}", fieldPath);
                     }
                     // Skip .start fields for lt/le
                 } else {
                     // Exact date or range - use both start and end
                     filtered.add(fieldPath);
-                    logger.info("🔍 DateSearchHelper: Using Period field for exact/range: {}", fieldPath);
+                    logger.debug("🔍 DateSearchHelper: Using Period field for exact/range: {}", fieldPath);
                 }
             } else {
                 // Non-Period field (DateTime, Instant) - always include
                 filtered.add(fieldPath);
-                logger.info("🔍 DateSearchHelper: Using non-Period field: {}", fieldPath);
+                logger.debug("🔍 DateSearchHelper: Using non-Period field: {}", fieldPath);
             }
         }
-        
-        logger.info("🔍 DateSearchHelper: Filtered {} paths to {} based on comparison", fieldPaths.size(), filtered.size());
+
+        logger.debug("🔍 DateSearchHelper: Filtered {} paths to {} based on comparison", fieldPaths.size(), filtered.size());
         return filtered;
     }
 
@@ -170,7 +170,7 @@ public class DateSearchHelper {
             return null;
         }
 
-        logger.info("🔍 DateSearchHelper: Using DateTime field as-is: {}", fieldPath);
+        logger.debug("🔍 DateSearchHelper: Using DateTime field as-is: {}", fieldPath);
 
         DateRangeQuery query = SearchQuery.dateRange().field(fieldPath);
         if (start != null) query = query.start(start, inclusiveStart);
@@ -193,18 +193,18 @@ public class DateSearchHelper {
             if (elementName.contains(".")) {
                 // Navigate nested path to find the actual child definition
                 child = findNestedChild(resDef, elementName);
-                logger.info("🔍 DateSearchHelper: Nested child '{}' found: {}", elementName, (child != null));
+                logger.debug("🔍 DateSearchHelper: Nested child '{}' found: {}", elementName, (child != null));
             } else {
                 // Simple field name
                 child = resDef.getChildByName(elementName);
                 if (child == null) {
                     child = resDef.getChildByName(elementName + "[x]");
-                    logger.info("🔍 DateSearchHelper: Child '{}[x]' found: {}", elementName, (child != null));
+                    logger.debug("🔍 DateSearchHelper: Child '{}[x]' found: {}", elementName, (child != null));
                 }
             }
             
             if (child == null) {
-                logger.info("🔍 DateSearchHelper: Field '{}' not found in {}", elementName, resourceType);
+                logger.debug("🔍 DateSearchHelper: Field '{}' not found in {}", elementName, resourceType);
                 return List.of(elementName);
             }
             
@@ -212,26 +212,26 @@ public class DateSearchHelper {
             if (child instanceof ca.uhn.fhir.context.RuntimeChildCompositeDatatypeDefinition
                 && ((ca.uhn.fhir.context.RuntimeChildCompositeDatatypeDefinition) child).getDatatype()
                    == org.hl7.fhir.r4.model.Period.class) {
-                logger.info("🔍 DateSearchHelper: {} is a direct Period type, expanding to start/end", elementName);
+                logger.debug("🔍 DateSearchHelper: {} is a direct Period type, expanding to start/end", elementName);
                 return List.of(elementName + ".start", elementName + ".end");
             }
             
             if (!(child instanceof ca.uhn.fhir.context.RuntimeChildChoiceDefinition)) {
                 // Not a choice type - check if it's a Period field
-                logger.info("🔍 DateSearchHelper: {} is not a choice type, checking if it's a Period", elementName);
-                
+                logger.debug("🔍 DateSearchHelper: {} is not a choice type, checking if it's a Period", elementName);
+
                 if (isPeriodType(fhirContext, resourceType, elementName)) {
-                    logger.info("🔍 DateSearchHelper: {} is a Period type, expanding to start/end", elementName);
+                    logger.debug("🔍 DateSearchHelper: {} is a Period type, expanding to start/end", elementName);
                     return List.of(elementName + ".start", elementName + ".end");
                 }
                 
                 // Try fallback for choice types
                 String suggestedField = FHIRPathParser.suggestDateTimeFieldPath(elementName);
                 if (suggestedField != null && !suggestedField.equals(elementName)) {
-                    logger.info("🔍 DateSearchHelper: Using fallback suggestion: {} -> {}", elementName, suggestedField);
+                    logger.debug("🔍 DateSearchHelper: Using fallback suggestion: {} -> {}", elementName, suggestedField);
                     return List.of(suggestedField);
                 }
-                logger.info("🔍 DateSearchHelper: Using element as-is: {}", elementName);
+                logger.debug("🔍 DateSearchHelper: Using element as-is: {}", elementName);
                 return List.of(elementName);
             }
 
@@ -239,14 +239,14 @@ public class DateSearchHelper {
                 (ca.uhn.fhir.context.RuntimeChildChoiceDefinition) child;
             List<String> paths = new ArrayList<>();
 
-            logger.info("🔍 DateSearchHelper: {} IS a choice type, processing variants", elementName);
-            
+            logger.debug("🔍 DateSearchHelper: {} IS a choice type, processing variants", elementName);
+
             // Extract the nested path prefix (e.g., "target" from "target.dueDate")
             String pathPrefix = "";
             if (elementName.contains(".")) {
                 int lastDotIndex = elementName.lastIndexOf(".");
                 pathPrefix = elementName.substring(0, lastDotIndex + 1); // Include the dot
-                logger.info("🔍 DateSearchHelper: Nested path prefix: '{}'", pathPrefix);
+                logger.debug("🔍 DateSearchHelper: Nested path prefix: '{}'", pathPrefix);
             }
             
             for (Class<?> dataType : choice.getValidChildTypes()) {
@@ -255,24 +255,24 @@ public class DateSearchHelper {
                 
                 // Preserve the nested path prefix
                 String fullFieldName = pathPrefix + concreteName;
-                
-                logger.info("🔍 DateSearchHelper: Found choice variant: {} -> {} (type: {})", elementName, fullFieldName, dataType.getSimpleName());
-                
+
+                logger.debug("🔍 DateSearchHelper: Found choice variant: {} -> {} (type: {})", elementName, fullFieldName, dataType.getSimpleName());
+
                 // Handle date-like types for DATE search parameters
                 if (dataType == org.hl7.fhir.r4.model.DateTimeType.class
                     // || dataType == org.hl7.fhir.r4.model.InstantType.class
                     ) {
                     paths.add(fullFieldName); // "effectiveDateTime" or "target.dueDateTime"
-                    logger.info("🔍 DateSearchHelper: Added DateTime/Instant variant: {}", fullFieldName);
+                    logger.debug("🔍 DateSearchHelper: Added DateTime/Instant variant: {}", fullFieldName);
                 } else if (dataType == org.hl7.fhir.r4.model.DateType.class) {
                     paths.add(fullFieldName); // "dueDate" or "target.dueDate"
-                    logger.info("🔍 DateSearchHelper: Added Date variant: {}", fullFieldName);
+                    logger.debug("🔍 DateSearchHelper: Added Date variant: {}", fullFieldName);
                 } else if (dataType == org.hl7.fhir.r4.model.Period.class) {
                     paths.add(fullFieldName + ".start"); // "effectivePeriod.start" or "target.duePeriod.start"
                     paths.add(fullFieldName + ".end");   // "effectivePeriod.end" or "target.duePeriod.end"
-                    logger.info("🔍 DateSearchHelper: Added Period variants: {}.start, {}.end", fullFieldName, fullFieldName);
+                    logger.debug("🔍 DateSearchHelper: Added Period variants: {}.start, {}.end", fullFieldName, fullFieldName);
                 } else {
-                    logger.info("🔍 DateSearchHelper: Skipping non-date type: {} ({})", fullFieldName, dataType.getSimpleName());
+                    logger.debug("🔍 DateSearchHelper: Skipping non-date type: {} ({})", fullFieldName, dataType.getSimpleName());
                 }
                 // else if (dataType == org.hl7.fhir.r4.model.Timing.class) {
                 //     paths.add(fullFieldName + ".event"); // "effectiveTiming.event" or "target.dueTiming.event"
@@ -280,9 +280,9 @@ public class DateSearchHelper {
                 // }
                 // Ignore other datatypes for DATE search
             }
-            
-            logger.info("🔍 DateSearchHelper: Expanded {} to {} date-related paths: {}", elementName, paths.size(), paths);
-            
+
+            logger.debug("🔍 DateSearchHelper: Expanded {} to {} date-related paths: {}", elementName, paths.size(), paths);
+
             // If no date-related paths found, fallback to the element name itself
             if (paths.isEmpty()) {
                 logger.warn("🔍 DateSearchHelper: No date-related paths found for choice type {}, using element as-is", elementName);

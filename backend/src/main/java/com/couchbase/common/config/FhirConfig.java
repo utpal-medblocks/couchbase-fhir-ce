@@ -123,7 +123,7 @@ public class FhirConfig {
             
             // Log summary of whitelisted parameters by resource type
             for (Map.Entry<String, Set<String>> entry : usCoreSearchParams.entrySet()) {
-                logger.info("  - {}: {} parameters", entry.getKey(), entry.getValue().size());
+                logger.debug("  - {}: {} parameters", entry.getKey(), entry.getValue().size());
             }
                        
         } catch (Exception e) {

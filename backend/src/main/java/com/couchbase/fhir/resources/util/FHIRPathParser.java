@@ -70,7 +70,7 @@ public class FHIRPathParser {
         }
         
         String trimmed = expression.trim();
-        logger.info("🔍 FHIRPathParser: Parsing expression: {}", trimmed);
+        logger.debug("🔍 FHIRPathParser: Parsing expression: {}", trimmed);
         
         // Check for extension expressions first (most complex)
         if (trimmed.contains("extension.where")) {
@@ -95,12 +95,12 @@ public class FHIRPathParser {
      * Parse extension-based expressions for US Core parameters
      */
     private static ParsedExpression parseExtensionExpression(String expression) {
-        logger.info("🔍 FHIRPathParser: Parsing extension expression");
+        logger.debug("🔍 FHIRPathParser: Parsing extension expression");
         
         String extensionUrl = extractExtensionUrl(expression);
         String valueField = extractExtensionValueField(expression);
         
-        logger.info("🔍 FHIRPathParser: Extension URL: {}, Value field: {}", extensionUrl, valueField);
+        logger.debug("🔍 FHIRPathParser: Extension URL: {}, Value field: {}", extensionUrl, valueField);
         
         return new ParsedExpression(expression, ExpressionType.EXTENSION, 
                                   null, extensionUrl, valueField);
@@ -110,7 +110,7 @@ public class FHIRPathParser {
      * Parse reference where expressions like "subject.where(resolve() is Patient)"
      */
     private static ParsedExpression parseReferenceWhereExpression(String expression) {
-        logger.info("🔍 FHIRPathParser: Parsing reference where expression");
+        logger.debug("🔍 FHIRPathParser: Parsing reference where expression");
         
         // Extract the base field before .where()
         String baseField = null;
@@ -125,7 +125,7 @@ public class FHIRPathParser {
             baseField = "unknown";
         }
         
-        logger.info("🔍 FHIRPathParser: Reference base field: {}", baseField);
+        logger.debug("🔍 FHIRPathParser: Reference base field: {}", baseField);
         
         List<String> fieldPaths = new ArrayList<>();
         fieldPaths.add(baseField);
@@ -138,7 +138,7 @@ public class FHIRPathParser {
      * Parse union expressions like "onsetDateTime | onsetPeriod"
      */
     private static ParsedExpression parseUnionExpression(String expression) {
-        logger.info("🔍 FHIRPathParser: Parsing union expression");
+        logger.debug("🔍 FHIRPathParser: Parsing union expression");
         
         String[] alternatives = expression.split("\\s*\\|\\s*");
         List<String> fieldPaths = new ArrayList<>();
@@ -150,7 +150,7 @@ public class FHIRPathParser {
             }
         }
         
-        logger.info("🔍 FHIRPathParser: Union alternatives: {}", fieldPaths);
+        logger.debug("🔍 FHIRPathParser: Union alternatives: {}", fieldPaths);
         
         return new ParsedExpression(expression, ExpressionType.UNION, 
                                   fieldPaths, null, null);
@@ -160,14 +160,14 @@ public class FHIRPathParser {
      * Parse simple field expressions like "Condition.assertedDate"
      */
     private static ParsedExpression parseSimpleFieldExpression(String expression) {
-        logger.info("🔍 FHIRPathParser: Parsing simple field expression");
+        logger.debug("🔍 FHIRPathParser: Parsing simple field expression");
         
         String fieldPath = extractSimpleFieldPath(expression);
         if (fieldPath == null) {
             fieldPath = expression; // Fallback to original
         }
         
-        logger.info("🔍 FHIRPathParser: Simple field: {}", fieldPath);
+        logger.debug("🔍 FHIRPathParser: Simple field: {}", fieldPath);
         
         List<String> fieldPaths = new ArrayList<>();
         fieldPaths.add(fieldPath);
@@ -188,7 +188,7 @@ public class FHIRPathParser {
         // Check if this is a known choice type that should have DateTime suffix for DATE searches
         if (isKnownChoiceTypeForDateTime(fieldPath)) {
             String dateTimeField = fieldPath + "DateTime";
-            logger.info("🔍 FHIRPathParser: Suggesting DateTime field for choice type: {} -> {}", fieldPath, dateTimeField);
+            logger.debug("🔍 FHIRPathParser: Suggesting DateTime field for choice type: {} -> {}", fieldPath, dateTimeField);
             return dateTimeField;
         }
         
@@ -249,7 +249,7 @@ public class FHIRPathParser {
                 fieldParts[fieldParts.length - 1] = lastField + capitalizedType;
                 
                 String result = String.join(".", fieldParts);
-                logger.info("🔍 FHIRPathParser: Converted cast expression: {} -> {}", expression, result);
+                logger.debug("🔍 FHIRPathParser: Converted cast expression: {} -> {}", expression, result);
                 return result;
             }
         }

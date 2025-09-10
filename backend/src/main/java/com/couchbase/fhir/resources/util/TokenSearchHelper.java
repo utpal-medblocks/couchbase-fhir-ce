@@ -30,7 +30,7 @@ public class TokenSearchHelper {
             RuntimeSearchParam searchParam = def.getSearchParam(paramName);
             
             if (searchParam != null && searchParam.getPath() != null) {
-                logger.info("🔍 TokenSearchHelper: HAPI path={}", searchParam.getPath());
+                logger.debug("🔍 TokenSearchHelper: HAPI path={}", searchParam.getPath());
                 return buildTokenFTSQueryFromExpression(fhirContext, resourceType, searchParam.getPath(), tokenValue);
             } else {
                 // Fallback for parameters without HAPI definition
@@ -50,8 +50,8 @@ public class TokenSearchHelper {
                                                               String resourceType,
                                                               String expression,
                                                               String tokenValue) {
-        logger.info("🔍 TokenSearchHelper: Building query from expression: {}", expression);
-        
+        logger.debug("🔍 TokenSearchHelper: Building query from expression: {}", expression);
+
         // Parse the expression to get field path
         FHIRPathParser.ParsedExpression parsed = FHIRPathParser.parse(expression);
         String fieldPath = parsed.getPrimaryFieldPath();
@@ -84,8 +84,8 @@ public class TokenSearchHelper {
                     queries.add(query);
                 }
             }
-            
-            logger.info("🔍 TokenSearchHelper: Created {} disjunctive queries for comma-separated values", queries.size());
+
+            logger.debug("🔍 TokenSearchHelper: Created {} disjunctive queries for comma-separated values", queries.size());
             return queries.isEmpty() ? null : SearchQuery.disjuncts(queries.toArray(new SearchQuery[0]));
         }
         

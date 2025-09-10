@@ -52,7 +52,7 @@ public class DeleteService {
     public void deleteResource(String resourceType, String resourceId, TransactionContext context) {
         String documentKey = resourceType + "/" + resourceId;
         
-        logger.info("🗑️ DELETE {}: Starting soft delete", documentKey);
+        logger.debug("🗑️ DELETE {}: Starting soft delete", documentKey);
         
         if (context.isInTransaction()) {
             // Operate within existing Bundle transaction
@@ -61,8 +61,8 @@ public class DeleteService {
             // Create standalone transaction for this DELETE operation
             performDeleteWithStandaloneTransaction(resourceType, resourceId, documentKey, context);
         }
-        
-        logger.info("✅ DELETE {}: Soft delete completed (204 No Content)", documentKey);
+
+        logger.debug("✅ DELETE {}: Soft delete completed (204 No Content)", documentKey);
     }
     
     /**
@@ -84,14 +84,14 @@ public class DeleteService {
     private void performDeleteWithStandaloneTransaction(String resourceType, String resourceId, String documentKey, TransactionContext context) {
         try {
             // Create standalone transaction for this DELETE operation
-            logger.info("🔄 DELETE {}: Starting standalone transaction for {}", resourceType, documentKey);
+            logger.debug("🔄 DELETE {}: Starting standalone transaction for {}", resourceType, documentKey);
             context.getCluster().transactions().run(txContext -> {
                 logger.debug("🔄 DELETE {}: Inside transaction context", resourceType);
                 handleSoftDeleteInTransaction(resourceType, resourceId, documentKey, 
                                             txContext, context.getCluster(), context.getBucketName());
                 logger.debug("✅ DELETE {}: Transaction operations completed", resourceType);
             });
-            logger.info("✅ DELETE {}: Standalone transaction committed for {}", resourceType, documentKey);
+            logger.debug("✅ DELETE {}: Standalone transaction committed for {}", resourceType, documentKey);
         } catch (Exception e) {
             logger.error("❌ DELETE {} (standalone transaction) failed: {}", documentKey, e.getMessage());
             throw new RuntimeException("DELETE operation failed: " + e.getMessage(), e);
@@ -114,10 +114,10 @@ public class DeleteService {
         // Step 2: Only create tombstone if resource actually existed (FHIR best practice)
         if (lastVersionId != null) {
             createTombstone(txContext, cluster, bucketName, resourceType, resourceId, lastVersionId);
-            logger.info("🪦 DELETE {}: Resource deleted - archived version {}, tombstone created, live removed", 
+            logger.debug("🪦 DELETE {}: Resource deleted - archived version {}, tombstone created, live removed",
                        documentKey, lastVersionId);
         } else {
-            logger.info("🔍 DELETE {}: Resource didn't exist - no tombstone created (idempotent 204)", 
+            logger.debug("🔍 DELETE {}: Resource didn't exist - no tombstone created (idempotent 204)",
                        documentKey);
         }
         

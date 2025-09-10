@@ -8,6 +8,8 @@ import jakarta.annotation.PostConstruct;
 import java.util.Collections;
 import ca.uhn.fhir.rest.api.SummaryEnum;
 import ca.uhn.fhir.rest.api.server.RequestDetails;
+import com.couchbase.fhir.resources.interceptor.RequestPerfBagUtils;
+import com.couchbase.fhir.resources.interceptor.DAOTimingContext;
 import ca.uhn.fhir.rest.server.exceptions.InvalidRequestException;
 import com.couchbase.client.java.Cluster;
 import com.couchbase.client.java.json.JsonObject;
@@ -87,7 +89,7 @@ public class SearchService {
     public ResolveResult resolveOne(String resourceType, Map<String, List<String>> criteria) {
         String bucketName = TenantContextHolder.getTenantId();
         
-        logger.info("🔍 SearchService.resolveOne: {} with criteria: {}", resourceType, criteria);
+        logger.debug("🔍 SearchService.resolveOne: {} with criteria: {}", resourceType, criteria);
         
         // Validate FHIR bucket
         try {
@@ -115,14 +117,14 @@ public class SearchService {
             @SuppressWarnings("unchecked")
             List<Resource> results = (List<Resource>) dao.search(resourceType, query);
             
-            logger.info("🔍 SearchService.resolveOne: Found {} matches for {}", results.size(), resourceType);
+            logger.debug("🔍 SearchService.resolveOne: Found {} matches for {}", results.size(), resourceType);
             
             // Analyze results
             if (results.isEmpty()) {
                 return ResolveResult.zero();
             } else if (results.size() == 1) {
                 String resourceId = results.get(0).getIdElement().getIdPart();
-                logger.info("🔍 SearchService.resolveOne: Single match found: {}", resourceId);
+                logger.debug("🔍 SearchService.resolveOne: Single match found: {}", resourceId);
                 return ResolveResult.one(resourceId);
             } else {
                 logger.warn("🔍 SearchService.resolveOne: Multiple matches found ({}), returning MANY", results.size());
@@ -145,7 +147,11 @@ public class SearchService {
     public Bundle search(String resourceType, RequestDetails requestDetails) {
         String bucketName = TenantContextHolder.getTenantId();
         
-        logger.info("🔍 SearchService.search: {} in bucket {}", resourceType, bucketName);
+        // Track search start time in performance bag
+        long searchStartMs = System.currentTimeMillis();
+        
+        logger.debug("🔍 SearchService.search: {} in bucket {} | reqId={}", resourceType, bucketName, 
+            RequestPerfBagUtils.getCurrentRequestId(requestDetails));
         
         // Validate FHIR bucket
         try {
@@ -217,7 +223,7 @@ public class SearchService {
         if (includeValue != null) {
             try {
                 include = new Include(includeValue);
-                logger.info("🔍 Parsed HAPI Include: {}", include);
+                logger.debug("🔍 Parsed HAPI Include: {}", include);
             } catch (Exception e) {
                 throw new InvalidRequestException("Invalid _include parameter: " + includeValue + " - " + e.getMessage());
             }
@@ -245,43 +251,63 @@ public class SearchService {
         List<SearchQuery> ftsQueries = searchQueryResult.getFtsQueries();
         List<String> n1qlFilters = searchQueryResult.getN1qlFilters();
         
-        logger.info("🔍 SearchService: Built {} FTS queries and {} N1QL filters for {}", 
+        logger.debug("🔍 SearchService: Built {} FTS queries and {} N1QL filters for {}", 
                    ftsQueries.size(), n1qlFilters.size(), resourceType);
         if (!n1qlFilters.isEmpty()) {
-            logger.info("🔍 SearchService: N1QL filters: {}", n1qlFilters);
+            logger.debug("🔍 SearchService: N1QL filters: {}", n1qlFilters);
         }
         // Handle count-only queries
         if ("accurate".equals(totalMode) && count == 0) {
-            return handleCountOnlyQuery(ftsQueries, resourceType, bucketName);
+            Bundle result = handleCountOnlyQuery(ftsQueries, resourceType, bucketName);
+            RequestPerfBagUtils.addTiming(requestDetails, "search_service", System.currentTimeMillis() - searchStartMs);
+            RequestPerfBagUtils.addCount(requestDetails, "search_results", result.getTotal());
+            return result;
         }
         
         // Check if this is a _revinclude search
         if (revInclude != null) {
-            return handleRevIncludeSearch(resourceType, ftsQueries, n1qlFilters, revInclude, count, 
-                                        summaryMode, elements, totalMode, bucketName);
+            Bundle result = handleRevIncludeSearch(resourceType, ftsQueries, n1qlFilters, revInclude, count, 
+                                        summaryMode, elements, totalMode, bucketName, requestDetails);
+            RequestPerfBagUtils.addTiming(requestDetails, "search_service", System.currentTimeMillis() - searchStartMs);
+            RequestPerfBagUtils.addCount(requestDetails, "search_results", result.getTotal());
+            return result;
         }
         
         // Check if this is a _include search
         if (include != null) {
-            return handleIncludeSearch(resourceType, ftsQueries, include, count, 
+            Bundle result = handleIncludeSearch(resourceType, ftsQueries, include, count, 
                                      summaryMode, elements, totalMode, bucketName);
+            RequestPerfBagUtils.addTiming(requestDetails, "search_service", System.currentTimeMillis() - searchStartMs);
+            RequestPerfBagUtils.addCount(requestDetails, "search_results", result.getTotal());
+            return result;
         }
         
         // Check if this is a chained search
         if (chainParam != null) {
-            return handleChainSearch(resourceType, ftsQueries, chainParam, count,
+            Bundle result = handleChainSearch(resourceType, ftsQueries, chainParam, count,
                                    sortFields, summaryMode, elements, totalMode, bucketName);
+            RequestPerfBagUtils.addTiming(requestDetails, "search_service", System.currentTimeMillis() - searchStartMs);
+            RequestPerfBagUtils.addCount(requestDetails, "search_results", result.getTotal());
+            return result;
         }
         
         // Check if this should be a paginated regular search
         if (shouldPaginate(searchParams, count)) {
-            return handlePaginatedRegularSearch(resourceType, ftsQueries, searchParams, count, 
-                                              sortFields, summaryMode, elements, totalMode, bucketName);
+            Bundle result = handlePaginatedRegularSearch(resourceType, ftsQueries, searchParams, count, 
+                                              sortFields, summaryMode, elements, totalMode, bucketName, requestDetails);
+            // Track search timing
+            RequestPerfBagUtils.addTiming(requestDetails, "search_service", System.currentTimeMillis() - searchStartMs);
+            RequestPerfBagUtils.addCount(requestDetails, "search_results", result.getTotal());
+            return result;
         }
         
         // Execute regular search (non-paginated)
-        return executeRegularSearch(resourceType, ftsQueries, n1qlFilters, count, sortFields, 
+        Bundle result = executeRegularSearch(resourceType, ftsQueries, n1qlFilters, count, sortFields, 
                                   summaryMode, elements, totalMode, bucketName);
+        // Track search timing
+        RequestPerfBagUtils.addTiming(requestDetails, "search_service", System.currentTimeMillis() - searchStartMs);
+        RequestPerfBagUtils.addCount(requestDetails, "search_results", result.getTotal());
+        return result;
     }
     
     // ========== Private Helper Methods ==========
@@ -349,11 +375,11 @@ public class SearchService {
                     org.hl7.fhir.r4.model.SearchParameter usCoreParam = fhirConfig.getUSCoreSearchParamDetails(resourceType, paramName);
                     if (usCoreParam != null) {
                         logger.info("🔍 Found US Core parameter: {} for {}", paramName, resourceType);
-                        logger.info("🔍 US Core parameter details:");
-                        logger.info("   - Name: {}", usCoreParam.getName());
-                        logger.info("   - Code: {}", usCoreParam.getCode());
-                        logger.info("   - Expression: {}", usCoreParam.getExpression());
-                        logger.info("   - Type: {}", usCoreParam.getType());
+                        logger.debug("🔍 US Core parameter details:");
+                        logger.debug("   - Name: {}", usCoreParam.getName());
+                        logger.debug("   - Code: {}", usCoreParam.getCode());
+                        logger.debug("   - Expression: {}", usCoreParam.getExpression());
+                        logger.debug("   - Type: {}", usCoreParam.getType());
                         
                         // Try to build US Core queries using the new helper
                         List<SearchQuery> usCoreQueries = USCoreSearchHelper.buildUSCoreFTSQueries(
@@ -391,7 +417,7 @@ public class SearchService {
                     SearchQuery dateQuery = DateSearchHelper.buildDateFTS(fhirContext, resourceType, paramName, values);
                     if (dateQuery != null) {
                         ftsQueries.add(dateQuery);
-                        logger.info("🔍 Added DATE query for {}: {}", paramName, dateQuery.export());
+                        logger.debug("🔍 Added DATE query for {}: {}", paramName, dateQuery.export());
                     }
                     break;
                 case REFERENCE:
@@ -680,7 +706,7 @@ public class SearchService {
                     .setMode(Bundle.SearchEntryMode.MATCH);
         }
         
-        logger.info("🔍 SearchService.search: Returning {} results for {}", results.size(), resourceType);
+        logger.debug("🔍 SearchService.search: Returning {} results for {}", results.size(), resourceType);
         return bundle;
     }
     
@@ -690,13 +716,13 @@ public class SearchService {
     private Bundle handleRevIncludeSearch(String primaryResourceType, List<SearchQuery> ftsQueries,
                                         List<String> n1qlFilters, Include revInclude, int count,
                                         SummaryEnum summaryMode, Set<String> elements,
-                                        String totalMode, String bucketName) {
+                                        String totalMode, String bucketName, RequestDetails requestDetails) {
         
         logger.info("🔍 Handling _revinclude search: {} -> {}", 
                    primaryResourceType, revInclude.getValue());
         
         // Step 1: Execute primary resource search to get full documents
-        List<Resource> primaryResources = executePrimaryResourceSearch(primaryResourceType, ftsQueries, n1qlFilters, count, bucketName);
+        List<Resource> primaryResources = executePrimaryResourceSearch(primaryResourceType, ftsQueries, n1qlFilters, count, bucketName, requestDetails);
         
         if (primaryResources.isEmpty()) {
             logger.info("🔍 No primary resources found, returning empty bundle");
@@ -719,7 +745,7 @@ public class SearchService {
         // Step 5: Search for revinclude resources (sorted by lastUpdated DESC)
         List<Resource> revIncludeResources = executeRevIncludeResourceSearch(
             revInclude.getParamType(), revInclude.getParamName(), 
-            primaryResourceReferences, revIncludeCount, 0, bucketName);
+            primaryResourceReferences, revIncludeCount, bucketName, requestDetails);
         
         // Only create SearchState if pagination is actually needed
         String continuationToken = null;
@@ -806,8 +832,8 @@ public class SearchService {
                                      SummaryEnum summaryMode, Set<String> elements,
                                      String totalMode, String bucketName) {
         
-        logger.info("🔍 Handling _include search: {} -> {}", primaryResourceType, include.getValue());
-        logger.info("🔍 HAPI Include details - ParamType: '{}', ParamName: '{}', ParamTargetType: '{}'", 
+        logger.debug("🔍 Handling _include search: {} -> {}", primaryResourceType, include.getValue());
+        logger.debug("🔍 HAPI Include details - ParamType: '{}', ParamName: '{}', ParamTargetType: '{}'", 
                    include.getParamType(), include.getParamName(), include.getParamTargetType());
         
         // Let's see what HAPI knows about this search parameter
@@ -815,7 +841,7 @@ public class SearchService {
                 .getResourceDefinition(include.getParamType())
                 .getSearchParam(include.getParamName());
         if (searchParam != null) {
-            logger.info("🔍 HAPI SearchParam details - Path: '{}', Type: '{}'", 
+            logger.debug("🔍 HAPI SearchParam details - Path: '{}', Type: '{}'", 
                        searchParam.getPath(), searchParam.getParamType());
         }
         
@@ -825,8 +851,8 @@ public class SearchService {
             // Fallback: use HAPI's search parameter definitions
             targetResourceType = determineTargetResourceType(include.getParamType(), include.getParamName());
         }
-        logger.info("🔍 Target resource type for inclusion: '{}'", targetResourceType);
-        
+        logger.debug("🔍 Target resource type for inclusion: '{}'", targetResourceType);
+
         // Step 1: Execute primary resource search to get full resources (no count needed for _include)
         String query = queryBuilder.build(ftsQueries, new ArrayList<>(), primaryResourceType, 0, count, null);
         
@@ -853,12 +879,12 @@ public class SearchService {
             return buildBundleWithPrimaryResourcesOnly(primaryResources, primaryResourceType, summaryMode, elements);
         }
         
-        logger.info("🔍 Extracted {} reference IDs: {}", includeResourceIds.size(), includeResourceIds);
+        logger.debug("🔍 Extracted {} reference IDs: {}", includeResourceIds.size(), includeResourceIds);
         
         // Step 3: Get included resources by their IDs  
-        logger.info("🔍 Looking up {} {} resources by IDs: {}", includeResourceIds.size(), targetResourceType, includeResourceIds);
+        logger.debug("🔍 Looking up {} {} resources by IDs: {}", includeResourceIds.size(), targetResourceType, includeResourceIds);
         List<Resource> includedResources = getResourcesByIds(targetResourceType, includeResourceIds, bucketName);
-        logger.info("🔍 Found {} {} resources", includedResources.size(), targetResourceType);
+        logger.debug("🔍 Found {} {} resources", includedResources.size(), targetResourceType);
         
         // Step 4: Create search state for pagination (reuse revInclude fields for include)
         SearchState searchState = SearchState.builder()
@@ -915,7 +941,7 @@ public class SearchService {
                     .setUrl(buildNextPageUrl(continuationToken, searchState.getCurrentPrimaryOffset(), primaryResourceType, bucketName, count));
         }
         
-        logger.info("🔍 Returning _include bundle: {} primary + {} included resources", 
+        logger.debug("🔍 Returning _include bundle: {} primary + {} included resources", 
                    primaryResources.size(), includedResources.size());
         
         return bundle;
@@ -928,9 +954,9 @@ public class SearchService {
                                    ChainParam chainParam, int count, List<SortField> sortFields,
                                    SummaryEnum summaryMode, Set<String> elements,
                                    String totalMode, String bucketName) {
-        
-        logger.info("🔗 Handling chained search: {} with chain {}", primaryResourceType, chainParam);
-        
+
+        logger.debug("🔗 Handling chained search: {} with chain {}", primaryResourceType, chainParam);
+
         // Step 1: Execute chain query to find referenced resource IDs
         List<String> referencedResourceIds = executeChainQuery(
             chainParam.getTargetResourceType(),
@@ -940,11 +966,11 @@ public class SearchService {
         );
         
         if (referencedResourceIds.isEmpty()) {
-            logger.info("🔗 No referenced resources found for chain query, returning empty bundle");
+            logger.warn("🔗 No referenced resources found for chain query, returning empty bundle");
             return createEmptyBundle();
         }
-        
-        logger.info("🔗 Chain query found {} referenced {} resources: {}", 
+
+        logger.debug("🔗 Chain query found {} referenced {} resources: {}", 
                    referencedResourceIds.size(), chainParam.getTargetResourceType(), referencedResourceIds);
         
         // Step 2: Execute primary search for resources that reference the found IDs
@@ -1010,7 +1036,7 @@ public class SearchService {
                     .setUrl(buildNextPageUrl(continuationToken, searchState.getCurrentPrimaryOffset(), primaryResourceType, bucketName, count));
         }
         
-        logger.info("🔗 Returning chained search bundle: {} results, total: {}", primaryResources.size(), totalPrimaryResourceCount);
+        logger.debug("🔗 Returning chained search bundle: {} results, total: {}", primaryResources.size(), totalPrimaryResourceCount);
         return bundle;
     }
     
@@ -1087,7 +1113,7 @@ public class SearchService {
      * Handle pagination for regular searches
      */
     private Bundle handleRegularPaginationInternal(SearchState searchState, String continuationToken, int offset, int count) {
-        logger.info("🔍 Handling regular pagination: offset={}, count={}", offset, count);
+        logger.debug("🔍 Handling regular pagination: offset={}, count={}", offset, count);
         
         // Execute query using cached FTS queries and sort fields
         String query = queryBuilder.build(searchState.getCachedFtsQueries(), 
@@ -1135,7 +1161,7 @@ public class SearchService {
      * Handle pagination for _include searches
      */
     private Bundle handleIncludePaginationInternal(SearchState searchState, String continuationToken, int offset, int count) {
-        logger.info("🔍 Handling include pagination: offset={}, count={}", offset, count);
+        logger.debug("🔍 Handling include pagination: offset={}, count={}", offset, count);
         
         // Execute query for next batch of primary resources using cached FTS queries
         String query = queryBuilder.build(searchState.getCachedFtsQueries(), 
@@ -1204,7 +1230,7 @@ public class SearchService {
      * Execute primary resource search to get full documents
      */
     private List<Resource> executePrimaryResourceSearch(String resourceType, List<SearchQuery> ftsQueries, 
-                                                      List<String> n1qlFilters, int count, String bucketName) {
+                                                      List<String> n1qlFilters, int count, String bucketName, RequestDetails requestDetails) {
         String query = queryBuilder.build(ftsQueries, n1qlFilters, resourceType, 0, count, null);
         
         logger.debug("🔍 Primary resource query: {}", query);
@@ -1214,8 +1240,8 @@ public class SearchService {
             Class<? extends Resource> resourceClassType = (Class<? extends Resource>) fhirContext.getResourceDefinition(resourceType).getImplementingClass();
             FhirResourceDaoImpl<?> dao = serviceFactory.getService(resourceClassType);
             
-            @SuppressWarnings("unchecked")
-            List<Resource> results = (List<Resource>) dao.search(resourceType, query);
+            // Execute DAO search with timing
+            List<Resource> results = executeDAOSearchWithTiming(dao, resourceType, query, requestDetails);
             
             logger.debug("🔍 Primary resource search returned {} resources for {}", results.size(), resourceType);
             return results;
@@ -1275,13 +1301,19 @@ public class SearchService {
     
     private List<Resource> executeRevIncludeResourceSearch(String resourceType, String searchParam,
                                                          List<String> primaryResourceIds, int count, 
-                                                         String bucketName) {
-        return executeRevIncludeResourceSearch(resourceType, searchParam, primaryResourceIds, count, 0, bucketName);
+                                                         String bucketName, RequestDetails requestDetails) {
+        return executeRevIncludeResourceSearch(resourceType, searchParam, primaryResourceIds, count, 0, bucketName, requestDetails);
     }
     
     private List<Resource> executeRevIncludeResourceSearch(String resourceType, String searchParam,
                                                          List<String> primaryResourceIds, int count,
                                                          int offset, String bucketName) {
+        return executeRevIncludeResourceSearch(resourceType, searchParam, primaryResourceIds, count, offset, bucketName, null);
+    }
+    
+    private List<Resource> executeRevIncludeResourceSearch(String resourceType, String searchParam,
+                                                         List<String> primaryResourceIds, int count,
+                                                         int offset, String bucketName, RequestDetails requestDetails) {
         
         // Build FTS query for revinclude resources
         List<SearchQuery> revIncludeQueries = new ArrayList<>();
@@ -1308,8 +1340,16 @@ public class SearchService {
         Class<? extends Resource> resourceClassType = (Class<? extends Resource>) fhirContext.getResourceDefinition(resourceType).getImplementingClass();
         FhirResourceDaoImpl<?> dao = serviceFactory.getService(resourceClassType);
         
-        @SuppressWarnings("unchecked")
-        List<Resource> results = (List<Resource>) dao.search(resourceType, query);
+        List<Resource> results;
+        if (requestDetails != null) {
+            // Execute DAO search with timing for first-time requests
+            results = executeDAOSearchWithTiming(dao, resourceType, query, requestDetails);
+        } else {
+            // For pagination requests, use direct DAO call (no timing needed)
+            @SuppressWarnings("unchecked")
+            List<Resource> directResults = (List<Resource>) dao.search(resourceType, query);
+            results = directResults;
+        }
         
         logger.debug("🔍 RevInclude search returned {} {} resources", results.size(), resourceType);
         return results;
@@ -1436,9 +1476,10 @@ public class SearchService {
     private Bundle handlePaginatedRegularSearch(String resourceType, List<SearchQuery> ftsQueries,
                                               Map<String, String> searchParams, int count,
                                               List<SortField> sortFields, SummaryEnum summaryMode,
-                                              Set<String> elements, String totalMode, String bucketName) {
+                                              Set<String> elements, String totalMode, String bucketName,
+                                              RequestDetails requestDetails) {
         
-        logger.info("🔍 Handling paginated regular search for {} with count {}", resourceType, count);
+        logger.debug("🔍 Handling paginated regular search for {} with count {}", resourceType, count);
         
         // Execute first page
         String query = queryBuilder.build(ftsQueries, new ArrayList<>(), resourceType, 0, count, sortFields);
@@ -1447,8 +1488,8 @@ public class SearchService {
         Class<? extends Resource> resourceClassType = (Class<? extends Resource>) fhirContext.getResourceDefinition(resourceType).getImplementingClass();
         FhirResourceDaoImpl<?> dao = serviceFactory.getService(resourceClassType);
         
-        @SuppressWarnings("unchecked")
-        List<Resource> results = (List<Resource>) dao.search(resourceType, query);
+        // Execute DAO search with timing
+        List<Resource> results = executeDAOSearchWithTiming(dao, resourceType, query, requestDetails);
         
         // Optimized counting and SearchState creation: Only create SearchState if pagination is actually needed
         int totalCount;
@@ -1550,7 +1591,7 @@ public class SearchService {
     private List<String> extractReferenceIds(List<Resource> primaryResources, String searchParam) {
         List<String> referenceIds = new ArrayList<>();
         
-        logger.info("🔍 Extracting reference IDs for parameter '{}' from {} resources", searchParam, primaryResources.size());
+        logger.debug("🔍 Extracting reference IDs for parameter '{}' from {} resources", searchParam, primaryResources.size());
         
         for (int i = 0; i < primaryResources.size(); i++) {
             Resource resource = primaryResources.get(i);
@@ -1582,7 +1623,7 @@ public class SearchService {
             }
         }
         
-        logger.info("🔍 Extracted {} reference IDs from {} primary resources: {}", referenceIds.size(), primaryResources.size(), referenceIds);
+        logger.debug("🔍 Extracted {} reference IDs from {} primary resources: {}", referenceIds.size(), primaryResources.size(), referenceIds);
         return referenceIds;
     }
     
@@ -1600,24 +1641,24 @@ public class SearchService {
             
             if (hapiSearchParam != null && hapiSearchParam.getPath() != null) {
                 String path = hapiSearchParam.getPath();
-                logger.info("🔍 HAPI path for '{}': {}", searchParam, path);
+                logger.debug("🔍 HAPI path for '{}': {}", searchParam, path);
                 
                 // Use FHIRPathParser to resolve casting expressions
                 FHIRPathParser.ParsedExpression parsed = FHIRPathParser.parse(path);
                 String fieldPath = parsed.getPrimaryFieldPath();
                 
                 if (fieldPath != null) {
-                    logger.info("🔍 Resolved field path: {}", fieldPath);
-                    
+                    logger.debug("🔍 Resolved field path: {}", fieldPath);
+
                     // Convert field path to getter method name
                     String methodName = fieldPathToGetterMethod(fieldPath);
-                    logger.info("🔍 Trying getter method: {}", methodName);
-                    
+                    logger.debug("🔍 Trying getter method: {}", methodName);
+
                     return tryGetReference(resource, methodName);
                 }
             }
         } catch (Exception e) {
-            logger.debug("🔍 Failed to resolve field path for '{}': {}", searchParam, e.getMessage());
+            logger.warn("🔍 Failed to resolve field path for '{}': {}", searchParam, e.getMessage());
         }
         
         // Fallback to hardcoded mappings for common cases
@@ -1668,13 +1709,13 @@ public class SearchService {
             if (referenceObj != null) {
                 java.lang.reflect.Method getReference = referenceObj.getClass().getMethod("getReference");
                 String reference = (String) getReference.invoke(referenceObj);
-                logger.info("🔍 Found reference via {}: {}", methodName, reference);
+                logger.debug("🔍 Found reference via {}: {}", methodName, reference);
                 return reference;
             } else {
-                logger.info("🔍 Method {} returned null reference object", methodName);
+                logger.warn("🔍 Method {} returned null reference object", methodName);
             }
         } catch (Exception e) {
-            logger.info("🔍 No {} method found or error accessing it: {}", methodName, e.getMessage());
+            logger.error("🔍 No {} method found or error accessing it: {}", methodName, e.getMessage());
         }
         return null;
     }
@@ -1704,7 +1745,7 @@ public class SearchService {
             return new ArrayList<>();
         }
         
-        logger.info("🔍 Getting {} resources by IDs from bucket '{}': {}", resourceType, bucketName, ids);
+        logger.debug("🔍 Getting {} resources by IDs from bucket '{}': {}", resourceType, bucketName, ids);
         
         @SuppressWarnings("unchecked")
         Class<? extends Resource> resourceClassType = (Class<? extends Resource>) fhirContext.getResourceDefinition(resourceType).getImplementingClass();
@@ -1714,8 +1755,8 @@ public class SearchService {
             // Use optimized bulk read instead of individual reads
             @SuppressWarnings("unchecked")
             List<Resource> resources = (List<Resource>) dao.readMultiple(resourceType, ids, bucketName);
-            
-            logger.info("🔍 Successfully retrieved {}/{} {} resources", resources.size(), ids.size(), resourceType);
+
+            logger.debug("🔍 Successfully retrieved {}/{} {} resources", resources.size(), ids.size(), resourceType);
             return resources;
             
         } catch (Exception e) {
@@ -1750,7 +1791,7 @@ public class SearchService {
      * Handle pagination for chained searches
      */
     private Bundle handleChainPaginationInternal(SearchState searchState, String continuationToken, int offset, int count) {
-        logger.info("🔗 Handling chain pagination: offset={}, count={}", offset, count);
+        logger.debug("🔗 Handling chain pagination: offset={}, count={}", offset, count);
         
         // Execute primary chain search for next batch using stored referenced IDs
         List<Resource> primaryResources = executePrimaryChainSearch(
@@ -1800,7 +1841,7 @@ public class SearchService {
      */
     private List<String> executeChainQuery(String targetResourceType, String searchParam, 
                                          String searchValue, String bucketName) {
-        logger.info("🔗 Executing chain query: {} where {}={}", targetResourceType, searchParam, searchValue);
+        logger.debug("🔗 Executing chain query: {} where {}={}", targetResourceType, searchParam, searchValue);
         
         // Build FTS query for the chain parameter
         Map<String, List<String>> chainCriteria = Map.of(searchParam, List.of(searchValue));
@@ -1830,7 +1871,7 @@ public class SearchService {
                                                    List<SearchQuery> additionalQueries, int count,
                                                    List<SortField> sortFields, int offset, String bucketName) {
         
-        logger.info("🔗 Executing primary chain search: {} where {} references {} IDs: {}", 
+        logger.debug("🔗 Executing primary chain search: {} where {} references {} IDs: {}", 
                    primaryResourceType, referenceFieldPath, targetResourceType, referencedIds);
         
         // Build FTS query for primary resources that reference the found IDs
@@ -1892,5 +1933,27 @@ public class SearchService {
         }
         
         return getAccurateCount(primaryQueries, primaryResourceType, bucketName);
+    }
+    
+    /**
+     * Execute DAO search with detailed timing breakdown for PerfBag
+     */
+    private List<Resource> executeDAOSearchWithTiming(FhirResourceDaoImpl<?> dao, String resourceType, String query, RequestDetails requestDetails) {
+        // Start timing context for DAO
+        DAOTimingContext.start();
+        
+        @SuppressWarnings("unchecked")
+        List<Resource> results = (List<Resource>) dao.search(resourceType, query);
+        
+        // Get detailed timing breakdown
+        DAOTimingContext timingContext = DAOTimingContext.getAndClear();
+        if (timingContext != null) {
+            RequestPerfBagUtils.addTiming(requestDetails, "query_execution", timingContext.getQueryExecutionMs());
+            RequestPerfBagUtils.addTiming(requestDetails, "hapi_parsing", timingContext.getHapiParsingMs());
+        }
+        
+        RequestPerfBagUtils.incrementCount(requestDetails, "dao_calls");
+        
+        return results;
     }
 }

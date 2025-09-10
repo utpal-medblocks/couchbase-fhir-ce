@@ -7,6 +7,7 @@ import com.couchbase.client.java.Cluster;
 import com.couchbase.client.java.query.QueryResult;
 import com.couchbase.client.java.json.JsonObject;
 import com.couchbase.fhir.resources.service.CollectionRoutingService;
+import com.couchbase.fhir.resources.interceptor.DAOTimingContext;
 import com.google.common.base.Stopwatch;
 import org.hl7.fhir.instance.model.api.IBaseResource;
 import org.slf4j.Logger;
@@ -173,7 +174,9 @@ public class FhirResourceDaoImpl<T extends IBaseResource> implements  FhirResour
 
             QueryResult result = cluster.query(query);
 
-            logger.info("Query execution time : " + stopwatch.elapsed(TimeUnit.MILLISECONDS) + " ms");
+            long queryTimeMs = stopwatch.elapsed(TimeUnit.MILLISECONDS);
+            logger.info("Query execution time : " + queryTimeMs + " ms");
+            DAOTimingContext.recordQueryTime(queryTimeMs);
 
             List<JsonObject> rows = result.rowsAs(JsonObject.class);
             JsonParser parser = (JsonParser) fhirContext.newJsonParser();
@@ -181,7 +184,11 @@ public class FhirResourceDaoImpl<T extends IBaseResource> implements  FhirResour
             rows.stream()  // Use sequential stream to preserve FTS sort order
                     .map(row -> (T) parser.parseResource(row.toString()))
                     .forEach(resources::add);
-            logger.info("Execution time after HAPI parsing result: " + stopwatch.elapsed(TimeUnit.MILLISECONDS) + " ms");
+            
+            long totalTimeMs = stopwatch.elapsed(TimeUnit.MILLISECONDS);
+            long parsingTimeMs = totalTimeMs - queryTimeMs;
+            logger.debug("Execution time after HAPI parsing result: " + totalTimeMs + " ms");
+            DAOTimingContext.recordParsingTime(parsingTimeMs);
 
         } catch (Exception e) {
             throw new RuntimeException(e);

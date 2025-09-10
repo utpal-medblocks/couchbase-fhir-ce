@@ -20,7 +20,7 @@ public class ReferenceSearchHelper {
         try {
             if (searchParam != null) {
                 String path = searchParam.getPath();
-                logger.info("🔍 ReferenceSearchHelper: paramName={}, HAPI path={}", paramName, path);
+                logger.debug("🔍 ReferenceSearchHelper: paramName={}, HAPI path={}", paramName, path);
                 
                 // Use FHIRPathParser to handle complex expressions
                 if (path != null) {
@@ -41,7 +41,7 @@ public class ReferenceSearchHelper {
                         }
                     }
                     
-                    logger.info("🔍 ReferenceSearchHelper: Parsed field name: {}", actualFieldName);
+                    logger.debug("🔍 ReferenceSearchHelper: Parsed field name: {}", actualFieldName);
                 } else {
                     logger.warn("🔍 ReferenceSearchHelper: HAPI path is null for paramName={}", paramName);
                 }
@@ -56,8 +56,8 @@ public class ReferenceSearchHelper {
         
         if (searchValue.startsWith("http://") || searchValue.startsWith("https://")) {
             // Handle canonical URLs - these should be matched as direct string values, not parsed as references
-            logger.info("🔍 ReferenceSearchHelper: Detected canonical URL, treating as direct string match: {}", searchValue);
-            
+            logger.debug("🔍 ReferenceSearchHelper: Detected canonical URL, treating as direct string match: {}", searchValue);
+
             // For canonical URLs, create a direct string match query on the field
             List<SearchQuery> queries = new ArrayList<>();
             queries.add(SearchQuery.match(searchValue).field(actualFieldName));
@@ -89,12 +89,12 @@ public class ReferenceSearchHelper {
         // If field already ends with "Reference" (from casting like "medicationReference"), use as-is
         if (actualFieldName != null && actualFieldName.endsWith("Reference")) {
             subFields.add(actualFieldName);
-            logger.info("🔍 ReferenceSearchHelper: Using cast reference field as-is: {}", actualFieldName);
+            logger.debug("🔍 ReferenceSearchHelper: Using cast reference field as-is: {}", actualFieldName);
         } else {
             // Otherwise append ".reference" to the field name (use paramName as fallback if actualFieldName is null)
             String fieldName = actualFieldName != null ? actualFieldName : paramName;
             subFields.add(fieldName + ".reference");
-            logger.info("🔍 ReferenceSearchHelper: Using standard reference field: {}", fieldName + ".reference");
+            logger.debug("🔍 ReferenceSearchHelper: Using standard reference field: {}", fieldName + ".reference");
         }
         
         if (subFields.isEmpty()) {
@@ -109,7 +109,7 @@ public class ReferenceSearchHelper {
                 Set<String> targets = searchParam.getTargets();
                 if (targets.size() == 1) {
                     targetResourceType = targets.iterator().next();
-                    logger.info("🔍 ReferenceSearchHelper: Found single target type from HAPI: {}", targetResourceType);
+                    logger.debug("🔍 ReferenceSearchHelper: Found single target type from HAPI: {}", targetResourceType);
                 } else if (targets.size() > 1) {
                     // Ambiguous target types — can't infer
                     String errorMsg = String.format(
@@ -126,12 +126,12 @@ public class ReferenceSearchHelper {
             }
         }
 
-        logger.info("🔍 ReferenceSearchHelper: paramName={}, fhirPath={}, subFields={}", paramName, actualFieldName, subFields);
+        logger.debug("🔍 ReferenceSearchHelper: paramName={}, fhirPath={}, subFields={}", paramName, actualFieldName, subFields);
 
         // Build the reference value - always use full reference format
         String referenceValue = targetResourceType != null ? targetResourceType + "/" + targetId : targetId;
-        logger.info("🔍 ReferenceSearchHelper: Final reference value: {}", referenceValue);
-        
+        logger.debug("🔍 ReferenceSearchHelper: Final reference value: {}", referenceValue);
+
         List<SearchQuery> queries = new ArrayList<>();
         
         // Build queries for each sub-field
