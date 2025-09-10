@@ -16,7 +16,7 @@ public class DateSearchHelperFTS {
         SearchHelper searchHelper = new SearchHelper();
         RuntimeSearchParam searchParam = searchHelper.getSearchParam(def , validationSupportChain , paramName);
 
-        String fhirPath = searchParam.getPath();
+     /*   String fhirPath = searchParam.getPath();
 
         // TODO : USE this for things like context.period
         String subPath;
@@ -24,7 +24,7 @@ public class DateSearchHelperFTS {
             subPath = fhirPath.substring(9);
         } else {
             subPath = fhirPath.substring(resourceType.length() + 1);
-        }
+        }*/
 
 
 

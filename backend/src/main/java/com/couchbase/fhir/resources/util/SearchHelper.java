@@ -33,14 +33,14 @@ public class SearchHelper {
 
                     // Convert SearchParameter -> RuntimeSearchParam
                     RuntimeSearchParam runtimeParam = new RuntimeSearchParam(
-                            null,                        // ID (optional)
+                            null,
                             sp.getUrl(),                 // URI
                             sp.getCode(),                // name/code
                             sp.getDescription(),         // description
                             sp.getExpression(),          // FHIRPath expression
                             RestSearchParameterTypeEnum.valueOf(sp.getType().toCode().toUpperCase()),
-                            Collections.emptySet(),      // providesMembershipInCompartments
-                            Collections.emptySet(),      // targets
+                            Collections.emptySet(),
+                            Collections.emptySet(),
                             RuntimeSearchParam.RuntimeSearchParamStatusEnum.ACTIVE,
                             Collections.singleton(sp.getBase().get(0).getValue())
                     );
