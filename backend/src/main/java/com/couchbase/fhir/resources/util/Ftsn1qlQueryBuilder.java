@@ -13,10 +13,15 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Collectors;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+
 @Component
 public class Ftsn1qlQueryBuilder {
 
     private static final String DEFAULT_SCOPE = "Resources";
+    private static final Logger logger = LoggerFactory.getLogger(Ftsn1qlQueryBuilder.class);
     
     @Autowired
     private CollectionRoutingService collectionRoutingService;
@@ -126,8 +131,7 @@ public class Ftsn1qlQueryBuilder {
                 bucketName, DEFAULT_SCOPE, targetCollection,
                 whereClause.toString()
         );
-
-        System.out.println("query (ID-only): "+n1ql);
+        logger.info("🔍 Query ID: {}", n1ql);
         return n1ql;
     }
     
@@ -234,8 +238,7 @@ public class Ftsn1qlQueryBuilder {
                 bucketName, DEFAULT_SCOPE, targetCollection,
                 whereClause.toString()
         );
-
-        System.out.println("query (full resource with filters): "+n1ql);
+        logger.info("🔍 Query Full: {}", n1ql);
         return n1ql;
     }
     
@@ -325,8 +328,7 @@ public class Ftsn1qlQueryBuilder {
                 ftsDsl.toString(),
                 ftsIndex
         );
-
-        System.out.println("count query " + n1ql);
+        logger.info("🔍 Query Count: {}", n1ql);
         return n1ql;
     }
     
