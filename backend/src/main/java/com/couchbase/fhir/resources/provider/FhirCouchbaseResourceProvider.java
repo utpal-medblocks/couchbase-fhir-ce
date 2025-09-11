@@ -4,6 +4,8 @@ import ca.uhn.fhir.context.*;
 import ca.uhn.fhir.rest.annotation.*;
 import ca.uhn.fhir.rest.api.MethodOutcome;
 import ca.uhn.fhir.rest.api.server.RequestDetails;
+import ca.uhn.fhir.rest.param.NumberParam;
+import ca.uhn.fhir.rest.param.StringParam;
 import ca.uhn.fhir.rest.server.IResourceProvider;
 import ca.uhn.fhir.rest.server.exceptions.InternalErrorException;
 import ca.uhn.fhir.rest.server.exceptions.ResourceNotFoundException;
@@ -428,18 +430,41 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
     @Search(allowUnknownParams = true)
     public Bundle search(RequestDetails requestDetails) {
         String resourceType = resourceClass.getSimpleName();
+        
+        // Check if this is a pagination request
+        Map<String, String[]> params = requestDetails.getParameters();
+        if (params.containsKey("_page")) {
+            String continuationToken = params.get("_page")[0];
+            int offset = 0;
+            int count = 20; // default
+            
+            if (params.containsKey("_offset")) {
+                try {
+                    offset = Integer.parseInt(params.get("_offset")[0]);
+                } catch (NumberFormatException e) {
+                    logger.warn("Invalid _offset parameter: {}", params.get("_offset")[0]);
+                }
+            }
+            
+            if (params.containsKey("_count")) {
+                try {
+                    count = Integer.parseInt(params.get("_count")[0]);
+                } catch (NumberFormatException e) {
+                    logger.warn("Invalid _count parameter: {}", params.get("_count")[0]);
+                }
+            }
+            
+            logger.info("🔍 ResourceProvider: Handling pagination request for {} (token: {}, offset: {}, count: {})", 
+                       resourceType, continuationToken, offset, count);
+            
+            return searchService.handleRevIncludePagination(continuationToken, offset, count);
+        }
+        
         logger.info("🔍 ResourceProvider: Delegating search for {} to SearchService", resourceType);
         
         // Delegate to SearchService for all search operations
         return searchService.search(resourceType, requestDetails);
     }
-
-
-
-
-
-
-
     /**
      * FHIR $validate Operation - Validates a resource without storing it
      * POST /fhir/{bucket}/{ResourceType}/$validate
@@ -512,11 +537,4 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
     public Class<T> getResourceType() {
         return resourceClass;
     }
-
-
-    
-
-
-
-
 }

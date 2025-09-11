@@ -23,7 +23,7 @@ public class TokenSearchHelperFTS {
         RuntimeResourceDefinition def = fhirContext.getResourceDefinition(resourceType);
         RuntimeSearchParam searchParam = def.getSearchParam(paramName);
         String path = searchParam.getPath();
-
+        
         ConceptInfo conceptInfo = getConceptInfo(path, resourceType, def);
 
         // FTS field names in index (assume "." in FHIRPath is replaced with "."
@@ -66,30 +66,30 @@ public class TokenSearchHelperFTS {
             return SearchQuery.booleanField(boolValue).field(ftsFieldPath);
         }
         
-        // Default to term query for strings
-        return SearchQuery.term(value).field(ftsFieldPath);
+        // Default to match query for strings
+        return SearchQuery.match(value).field(ftsFieldPath);
     }
 
     private static SearchQuery buildCodeableConceptQuery(String ftsFieldPath, TokenParam token) {
         // For FTS index: field might be like "name.coding.code" and "name.coding.system"
         if (token.system != null) {
             return SearchQuery.conjuncts(
-                    SearchQuery.term(token.system).field(ftsFieldPath + ".system"),
-                    SearchQuery.term(token.code).field(ftsFieldPath + ".code")
+                    SearchQuery.match(token.system).field(ftsFieldPath + ".system"),
+                    SearchQuery.match(token.code).field(ftsFieldPath + ".code")
             );
         } else {
-            return SearchQuery.term(token.code).field(ftsFieldPath + ".code");
+            return SearchQuery.match(token.code).field(ftsFieldPath + ".code");
         }
     }
 
     private static SearchQuery buildSystemValueQuery(String ftsFieldPath, TokenParam token) {
         if (token.system != null) {
             return SearchQuery.conjuncts(
-                    SearchQuery.term(token.system).field(ftsFieldPath + ".system"),
-                    SearchQuery.term(token.code).field(ftsFieldPath + ".value")
+                    SearchQuery.match(token.system).field(ftsFieldPath + ".system"),
+                    SearchQuery.match(token.code).field(ftsFieldPath + ".value")
             );
         } else {
-            return SearchQuery.term(token.code).field(ftsFieldPath + ".value");
+            return SearchQuery.match(token.code).field(ftsFieldPath + ".value");
         }
     }
 
@@ -98,9 +98,11 @@ public class TokenSearchHelperFTS {
         boolean isArray = false;
         boolean isPrimitive = false;
         BaseRuntimeElementDefinition<?> current = def;
+        
         try {
             String fhirPath = path.replaceFirst("^" + resourceType + "\\.", "");
             String[] pathParts = fhirPath.split("\\.");
+            
             for (String part : pathParts) {
                 if (def != null) {
                     BaseRuntimeChildDefinition child = ((BaseRuntimeElementCompositeDefinition<?>) def).getChildByName(part);
@@ -123,7 +125,6 @@ public class TokenSearchHelperFTS {
         } catch (Exception e) {
             System.out.println(e.getMessage());
         }
-
         return new ConceptInfo(isCodableConcept, isArray, isPrimitive);
     }
 
@@ -148,7 +149,7 @@ public class TokenSearchHelperFTS {
         } else {
             subPath = fhirPath.substring(resourceType.length() + 1);
         }
-
+        
         String ftsPath = subPath
                 .replace(".coding", ".coding") // Keep .coding for FTS mapping
                 .replace(".value", ".value")
@@ -159,7 +160,9 @@ public class TokenSearchHelperFTS {
             return ftsPath;
         }
 
-        if (codableConcept && !isArray) {
+        if (codableConcept) {
+            // For CodeableConcepts, we always need to add .coding
+            // Whether it's a single CodeableConcept or an array of CodeableConcepts
             ftsPath += ".coding";
         }
         return ftsPath;

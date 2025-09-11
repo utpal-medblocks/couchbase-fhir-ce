@@ -61,6 +61,7 @@ public class FhirResourceDaoImpl<T extends IBaseResource> implements  FhirResour
                     bucketName, DEFAULT_SCOPE, resourceType, documentKey
             );
 
+            logger.info("READ query: {}", query);
             QueryResult result = cluster.query(query, queryOptions()
                     .parameters(JsonObject.create().put("key", documentKey)));
 
@@ -73,6 +74,63 @@ public class FhirResourceDaoImpl<T extends IBaseResource> implements  FhirResour
 
         } catch (Exception e) {
             logger.error("Failed to get {}/{}: {}", resourceType, id, e.getMessage());
+            throw new RuntimeException(e);
+        }
+    }
+
+    @Override
+    public List<T> readMultiple(String resourceType, List<String> ids, String bucketName) {
+        List<T> resources = new ArrayList<>();
+        
+        if (ids == null || ids.isEmpty()) {
+            return resources;
+        }
+        
+        try {
+            String connectionName = getDefaultConnection();
+            bucketName = bucketName != null ? bucketName : DEFAULT_BUCKET;
+
+            Cluster cluster = connectionService.getConnection(connectionName);
+            if (cluster == null) {
+                throw new RuntimeException("No active connection found: " + connectionName);
+            }
+            
+            // Build document keys with ResourceType::id format
+            List<String> documentKeys = new ArrayList<>();
+            for (String id : ids) {
+                documentKeys.add("'" + resourceType + "/" + id + "'");
+            }
+            
+            // Build N1QL query with USE KEYS array
+            String keysArray = "[" + String.join(", ", documentKeys) + "]";
+            String query = String.format(
+                    "SELECT c.* " +
+                            "FROM `%s`.`%s`.`%s` c " +
+                            "USE KEYS %s",
+                    bucketName, DEFAULT_SCOPE, resourceType, keysArray
+            );
+
+            logger.info("READ MULTIPLE query: {}", query);
+            QueryResult result = cluster.query(query);
+
+            List<JsonObject> rows = result.rowsAsObject();
+            logger.debug("Found {}/{} {} resources", rows.size(), ids.size(), resourceType);
+            
+            for (JsonObject json : rows) {
+                try {
+                    @SuppressWarnings("unchecked")
+                    T resource = (T) fhirContext.newJsonParser().parseResource(json.toString());
+                    resources.add(resource);
+                } catch (Exception e) {
+                    logger.warn("Failed to parse {} resource: {}", resourceType, e.getMessage());
+                }
+            }
+            
+            logger.info("Successfully parsed {}/{} {} resources", resources.size(), ids.size(), resourceType);
+            return resources;
+
+        } catch (Exception e) {
+            logger.error("Failed to get multiple {}: {}", resourceType, e.getMessage());
             throw new RuntimeException(e);
         }
     }
