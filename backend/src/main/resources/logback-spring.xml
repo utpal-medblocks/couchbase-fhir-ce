@@ -8,6 +8,15 @@
         </encoder>
     </appender>
 
+    <!-- Overwrite ~/Documents/fhir.log on each startup -->
+    <appender name="FILE" class="ch.qos.logback.core.FileAppender">
+        <file>${user.home}/Documents/fhir.log</file>
+        <append>false</append>
+        <encoder>
+        <pattern>%d{HH:mm:ss.SSS} %-5level %logger{36} - %msg%n</pattern>
+        </encoder>
+    </appender>
+
     <!-- RollingFileAppender for log rotation -->
     <appender name="ROLLING" class="ch.qos.logback.core.rolling.RollingFileAppender">
         <file>logs/app.log</file>
@@ -23,6 +32,7 @@
     <root level="INFO">
         <appender-ref ref="STDOUT"/>
         <appender-ref ref="ROLLING"/>
+        <appender-ref ref="FILE"/>
     </root>
 
     <!-- Your Couchbase loggers -->
