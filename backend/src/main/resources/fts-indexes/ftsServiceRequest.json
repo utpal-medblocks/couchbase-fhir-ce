@@ -1,7 +1,7 @@
 {
   "type": "fulltext-index",
   "name": "",
-  "uuid": "",
+  "uuid": "5d3db8c878effaf",
   "sourceType": "gocbcore",
   "sourceName": "",
   "sourceUUID": "",
@@ -256,6 +256,34 @@
                       "docvalues": true,
                       "index": true,
                       "name": "lastUpdated",
+                      "type": "datetime"
+                    }
+                  ]
+                }
+              }
+            },
+            "occurrence Period": {
+              "dynamic": false,
+              "enabled": true,
+              "properties": {
+                "end": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "index": true,
+                      "name": "end",
+                      "type": "datetime"
+                    }
+                  ]
+                },
+                "start": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "index": true,
+                      "name": "start",
                       "type": "datetime"
                     }
                   ]
