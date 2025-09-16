@@ -251,8 +251,8 @@ const BucketMetricsCharts: React.FC<BucketMetricsChartsProps> = ({
     },
     {
       title: "Query Performance",
-      metrics: ["n1ql_request_time", "n1ql_service_time"],
-      colors: [chartColors.warning, chartColors.info],
+      metrics: ["n1ql_request_time"],
+      colors: [chartColors.warning],
       unit: "ns",
       type: "bar" as const,
     },

@@ -546,8 +546,11 @@ export const useBucketStore = create<BucketStore>()((set, get) => ({
                 Object.entries(collections).forEach(
                   ([collectionName, metrics]) => {
                     if (metrics && typeof metrics === "object") {
-                      // Skip Versions collection as it's for internal use only
-                      if (collectionName !== "Versions") {
+                      // Skip internal collections: Versions and Tombstones
+                      if (
+                        collectionName !== "Versions" &&
+                        collectionName !== "Tombstones"
+                      ) {
                         const collectionDetail: CollectionDetails = {
                           collectionName,
                           scopeName,
