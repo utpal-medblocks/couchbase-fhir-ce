@@ -14,7 +14,7 @@ import {
   IconButton,
 } from "@mui/material";
 import { Refresh } from "@mui/icons-material";
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useMemo, useEffect } from "react";
 import type { SelectChangeEvent } from "@mui/material";
 import { useConnectionStore } from "../../store/connectionStore";
 import { useBucketStore } from "../../store/bucketStore";
@@ -35,6 +35,7 @@ const BucketsMain = () => {
   const [timeRange, setTimeRange] = useState<TimeRange>(() =>
     getStoredTimeRange("HOUR")
   );
+  const [lastRefreshed, setLastRefreshed] = useState<Date | null>(null);
 
   const connectionId = connection.name;
 
@@ -50,9 +51,31 @@ const BucketsMain = () => {
 
   const handleRefresh = useCallback(() => {
     if (connectionId) {
-      bucketStore.fetchBucketData(connectionId);
+      bucketStore
+        .fetchBucketData(connectionId)
+        .then(() => setLastRefreshed(new Date()))
+        .catch(() => setLastRefreshed(new Date()));
     }
-  }, [connectionId, bucketStore]);
+  }, [connectionId]);
+
+  // Auto-refresh bucket data every 20 seconds to keep item counts fresh
+  useEffect(() => {
+    if (!connectionId) return;
+
+    const refresh = () =>
+      bucketStore
+        .fetchBucketData(connectionId)
+        .then(() => setLastRefreshed(new Date()))
+        .catch(() => setLastRefreshed(new Date()));
+
+    // Initial refresh
+    refresh();
+
+    // Interval refresh
+    const interval = setInterval(refresh, 20000);
+
+    return () => clearInterval(interval);
+  }, [connectionId]);
 
   // Smart byte formatting function
   const formatBytes = useCallback((bytes: number): string => {
@@ -187,6 +210,13 @@ const BucketsMain = () => {
                   )}
                 </TableBody>
               </Table>
+              {/* Last Refreshed timestamp */}
+              <Box sx={{ p: 1, borderTop: 0.5, borderColor: "divider" }}>
+                <Typography variant="caption" color="text.secondary">
+                  Last Refreshed:{" "}
+                  {lastRefreshed ? lastRefreshed.toLocaleString() : "-"}
+                </Typography>
+              </Box>
             </TableContainer>
           )}
         </Box>

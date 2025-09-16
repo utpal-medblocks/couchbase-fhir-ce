@@ -2,59 +2,152 @@ package com.couchbase.fhir.resources.util;
 
 import ca.uhn.fhir.context.FhirContext;
 import ca.uhn.fhir.context.RuntimeSearchParam;
+import com.couchbase.client.java.search.SearchQuery;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Set;
 
 public class ReferenceSearchHelper {
 
-    public static String buildReferenceWhereCluse(FhirContext fhirContext , String resourceType, String paramName, String value  , RuntimeSearchParam searchParam){
-        String path = searchParam.getPath();
-        String jsonPath = toCouchbasePath(path, resourceType);
+    private static final Logger logger = LoggerFactory.getLogger(ReferenceSearchHelper.class);
 
-        if (!value.contains("/")) {
-            Set<String> targets = searchParam.getTargets();
-            if (targets.size() == 1) {
-                String targetResource = targets.iterator().next();
-                value = targetResource + "/" + value;
-            } else if (targets.size() > 1) {
-                // Ambiguous target types — can't infer
-                throw new IllegalArgumentException(
-                        "The reference parameter '" + paramName + "' is ambiguous. " +
-                                "Expected format: 'ResourceType/id', e.g., 'Patient/123'. " +
-                                "Allowed targets: " + targets
-                );
+    public static SearchQuery buildReferenceFTSQuery(FhirContext fhirContext, String resourceType, String paramName, String searchValue, RuntimeSearchParam searchParam) {
+        // Get the actual FHIR path from HAPI search parameter
+        String actualFieldName = paramName;
+        try {
+            if (searchParam != null) {
+                String path = searchParam.getPath();
+                logger.debug("🔍 ReferenceSearchHelper: paramName={}, HAPI path={}", paramName, path);
+                
+                // Use FHIRPathParser to handle complex expressions
+                if (path != null) {
+                    FHIRPathParser.ParsedExpression parsed = FHIRPathParser.parse(path);
+                    actualFieldName = parsed.getPrimaryFieldPath();
+                    
+                    if (actualFieldName == null) {
+                        logger.warn("🔍 ReferenceSearchHelper: Could not parse field path from: {}", path);
+                        // Fallback to manual parsing
+                        if (path.startsWith(resourceType + ".")) {
+                            actualFieldName = path.substring(resourceType.length() + 1);
+                            int whereIndex = actualFieldName.indexOf(".where(");
+                            if (whereIndex != -1) {
+                                actualFieldName = actualFieldName.substring(0, whereIndex);
+                            }
+                        } else {
+                            actualFieldName = paramName;
+                        }
+                    }
+                    
+                    logger.debug("🔍 ReferenceSearchHelper: Parsed field name: {}", actualFieldName);
+                } else {
+                    logger.warn("🔍 ReferenceSearchHelper: HAPI path is null for paramName={}", paramName);
+                }
+            }
+        } catch (Exception e) {
+            logger.warn("🔍 ReferenceSearchHelper: Failed to get HAPI path for paramName={}, using paramName as field: {}", paramName, e.getMessage());
+        }
+
+        // Parse the reference value (format: ResourceType/id, just id, or canonical URL)
+        String targetResourceType = null;
+        String targetId = null;
+        
+        if (searchValue.startsWith("http://") || searchValue.startsWith("https://")) {
+            // Handle canonical URLs - these should be matched as direct string values, not parsed as references
+            logger.debug("🔍 ReferenceSearchHelper: Detected canonical URL, treating as direct string match: {}", searchValue);
+
+            // For canonical URLs, create a direct string match query on the field
+            List<SearchQuery> queries = new ArrayList<>();
+            queries.add(SearchQuery.match(searchValue).field(actualFieldName));
+            
+            if (queries.size() == 1) {
+                return queries.get(0);
+            } else {
+                return SearchQuery.disjuncts(queries.toArray(new SearchQuery[0]));
+            }
+        } else {
+            // Handle simple references like "ResourceType/id" or just "id"
+            String[] parts = searchValue.split("/");
+            if (parts.length == 2) {
+                targetResourceType = parts[0];
+                targetId = parts[1];
+            } else if (parts.length == 1) {
+                targetId = parts[0];
             }
         }
-        return jsonPath + ".reference = \"" + value + "\"";
-    }
 
-
-
-    private static String toCouchbasePath(String fhirPath, String resourceType) {
-        if (fhirPath == null) {
-            throw new IllegalArgumentException("FHIRPath is null ");
+        if (targetId == null || targetId.isEmpty()) {
+            logger.warn("🔍 ReferenceSearchHelper: Invalid reference format: {}", searchValue);
+            return null;
         }
 
-        if (!fhirPath.startsWith(resourceType + ".") && !fhirPath.startsWith("Resource.")) {
-            throw new IllegalArgumentException("Invalid FHIRPath: " + fhirPath);
+        // Get sub-fields for the reference parameter
+        List<String> subFields = new ArrayList<>();
+        
+        // If field already ends with "Reference" (from casting like "medicationReference"), use as-is
+        if (actualFieldName != null && actualFieldName.endsWith("Reference")) {
+            subFields.add(actualFieldName);
+            logger.debug("🔍 ReferenceSearchHelper: Using cast reference field as-is: {}", actualFieldName);
+        } else {
+            // Otherwise append ".reference" to the field name (use paramName as fallback if actualFieldName is null)
+            String fieldName = actualFieldName != null ? actualFieldName : paramName;
+            subFields.add(fieldName + ".reference");
+            logger.debug("🔍 ReferenceSearchHelper: Using standard reference field: {}", fieldName + ".reference");
+        }
+        
+        if (subFields.isEmpty()) {
+            String fallbackField = actualFieldName != null ? actualFieldName : paramName;
+            logger.warn("🔍 ReferenceSearchHelper: No sub-fields found for paramName={}, using base field: {}", paramName, fallbackField);
+            subFields.add(fallbackField);
         }
 
-        String subPath = fhirPath.substring(resourceType.length() + 1);
-
-
-        // Remove .where(...) clause if present
-        int whereIndex = subPath.indexOf(".where(");
-        if (whereIndex != -1) {
-            subPath = subPath.substring(0, whereIndex);
+        // If no target resource type provided, try to determine it from HAPI using getTargets()
+        if (targetResourceType == null && searchParam != null) {
+            try {
+                Set<String> targets = searchParam.getTargets();
+                if (targets.size() == 1) {
+                    targetResourceType = targets.iterator().next();
+                    logger.debug("🔍 ReferenceSearchHelper: Found single target type from HAPI: {}", targetResourceType);
+                } else if (targets.size() > 1) {
+                    // Ambiguous target types — can't infer
+                    String errorMsg = String.format(
+                        "The reference parameter '%s' is ambiguous. Expected format: 'ResourceType/id', e.g., 'Patient/123'. Allowed targets: %s",
+                        paramName, targets
+                    );
+                    logger.error("🔍 ReferenceSearchHelper: {}", errorMsg);
+                    throw new IllegalArgumentException(errorMsg);
+                } else {
+                    logger.warn("🔍 ReferenceSearchHelper: No target types found in HAPI for parameter: {}", paramName);
+                }
+            } catch (Exception e) {
+                logger.warn("🔍 ReferenceSearchHelper: Failed to get target types from HAPI: {}", e.getMessage());
+            }
         }
 
-        String jsonPath = subPath
-                .replace(".coding", "")
-                .replace(".value", "")
-                .replace(".code", "")
-                .replace(".system", "");
+        logger.debug("🔍 ReferenceSearchHelper: paramName={}, fhirPath={}, subFields={}", paramName, actualFieldName, subFields);
 
+        // Build the reference value - always use full reference format
+        String referenceValue = targetResourceType != null ? targetResourceType + "/" + targetId : targetId;
+        logger.debug("🔍 ReferenceSearchHelper: Final reference value: {}", referenceValue);
 
-        return jsonPath;
+        List<SearchQuery> queries = new ArrayList<>();
+        
+        // Build queries for each sub-field
+        for (String field : subFields) {
+            queries.add(SearchQuery.match(referenceValue).field(field));
+        }
+
+        if (queries.isEmpty()) {
+            return null;
+        }
+
+        if (queries.size() == 1) {
+            return queries.get(0);
+        }
+
+        // Multiple sub-fields: use OR (disjunction) to match any of them
+        return SearchQuery.disjuncts(queries.toArray(new SearchQuery[0]));
     }
 }

@@ -12,6 +12,8 @@ import org.springframework.stereotype.Service;
 import java.time.Instant;
 import java.util.List;
 
+import com.couchbase.fhir.resources.service.CollectionRoutingService;
+
 /**
  * Service for handling FHIR DELETE operations with proper tombstone management.
  * DELETE operations are idempotent and use soft delete with tombstones.
@@ -36,6 +38,9 @@ public class DeleteService {
     @Autowired
     private FhirAuditService auditService;
     
+    @Autowired
+    private CollectionRoutingService collectionRoutingService;
+    
     /**
      * Delete a FHIR resource (soft delete with tombstone).
      * Always returns success (204) even if resource doesn't exist (idempotent).
@@ -47,7 +52,7 @@ public class DeleteService {
     public void deleteResource(String resourceType, String resourceId, TransactionContext context) {
         String documentKey = resourceType + "/" + resourceId;
         
-        logger.info("🗑️ DELETE {}: Starting soft delete", documentKey);
+        logger.debug("🗑️ DELETE {}: Starting soft delete", documentKey);
         
         if (context.isInTransaction()) {
             // Operate within existing Bundle transaction
@@ -56,8 +61,8 @@ public class DeleteService {
             // Create standalone transaction for this DELETE operation
             performDeleteWithStandaloneTransaction(resourceType, resourceId, documentKey, context);
         }
-        
-        logger.info("✅ DELETE {}: Soft delete completed (204 No Content)", documentKey);
+
+        logger.debug("✅ DELETE {}: Soft delete completed (204 No Content)", documentKey);
     }
     
     /**
@@ -79,14 +84,14 @@ public class DeleteService {
     private void performDeleteWithStandaloneTransaction(String resourceType, String resourceId, String documentKey, TransactionContext context) {
         try {
             // Create standalone transaction for this DELETE operation
-            logger.info("🔄 DELETE {}: Starting standalone transaction for {}", resourceType, documentKey);
+            logger.debug("🔄 DELETE {}: Starting standalone transaction for {}", resourceType, documentKey);
             context.getCluster().transactions().run(txContext -> {
                 logger.debug("🔄 DELETE {}: Inside transaction context", resourceType);
                 handleSoftDeleteInTransaction(resourceType, resourceId, documentKey, 
                                             txContext, context.getCluster(), context.getBucketName());
                 logger.debug("✅ DELETE {}: Transaction operations completed", resourceType);
             });
-            logger.info("✅ DELETE {}: Standalone transaction committed for {}", resourceType, documentKey);
+            logger.debug("✅ DELETE {}: Standalone transaction committed for {}", resourceType, documentKey);
         } catch (Exception e) {
             logger.error("❌ DELETE {} (standalone transaction) failed: {}", documentKey, e.getMessage());
             throw new RuntimeException("DELETE operation failed: " + e.getMessage(), e);
@@ -109,10 +114,10 @@ public class DeleteService {
         // Step 2: Only create tombstone if resource actually existed (FHIR best practice)
         if (lastVersionId != null) {
             createTombstone(txContext, cluster, bucketName, resourceType, resourceId, lastVersionId);
-            logger.info("🪦 DELETE {}: Resource deleted - archived version {}, tombstone created, live removed", 
+            logger.debug("🪦 DELETE {}: Resource deleted - archived version {}, tombstone created, live removed",
                        documentKey, lastVersionId);
         } else {
-            logger.info("🔍 DELETE {}: Resource didn't exist - no tombstone created (idempotent 204)", 
+            logger.debug("🔍 DELETE {}: Resource didn't exist - no tombstone created (idempotent 204)",
                        documentKey);
         }
         
@@ -127,6 +132,9 @@ public class DeleteService {
      */
     private String copyCurrentResourceToVersions(Cluster cluster, String bucketName, String resourceType, String documentKey) {
         try {
+            // Get the correct target collection for this resource type
+            String targetCollection = collectionRoutingService.getTargetCollection(resourceType);
+            
             // Use same efficient N1QL as PUT service with RETURNING to get version ID directly
             String sql = String.format(
                 "INSERT INTO `%s`.`%s`.`%s` (KEY k, VALUE v) " +
@@ -137,7 +145,7 @@ public class DeleteService {
                 "USE KEYS '%s' " +
                 "RETURNING RAW %s.meta.versionId",
                 bucketName, DEFAULT_SCOPE, VERSIONS_COLLECTION,  // INSERT INTO Versions
-                bucketName, DEFAULT_SCOPE, resourceType,         // FROM ResourceType
+                bucketName, DEFAULT_SCOPE, targetCollection,     // FROM TargetCollection
                 documentKey,                                     // USE KEYS 'Patient/04d74bb4-61a9-45f5-8912-3d30d8029fa7'
                 VERSIONS_COLLECTION                              // RETURNING RAW Versions.meta.versionId
             );
@@ -212,9 +220,12 @@ public class DeleteService {
     private void removeFromLiveCollection(com.couchbase.client.java.transactions.TransactionAttemptContext txContext,
                                         Cluster cluster, String bucketName, String resourceType, String documentKey) {
         try {
+            // Get the correct target collection for this resource type
+            String targetCollection = collectionRoutingService.getTargetCollection(resourceType);
+            
             // Get live collection reference
             com.couchbase.client.java.Collection liveCollection = 
-                cluster.bucket(bucketName).scope(DEFAULT_SCOPE).collection(resourceType);
+                cluster.bucket(bucketName).scope(DEFAULT_SCOPE).collection(targetCollection);
             
             try {
                 // Try to remove the document (idempotent - OK if doesn't exist)
