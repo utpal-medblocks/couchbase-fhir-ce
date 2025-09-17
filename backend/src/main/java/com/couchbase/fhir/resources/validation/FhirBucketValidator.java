@@ -1,19 +1,16 @@
 package com.couchbase.fhir.resources.validation;
 
-import com.couchbase.admin.fhirBucket.service.FhirBucketService;
+import com.couchbase.fhir.resources.service.FhirBucketConfigService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.TimeUnit;
-
 /**
- * Lightweight FHIR bucket validator with caching to minimize performance impact
+ * Lightweight FHIR bucket validator that uses the single source of truth
  * 
- * This validator checks if a bucket is FHIR-enabled before allowing FHIR operations.
- * Uses caching to avoid repeated REST API calls for the same bucket.
+ * This validator checks if a bucket is FHIR-enabled by leveraging the 
+ * FhirBucketConfigService cache - no separate cache needed!
  */
 @Component
 public class FhirBucketValidator {
@@ -21,47 +18,29 @@ public class FhirBucketValidator {
     private static final Logger logger = LoggerFactory.getLogger(FhirBucketValidator.class);
     
     @Autowired
-    private FhirBucketService fhirBucketService;
-    
-    // Cache for bucket validation results to minimize performance impact
-    private final ConcurrentHashMap<String, CacheEntry> bucketCache = new ConcurrentHashMap<>();
-    
-    // Cache TTL in milliseconds (5 minutes)
-    private static final long CACHE_TTL = TimeUnit.MINUTES.toMillis(5);
+    private FhirBucketConfigService fhirBucketConfigService;
     
     /**
-     * Validates if a bucket is FHIR-enabled
+     * Validates if a bucket is FHIR-enabled using the single source of truth
      * @param bucketName The bucket name to validate
      * @param connectionName The connection name
      * @return true if bucket is FHIR-enabled, false otherwise
      */
     public boolean isFhirBucket(String bucketName, String connectionName) {
-        String cacheKey = connectionName + ":" + bucketName;
-        
-        // Check cache first
-        CacheEntry cached = bucketCache.get(cacheKey);
-        if (cached != null && !cached.isExpired()) {
-            logger.debug("🔍 Using cached FHIR bucket validation for {}: {}", cacheKey, cached.isFhir);
-            return cached.isFhir;
-        }
-        
-        // Cache miss or expired - validate via service
         try {
-            boolean isFhir = fhirBucketService.isFhirBucket(bucketName, connectionName);
+            // Use the config service as single source of truth
+            // If it returns a config, the bucket is FHIR-enabled
+            FhirBucketConfigService.FhirBucketConfig config = 
+                fhirBucketConfigService.getFhirBucketConfig(bucketName, connectionName);
             
-            // Cache the result
-            bucketCache.put(cacheKey, new CacheEntry(isFhir, System.currentTimeMillis()));
-            
-            logger.debug("🔍 Validated FHIR bucket {}: {} (cached for {} min)", 
-                        cacheKey, isFhir, CACHE_TTL / 60000);
-            
+            boolean isFhir = (config != null);
+            logger.debug("🔍 FHIR bucket validation for {}:{} = {} (via config service)", 
+                        connectionName, bucketName, isFhir);
             return isFhir;
             
         } catch (Exception e) {
-            logger.warn("❌ Failed to validate FHIR bucket {}: {}", cacheKey, e.getMessage());
-            
-            // On error, cache negative result for shorter time to avoid repeated failures
-            bucketCache.put(cacheKey, new CacheEntry(false, System.currentTimeMillis()));
+            logger.debug("🔍 FHIR bucket validation failed for {}:{} - assuming not FHIR: {}", 
+                        connectionName, bucketName, e.getMessage());
             return false;
         }
     }
@@ -79,36 +58,20 @@ public class FhirBucketValidator {
     }
     
     /**
-     * Clear cache for a specific bucket (useful when bucket status changes)
+     * Clear cache for a specific bucket - delegates to config service
+     * (kept for backward compatibility)
      */
     public void clearCache(String bucketName, String connectionName) {
-        String cacheKey = connectionName + ":" + bucketName;
-        bucketCache.remove(cacheKey);
-        logger.debug("🗑️ Cleared FHIR bucket cache for {}", cacheKey);
+        fhirBucketConfigService.clearConfigCache(bucketName, connectionName);
+        logger.debug("🗑️ Delegated FHIR bucket cache clear for {}:{}", connectionName, bucketName);
     }
     
     /**
-     * Clear all cache entries
+     * Clear all cache entries - delegates to config service
+     * (kept for backward compatibility)
      */
     public void clearAllCache() {
-        bucketCache.clear();
-        logger.debug("🗑️ Cleared all FHIR bucket cache entries");
-    }
-    
-    /**
-     * Cache entry with expiration
-     */
-    private static class CacheEntry {
-        final boolean isFhir;
-        final long timestamp;
-        
-        CacheEntry(boolean isFhir, long timestamp) {
-            this.isFhir = isFhir;
-            this.timestamp = timestamp;
-        }
-        
-        boolean isExpired() {
-            return System.currentTimeMillis() - timestamp > CACHE_TTL;
-        }
+        fhirBucketConfigService.clearAllConfigCache();
+        logger.debug("🗑️ Delegated clear all FHIR bucket cache entries");
     }
 }

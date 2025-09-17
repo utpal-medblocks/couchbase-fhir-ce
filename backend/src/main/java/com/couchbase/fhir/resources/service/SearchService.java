@@ -95,7 +95,7 @@ public class SearchService {
         try {
             bucketValidator.validateFhirBucketOrThrow(bucketName, "default");
         } catch (FhirBucketValidationException e) {
-            throw new InvalidRequestException(e.getMessage());
+            throw e; // Re-throw as-is since it already extends InvalidRequestException
         }
         
         // Build search queries using the same logic as regular search
@@ -157,7 +157,7 @@ public class SearchService {
         try {
             bucketValidator.validateFhirBucketOrThrow(bucketName, "default");
         } catch (FhirBucketValidationException e) {
-            throw new InvalidRequestException(e.getMessage());
+            throw e; // Re-throw as-is since it already extends InvalidRequestException
         }
         
         // Extract and validate parameters

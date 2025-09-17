@@ -5,6 +5,8 @@ import com.couchbase.admin.fhirBucket.config.FhirBucketProperties;
 import com.couchbase.admin.connections.service.ConnectionService;
 import com.couchbase.admin.fts.config.FtsIndexCreator;
 import com.couchbase.client.java.Cluster;
+import com.couchbase.fhir.resources.service.FhirBucketConfigService;
+import com.couchbase.fhir.resources.validation.FhirBucketValidator;
 import com.couchbase.client.java.manager.collection.CollectionManager;
 
 import com.couchbase.client.java.query.QueryOptions;
@@ -27,6 +29,12 @@ public class FhirBucketService {
     
     @Autowired
     private ConnectionService connectionService;
+    
+    @Autowired
+    private FhirBucketConfigService fhirBucketConfigService;
+    
+    @Autowired
+    private FhirBucketValidator fhirBucketValidator;
     
     @Autowired
     private FhirBucketProperties fhirProperties;
@@ -363,9 +371,16 @@ public class FhirBucketService {
             cluster.query(sql);
             // logger.info("Successfully marked bucket {} as FHIR-enabled with custom configuration", bucketName);
             
+            // Clear both caches since we just updated the FHIR configuration
+            fhirBucketConfigService.clearConfigCache(bucketName, connectionName);
+            fhirBucketValidator.clearCache(bucketName, connectionName);
+            
         } catch (Exception e) {
             if (e.getMessage() != null && e.getMessage().contains("already exists")) {
                 // logger.warn("FHIR config document already exists in bucket: {}", bucketName);
+                // Even if it already exists, clear both caches in case it was updated
+                fhirBucketConfigService.clearConfigCache(bucketName, connectionName);
+                fhirBucketValidator.clearCache(bucketName, connectionName);
             } else {
                 // logger.error("Failed to mark bucket {} as FHIR-enabled: {}", bucketName, e.getMessage());
                 throw e;
@@ -401,7 +416,7 @@ public class FhirBucketService {
             
             return buckets;
         } catch (Exception e) {
-            // logger.error("Failed to get FHIR buckets: {}", e.getMessage());
+            logger.error("Failed to get FHIR buckets: {}", e.getMessage());
             return new ArrayList<>();
         }
     }
@@ -462,16 +477,18 @@ public class FhirBucketService {
             
             // If we get a 200, the document exists (FHIR-enabled)
             if (statusCode == 200) {
+                logger.info("FHIR config found for bucket {}", bucketName);
                 return true;
             }
             
             // 404 means document doesn't exist (not FHIR-enabled)
             if (statusCode == 404) {
+                logger.info("No FHIR config found for bucket {}", bucketName);
                 return false;
             }
             
             // Other status codes are unexpected
-            // logger.warn("Unexpected status code {} when checking FHIR config for bucket {}", statusCode, bucketName);
+            logger.warn("Unexpected status code {} when checking FHIR config for bucket {}", statusCode, bucketName);
             return false;
             
         } catch (Exception e) {

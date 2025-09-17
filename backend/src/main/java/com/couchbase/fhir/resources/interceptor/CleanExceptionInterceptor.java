@@ -23,7 +23,7 @@ public class CleanExceptionInterceptor {
     private static final Logger logger = LoggerFactory.getLogger(CleanExceptionInterceptor.class);
 
     @Hook(Pointcut.SERVER_HANDLE_EXCEPTION)
-    public void handleException(RequestDetails theRequestDetails, BaseServerResponseException theException) {
+    public void handleException(RequestDetails theRequestDetails, Throwable theException) {
         if (theRequestDetails instanceof ServletRequestDetails) {
             ServletRequestDetails servletDetails = (ServletRequestDetails) theRequestDetails;
             HttpServletRequest request = servletDetails.getServletRequest();
@@ -53,6 +53,7 @@ public class CleanExceptionInterceptor {
             message.contains("Unknown parameter") ||
             message.contains("Search parameter validation failed") ||
             message.contains("is not FHIR-enabled") ||
+            message.contains("Please convert it to a FHIR bucket first") ||
             message.contains("HAPI-0389") ||
             message.contains("HAPI-0418") ||
             message.contains("No Patient found matching the specified criteria") ||

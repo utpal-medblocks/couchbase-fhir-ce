@@ -45,9 +45,9 @@
     <logger name="com.couchbase.transactions" level="WARN"/>
     <logger name="com.couchbase.tracing" level="WARN"/>
     
-    <logger name="com.couchbase.admin" level="INFO"/>
-    <logger name="com.couchbase.fhir" level="INFO"/>
-    <logger name="com.couchbase.common" level="INFO"/>
+    <logger name="com.couchbase.admin" level="DEBUG"/>
+    <logger name="com.couchbase.fhir" level="DEBUG"/>
+    <logger name="com.couchbase.common" level="DEBUG"/>
     
     <!-- Suppress noisy HAPI FHIR parser warnings -->
     <logger name="ca.uhn.fhir.parser.LenientErrorHandler" level="ERROR"/>
