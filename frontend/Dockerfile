@@ -10,12 +10,13 @@ WORKDIR /usr/share/nginx/html
 RUN rm -rf ./*
 COPY --from=builder /app/dist .
 
+# Copy custom nginx configuration
+COPY nginx-default.conf /etc/nginx/conf.d/default.conf
+
 RUN addgroup -S appgroup && adduser -S appuser -G appgroup
 RUN mkdir -p /var/cache/nginx /var/run /var/log/nginx \
     && chown -R appuser:appgroup /var/cache/nginx /var/run /var/log/nginx
-
 RUN mkdir -p /run && chown -R appuser:appgroup /run
-
 USER appuser
 EXPOSE 80
 CMD ["nginx", "-g", "daemon off;"]

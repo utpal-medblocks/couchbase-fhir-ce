@@ -12,8 +12,6 @@ import java.util.Map;
 import java.util.Set;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.stream.Collectors;
-
 // US Core validation support imports
 import ca.uhn.fhir.context.support.DefaultProfileValidationSupport;
 import org.hl7.fhir.common.hapi.validation.support.ValidationSupportChain;
@@ -45,17 +43,17 @@ public class FhirConfig {
      */
     @Bean
     public FhirContext fhirContext() {
-        logger.info("Initializing FHIR R4 Context for US Core support");
+        logger.debug("Initializing FHIR R4 Context for US Core support");
         
         FhirContext fhirContext = FhirContext.forR4();
         
         // Configure for better performance and US Core compatibility
         fhirContext.getParserOptions().setStripVersionsFromReferences(false);
         fhirContext.getParserOptions().setDontStripVersionsFromReferencesAtPaths("meta");
-        
-        logger.info("FHIR R4 Context initialized successfully");
-        logger.info("FHIR Version: {}", fhirContext.getVersion().getVersion().getFhirVersionString());
-        
+
+        logger.debug("FHIR R4 Context initialized successfully");
+        logger.debug("FHIR Version: {}", fhirContext.getVersion().getVersion().getFhirVersionString());
+
         return fhirContext;
     }
 
@@ -65,7 +63,7 @@ public class FhirConfig {
      */
     @PostConstruct
     public void buildUSCoreSearchParamWhitelist() {
-        logger.info("Building US Core search parameter whitelist...");
+        logger.debug("Building US Core search parameter whitelist...");
         
         try {
             // Create NPM package support to extract US Core search parameters
@@ -73,13 +71,13 @@ public class FhirConfig {
             NpmPackageValidationSupport npmPackageSupport = new NpmPackageValidationSupport(tempContext);
             
             // Load US Core 6.1.0 package
-            logger.info("Loading US Core 6.1.0 package for search parameter extraction...");
+            logger.debug("Loading US Core 6.1.0 package for search parameter extraction...");
             npmPackageSupport.loadPackageFromClasspath("classpath:hl7.fhir.us.core-6.1.0.tgz");
-            logger.info("US Core package loaded successfully");
-            
+            logger.debug("US Core package loaded successfully");
+
             // Extract search parameters
             List<IBaseResource> searchParams = npmPackageSupport.fetchAllSearchParameters();
-            logger.info("Found {} SearchParameter resources in US Core package", searchParams.size());
+            logger.debug("Found {} SearchParameter resources in US Core package", searchParams.size());
             
             int whitelistedCount = 0;
             
@@ -118,7 +116,7 @@ public class FhirConfig {
                 }
             }
             
-            logger.info("US Core search parameter whitelist built successfully: {} parameters across {} resource types", 
+            logger.debug("US Core search parameter whitelist built successfully: {} parameters across {} resource types", 
                        whitelistedCount, usCoreSearchParams.size());
             
             // Log summary of whitelisted parameters by resource type
@@ -127,7 +125,7 @@ public class FhirConfig {
             }
                        
         } catch (Exception e) {
-            logger.warn("Failed to build US Core search parameter whitelist: {}. US Core search parameters will not be available.", e.getMessage());
+            logger.error("Failed to build US Core search parameter whitelist: {}. US Core search parameters will not be available.", e.getMessage());
         }
     }
     
@@ -196,7 +194,6 @@ public class FhirConfig {
      */
     @Bean
     public IParser jsonParser(FhirContext fhirContext) {
-        logger.info("Configuring FHIR JSON Parser for US Core (lenient)");
         
         IParser parser = fhirContext.newJsonParser();
         parser.setPrettyPrint(false);
@@ -215,7 +212,6 @@ public class FhirConfig {
     @Bean
     @Qualifier("strictJsonParser")
     public IParser strictJsonParser(FhirContext fhirContext) {
-        logger.info("Configuring strict FHIR JSON Parser");
         
         IParser parser = fhirContext.newJsonParser();
         parser.setPrettyPrint(false);
@@ -235,16 +231,16 @@ public class FhirConfig {
     @Bean
     @Primary
     public FhirValidator fhirValidator(FhirContext fhirContext) {
-        logger.info("Configuring FHIR Validator with US Core support");
+        logger.debug("Configuring FHIR Validator with US Core support");
         
         try {
             // Create NPM package support for US Core
             NpmPackageValidationSupport npmPackageSupport = new NpmPackageValidationSupport(fhirContext);
             
             // Load US Core 6.1.0 package
-            logger.info("Loading US Core 6.1.0 package for validation...");
+            logger.debug("Loading US Core 6.1.0 package for validation...");
             npmPackageSupport.loadPackageFromClasspath("classpath:hl7.fhir.us.core-6.1.0.tgz");
-            logger.info("US Core package loaded successfully for validation");
+            logger.debug("US Core package loaded successfully for validation");
             
             // Create validation support chain with US Core profiles
             ValidationSupportChain validationSupportChain = new ValidationSupportChain(
@@ -255,7 +251,7 @@ public class FhirConfig {
                 new CommonCodeSystemsTerminologyService(fhirContext)
             );
             
-            logger.info("US Core validation support configured successfully");
+            logger.debug("US Core validation support configured successfully");
             
             // Create validator with instance validator
             FhirValidator validator = fhirContext.newValidator();
@@ -269,14 +265,13 @@ public class FhirConfig {
             instanceValidator.setNoExtensibleWarnings(false);
             validator.registerValidatorModule(instanceValidator);
 
-            logger.info("FHIR Validator with US Core support configured (strict mode)");
+            logger.debug("FHIR Validator with US Core support configured (strict mode)");
             
             return validator;
             
         } catch (Exception e) {
             logger.error("Failed to configure US Core validator: {}", e.getMessage(), e);
-            logger.info("Falling back to basic FHIR validator");
-            
+            logger.error("Falling back to basic FHIR validator");         
             // Fallback to basic validator
             return fhirContext.newValidator();
         }
@@ -288,7 +283,7 @@ public class FhirConfig {
     @Bean
     @Qualifier("basicFhirValidator")
     public FhirValidator basicFhirValidator(FhirContext fhirContext) {
-        logger.info("Configuring basic FHIR R4 validator for sample data loading");
+        logger.debug("Configuring basic FHIR R4 validator for sample data loading");
         
         // Create basic validation support
         DefaultProfileValidationSupport defaultSupport = new DefaultProfileValidationSupport(fhirContext);
@@ -311,8 +306,8 @@ public class FhirConfig {
         instanceValidator.setNoExtensibleWarnings(true);
         
         validator.registerValidatorModule(instanceValidator);
-        
-        logger.info("Basic FHIR R4 validator configured for sample data loading");
+
+        logger.debug("Basic FHIR R4 validator configured for sample data loading");
         return validator;
     }
 }

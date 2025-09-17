@@ -60,12 +60,7 @@ public class FhirMappingConfiguration {
                     if (collectionMapping != null) {
                         config.setCollectionToFtsIndex(new HashMap<>(collectionMapping));
                     }
-                }
-                
-                System.out.println("✅ Loaded FHIR resource mapping configuration:");
-                System.out.println("  - Resource types mapped: " + config.getResourceToCollection().size());
-                System.out.println("  - Collections configured: " + config.getCollectionToFtsIndex().size());
-                
+                }                
             }
         } catch (IOException e) {
             throw new RuntimeException("Failed to load FHIR resource mapping configuration from " + FHIR_CONFIG_PATH, e);
