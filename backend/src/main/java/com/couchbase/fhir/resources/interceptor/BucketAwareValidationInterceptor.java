@@ -10,13 +10,18 @@ import ca.uhn.fhir.interceptor.api.Pointcut;
 import ca.uhn.fhir.interceptor.api.Interceptor;
 import com.couchbase.fhir.resources.config.TenantContextHolder;
 import com.couchbase.fhir.resources.service.FhirBucketConfigService;
+import com.couchbase.fhir.resources.util.FhirErrorResponseUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+import java.io.IOException;
+
 /**
- * Interceptor to handle strict validation by parsing request body before HAPI's default parsing
+ * Interceptor to handle bucket validation and strict validation by parsing request body before HAPI's default parsing
  */
 @Component
 @Interceptor
@@ -32,6 +37,34 @@ public class BucketAwareValidationInterceptor {
 
     @Autowired
     private FhirContext fhirContext;
+    
+    @Autowired
+    private FhirErrorResponseUtil errorResponseUtil;
+
+    // Early validation - before request is processed
+    @Hook(Pointcut.SERVER_INCOMING_REQUEST_PRE_PROCESSED)
+    public boolean validateBucketEnabled(RequestDetails theRequestDetails, HttpServletRequest theRequest, HttpServletResponse theResponse) throws IOException {
+        // Extract bucket name directly from URL path since TenantContextHolder isn't populated yet
+        String bucketName = extractBucketFromPath(theRequest.getRequestURI());
+        
+        try {
+            logger.debug("🔍 Validating bucket is FHIR-enabled: {}", bucketName);
+            
+            // This will throw FhirBucketValidationException if bucket is not FHIR-enabled
+            FhirBucketConfigService.FhirBucketConfig config = configService.getFhirBucketConfig(bucketName);
+            
+            logger.debug("✅ Bucket {} is FHIR-enabled with mode: {}", bucketName, config.getValidationMode());
+            return true; // Continue processing
+            
+        } catch (Exception e) {
+            logger.error("❌ Bucket validation failed for {}: {}", bucketName, e.getMessage());
+            
+            // Use utility to write standardized FHIR error response
+            errorResponseUtil.writeBucketNotEnabledResponse(theResponse, bucketName, e.getMessage());
+            
+            return false; // Stop processing - don't continue to other hooks
+        }
+    }
 
     @Hook(Pointcut.SERVER_INCOMING_REQUEST_PRE_HANDLED)
     public void validateStrictBuckets(RequestDetails theRequestDetails) {
@@ -59,19 +92,22 @@ public class BucketAwareValidationInterceptor {
         }
         String bucketName = TenantContextHolder.getTenantId();
 
-        // ...existing validation logic...
+        // Get bucket config (this should work now since we validated bucket earlier)
         try {
-            logger.debug("🔍 Getting bucket config for: {}", bucketName);
+            logger.debug("🔍 Getting bucket config for strict validation: {}", bucketName);
             FhirBucketConfigService.FhirBucketConfig config = configService.getFhirBucketConfig(bucketName);
             logger.debug("🔍 Bucket config - mode: {}, profile: {}", config.getValidationMode(), config.getValidationProfile());
+            
             if ("strict".equals(config.getValidationMode())) {
                 logger.debug("🔍 APPLYING STRICT VALIDATION for bucket: {}", bucketName);
                 byte[] requestBody = (byte[]) theRequestDetails.getUserData().get(UD_REQ_BODY);
                 logger.debug("🔍 Request body size: {} bytes", requestBody != null ? requestBody.length : 0);
+                
                 if (requestBody != null && requestBody.length > 0) {
                     String jsonContent = new String(requestBody, java.nio.charset.StandardCharsets.UTF_8);
                     IParser strictParser = fhirContext.newJsonParser();
                     strictParser.setParserErrorHandler(new StrictErrorHandler());
+                    
                     try {
                         strictParser.parseResource(jsonContent);
                         logger.debug("🔍 ✅ Strict validation PASSED for bucket: {}", bucketName);
@@ -89,12 +125,17 @@ public class BucketAwareValidationInterceptor {
                 String validationType = "us-core".equals(config.getValidationProfile()) ? "US Core 6.1.0" : "basic FHIR R4";
                 logger.debug("🔍 Using {} {} validation for bucket: {}", config.getValidationMode().toUpperCase(), validationType, bucketName);
             }
+            
         } catch (Exception e) {
             if (e instanceof ca.uhn.fhir.rest.server.exceptions.UnprocessableEntityException) {
                 logger.error("🔍 Re-throwing UnprocessableEntityException: {}", e.getMessage());
                 throw e;
             }
-            logger.error("🔍 Error in bucket validation interceptor for bucket {}: {}", bucketName, e.getMessage(), e);
+            // This shouldn't happen now since we validated the bucket earlier
+            logger.error("🔍 Unexpected error in strict validation for bucket {}: {}", bucketName, e.getMessage(), e);
+            throw new ca.uhn.fhir.rest.server.exceptions.InternalErrorException(
+                "Unexpected error during validation for bucket '" + bucketName + "': " + e.getMessage()
+            );
         }
     }
 
@@ -122,6 +163,12 @@ public class BucketAwareValidationInterceptor {
 
     @Hook(Pointcut.SERVER_HANDLE_EXCEPTION)
     public boolean onException(RequestDetails rd, Throwable e) {
+        // Check for null exception to prevent NPE
+        if (e == null) {
+            logger.warn("🔍 onException called with null exception");
+            return true;
+        }
+        
         RequestPerfBag perfBag = (RequestPerfBag) rd.getUserData().get(UD_PERF_BAG);
         if (perfBag != null) {
             perfBag.setStatus("error");
@@ -158,4 +205,36 @@ public class BucketAwareValidationInterceptor {
             logger.warn("🌐 Failed to log incoming request details: {}", e.getMessage());
         }
     }
+    
+    /**
+     * Extracts bucket name from FHIR URL path
+     * Expected format: /fhir/{bucketName}/ResourceType/...
+     */
+    private String extractBucketFromPath(String requestURI) {
+        if (requestURI == null || requestURI.isEmpty()) {
+            return null;
+        }
+        
+        try {
+            // Split path and find bucket name after /fhir/
+            String[] pathParts = requestURI.split("/");
+            
+            // Look for pattern: /fhir/{bucketName}/...
+            for (int i = 0; i < pathParts.length - 1; i++) {
+                if ("fhir".equals(pathParts[i]) && i + 1 < pathParts.length) {
+                    String bucketName = pathParts[i + 1];
+                    logger.debug("🔍 Extracted bucket name '{}' from path: {}", bucketName, requestURI);
+                    return bucketName;
+                }
+            }
+            
+            logger.warn("🔍 Could not extract bucket name from path: {}", requestURI);
+            return null;
+            
+        } catch (Exception e) {
+            logger.error("🔍 Error extracting bucket name from path {}: {}", requestURI, e.getMessage());
+            return null;
+        }
+    }
+    
 }
