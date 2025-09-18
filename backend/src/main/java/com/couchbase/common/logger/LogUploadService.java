@@ -1,6 +1,6 @@
 package com.couchbase.common.logger;
 
-import org.springframework.stereotype.Service;
+// import org.springframework.stereotype.Service; // Disabled for Beta release
 import org.yaml.snakeyaml.Yaml;
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
@@ -16,7 +16,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.Map;
 
-@Service
+// @Service - Disabled for Beta release
 public class LogUploadService {
     private static final String DEFAULT_CONFIG_FILE = "../config.yaml";
     private static final String DEFAULT_BUCKET = "";

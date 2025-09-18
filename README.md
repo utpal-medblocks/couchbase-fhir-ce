@@ -72,4 +72,4 @@ See [Docker-Deployment.md](./Docker-Deployment.md) for instructions on running t
 
 ## Log Rotation & S3 Uploads
 
-Log Rotation is enabled by default. Rotated logs can be configured to be uploaded to an S3 Bucket for complying with Audit requiremeents. To learn more read [LOG_ROTATION_AND_S3_UPLOAD.md](./LOG_ROTATION_AND_S3_UPLOAD.md)
+Log Rotation is enabled by default. ~~Rotated logs can be configured to be uploaded to an S3 Bucket for complying with Audit requiremeents.~~ **Note: S3 upload functionality is currently disabled for the Beta release.** To learn more read [LOG_ROTATION_AND_S3_UPLOAD.md](./LOG_ROTATION_AND_S3_UPLOAD.md)

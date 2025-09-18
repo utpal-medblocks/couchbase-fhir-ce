@@ -477,13 +477,13 @@ public class FhirBucketService {
             
             // If we get a 200, the document exists (FHIR-enabled)
             if (statusCode == 200) {
-                logger.info("FHIR config found for bucket {}", bucketName);
+                logger.debug("FHIR config found for bucket {}", bucketName);
                 return true;
             }
             
             // 404 means document doesn't exist (not FHIR-enabled)
             if (statusCode == 404) {
-                logger.info("No FHIR config found for bucket {}", bucketName);
+                logger.debug("No FHIR config found for bucket {}", bucketName);
                 return false;
             }
             

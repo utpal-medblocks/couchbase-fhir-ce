@@ -1,15 +1,15 @@
 package com.couchbase.common.logger;
 
-import org.springframework.context.annotation.Configuration;
-import org.springframework.scheduling.annotation.EnableScheduling;
+// import org.springframework.context.annotation.Configuration; // Disabled for Beta release
+// import org.springframework.scheduling.annotation.EnableScheduling; // Disabled for Beta release
 import org.springframework.scheduling.annotation.SchedulingConfigurer;
 import org.springframework.scheduling.config.ScheduledTaskRegistrar;
 import org.springframework.scheduling.support.PeriodicTrigger;
 
 import java.time.Duration;
 
-@Configuration
-@EnableScheduling
+// @Configuration - Disabled for Beta release
+// @EnableScheduling - Disabled for Beta release
 public class SchedulingConfig implements SchedulingConfigurer {
 
     private final LogUploadService logUploadService;

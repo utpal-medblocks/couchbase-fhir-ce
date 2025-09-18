@@ -37,17 +37,17 @@ connection:
 #   serverType: "Capella"
 #   sslEnabled: true
 
-# Log Rotation and S3 Uploads
-logger:
-  log-upload-interval-ms: 3600000
-  log-s3-bucket: bucketname
-  log-s3-prefix: "logs/"
+# Log Rotation and S3 Uploads (DISABLED FOR BETA RELEASE)
+# logger:
+#   log-upload-interval-ms: 3600000
+#   log-s3-bucket: bucketname
+#   log-s3-prefix: "logs/"
 
-# AWS Credentials
-aws:
-  access-key-id: ""
-  secret-access-key: ""
-  region: ""
+# AWS Credentials (DISABLED FOR BETA RELEASE)
+# aws:
+#   access-key-id: ""
+#   secret-access-key: ""
+#   region: ""
 
 fhir:
   profile: "US Core"
