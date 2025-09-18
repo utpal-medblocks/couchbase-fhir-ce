@@ -126,11 +126,11 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
         metaHelper.applyMeta(resource, metaRequest);
         
         if (profiles != null && !profiles.isEmpty()) {
-            logger.info("🔍 ResourceProvider: Added US Core profile: {}", profiles.get(0));
+            logger.debug("🔍 ResourceProvider: Added US Core profile: {}", profiles.get(0));
         }
         
-        logger.info("🔍 ResourceProvider: Processing {} for bucket: {}", resourceClass.getSimpleName(), bucketName);
-        logger.info("🔍 ResourceProvider: Bucket config - strict: {}, enforceUSCore: {}, validationDisabled: {}", 
+        logger.debug("🔍 ResourceProvider: Processing {} for bucket: {}", resourceClass.getSimpleName(), bucketName);
+        logger.debug("🔍 ResourceProvider: Bucket config - strict: {}, enforceUSCore: {}, validationDisabled: {}", 
             bucketConfig.isStrictValidation(), bucketConfig.isEnforceUSCore(), bucketConfig.isValidationDisabled());
         
         // Perform validation based on bucket configuration
@@ -146,13 +146,13 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
                 validator = lenientValidator;
                 validationMode = "lenient (basic FHIR R4)";
             }
-            
-            logger.info("🔍 ResourceProvider: Using {} validation for bucket: {}", validationMode, bucketName);
-            logger.info("🔍 ResourceProvider: About to validate resource with validator: {}", validator.getClass().getSimpleName());
-            
+
+            logger.debug("🔍 ResourceProvider: Using {} validation for bucket: {}", validationMode, bucketName);
+            logger.debug("🔍 ResourceProvider: About to validate resource with validator: {}", validator.getClass().getSimpleName());
+
             ValidationResult result = validator.validateWithResult(resource);
-            
-            logger.info("🔍 ResourceProvider: Validation result - isSuccessful: {}, messageCount: {}", 
+
+            logger.debug("🔍 ResourceProvider: Validation result - isSuccessful: {}, messageCount: {}", 
                 result.isSuccessful(), result.getMessages().size());
             
             if (!result.isSuccessful()) {
@@ -180,10 +180,10 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
                     );
                 }
             } else {
-                logger.info("🔍 ResourceProvider: ✅ FHIR validation PASSED for {} in bucket {}", resourceClass.getSimpleName(), bucketName);
+                logger.debug("🔍 ResourceProvider: ✅ FHIR validation PASSED for {} in bucket {}", resourceClass.getSimpleName(), bucketName);
             }
         } else {
-            logger.info("🔍 ResourceProvider: FHIR Validation DISABLED for bucket: {}", bucketName);
+            logger.debug("🔍 ResourceProvider: FHIR Validation DISABLED for bucket: {}", bucketName);
         }
 
 
@@ -222,7 +222,7 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
         if (theId != null && theId.hasIdPart()) {
             // ID-based PUT: PUT /Patient/123
             String urlId = theId.getIdPart();
-            logger.info("🔄 ResourceProvider: Processing ID-based PUT for {}/{}", resourceType, urlId);
+            logger.debug("🔄 ResourceProvider: Processing ID-based PUT for {}/{}", resourceType, urlId);
             
             // Ensure the resource ID matches the URL parameter
             resource.setId(urlId);
@@ -231,16 +231,16 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
             
         } else {
             // Conditional PUT - use HAPI's already-parsed parameters
-            logger.info("🔄 ResourceProvider: Processing conditional PUT for {}", resourceType);
-            
+            logger.debug("🔄 ResourceProvider: Processing conditional PUT for {}", resourceType);
+
             Map<String, String[]> rawParams = requestDetails.getParameters();
-            Map<String, String> searchCriteria = new LinkedHashMap<>();
+            Map<String, List<String>> searchCriteria = new LinkedHashMap<>();
             for (Map.Entry<String, String[]> e : rawParams.entrySet()) {
                 String key = e.getKey();
                 if (key.startsWith("_")) continue;      // skip control params
                 String[] vals = e.getValue();
                 if (vals != null && vals.length > 0) {
-                    searchCriteria.put(key, vals[0]);   // first value OK for now
+                    searchCriteria.put(key, Arrays.asList(vals));   // preserve all values
                 }
             }
             
@@ -264,7 +264,7 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
         String resourceType = resourceClass.getSimpleName();
         String resourceId = resource.getIdElement() != null ? resource.getIdElement().getIdPart() : "new";
         
-        logger.info("🔄 PUT {}: Processing {} for ID {}", resourceType, 
+        logger.debug("🔄 PUT {}: Processing {} for ID {}", resourceType, 
             isConditionalCreate ? "conditional create" : "update", resourceId);
 
         // Delegate to PutService for proper versioning and tombstone checking
@@ -284,10 +284,10 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
             String versionId = updatedResource.getMeta().getVersionId();
             if ("1".equals(versionId) || isConditionalCreate) {
                 outcome.setCreated(true); // New resource
-                logger.info("✅ PUT {}: Created new resource with ID {}", resourceType, updatedResource.getIdElement().getIdPart());
+                logger.debug("✅ PUT {}: Created new resource with ID {}", resourceType, updatedResource.getIdElement().getIdPart());
             } else {
                 outcome.setCreated(false); // Updated existing
-                logger.info("✅ PUT {}: Updated existing resource with ID {}, version {}", resourceType, updatedResource.getIdElement().getIdPart(), versionId);
+                logger.debug("✅ PUT {}: Updated existing resource with ID {}, version {}", resourceType, updatedResource.getIdElement().getIdPart(), versionId);
             }
             
             return outcome;
@@ -317,17 +317,17 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
         if (theId != null && theId.hasIdPart()) {
             // ID-based DELETE: DELETE /Patient/123
             String resourceId = theId.getIdPart();
-            logger.info("🗑️ DELETE {}: Processing ID-based delete for {}", resourceType, resourceId);
-            
+            logger.debug("🗑️ DELETE {}: Processing ID-based delete for {}", resourceType, resourceId);
+
             return performDelete(resourceType, resourceId, bucketName);
             
         } else {
             // Conditional DELETE: DELETE /Patient?family=Smith
-            logger.info("🗑️ DELETE {}: Processing conditional delete", resourceType);
+            logger.debug("🗑️ DELETE {}: Processing conditional delete", resourceType);
             
             // Extract search parameters from request
             Map<String, String[]> rawParams = requestDetails.getParameters();
-            Map<String, String> searchCriteria = new HashMap<>();
+            Map<String, List<String>> searchCriteria = new HashMap<>();
             
             for (Map.Entry<String, String[]> entry : rawParams.entrySet()) {
                 String paramName = entry.getKey();
@@ -339,7 +339,7 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
                 }
                 
                 if (values != null && values.length > 0) {
-                    searchCriteria.put(paramName, values[0]); // Use first value
+                    searchCriteria.put(paramName, Arrays.asList(values)); // Preserve all values
                 }
             }
             
@@ -359,7 +359,7 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
             switch (resolveResult.getStatus()) {
                 case ZERO:
                     // No matches - return 404 Not Found
-                    logger.info("❌ DELETE {}: No resources found matching criteria", resourceType);
+                    logger.warn("❌ DELETE {}: No resources found matching criteria", resourceType);
                     throw new ResourceNotFoundException("No " + resourceType + " found matching the specified criteria");
                     
                 case MANY:
@@ -372,7 +372,7 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
                 case ONE:
                     // Single match - proceed with delete
                     String resourceId = resolveResult.getResourceId();
-                    logger.info("✅ DELETE {}: Found single match: {}", resourceType, resourceId);
+                    logger.debug("✅ DELETE {}: Found single match: {}", resourceType, resourceId);
                     
                     return performDelete(resourceType, resourceId, bucketName);
                     
@@ -386,7 +386,7 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
      * Perform the actual DELETE operation for both ID-based and conditional deletes
      */
     private MethodOutcome performDelete(String resourceType, String resourceId, String bucketName) throws IOException {
-        logger.info("🗑️ DELETE {}: Processing soft delete for ID {}", resourceType, resourceId);
+        logger.debug("🗑️ DELETE {}: Processing soft delete for ID {}", resourceType, resourceId);
 
         // Delegate to DeleteService for proper tombstone handling
         try {
@@ -399,8 +399,8 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
             // DELETE always returns 204 No Content (idempotent)
             MethodOutcome outcome = new MethodOutcome();
             // Note: No resource or ID set for DELETE - just success indication
-            
-            logger.info("✅ DELETE {}: Soft delete completed for ID {}", resourceType, resourceId);
+
+            logger.debug("✅ DELETE {}: Soft delete completed for ID {}", resourceType, resourceId);
             return outcome;
             
         } catch (Exception e) {
@@ -414,7 +414,7 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
         String resourceId = theId.getIdPart();
         String resourceType = resourceClass.getSimpleName();
         
-        logger.info("🔧 ResourceProvider: Delegating PATCH for {}/{} to PatchService", resourceType, resourceId);
+        logger.debug("🔧 ResourceProvider: Delegating PATCH for {}/{} to PatchService", resourceType, resourceId);
         
         // Validate patch type - we only support JSON Patch
         if (patchType != PatchTypeEnum.JSON_PATCH) {
@@ -454,14 +454,14 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
                 }
             }
             
-            logger.info("🔍 ResourceProvider: Handling pagination request for {} (token: {}, offset: {}, count: {})", 
+            logger.debug("🔍 ResourceProvider: Handling pagination request for {} (token: {}, offset: {}, count: {})", 
                        resourceType, continuationToken, offset, count);
             
             return searchService.handleRevIncludePagination(continuationToken, offset, count);
         }
-        
-        logger.info("🔍 ResourceProvider: Delegating search for {} to SearchService", resourceType);
-        
+
+        logger.debug("🔍 ResourceProvider: Delegating search for {} to SearchService", resourceType);
+
         // Delegate to SearchService for all search operations
         return searchService.search(resourceType, requestDetails);
     }

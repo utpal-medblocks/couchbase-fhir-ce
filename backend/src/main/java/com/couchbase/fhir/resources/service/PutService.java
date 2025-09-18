@@ -13,6 +13,8 @@ import org.springframework.stereotype.Service;
 
 import java.util.List;
 
+import com.couchbase.fhir.resources.service.CollectionRoutingService;
+
 /**
  * Service for handling FHIR PUT operations (create or update resources with client-controlled IDs).
  * PUT operations always use the client-supplied ID and handle proper FHIR versioning.
@@ -33,6 +35,9 @@ public class PutService {
     
     @Autowired
     private DeleteService deleteService;
+    
+    @Autowired
+    private CollectionRoutingService collectionRoutingService;
     
     /**
      * Create or update a FHIR resource via PUT operation.
@@ -149,6 +154,9 @@ public class PutService {
      */
     private int copyExistingResourceToVersions(Cluster cluster, String bucketName, String resourceType, String documentKey) {
         try {
+            // Get the correct target collection for this resource type
+            String targetCollection = collectionRoutingService.getTargetCollection(resourceType);
+            
             // Use efficient N1QL with USE KEYS - get current version and increment
             String sql = String.format(
                 "INSERT INTO `%s`.`%s`.`%s` (KEY k, VALUE v) " +
@@ -159,7 +167,7 @@ public class PutService {
                 "USE KEYS '%s' " +
                 "RETURNING RAW %s.meta.versionId",
                 bucketName, DEFAULT_SCOPE, VERSIONS_COLLECTION,  // INSERT INTO Versions
-                bucketName, DEFAULT_SCOPE, resourceType,         // FROM ResourceType
+                bucketName, DEFAULT_SCOPE, targetCollection,     // FROM TargetCollection
                 documentKey,                                     // USE KEYS 'Patient/simple-patient-1'
                 VERSIONS_COLLECTION                              // RETURNING RAW Versions.meta.versionId
             );
@@ -192,7 +200,12 @@ public class PutService {
      */
     private void updateResourceMetadata(Resource resource, String versionId, String operation) {
         // Apply proper meta using new architecture
-        MetaRequest metaRequest = MetaRequest.forUpdate(null, versionId, null);
+        MetaRequest metaRequest;
+        if ("CREATE".equals(operation) || "1".equals(versionId)) {
+            metaRequest = MetaRequest.forCreate(null, versionId, null);
+        } else {
+            metaRequest = MetaRequest.forUpdate(null, versionId, null);
+        }
         metaHelper.applyMeta(resource, metaRequest);
         
         logger.warn("🏷️ Updated metadata: version={}, operation={}", versionId, operation);
@@ -205,9 +218,12 @@ public class PutService {
                                            Cluster cluster, String bucketName, String resourceType,
                                            String documentKey, Resource resource) {
         try {
+            // Get the correct target collection for this resource type
+            String targetCollection = collectionRoutingService.getTargetCollection(resourceType);
+            
             // Get collection reference
             com.couchbase.client.java.Collection collection = 
-                cluster.bucket(bucketName).scope(DEFAULT_SCOPE).collection(resourceType);
+                cluster.bucket(bucketName).scope(DEFAULT_SCOPE).collection(targetCollection);
             
             // Convert to JSON and upsert (try replace first, then insert if not found)
             String resourceJson = jsonParser.encodeResourceToString(resource);

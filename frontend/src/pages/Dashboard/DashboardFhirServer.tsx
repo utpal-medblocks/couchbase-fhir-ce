@@ -15,14 +15,31 @@ import {
 import { GaugeChart } from "../../components/GuageChart";
 import { tableCellStyle } from "../../styles/styles";
 import { useFhirStore } from "../../store/fhirStore";
+import { haproxyMetricsService } from "../../services/haproxyMetricsService";
 
 const DashboardFhirServer: React.FC = () => {
   const { metrics, error, retrievedAt, fetchMetrics } = useFhirStore();
+  const [haproxyMetrics, setHaproxyMetrics] = React.useState<any>(null);
+  const [haproxyError, setHaproxyError] = React.useState<string | null>(null);
 
   useEffect(() => {
     // Initial fetch when component mounts
     fetchMetrics();
+    fetchHaproxyMetrics();
   }, [fetchMetrics]);
+
+  const fetchHaproxyMetrics = async () => {
+    try {
+      const data = await haproxyMetricsService.getDashboardMetrics();
+      setHaproxyMetrics(data);
+      setHaproxyError(null);
+    } catch (err) {
+      setHaproxyError(
+        err instanceof Error ? err.message : "Failed to fetch HAProxy metrics"
+      );
+      setHaproxyMetrics(null);
+    }
+  };
 
   if (error) {
     return (
@@ -162,126 +179,116 @@ const DashboardFhirServer: React.FC = () => {
         </Box>
       </Box>
 
-      {/* FHIR Operations - Full Width */}
-      <Typography variant="subtitle1" gutterBottom>
-        FHIR Operations
+      {/* Note: FHIR operation-level metrics (READ/CREATE/SEARCH) would require 
+          application-level instrumentation, not available from HAProxy */}
+
+      {/* HAProxy Load Balancer Metrics */}
+      <Typography variant="subtitle1" gutterBottom sx={{ mt: 3 }}>
+        Load Balancer (HAProxy)
       </Typography>
-      <Box sx={{ display: "flex", gap: 2 }}>
-        {/* Read Operations - 33% */}
-        <Box sx={{ width: "33%" }}>
-          <Card variant="outlined">
-            <CardContent sx={{ p: 2, textAlign: "center" }}>
-              <Chip label="READ" size="small" color="success" sx={{ mb: 1 }} />
-              <Typography variant="h4" color="primary.main" gutterBottom>
-                {metrics.operations.read.count.toLocaleString()}
-              </Typography>
-              <Typography variant="body2" color="text.secondary" gutterBottom>
-                operations
-              </Typography>
-              <Box sx={{ display: "flex", flexDirection: "column", gap: 0.5 }}>
-                <Typography variant="body2">
-                  Ops/Sec: {(metrics.operations.read.count / 3600).toFixed(1)}
+      {haproxyError ? (
+        <Alert severity="warning" sx={{ mb: 2 }}>
+          HAProxy metrics unavailable: {haproxyError}
+        </Alert>
+      ) : haproxyMetrics ? (
+        <Box sx={{ display: "flex", gap: 2 }}>
+          {/* Total Requests */}
+          <Box sx={{ width: "25%" }}>
+            <Card variant="outlined">
+              <CardContent sx={{ p: 2, textAlign: "center" }}>
+                <Chip
+                  label="REQUESTS"
+                  size="small"
+                  color="info"
+                  sx={{ mb: 1 }}
+                />
+                <Typography variant="h5" color="primary.main" gutterBottom>
+                  {haproxyMetrics.totalRequests.toLocaleString()}
                 </Typography>
-                <Typography variant="body2">
-                  Avg Latency: {metrics.operations.read.avgLatency}ms
+                <Typography variant="body2" color="text.secondary">
+                  total requests
                 </Typography>
-                <Typography
-                  variant="body2"
-                  color={
-                    metrics.operations.read.successRate > 98
-                      ? "success.main"
-                      : metrics.operations.read.successRate > 95
-                      ? "warning.main"
-                      : "error.main"
-                  }
-                >
-                  Success: {metrics.operations.read.successRate.toFixed(1)}%
-                </Typography>
-              </Box>
-            </CardContent>
-          </Card>
-        </Box>
+              </CardContent>
+            </Card>
+          </Box>
 
-        {/* Create Operations - 33% */}
-        <Box sx={{ width: "33%", borderLeft: "1px solid" }}>
-          <Card variant="outlined">
-            <CardContent sx={{ p: 2, textAlign: "center" }}>
-              <Chip
-                label="CREATE"
-                size="small"
-                color="primary"
-                sx={{ mb: 1 }}
-              />
-              <Typography variant="h4" color="primary.main" gutterBottom>
-                {metrics.operations.create.count.toLocaleString()}
-              </Typography>
-              <Typography variant="body2" color="text.secondary" gutterBottom>
-                operations
-              </Typography>
-              <Box sx={{ display: "flex", flexDirection: "column", gap: 0.5 }}>
-                <Typography variant="body2">
-                  Ops/Sec: {(metrics.operations.create.count / 3600).toFixed(1)}
+          {/* Success Rate */}
+          <Box sx={{ width: "25%" }}>
+            <Card variant="outlined">
+              <CardContent sx={{ p: 2, textAlign: "center" }}>
+                <Chip
+                  label="SUCCESS"
+                  size="small"
+                  color="success"
+                  sx={{ mb: 1 }}
+                />
+                <Typography variant="h5" color="success.main" gutterBottom>
+                  {haproxyMetrics.successRate.toFixed(1)}%
                 </Typography>
-                <Typography variant="body2">
-                  Avg Latency: {metrics.operations.create.avgLatency}ms
+                <Typography variant="body2" color="text.secondary">
+                  success rate
                 </Typography>
-                <Typography
-                  variant="body2"
-                  color={
-                    metrics.operations.create.successRate > 98
-                      ? "success.main"
-                      : metrics.operations.create.successRate > 95
-                      ? "warning.main"
-                      : "error.main"
-                  }
-                >
-                  Success: {metrics.operations.create.successRate.toFixed(1)}%
-                </Typography>
-              </Box>
-            </CardContent>
-          </Card>
-        </Box>
+              </CardContent>
+            </Card>
+          </Box>
 
-        {/* Search Operations - 33% */}
-        <Box sx={{ width: "33%" }}>
-          <Card variant="outlined">
-            <CardContent sx={{ p: 2, textAlign: "center" }}>
-              <Chip
-                label="SEARCH"
-                size="small"
-                color="warning"
-                sx={{ mb: 1 }}
-              />
-              <Typography variant="h4" color="primary.main" gutterBottom>
-                {metrics.operations.search.count.toLocaleString()}
-              </Typography>
-              <Typography variant="body2" color="text.secondary" gutterBottom>
-                operations
-              </Typography>
-              <Box sx={{ display: "flex", flexDirection: "column", gap: 0.5 }}>
-                <Typography variant="body2">
-                  Ops/Sec: {(metrics.operations.search.count / 3600).toFixed(1)}
+          {/* Current Sessions */}
+          <Box sx={{ width: "25%" }}>
+            <Card variant="outlined">
+              <CardContent sx={{ p: 2, textAlign: "center" }}>
+                <Chip
+                  label="SESSIONS"
+                  size="small"
+                  color="warning"
+                  sx={{ mb: 1 }}
+                />
+                <Typography variant="h5" color="warning.main" gutterBottom>
+                  {haproxyMetrics.currentSessions}
                 </Typography>
-                <Typography variant="body2">
-                  Avg Latency: {metrics.operations.search.avgLatency}ms
+                <Typography variant="body2" color="text.secondary">
+                  active sessions
                 </Typography>
-                <Typography
-                  variant="body2"
+              </CardContent>
+            </Card>
+          </Box>
+
+          {/* Status */}
+          <Box sx={{ width: "25%" }}>
+            <Card variant="outlined">
+              <CardContent sx={{ p: 2, textAlign: "center" }}>
+                <Chip
+                  label="STATUS"
+                  size="small"
                   color={
-                    metrics.operations.search.successRate > 98
+                    haproxyMetrics.backendStatus === "UP" ? "success" : "error"
+                  }
+                  sx={{ mb: 1 }}
+                />
+                <Typography
+                  variant="h6"
+                  color={
+                    haproxyMetrics.backendStatus === "UP"
                       ? "success.main"
-                      : metrics.operations.search.successRate > 95
-                      ? "warning.main"
                       : "error.main"
                   }
+                  gutterBottom
                 >
-                  Success: {metrics.operations.search.successRate.toFixed(1)}%
+                  {haproxyMetrics.backendStatus}
                 </Typography>
-              </Box>
-            </CardContent>
-          </Card>
+                <Typography variant="body2" color="text.secondary">
+                  backend status
+                </Typography>
+              </CardContent>
+            </Card>
+          </Box>
         </Box>
-      </Box>
+      ) : (
+        <Box sx={{ textAlign: "center", py: 2 }}>
+          <Typography variant="body2" color="text.secondary">
+            Loading HAProxy metrics...
+          </Typography>
+        </Box>
+      )}
     </Box>
   );
 };

@@ -27,6 +27,7 @@ export interface DocumentMetadata {
   display: string;
   deleted: boolean;
   isCurrentVersion: boolean;
+  resourceType?: string; // Optional - only present for General collection
 }
 
 export interface DocumentMetadataResponse {

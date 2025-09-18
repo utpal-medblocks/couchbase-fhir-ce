@@ -34,7 +34,6 @@ public class BucketMetricsService {
         "kv_vb_resident_items_ratio",  // Resident Ratio
         "kv_ep_cache_miss_ratio",      // Cache Miss Ratio
         "n1ql_request_time",           // Query Request Time in ns
-        "n1ql_service_time",           // Query Execution Time in ns
         "n1ql_requests"                // N1QL Request Rate
     };
 
@@ -79,7 +78,6 @@ public class BucketMetricsService {
             // Add bucket label for specific metrics only (not for kv_ops or n1ql metrics based on working Postman payload)
             if (!"kv_ops".equals(metricName) && 
                 !"n1ql_request_time".equals(metricName) && 
-                !"n1ql_service_time".equals(metricName) && 
                 !"n1ql_requests".equals(metricName)) {
                 metric.add(Map.of("label", "bucket", "value", bucketName));
             }
@@ -95,7 +93,7 @@ public class BucketMetricsService {
             if ("kv_ops".equals(metricName) || "n1ql_requests".equals(metricName)) {
                 request.put("nodesAggregation", "sum");
                 request.put("applyFunctions", Arrays.asList("irate", "sum"));
-            } else if ("n1ql_request_time".equals(metricName) || "n1ql_service_time".equals(metricName)) {
+            } else if ("n1ql_request_time".equals(metricName)) {
                 // For n1ql time metrics, use irate like in working Postman payload
                 request.put("applyFunctions", Arrays.asList("irate"));
                 // No nodesAggregation for n1ql time metrics (matches Postman payload)
@@ -279,8 +277,6 @@ public class BucketMetricsService {
                 return "Cache Miss Ratio";
             case "n1ql_request_time":
                 return "Query Request Time";
-            case "n1ql_service_time":
-                return "Query Execution Time";
             case "n1ql_requests":
                 return "N1QL Request Rate";
             default:
@@ -296,7 +292,6 @@ public class BucketMetricsService {
             case "kv_ep_cache_miss_ratio":
                 return "ratio";
             case "n1ql_request_time":
-            case "n1ql_service_time":
                 return "ns";
             case "n1ql_requests":
                 return "req/sec";

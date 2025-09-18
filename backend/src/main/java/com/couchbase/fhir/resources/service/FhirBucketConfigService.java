@@ -10,7 +10,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
-import java.util.ArrayList;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 
 /**
  * Service to retrieve and manage FHIR bucket configuration settings.
@@ -23,6 +24,10 @@ public class FhirBucketConfigService {
     
     @Autowired
     private ConnectionService connectionService;
+    
+    // Cache for FHIR bucket configurations to avoid repeated Couchbase queries
+    // Key format: "connectionName:bucketName"
+    private final ConcurrentMap<String, FhirBucketConfig> configCache = new ConcurrentHashMap<>();
     
     /**
      * Profile information class
@@ -119,11 +124,25 @@ public class FhirBucketConfigService {
      * Get FHIR configuration for a specific bucket and connection
      */
     public FhirBucketConfig getFhirBucketConfig(String bucketName, String connectionName) {
+        String cacheKey = connectionName + ":" + bucketName;
+        
+        // Check cache first
+        FhirBucketConfig cachedConfig = configCache.get(cacheKey);
+        if (cachedConfig != null) {
+            logger.debug("🚀 Using cached FHIR config for bucket: {} (connection: {})", bucketName, connectionName);
+            return cachedConfig;
+        }
+        
+        // Cache miss - load from Couchbase
+        logger.debug("💾 Loading FHIR config from Couchbase for bucket: {} (connection: {})", bucketName, connectionName);
+        
         try {
             Cluster cluster = connectionService.getConnection(connectionName);
             if (cluster == null) {
                 logger.warn("No active connection found: {}, using default config", connectionName);
-                return getDefaultConfig();
+                FhirBucketConfig defaultConfig = getDefaultConfig();
+                configCache.put(cacheKey, defaultConfig);
+                return defaultConfig;
             }
             
             // Query the FHIR config document
@@ -131,21 +150,35 @@ public class FhirBucketConfigService {
                 "SELECT c.* FROM `%s`.`Admin`.`config` c USE KEYS 'fhir-config'",
                 bucketName
             );
-            
+            logger.debug("Executing query: {}", query);
             QueryResult result = cluster.query(query);
             List<JsonObject> rows = result.rowsAsObject();
             
             if (rows.isEmpty()) {
-                logger.warn("No FHIR config found for bucket: {}, using default config", bucketName);
-                return getDefaultConfig();
+                logger.warn("No FHIR config found for bucket: {}", bucketName);
+                throw new RuntimeException("Bucket '" + bucketName + "' is not FHIR-enabled");
             }
             
             JsonObject configDoc = rows.get(0);
-            return parseConfigDocument(configDoc);
+            FhirBucketConfig config = parseConfigDocument(configDoc);
+            
+            // Cache the loaded configuration
+            configCache.put(cacheKey, config);
+            logger.debug("✅ Cached FHIR config for bucket: {} (connection: {})", bucketName, connectionName);
+            
+            return config;
             
         } catch (Exception e) {
             logger.error("Failed to retrieve FHIR config for bucket: {}, error: {}", bucketName, e.getMessage());
-            return getDefaultConfig();
+            
+            // Fast fail - don't return default config, throw exception
+            if (e.getMessage() != null && e.getMessage().contains("Keyspace not found")) {
+                throw new RuntimeException("Bucket '" + bucketName + "' does not exist");
+            } else if (e.getMessage() != null && e.getMessage().contains("Scope not found")) {
+                throw new RuntimeException("Bucket '" + bucketName + "' is not FHIR-enabled");
+            } else {
+                throw new RuntimeException("Failed to access FHIR configuration for bucket '" + bucketName + "'");
+            }
         }
     }
     
@@ -221,5 +254,41 @@ public class FhirBucketConfigService {
     private String getDefaultConnection() {
         List<String> connections = connectionService.getActiveConnections();
         return connections.isEmpty() ? "default" : connections.get(0);
+    }
+    
+    /**
+     * Clear cached configuration for a specific bucket and connection
+     * Should be called when FHIR configuration is updated
+     */
+    public void clearConfigCache(String bucketName, String connectionName) {
+        String cacheKey = connectionName + ":" + bucketName;
+        configCache.remove(cacheKey);
+        logger.debug("🗑️ Cleared cached FHIR config for bucket: {} (connection: {})", bucketName, connectionName);
+    }
+    
+    /**
+     * Clear cached configuration for a specific bucket (all connections)
+     * Should be called when FHIR configuration is updated
+     */
+    public void clearConfigCache(String bucketName) {
+        configCache.entrySet().removeIf(entry -> entry.getKey().endsWith(":" + bucketName));
+        logger.debug("🗑️ Cleared cached FHIR config for bucket: {} (all connections)", bucketName);
+    }
+    
+    /**
+     * Clear all cached configurations
+     * Useful for development/debugging or when connection changes occur
+     */
+    public void clearAllConfigCache() {
+        int size = configCache.size();
+        configCache.clear();
+        logger.info("🗑️ Cleared all cached FHIR configurations ({} entries)", size);
+    }
+    
+    /**
+     * Get cache statistics for monitoring
+     */
+    public int getCacheSize() {
+        return configCache.size();
     }
 }

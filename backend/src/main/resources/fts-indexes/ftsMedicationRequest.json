@@ -6,8 +6,8 @@
   "sourceName": "",
   "sourceUUID": "",
   "planParams": {
-    "maxPartitionsPerPIndex": 1024,
-    "indexPartitions": 1
+    "maxPartitionsPerPIndex": 171,
+    "indexPartitions": 6
   },
   "params": {
     "doc_config": {
@@ -22,7 +22,7 @@
       "default_datetime_parser": "dateTimeOptional",
       "default_field": "_all",
       "default_mapping": {
-        "dynamic": false,
+        "dynamic": true,
         "enabled": false
       },
       "default_type": "_default",
@@ -32,43 +32,136 @@
       "type_field": "_type",
       "types": {
         "Resources.MedicationRequest": {
+          "default_analyzer": "keyword",
           "dynamic": false,
           "enabled": true,
           "properties": {
-            "authoredon": {
+            "authoredOn": {
               "dynamic": false,
               "enabled": true,
               "fields": [
                 {
-                  "docvalues": true,
                   "index": true,
-                  "name": "authoredon",
+                  "name": "authoredOn",
                   "type": "datetime"
                 }
               ]
             },
             "category": {
-              "dynamic": true,
-              "enabled": true
-            },
-            "deleted": {
               "dynamic": false,
               "enabled": true,
-              "fields": [
-                {
-                  "index": true,
-                  "name": "deleted",
-                  "type": "boolean"
+              "properties": {
+                "coding": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "properties": {
+                    "code": {
+                      "dynamic": false,
+                      "enabled": true,
+                      "fields": [
+                        {
+                          "index": true,
+                          "name": "code",
+                          "type": "text"
+                        }
+                      ]
+                    },
+                    "system": {
+                      "dynamic": false,
+                      "enabled": true,
+                      "fields": [
+                        {
+                          "index": true,
+                          "name": "system",
+                          "type": "text"
+                        }
+                      ]
+                    }
+                  }
                 }
-              ]
+              }
             },
             "dispenseRequest": {
               "dynamic": false,
               "enabled": true,
               "properties": {
+                "numberOfRepeatsAllowed": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "index": true,
+                      "name": "numberOfRepeatsAllowed",
+                      "type": "number"
+                    }
+                  ]
+                },
                 "performer": {
-                  "dynamic": true,
-                  "enabled": true
+                  "dynamic": false,
+                  "enabled": true,
+                  "properties": {
+                    "reference": {
+                      "dynamic": false,
+                      "enabled": true,
+                      "fields": [
+                        {
+                          "index": true,
+                          "name": "reference",
+                          "type": "text"
+                        }
+                      ]
+                    }
+                  }
+                },
+                "quantity": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "properties": {
+                    "code": {
+                      "dynamic": false,
+                      "enabled": true,
+                      "fields": [
+                        {
+                          "index": true,
+                          "name": "code",
+                          "type": "text"
+                        }
+                      ]
+                    },
+                    "system": {
+                      "dynamic": false,
+                      "enabled": true,
+                      "fields": [
+                        {
+                          "index": true,
+                          "name": "system",
+                          "type": "text"
+                        }
+                      ]
+                    },
+                    "unit": {
+                      "dynamic": false,
+                      "enabled": true,
+                      "fields": [
+                        {
+                          "index": true,
+                          "name": "unit",
+                          "type": "text"
+                        }
+                      ]
+                    },
+                    "value": {
+                      "dynamic": false,
+                      "enabled": true,
+                      "fields": [
+                        {
+                          "index": true,
+                          "name": "value",
+                          "type": "number"
+                        }
+                      ]
+                    }
+                  }
                 }
               }
             },
@@ -85,7 +178,6 @@
                       "enabled": true,
                       "fields": [
                         {
-                          "docvalues": true,
                           "index": true,
                           "name": "event",
                           "type": "datetime"
@@ -97,39 +189,97 @@
               }
             },
             "encounter": {
-              "dynamic": true,
-              "enabled": true
+              "dynamic": false,
+              "enabled": true,
+              "properties": {
+                "reference": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "index": true,
+                      "name": "reference",
+                      "type": "text"
+                    }
+                  ]
+                }
+              }
             },
             "id": {
               "dynamic": false,
               "enabled": true,
               "fields": [
                 {
-                  "analyzer": "keyword",
                   "index": true,
                   "name": "id",
                   "type": "text"
                 }
               ]
             },
-            "identifier": {
-              "dynamic": true,
-              "enabled": true
-            },
             "intent": {
-              "dynamic": true,
-              "enabled": true
+              "dynamic": false,
+              "enabled": true,
+              "fields": [
+                {
+                  "index": true,
+                  "name": "intent",
+                  "type": "text"
+                }
+              ]
             },
             "medication": {
-              "dynamic": true,
-              "enabled": true
+              "dynamic": false,
+              "enabled": true,
+              "properties": {
+                "reference": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "index": true,
+                      "name": "reference",
+                      "type": "text"
+                    }
+                  ]
+                }
+              }
             },
             "medicationCodeableConcept": {
-              "dynamic": true,
-              "enabled": true
+              "dynamic": false,
+              "enabled": true,
+              "properties": {
+                "coding": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "properties": {
+                    "code": {
+                      "dynamic": false,
+                      "enabled": true,
+                      "fields": [
+                        {
+                          "index": true,
+                          "name": "code",
+                          "type": "text"
+                        }
+                      ]
+                    },
+                    "system": {
+                      "dynamic": false,
+                      "enabled": true,
+                      "fields": [
+                        {
+                          "index": true,
+                          "name": "system",
+                          "type": "text"
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
             },
             "meta": {
-              "dynamic": false,
+              "dynamic": true,
               "enabled": true,
               "properties": {
                 "lastUpdated": {
@@ -143,14 +293,20 @@
                       "type": "datetime"
                     }
                   ]
-                },
-                "versionId": {
+                }
+              }
+            },
+            "patient": {
+              "dynamic": false,
+              "enabled": true,
+              "properties": {
+                "reference": {
                   "dynamic": false,
                   "enabled": true,
                   "fields": [
                     {
                       "index": true,
-                      "name": "versionId",
+                      "name": "reference",
                       "type": "text"
                     }
                   ]
@@ -158,20 +314,49 @@
               }
             },
             "performer": {
-              "dynamic": true,
-              "enabled": true
-            },
-            "performerType": {
-              "dynamic": true,
-              "enabled": true
+              "dynamic": false,
+              "enabled": true,
+              "properties": {
+                "reference": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "index": true,
+                      "name": "reference",
+                      "type": "text"
+                    }
+                  ]
+                }
+              }
             },
             "priority": {
-              "dynamic": true,
-              "enabled": true
+              "dynamic": false,
+              "enabled": true,
+              "fields": [
+                {
+                  "index": true,
+                  "name": "priority",
+                  "type": "text"
+                }
+              ]
             },
             "requester": {
-              "dynamic": true,
-              "enabled": true
+              "dynamic": false,
+              "enabled": true,
+              "properties": {
+                "reference": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "index": true,
+                      "name": "reference",
+                      "type": "text"
+                    }
+                  ]
+                }
+              }
             },
             "status": {
               "dynamic": false,

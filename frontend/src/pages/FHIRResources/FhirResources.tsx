@@ -450,7 +450,10 @@ export default function FhirResources() {
                   </TableRow>
                 ) : (
                   documentMetadata.map((metadata) => {
-                    const documentKey = `${selectedCollection}/${metadata.id}`;
+                    // For General collection, use resourceType if available, otherwise use collection name
+                    const resourceType =
+                      metadata.resourceType || selectedCollection;
+                    const documentKey = `${resourceType}/${metadata.id}`;
                     const isVersioned = parseInt(metadata.versionId) > 1;
 
                     return (

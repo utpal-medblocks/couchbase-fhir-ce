@@ -6,8 +6,8 @@
   "sourceName": "",
   "sourceUUID": "",
   "planParams": {
-    "maxPartitionsPerPIndex": 1024,
-    "indexPartitions": 1
+    "maxPartitionsPerPIndex": 171,
+    "indexPartitions": 6
   },
   "params": {
     "doc_config": {
@@ -17,12 +17,20 @@
       "type_field": "type"
     },
     "mapping": {
-      "analysis": {},
+      "analysis": {
+        "analyzers": {
+          "keyword_lowercase": {
+            "token_filters": ["to_lower"],
+            "tokenizer": "single",
+            "type": "custom"
+          }
+        }
+      },
       "default_analyzer": "keyword",
       "default_datetime_parser": "dateTimeOptional",
       "default_field": "_all",
       "default_mapping": {
-        "dynamic": false,
+        "dynamic": true,
         "enabled": false
       },
       "default_type": "_default",
@@ -32,6 +40,7 @@
       "type_field": "_type",
       "types": {
         "Resources.Patient": {
+          "default_analyzer": "keyword",
           "dynamic": false,
           "enabled": true,
           "properties": {
@@ -47,15 +56,113 @@
               ]
             },
             "address": {
-              "dynamic": true,
-              "enabled": true
+              "default_analyzer": "keyword_lowercase",
+              "dynamic": false,
+              "enabled": true,
+              "properties": {
+                "city": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "include_term_vectors": true,
+                      "index": true,
+                      "name": "city",
+                      "type": "text"
+                    }
+                  ]
+                },
+                "country": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "include_term_vectors": true,
+                      "index": true,
+                      "name": "country",
+                      "type": "text"
+                    }
+                  ]
+                },
+                "district": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "include_term_vectors": true,
+                      "index": true,
+                      "name": "district",
+                      "type": "text"
+                    }
+                  ]
+                },
+                "line": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "include_term_vectors": true,
+                      "index": true,
+                      "name": "line",
+                      "type": "text"
+                    }
+                  ]
+                },
+                "postalCode": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "include_term_vectors": true,
+                      "index": true,
+                      "name": "postalCode",
+                      "type": "text"
+                    }
+                  ]
+                },
+                "state": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "include_term_vectors": true,
+                      "index": true,
+                      "name": "state",
+                      "type": "text"
+                    }
+                  ]
+                },
+                "text": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "include_term_vectors": true,
+                      "index": true,
+                      "name": "text",
+                      "type": "text"
+                    }
+                  ]
+                },
+                "use": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "include_term_vectors": true,
+                      "index": true,
+                      "name": "use",
+                      "type": "text"
+                    }
+                  ]
+                }
+              }
             },
             "birthDate": {
               "dynamic": false,
               "enabled": true,
               "fields": [
                 {
-                  "docvalues": true,
                   "index": true,
                   "name": "birthDate",
                   "type": "datetime"
@@ -63,35 +170,117 @@
               ]
             },
             "communication": {
-              "dynamic": true,
-              "enabled": true
+              "dynamic": false,
+              "enabled": true,
+              "properties": {
+                "language": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "properties": {
+                    "coding": {
+                      "dynamic": false,
+                      "enabled": true,
+                      "properties": {
+                        "code": {
+                          "dynamic": false,
+                          "enabled": true,
+                          "fields": [
+                            {
+                              "index": true,
+                              "name": "code",
+                              "type": "text"
+                            }
+                          ]
+                        },
+                        "system": {
+                          "dynamic": false,
+                          "enabled": true,
+                          "fields": [
+                            {
+                              "index": true,
+                              "name": "system",
+                              "type": "text"
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              }
             },
             "deceasedDateTime": {
               "dynamic": false,
               "enabled": true,
               "fields": [
                 {
-                  "docvalues": true,
                   "index": true,
                   "name": "deceasedDateTime",
                   "type": "datetime"
                 }
               ]
             },
-            "deleted": {
+            "extension": {
               "dynamic": false,
               "enabled": true,
-              "fields": [
-                {
-                  "index": true,
-                  "name": "deleted",
-                  "type": "boolean"
+              "properties": {
+                "extension": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "properties": {
+                    "url": {
+                      "dynamic": false,
+                      "enabled": true,
+                      "fields": [
+                        {
+                          "index": true,
+                          "name": "url",
+                          "type": "text"
+                        }
+                      ]
+                    },
+                    "valueCoding": {
+                      "dynamic": false,
+                      "enabled": true,
+                      "properties": {
+                        "code": {
+                          "dynamic": false,
+                          "enabled": true,
+                          "fields": [
+                            {
+                              "index": true,
+                              "name": "code",
+                              "type": "text"
+                            }
+                          ]
+                        },
+                        "system": {
+                          "dynamic": false,
+                          "enabled": true,
+                          "fields": [
+                            {
+                              "index": true,
+                              "name": "system",
+                              "type": "text"
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                },
+                "url": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "index": true,
+                      "name": "url",
+                      "type": "text"
+                    }
+                  ]
                 }
-              ]
-            },
-            "extension": {
-              "dynamic": true,
-              "enabled": true
+              }
             },
             "gender": {
               "dynamic": false,
@@ -103,10 +292,6 @@
                   "type": "text"
                 }
               ]
-            },
-            "generalPractitioner": {
-              "dynamic": true,
-              "enabled": true
             },
             "id": {
               "dynamic": false,
@@ -120,22 +305,94 @@
               ]
             },
             "identifier": {
-              "dynamic": true,
-              "enabled": true
-            },
-            "link": {
               "dynamic": false,
               "enabled": true,
               "properties": {
-                "other": {
-                  "dynamic": true,
-                  "enabled": true
+                "system": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "index": true,
+                      "name": "system",
+                      "type": "text"
+                    }
+                  ]
+                },
+                "type": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "properties": {
+                    "coding": {
+                      "dynamic": false,
+                      "enabled": true,
+                      "properties": {
+                        "code": {
+                          "dynamic": false,
+                          "enabled": true,
+                          "fields": [
+                            {
+                              "index": true,
+                              "name": "code",
+                              "type": "text"
+                            }
+                          ]
+                        },
+                        "system": {
+                          "dynamic": false,
+                          "enabled": true,
+                          "fields": [
+                            {
+                              "index": true,
+                              "name": "system",
+                              "type": "text"
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                },
+                "use": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "index": true,
+                      "name": "use",
+                      "type": "text"
+                    }
+                  ]
+                },
+                "value": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "index": true,
+                      "name": "value",
+                      "type": "text"
+                    }
+                  ]
                 }
               }
             },
             "managingOrganization": {
-              "dynamic": true,
-              "enabled": true
+              "dynamic": false,
+              "enabled": true,
+              "properties": {
+                "reference": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "index": true,
+                      "name": "reference",
+                      "type": "text"
+                    }
+                  ]
+                }
+              }
             },
             "meta": {
               "dynamic": false,
@@ -150,17 +407,6 @@
                       "index": true,
                       "name": "lastUpdated",
                       "type": "datetime"
-                    }
-                  ]
-                },
-                "versionId": {
-                  "dynamic": false,
-                  "enabled": true,
-                  "fields": [
-                    {
-                      "index": true,
-                      "name": "versionId",
-                      "type": "text"
                     }
                   ]
                 }
@@ -180,7 +426,8 @@
                       "type": "text"
                     },
                     {
-                      "analyzer": "standard",
+                      "analyzer": "keyword_lowercase",
+                      "include_term_vectors": true,
                       "index": true,
                       "name": "family",
                       "type": "text"
@@ -197,7 +444,8 @@
                       "type": "text"
                     },
                     {
-                      "analyzer": "standard",
+                      "analyzer": "keyword_lowercase",
+                      "include_term_vectors": true,
                       "index": true,
                       "name": "given",
                       "type": "text"
@@ -214,7 +462,8 @@
                       "type": "text"
                     },
                     {
-                      "analyzer": "standard",
+                      "analyzer": "keyword_lowercase",
+                      "include_term_vectors": true,
                       "index": true,
                       "name": "prefix",
                       "type": "text"
@@ -231,7 +480,8 @@
                       "type": "text"
                     },
                     {
-                      "analyzer": "standard",
+                      "analyzer": "keyword_lowercase",
+                      "include_term_vectors": true,
                       "index": true,
                       "name": "suffix",
                       "type": "text"
@@ -248,7 +498,8 @@
                       "type": "text"
                     },
                     {
-                      "analyzer": "standard",
+                      "analyzer": "keyword_lowercase",
+                      "include_term_vectors": true,
                       "index": true,
                       "name": "text",
                       "type": "text"
@@ -258,8 +509,43 @@
               }
             },
             "telecom": {
-              "dynamic": true,
-              "enabled": true
+              "dynamic": false,
+              "enabled": true,
+              "properties": {
+                "system": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "index": true,
+                      "name": "system",
+                      "type": "text"
+                    }
+                  ]
+                },
+                "use": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "index": true,
+                      "name": "use",
+                      "type": "text"
+                    }
+                  ]
+                },
+                "value": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "index": true,
+                      "name": "value",
+                      "type": "text"
+                    }
+                  ]
+                }
+              }
             }
           }
         }

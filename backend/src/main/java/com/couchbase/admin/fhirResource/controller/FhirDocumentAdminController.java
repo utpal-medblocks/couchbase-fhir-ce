@@ -36,7 +36,7 @@ public class FhirDocumentAdminController {
             @RequestParam(required = false) String patientId) {
         
         try {
-            logger.info("Getting document keys for connection: {}, bucket: {}, collection: {}, page: {}, pageSize: {}, patientId: {}", 
+            logger.debug("Getting document keys for connection: {}, bucket: {}, collection: {}, page: {}, pageSize: {}, patientId: {}", 
                        connectionName, bucketName, collectionName, page, pageSize, patientId);
             
             DocumentKeyRequest request = new DocumentKeyRequest();
@@ -70,7 +70,7 @@ public class FhirDocumentAdminController {
             @RequestParam(required = false) String patientId) {
         
         try {
-            logger.info("Getting document metadata for connection: {}, bucket: {}, collection: {}, page: {}, pageSize: {}, patientId: {}", 
+            logger.debug("Getting document metadata for connection: {}, bucket: {}, collection: {}, page: {}, pageSize: {}, patientId: {}", 
                        connectionName, bucketName, collectionName, page, pageSize, patientId);
             
             DocumentKeyRequest request = new DocumentKeyRequest();
@@ -101,7 +101,7 @@ public class FhirDocumentAdminController {
             @RequestParam String documentId) {
         
         try {
-            logger.info("Getting version history for connection: {}, bucket: {}, documentId: {}", 
+            logger.debug("Getting version history for connection: {}, bucket: {}, documentId: {}", 
                        connectionName, bucketName, documentId);
             
             List<DocumentMetadata> versions = fhirDocumentAdminService.getVersionHistory(bucketName, documentId, connectionName);
@@ -126,7 +126,7 @@ public class FhirDocumentAdminController {
             @RequestParam String documentKey) {
         
         try {
-            logger.info("Getting document for connection: {}, bucket: {}, collection: {}, key: {}", 
+            logger.debug("Getting document for connection: {}, bucket: {}, collection: {}, key: {}", 
                        connectionName, bucketName, collectionName, documentKey);
             
             Object document = fhirDocumentAdminService.getDocument(bucketName, collectionName, documentKey, connectionName);

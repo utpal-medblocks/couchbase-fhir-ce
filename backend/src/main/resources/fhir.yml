@@ -26,136 +26,48 @@ fhir:
       name: "Resources"
       description: "FHIR clinical and administrative resource collections"
       collections:
-        - name: "AllergyIntolerance"
-          description: "FHIR AllergyIntolerance resources"
-          indexes:
-
-        - name: "Claim"
-          description: "FHIR Claim resources"
-          indexes:
-
-        - name: "ExplanationOfBenefit"
-          description: "FHIR ExplanationOfBenefit resources"
-          indexes:
-
-        - name: "SupplyDelivery"
-          description: "FHIR SupplyDelivery resources"
-          indexes:
-
-        - name: "Provenance"
-          description: "FHIR Provenance resources"
-          indexes:
-
-        - name: "MedicationAdministration"
-          description: "FHIR MedicationAdministration resources"
-          indexes:
-
-        - name: "ImagingStudy"
-          description: "FHIR ImagingStudy resources"
-          indexes:
-
-        - name: "CarePlan"
-          description: "FHIR CarePlan resources"
-          indexes:
-
-        - name: "CareTeam"
-          description: "FHIR CareTeam resources"
-          indexes:
-
-        - name: "Condition"
-          description: "FHIR Condition resources"
-          indexes:
-
-        - name: "Coverage"
-          description: "FHIR Coverage resources"
-          indexes:
-
-        - name: "Device"
-          description: "FHIR Device resources"
-          indexes:
-
-        - name: "DiagnosticReport"
-          description: "FHIR DiagnosticReport resources"
-          indexes:
-
-        - name: "DocumentReference"
-          description: "FHIR DocumentReference resources"
-          indexes:
-
-        - name: "Encounter"
-          description: "FHIR Encounter resources"
-          indexes:
-
-        - name: "Goal"
-          description: "FHIR Goal resources"
-          indexes:
-
-        - name: "Immunization"
-          description: "FHIR Immunization resources"
-          indexes:
-
-        - name: "Media"
-          description: "FHIR Media resources"
-          indexes:
-
-        - name: "Medication"
-          description: "FHIR Medication resources"
-          indexes:
-
-        - name: "MedicationDispense"
-          description: "FHIR MedicationDispense resources"
-          indexes:
-
-        - name: "MedicationRequest"
-          description: "FHIR MedicationRequest resources"
+        - name: "Patient"
+          description: "Patient - 1 resource"
           indexes:
 
         - name: "Observation"
-          description: "FHIR Observation resources"
+          description: "Observation - 1 resource"
           indexes:
 
-        - name: "Organization"
-          description: "FHIR Organization resources"
+        - name: "Encounter"
+          description: "Encounter - 1 resource"
+          indexes:
+
+        - name: "Condition"
+          description: "Condition - 1 resource"
           indexes:
 
         - name: "Procedure"
-          description: "FHIR Procedure resources"
+          description: "Procedure - 1 resource"
           indexes:
 
-        - name: "Questionnaire"
-          description: "FHIR Questionnaire resources"
+        - name: "MedicationRequest"
+          description: "MedicationRequest - 1 resource"
           indexes:
 
-        - name: "QuestionnaireResponse"
-          description: "FHIR QuestionnaireResponse resources"
+        - name: "DiagnosticReport"
+          description: "DiagnosticReport - 1 resource"
           indexes:
 
-        - name: "RelatedPerson"
-          description: "FHIR RelatedPerson resources"
+        - name: "DocumentReference"
+          description: "DocumentReference - 1 resource"
+          indexes:
+
+        - name: "Immunization"
+          description: "Immunization - 1 resource"
           indexes:
 
         - name: "ServiceRequest"
-          description: "FHIR ServiceRequest resources"
+          description: "ServiceRequest - 1 resource"
           indexes:
 
-        - name: "Specimen"
-          description: "FHIR Specimen resources"
-          indexes:
-
-        - name: "Patient"
-          description: "FHIR Patient resources"
-          indexes:
-
-        - name: "Practitioner"
-          description: "FHIR Practitioner resources"
-          indexes:
-
-        - name: "PractitionerRole"
-          description: "FHIR Practitioner Role resources"
-          indexes:
-
-        - name: "Location"
-          description: "FHIR Location resources"
+        - name: "General"
+          description: "All other resources"
           indexes:
 
         - name: "Versions"
@@ -180,3 +92,35 @@ fhir:
         GROUP BY k
         LETTING inames = ARRAY_AGG(s.name) FILTER (WHERE s.state = 'deferred')
         HAVING ARRAY_LENGTH(inames) > 0
+
+# FHIR Resource to Collection Mapping Configuration
+mapping:
+  resource_to_collection:
+    # Dedicated collections for high-volume/important resources
+    Patient: Patient
+    Observation: Observation
+    Encounter: Encounter
+    Condition: Condition
+    Procedure: Procedure
+    MedicationRequest: MedicationRequest
+    DiagnosticReport: DiagnosticReport
+    DocumentReference: DocumentReference
+    Immunization: Immunization
+    ServiceRequest: ServiceRequest
+
+    # Default fallback - any resource not explicitly listed above goes to General collection
+    _default: General
+
+  collection_to_fts_index:
+    Patient: ftsPatient
+    Observation: ftsObservation
+    Encounter: ftsEncounter
+    Condition: ftsCondition
+    Procedure: ftsProcedure
+    MedicationRequest: ftsMedicationRequest
+    DiagnosticReport: ftsDiagnosticReport
+    DocumentReference: ftsDocumentReference
+    Immunization: ftsImmunization
+    ServiceRequest: ftsServiceRequest
+    General: ftsGeneral
+    Versions: ftsVersions

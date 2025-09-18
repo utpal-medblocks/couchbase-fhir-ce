@@ -78,7 +78,7 @@ public class FhirBundleProcessingService {
         fhirContext.getParserOptions().setStripVersionsFromReferences(false);
         fhirContext.getParserOptions().setOverrideResourceIdWithBundleEntryFullUrl(false);
 
-        logger.info("✅ Bundle Processing Service optimized for high-performance transactions");
+        logger.debug("✅ Bundle Processing Service optimized for high-performance transactions");
     }
 
     /**

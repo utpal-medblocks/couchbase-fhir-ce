@@ -215,12 +215,24 @@ public class FhirDocumentAdminService {
         StringBuilder query = new StringBuilder();
         
         // Base SELECT with FTS search
-        query.append("SELECT ")
-             .append("resource.id, ")
-             .append("resource.meta.versionId, ")
-             .append("resource.meta.lastUpdated, ")
-             .append("resource.meta.tag[0].code, ")
-             .append("resource.meta.tag[0].display ");
+        // For General collection, include resourceType to build correct document keys
+        if ("General".equals(request.getCollectionName())) {
+            query.append("SELECT ")
+                 .append("resource.resourceType, ")
+                 .append("resource.id, ")
+                 .append("resource.meta.versionId, ")
+                 .append("resource.meta.lastUpdated, ")
+                 .append("resource.meta.tag[0].code, ")
+                 .append("resource.meta.tag[0].display ");
+        } else {
+            // For named collections, resourceType = collection name
+            query.append("SELECT ")
+                 .append("resource.id, ")
+                 .append("resource.meta.versionId, ")
+                 .append("resource.meta.lastUpdated, ")
+                 .append("resource.meta.tag[0].code, ")
+                 .append("resource.meta.tag[0].display ");
+        }
         
         query.append("FROM `")
              .append(request.getBucketName())
@@ -409,7 +421,7 @@ public class FhirDocumentAdminService {
     }
     
     /**
-     * Get a specific document by its key
+     * Get a specific document by its key using CB Server REST API
      */
     public Object getDocument(String bucketName, String collectionName, String documentKey, String connectionName) {
         try {
@@ -418,28 +430,57 @@ public class FhirDocumentAdminService {
                 throw new IllegalStateException("No active Couchbase connection found for: " + connectionName);
             }
             
-            // Use KV operation to get the document directly
-            var bucket = cluster.bucket(bucketName);
-            var scope = bucket.scope("Resources");
-            var collection = scope.collection(collectionName);
+            // Use SDK's HTTP client for REST API call (handles certificates automatically)
+            com.couchbase.client.java.http.CouchbaseHttpClient httpClient = cluster.httpClient();
             
-            var getResult = collection.get(documentKey);
-            Object documentContent = getResult.contentAsObject();
+            // Construct the REST path for the document
+            // Format: /pools/default/buckets/{bucket}/scopes/{scope}/collections/{collection}/docs/{docId}
+            // URL encode the document key to handle special characters like slashes
+            String encodedDocumentKey = java.net.URLEncoder.encode(documentKey, java.nio.charset.StandardCharsets.UTF_8);
+            String restPath = String.format("/pools/default/buckets/%s/scopes/Resources/collections/%s/docs/%s",
+                bucketName, collectionName, encodedDocumentKey);
             
-            // Convert JsonObject to Map for proper JSON serialization
-            if (documentContent instanceof com.couchbase.client.java.json.JsonObject) {
-                com.couchbase.client.java.json.JsonObject jsonObj = (com.couchbase.client.java.json.JsonObject) documentContent;
-                // Convert to Map to ensure proper JSON serialization
-                java.util.Map<String, Object> documentMap = jsonObj.toMap();
-                return documentMap;
+            logger.debug("🔍 Fetching document via REST API: {}", restPath);
+            
+            // Make the REST API call
+            com.couchbase.client.java.http.HttpResponse httpResponse = httpClient.get(
+                com.couchbase.client.java.http.HttpTarget.manager(),
+                com.couchbase.client.java.http.HttpPath.of(restPath)
+            );
+            
+            // Check if request was successful
+            if (httpResponse.statusCode() == 200) {
+                String responseBody = new String(httpResponse.content());
+                logger.debug("✅ Document retrieved successfully via REST API");
+                
+                // Parse JSON response to extract just the document content
+                com.fasterxml.jackson.databind.ObjectMapper objectMapper = new com.fasterxml.jackson.databind.ObjectMapper();
+                com.fasterxml.jackson.databind.JsonNode fullResponse = objectMapper.readTree(responseBody);
+                
+                // Extract the "json" field which contains the actual FHIR document as a string
+                if (fullResponse.has("json")) {
+                    String documentJsonString = fullResponse.get("json").asText();
+                    // Parse the JSON string to return the actual FHIR document object
+                    return objectMapper.readValue(documentJsonString, Object.class);
+                } else {
+                    // Fallback: return the full response if "json" field is not found
+                    logger.warn("Response does not contain 'json' field, returning full response");
+                    return objectMapper.readValue(responseBody, Object.class);
+                }
+                
+            } else if (httpResponse.statusCode() == 404) {
+                logger.warn("Document not found with key: {}", documentKey);
+                return null;
+                
+            } else {
+                String errorBody = new String(httpResponse.content());
+                logger.error("REST API call failed with status {}: {}", httpResponse.statusCode(), errorBody);
+                throw new RuntimeException("Failed to fetch document via REST API: HTTP " + httpResponse.statusCode());
             }
             
-            // Return the document content as Object (fallback)
-            return documentContent;
-            
-        } catch (com.couchbase.client.core.error.DocumentNotFoundException e) {
-            logger.warn("Document not found with key: {}", documentKey);
-            return null;
+        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+            logger.error("Failed to parse JSON response for document key: {}", documentKey, e);
+            throw new RuntimeException("Failed to parse document JSON: " + e.getMessage(), e);
         } catch (Exception e) {
             logger.error("Failed to get document with key: {}", documentKey, e);
             throw new RuntimeException("Failed to fetch document: " + e.getMessage(), e);
