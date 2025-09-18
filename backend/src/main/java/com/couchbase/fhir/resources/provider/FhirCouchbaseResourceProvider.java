@@ -3,10 +3,13 @@ package com.couchbase.fhir.resources.provider;
 import ca.uhn.fhir.context.*;
 import ca.uhn.fhir.rest.annotation.*;
 import ca.uhn.fhir.rest.api.MethodOutcome;
+import ca.uhn.fhir.rest.api.server.IBundleProvider;
 import ca.uhn.fhir.rest.api.server.RequestDetails;
+import ca.uhn.fhir.rest.param.DateParam;
 import ca.uhn.fhir.rest.param.NumberParam;
 import ca.uhn.fhir.rest.param.StringParam;
 import ca.uhn.fhir.rest.server.IResourceProvider;
+import ca.uhn.fhir.rest.server.SimpleBundleProvider;
 import ca.uhn.fhir.rest.server.exceptions.InternalErrorException;
 import ca.uhn.fhir.rest.server.exceptions.ResourceNotFoundException;
 import ca.uhn.fhir.rest.server.exceptions.UnprocessableEntityException;
@@ -96,7 +99,31 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
                 new ResourceNotFoundException(theId));
     }
 
-    @Create
+    @History
+    public IBundleProvider history(@IdParam IdType theId , @Since DateParam since) {
+        String bucketName = TenantContextHolder.getTenantId();
+
+        // Validate FHIR bucket before proceeding
+        try {
+            bucketValidator.validateFhirBucketOrThrow(bucketName, "default");
+        } catch (FhirBucketValidationException e) {
+            throw new ca.uhn.fhir.rest.server.exceptions.InvalidRequestException(e.getMessage());
+        }
+
+         Resource currentResource= dao.read(resourceClass.getSimpleName(), theId.getIdPart() , bucketName).orElseThrow(() ->
+                new ResourceNotFoundException(theId));
+
+        @SuppressWarnings("unchecked")
+        List<Resource> olderVersions = (List<Resource>) dao.history(resourceClass.getSimpleName(), theId.getIdPart() , since , bucketName);
+
+        List<Resource> allVersions = new ArrayList<>();
+        allVersions.add(currentResource);
+        allVersions.addAll(olderVersions);
+        return new SimpleBundleProvider(allVersions);
+    }
+
+
+        @Create
     public MethodOutcome create(@ResourceParam T resource) throws IOException {
         String bucketName = TenantContextHolder.getTenantId();
         
