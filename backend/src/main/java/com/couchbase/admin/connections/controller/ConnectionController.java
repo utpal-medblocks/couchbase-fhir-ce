@@ -1,6 +1,5 @@
 package com.couchbase.admin.connections.controller;
 
-import com.couchbase.admin.connections.model.Connection;
 import com.couchbase.admin.connections.model.ConnectionRequest;
 import com.couchbase.admin.connections.model.ConnectionResponse;
 import com.couchbase.admin.connections.service.ConnectionService;
@@ -13,6 +12,7 @@ import org.springframework.web.bind.annotation.*;
 import java.util.List;
 import java.util.Map;
 import java.util.HashMap;
+import java.util.ArrayList;
 
 @RestController
 @RequestMapping("/api/connections")
@@ -50,18 +50,32 @@ public class ConnectionController {
     }
     
     /**
-     * Get list of active connections
+     * Get list of active connections with detailed information
      */
     @GetMapping("/active")
     public ResponseEntity<Map<String, Object>> getActiveConnections() {
         try {
-            List<String> activeConnections = connectionService.getActiveConnections();
+            List<String> activeConnectionNames = connectionService.getActiveConnections();
             String lastError = connectionService.getLastConnectionError();
+            
+            // Build detailed connection info
+            List<Map<String, Object>> detailedConnections = new ArrayList<>();
+            for (String connectionName : activeConnectionNames) {
+                var connectionDetails = connectionService.getConnectionDetails(connectionName);
+                if (connectionDetails != null) {
+                    Map<String, Object> connectionInfo = new HashMap<>();
+                    connectionInfo.put("name", connectionName);
+                    connectionInfo.put("serverType", connectionDetails.getServerType());
+                    connectionInfo.put("isSSL", connectionDetails.isSslEnabled());
+                    detailedConnections.add(connectionInfo);
+                }
+            }
             
             Map<String, Object> response = new HashMap<>();
             response.put("success", true);
-            response.put("connections", activeConnections);
-            response.put("count", activeConnections.size());
+            response.put("connections", activeConnectionNames); // Keep for backward compatibility
+            response.put("detailedConnections", detailedConnections); // New detailed format
+            response.put("count", activeConnectionNames.size());
             
             // Include last connection error if present (for frontend error display)
             if (lastError != null) {
@@ -79,47 +93,6 @@ public class ConnectionController {
         }
     }
     
-    /**
-     * Get all connections (for compatibility)
-     */
-    @GetMapping
-    public ResponseEntity<List<Connection>> getAllConnections() {
-        List<Connection> connections = connectionService.getAllConnections();
-        return ResponseEntity.ok(connections);
-    }
-
-    /**
-     * Get connection by ID
-     */
-    @GetMapping("/{id}")
-    public ResponseEntity<Connection> getConnectionById(@PathVariable String id) {
-        Connection connection = connectionService.getConnectionById(id);
-        if (connection != null) {
-            return ResponseEntity.ok(connection);
-        }
-        return ResponseEntity.notFound().build();
-    }
-
-    /**
-     * Create connection (legacy endpoint)
-     */
-    @PostMapping
-    public ResponseEntity<Connection> createConnectionLegacy(@RequestBody Connection connection) {
-        Connection createdConnection = connectionService.createConnection(connection);
-        return ResponseEntity.ok(createdConnection);
-    }
-
-    /**
-     * Test connection
-     */
-    @PostMapping("/test")
-    public ResponseEntity<Map<String, Object>> testConnection(@RequestBody Connection connection) {
-        boolean isConnected = connectionService.testConnection(connection);
-        Map<String, Object> response = new HashMap<>();
-        response.put("success", isConnected);
-        response.put("message", isConnected ? "Connection successful" : "Connection failed");
-        return ResponseEntity.ok(response);
-    }
     
     /**
      * Close a specific connection

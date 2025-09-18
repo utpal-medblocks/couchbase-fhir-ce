@@ -67,7 +67,7 @@ const DashboardCouchbaseServer: React.FC = () => {
   // Get data with fallbacks for no connection
   const nodes = metrics?.nodes || [];
   const buckets = metrics?.buckets || [];
-  const clusterName = metrics?.clusterName || "No Connection";
+  const clusterName = connection.name;
   const clusterVersion = nodes.length > 0 ? nodes[0].version : "No Connection";
   const serviceQuotas = metrics?.serviceQuotas;
   const services = nodes.length > 0 ? nodes[0].services : [];
@@ -99,10 +99,13 @@ const DashboardCouchbaseServer: React.FC = () => {
   ) => {
     setSelectedBucket(bucketName);
 
-    if (isFhirBucket && connection.name) {
+    if (isFhirBucket && connection.connectionName) {
       try {
         // Fetch FHIR config from API
-        const config = await fetchFhirConfig(connection.name, bucketName);
+        const config = await fetchFhirConfig(
+          connection.connectionName,
+          bucketName
+        );
         setFhirConfig(config);
       } catch (error) {
         console.error(`Failed to fetch FHIR config for ${bucketName}:`, error);
@@ -447,7 +450,7 @@ const DashboardCouchbaseServer: React.FC = () => {
         open={dialogOpen}
         onClose={handleDialogClose}
         bucketName={selectedBucketName}
-        connectionName={connection.name || "default"}
+        connectionName={connection.connectionName || "default"}
         onSuccess={handleConversionSuccess}
       />
     </Box>

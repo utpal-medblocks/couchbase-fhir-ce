@@ -2,29 +2,25 @@ package com.couchbase.admin.fts.config;
 
 import com.couchbase.admin.connections.service.ConnectionService;
 import com.couchbase.client.java.Cluster;
+import com.couchbase.client.java.http.CouchbaseHttpClient;
+import com.couchbase.client.java.http.HttpResponse;
+import com.couchbase.client.java.http.HttpTarget;
+import com.couchbase.client.java.http.HttpPath;
+import com.couchbase.client.java.http.HttpPutOptions;
+import com.couchbase.client.java.http.HttpBody;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.ApplicationRunner;
-import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.support.PathMatchingResourcePatternResolver;
 
-import java.io.IOException;
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.time.Duration;
-import java.util.Arrays;
-import java.util.Base64;
 
 /**
  * FTS Index Creator - Loads individual JSON files and creates FTS indexes
@@ -42,72 +38,11 @@ public class FtsIndexCreator {
     private static final Logger logger = LoggerFactory.getLogger(FtsIndexCreator.class);
     private static final String FTS_INDEXES_PATH = "classpath:fts-indexes/*.json";
     private final ObjectMapper objectMapper = new ObjectMapper();
-    private final HttpClient httpClient = HttpClient.newHttpClient();
     
     @Autowired
     private ConnectionService connectionService;
     
-    /*
-     * @Bean - Commented out to prevent auto-creation on startup
-     * Uncomment if you want indexes created automatically on app start
-     */
-    /*
-    @Bean
-    public ApplicationRunner createFtsIndexes() {
-        return args -> {
-            logger.info("🔍 Starting FTS Index Creation Process...");
-            
-            try {
-                // Find all JSON files in fts-indexes directory
-                PathMatchingResourcePatternResolver resolver = new PathMatchingResourcePatternResolver();
-                Resource[] resources = resolver.getResources(FTS_INDEXES_PATH);
-                
-                if (resources.length == 0) {
-                    logger.info("📋 No FTS index files found in fts-indexes directory");
-                    return;
-                }
-                
-                logger.info("📁 Found {} FTS index files to process", resources.length);
-                
-                // Process each JSON file
-                for (Resource resource : resources) {
-                    try {
-                        processFtsIndexFile(resource);
-                    } catch (Exception e) {
-                        logger.error("❌ Failed to process FTS index file: {}", resource.getFilename(), e);
-                        // Continue with other files even if one fails
-                    }
-                }
-                
-                logger.info("✅ FTS Index Creation Process completed");
-                
-            } catch (Exception e) {
-                logger.error("❌ Failed to initialize FTS Index Creation", e);
-            }
-        };
-    }
-    */
-    
-    private void processFtsIndexFile(Resource resource) throws Exception {
-        String filename = resource.getFilename();
-        logger.info("🔧 Processing FTS index file: {}", filename);
-        
-        // Read the JSON file
-        String jsonContent = new String(resource.getInputStream().readAllBytes());
-        
-        // Parse JSON
-        JsonNode jsonNode = objectMapper.readTree(jsonContent);
-        
-        // Process the JSON (replace bucket names, clear UUIDs)
-        String processedJson = processJsonForCreation(jsonNode, "PLACEHOLDER_BUCKET", filename);
-        
-        logger.info("📝 Processed JSON for {}: Ready for index creation", filename);
-        logger.debug("🔍 Processed JSON content: {}", processedJson);
-        
-        // TODO: Integrate with actual bucket creation process
-        // This will be called during bucket creation with the real bucket name
-        // For now, we're just validating the JSON processing
-    }
+
     
     /**
      * Process JSON for index creation - replace bucket names and clear UUIDs
@@ -144,22 +79,6 @@ public class FtsIndexCreator {
         return filename;
     }
     
-    /**
-     * Replace the bucket part of a 3-part FTS index name
-     * Example: "synthea.Resources.ftsClaim" -> "newBucket.Resources.ftsClaim"
-     */
-    private String replaceIndexNameBucket(String indexName, String newBucketName) {
-        String[] parts = indexName.split("\\.", 3);
-        if (parts.length >= 3) {
-            return newBucketName + "." + parts[1] + "." + parts[2];
-        } else if (parts.length == 2) {
-            return newBucketName + "." + parts[1];
-        } else {
-            // If it's not a 3-part name, just return as-is
-            logger.warn("⚠️ Unexpected FTS index name format: {}. Expected format: bucket.scope.indexName", indexName);
-            return indexName;
-        }
-    }
     
     /**
      * Create FTS index using REST API - to be called during bucket creation
@@ -254,52 +173,46 @@ public class FtsIndexCreator {
     }
     
     /**
-     * Create FTS index via REST API
+     * Create FTS index via REST API using Couchbase SDK's HTTP client
      * PUT /api/bucket/{BUCKET_NAME}/scope/{SCOPE_NAME}/index/{INDEX_NAME}
      */
     private void createFtsIndexViaRest(String connectionName, String bucketName, String indexName, String indexJson) throws Exception {
-        // Get connection details from ConnectionService
-        var connection = connectionService.getConnectionDetails(connectionName);
-        if (connection == null) {
+        // Get the active cluster connection
+        Cluster cluster = connectionService.getConnection(connectionName);
+        if (cluster == null) {
             throw new IllegalStateException("Connection not found: " + connectionName);
         }
         
         // Extract scope from index name (e.g., "bucket.Resources.ftsName" -> "Resources")
         String scopeName = extractScopeFromIndexName(indexName);
         
-        // Get hostname using ConnectionService method
-        String hostname = connectionService.getHostname(connectionName);
+        // Build FTS API path - the SDK's HTTP client handles the full URL construction
+        String apiPath = String.format("/api/bucket/%s/scope/%s/index/%s", bucketName, scopeName, indexName);
         
-        // Build FTS API URL
-        String protocol = connection.isSslEnabled() ? "https" : "http";
-        int port = connection.isSslEnabled() ? 18094 : 8094; // FTS ports
-        String url = String.format("%s://%s:%d/api/bucket/%s/scope/%s/index/%s", 
-                                 protocol, hostname, port, bucketName, scopeName, indexName);
+        logger.info("🔗 Creating FTS index '{}' via Couchbase SDK HTTP client: {}", indexName, apiPath);
         
-        logger.info("🔗 Creating FTS index '{}' via REST: {}", indexName, url);
+        // Use the cluster's HTTP client - this handles SSL certificates and authentication automatically
+        CouchbaseHttpClient httpClient = cluster.httpClient();
         
-        // Create HTTP request
-        HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(url))
+        // Send PUT request using Couchbase SDK's HTTP client
+        HttpResponse response = httpClient.put(
+            HttpTarget.search(), // Use the search (FTS) target
+            HttpPath.of(apiPath),
+            HttpPutOptions.httpPutOptions()
+                .body(HttpBody.json(indexJson))
                 .header("Content-Type", "application/json")
-                .header("Authorization", "Basic " + createBasicAuthHeader(connection.getUsername(), connection.getPassword()))
-                .PUT(HttpRequest.BodyPublishers.ofString(indexJson))
-                .timeout(Duration.ofMinutes(5))
-                .build();
-        
-        // Send request
-        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+        );
         
         if (response.statusCode() >= 200 && response.statusCode() < 300) {
             logger.info("✅ FTS index created successfully: {}", indexName);
         } else if (response.statusCode() == 400 && 
-                   response.body().contains("index with the same name already exists")) {
+                   response.contentAsString().contains("index with the same name already exists")) {
             // Handle the case where index already exists - this should be an update but Couchbase is rejecting it
             logger.warn("⚠️ FTS index '{}' already exists - skipping creation (this should have been an update)", indexName);
-            logger.debug("Response body: {}", response.body());
+            logger.debug("Response body: {}", response.contentAsString());
         } else {
             logger.error("❌ FTS index creation failed: {} - Status: {}, Body: {}", 
-                        indexName, response.statusCode(), response.body());
+                        indexName, response.statusCode(), response.contentAsString());
             throw new RuntimeException("FTS index creation failed with status: " + response.statusCode());
         }
     }
@@ -332,11 +245,4 @@ public class FtsIndexCreator {
         }
     }
     
-    /**
-     * Create Basic Auth header
-     */
-    private String createBasicAuthHeader(String username, String password) {
-        String auth = username + ":" + password;
-        return Base64.getEncoder().encodeToString(auth.getBytes());
-    }
 }

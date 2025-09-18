@@ -1,34 +1,34 @@
 package com.couchbase.admin.fts.service;
 
 import com.couchbase.admin.connections.service.ConnectionService;
-import com.couchbase.admin.connections.service.ConnectionService.ConnectionDetails;
 import com.couchbase.admin.fts.model.FtsMetricsRequest;
 import com.couchbase.admin.fts.model.FtsMetricsResponse;
-import com.fasterxml.jackson.databind.JsonNode;
+import com.couchbase.client.java.Cluster;
+import com.couchbase.client.java.http.CouchbaseHttpClient;
+import com.couchbase.client.java.http.HttpResponse;
+import com.couchbase.client.java.http.HttpTarget;
+import com.couchbase.client.java.http.HttpPath;
+import com.couchbase.client.java.http.HttpPostOptions;
+import com.couchbase.client.java.http.HttpBody;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.http.*;
 import org.springframework.stereotype.Service;
-import org.springframework.web.client.RestTemplate;
 
 import java.util.*;
-import java.util.stream.Collectors;
 
 @Service
 public class FtsMetricsService {
     
     private static final Logger logger = LoggerFactory.getLogger(FtsMetricsService.class);
     private final ObjectMapper objectMapper;
-    private final RestTemplate restTemplate;
 
     @Autowired
     private ConnectionService connectionService;
 
     public FtsMetricsService() {
         this.objectMapper = new ObjectMapper();
-        this.restTemplate = new RestTemplate();
     }
 
     /**
@@ -37,8 +37,8 @@ public class FtsMetricsService {
     public FtsMetricsResponse getFtsMetrics(String connectionName, String bucketName, 
                                           String indexName, FtsMetricsRequest.TimeRange timeRange) {
         try {
-            ConnectionDetails connection = connectionService.getConnectionDetails(connectionName);
-            if (connection == null) {
+            Cluster cluster = connectionService.getConnection(connectionName);
+            if (cluster == null) {
                 logger.error("Connection not found: {}", connectionName);
                 return getEmptyResponse(bucketName, indexName, timeRange.getLabel());
             }
@@ -46,8 +46,8 @@ public class FtsMetricsService {
             // Build the metrics requests (array of requests)
             List<FtsMetricsRequest> requests = buildMetricsRequests(bucketName, indexName, timeRange);
             
-            // Make the API call with array payload
-            Map<String, Object> response = callMetricsApiWithArray(connection, requests);
+            // Make the API call with array payload using SDK's HTTP client
+            Map<String, Object> response = callMetricsApiWithArray(cluster, requests);
             
             if (response == null) {
                 return getEmptyResponse(bucketName, indexName, timeRange.getLabel());
@@ -106,50 +106,36 @@ public class FtsMetricsService {
     }
 
     /**
-     * Make the API call to get metrics with array payload
+     * Make the API call to get metrics with array payload using SDK's HTTP client
      */
-    @SuppressWarnings("unchecked")
-    private Map<String, Object> callMetricsApiWithArray(ConnectionDetails connection, List<FtsMetricsRequest> requests) {
+    private Map<String, Object> callMetricsApiWithArray(Cluster cluster, List<FtsMetricsRequest> requests) {
         try {
-            // Determine port and protocol
-            String connectionString = connection.getConnectionString();
-            boolean isSSL = connection.isSslEnabled();
-            int port = isSSL ? 18091 : 8091; // Management port
-            String protocol = isSSL ? "https" : "http";
-            
-            // Extract hostname from connection string (format: hostname:port or hostname)
-            String hostname = connectionString.split(":")[0];
-            
-            String url = String.format("%s://%s:%d/pools/default/stats/range/", 
-                                     protocol, hostname, port);
-            
-            // Set up authentication
-            String auth = connection.getUsername() + ":" + connection.getPassword();
-            String encodedAuth = Base64.getEncoder().encodeToString(auth.getBytes());
-            
-            HttpHeaders headers = new HttpHeaders();
-            headers.setContentType(MediaType.APPLICATION_JSON);
-            headers.set("Authorization", "Basic " + encodedAuth);
+            // Use the cluster's HTTP client - this handles SSL certificates automatically
+            CouchbaseHttpClient httpClient = cluster.httpClient();
             
             // Convert requests array to JSON string
             String requestJson = objectMapper.writeValueAsString(requests);
-            HttpEntity<String> entity = new HttpEntity<>(requestJson, headers);
             
-            // Making POST request to Couchbase metrics API
+            // Make the API call using SDK's HTTP client
+            HttpResponse response = httpClient.post(
+                HttpTarget.manager(),
+                HttpPath.of("/pools/default/stats/range/"),
+                HttpPostOptions.httpPostOptions()
+                    .body(HttpBody.json(requestJson))
+                    .header("Content-Type", "application/json")
+            );
             
-            ResponseEntity<?> response = restTemplate.exchange(url, HttpMethod.POST, entity, Object.class);
-            
-            if (response.getStatusCode() == HttpStatus.OK && response.getBody() != null) {
+            if (response.statusCode() >= 200 && response.statusCode() < 300) {
                 // Response is an array, not a single object
-                Object responseBody = response.getBody();
-                // Successfully received metrics data
+                String responseBody = response.contentAsString();
+                Object responseData = objectMapper.readValue(responseBody, Object.class);
                 
                 // Wrap array response in a map for consistent handling
                 Map<String, Object> wrappedResponse = new HashMap<>();
-                wrappedResponse.put("responses", responseBody);
+                wrappedResponse.put("responses", responseData);
                 return wrappedResponse;
             } else {
-                logger.warn("Metrics API returned status: {}", response.getStatusCode());
+                logger.warn("Metrics API returned status: {}", response.statusCode());
                 return null;
             }
             

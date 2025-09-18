@@ -15,7 +15,7 @@ const Samples: React.FC = () => {
   // Get connection and bucket information
   const connection = useConnectionStore((state) => state.connection);
   const bucketStore = useBucketStore();
-  const connectionId = connection.name;
+  const connectionId = connection.connectionName;
   const activeBucket = bucketStore.getActiveBucket(connectionId);
   // All buckets use Resources scope only
 

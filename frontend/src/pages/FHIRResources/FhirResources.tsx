@@ -41,7 +41,7 @@ export default function FhirResources() {
   const bucketStore = useBucketStore();
   const { themeMode } = useThemeContext();
 
-  const connectionId = connection.name;
+  const connectionId = connection.connectionName;
 
   // State for component
   const [selectedBucket, setSelectedBucket] = useState("");

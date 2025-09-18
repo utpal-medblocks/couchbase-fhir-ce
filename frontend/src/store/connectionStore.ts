@@ -4,10 +4,12 @@ import axios from "axios";
 // Types for connection details
 interface ConnectionInfo {
   id: string;
-  name: string;
+  name: string; // Display name (e.g., "Couchbase Capella", "Couchbase Server")
+  connectionName: string; // Backend connection identifier (e.g., "default")
   version: string;
   isConnected: boolean;
   isSSL?: boolean; // SSL connection status
+  serverType?: string; // "Server" or "Capella"
 }
 
 // Types for metrics data
@@ -117,6 +119,7 @@ const initialState = {
   connection: {
     id: "No Connection",
     name: "No Connection",
+    connectionName: "No Connection",
     version: "No Connection",
     isConnected: false,
   },
@@ -200,22 +203,56 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
 
         if (response.data.connections) {
           const connections = response.data.connections;
+          const detailedConnections = response.data.detailedConnections;
+
           // console.log(
           //   "🔍 connectionStore: API returned connections",
-          //   connections
+          //   connections,
+          //   "detailed:",
+          //   detailedConnections
           // );
 
           if (connections.length > 0) {
-            const activeConnection = connections[0];
+            const activeConnectionName = connections[0];
 
-            // TODO: Backend should return complete ConnectionInfo including SSL status
-            const connectionInfo: ConnectionInfo = {
-              id: `conn-${activeConnection}`,
-              name: activeConnection,
-              version: "7.6.0", // TODO: Get from backend response
-              isConnected: true,
-              isSSL: false, // TODO: Backend should provide this
-            };
+            // Use detailed connection info if available, otherwise fallback to basic info
+            let connectionInfo: ConnectionInfo;
+
+            if (detailedConnections && detailedConnections.length > 0) {
+              const detailedConnection = detailedConnections[0];
+              const serverType = detailedConnection.serverType || "Server";
+
+              // For Capella, automatically set SSL to true regardless of config
+              const isSSL =
+                serverType === "Capella" ? true : detailedConnection.isSSL;
+
+              // Generate appropriate display name based on server type
+              const displayName =
+                serverType === "Capella"
+                  ? "Couchbase Capella"
+                  : "Couchbase Server";
+
+              connectionInfo = {
+                id: `conn-${activeConnectionName}`,
+                name: displayName,
+                connectionName: activeConnectionName, // Backend connection identifier
+                version: "7.6.0", // TODO: Get from backend response
+                isConnected: true,
+                isSSL: isSSL,
+                serverType: serverType,
+              };
+            } else {
+              // Fallback for backward compatibility
+              connectionInfo = {
+                id: `conn-${activeConnectionName}`,
+                name: "Couchbase Server", // Default fallback
+                connectionName: activeConnectionName, // Backend connection identifier
+                version: "7.6.0",
+                isConnected: true,
+                isSSL: false,
+                serverType: "Server",
+              };
+            }
 
             // console.log(
             //   "✅ connectionStore: Setting connection info",
@@ -229,6 +266,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
               connection: {
                 id: "No Connection",
                 name: "No Connection",
+                connectionName: "No Connection",
                 version: "No Connection",
                 isConnected: false,
               },
@@ -244,6 +282,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
           connection: {
             id: "No Connection",
             name: "No Connection",
+            connectionName: "No Connection",
             version: "No Connection",
             isConnected: false,
           },
@@ -271,6 +310,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
           connection: {
             id: "No Connection",
             name: "No Connection",
+            connectionName: "No Connection",
             version: "No Connection",
             isConnected: false,
           },
@@ -281,6 +321,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
           connection: {
             id: "No Connection",
             name: "No Connection",
+            connectionName: "No Connection",
             version: "No Connection",
             isConnected: false,
           },
@@ -292,7 +333,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
   fetchMetrics: async () => {
     const { connection } = get();
 
-    if (!connection.isConnected || !connection.name) {
+    if (!connection.isConnected || !connection.connectionName) {
       set({ metrics: null, metricsError: null });
       return;
     }
@@ -301,7 +342,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
 
     try {
       const response = await axios.get(`/api/dashboard/metrics`, {
-        params: { connectionName: connection.name },
+        params: { connectionName: connection.connectionName },
         timeout: 5000,
       });
       const metricsData = response.data;

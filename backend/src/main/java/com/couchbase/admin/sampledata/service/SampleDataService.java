@@ -20,6 +20,12 @@ import java.io.ByteArrayInputStream;
 import java.io.InputStream;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.List;
+import java.util.ArrayList;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
@@ -48,6 +54,17 @@ public class SampleDataService {
     private FhirResourceStorageHelper storageHelper;
     
     private final ObjectMapper objectMapper = new ObjectMapper();
+    
+    // Inner class to hold file data for concurrent processing
+    private static class FileData {
+        final String fileName;
+        final byte[] content;
+        
+        FileData(String fileName, byte[] content) {
+            this.fileName = fileName;
+            this.content = content;
+        }
+    }
     
     /**
      * Get the sample data file path based on the sample type
@@ -432,7 +449,7 @@ public class SampleDataService {
             int patientsLoaded = 0;
             
             // First pass: count total files
-            int totalFiles = 0;
+            int fileCount = 0;
             String sampleDataPath = getSampleDataPath(request.getSampleType());
             try (InputStream zipStream = new ClassPathResource(sampleDataPath).getInputStream();
                  ZipInputStream zis = new ZipInputStream(zipStream)) {
@@ -440,10 +457,11 @@ public class SampleDataService {
                 ZipEntry entry;
                 while ((entry = zis.getNextEntry()) != null) {
                     if (shouldProcessEntry(entry)) {
-                        totalFiles++;
+                        fileCount++;
                     }
                 }
             }
+            final int totalFiles = fileCount;
             
             // Notify start
             if (callback != null) {
@@ -453,8 +471,8 @@ public class SampleDataService {
                 callback.onProgress(progress);
             }
             
-            // Second pass: process files
-            int processedFiles = 0;
+            // Second pass: collect all files for concurrent processing
+            List<FileData> filesToProcess = new ArrayList<>();
             try (InputStream zipStream = new ClassPathResource(sampleDataPath).getInputStream();
                  ZipInputStream zis = new ZipInputStream(zipStream)) {
                 
@@ -462,16 +480,6 @@ public class SampleDataService {
                 while ((entry = zis.getNextEntry()) != null) {
                     if (shouldProcessEntry(entry)) {
                         String fileName = entry.getName();
-                        
-                        // Update progress - BEFORE processing file
-                        if (callback != null) {
-                            SampleDataProgress progress = new SampleDataProgress(totalFiles, processedFiles, fileName);
-                            progress.setStatus("IN_PROGRESS");
-                            progress.setMessage("Processing " + fileName + "...");
-                            progress.setResourcesLoaded(resourcesLoaded);
-                            progress.setPatientsLoaded(patientsLoaded);
-                            callback.onProgress(progress);
-                        }
                         
                         // Read the JSON content using ByteArrayOutputStream for dynamic sizing
                         java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream();
@@ -482,33 +490,80 @@ public class SampleDataService {
                         }
                         byte[] jsonBytes = baos.toByteArray();
                         
-                        // Process the data - check if it's a Bundle or individual resource
-                        String jsonContent = new String(jsonBytes, java.nio.charset.StandardCharsets.UTF_8);
-                        Map<String, Integer> resourceCounts = processJsonContent(jsonContent, request.getConnectionName(), request.getBucketName(), request.getSampleType());
-                        resourcesLoaded += resourceCounts.getOrDefault("resources", 0);
-                        patientsLoaded += resourceCounts.getOrDefault("patients", 0);
-                        
-                        processedFiles++;
-                        
-                        // Update progress - AFTER processing file
-                        if (callback != null) {
-                            SampleDataProgress progress = new SampleDataProgress(totalFiles, processedFiles, fileName);
-                            progress.setStatus("IN_PROGRESS");
-                            progress.setMessage("Completed " + fileName + " - " + resourcesLoaded + " resources loaded");
-                            progress.setResourcesLoaded(resourcesLoaded);
-                            progress.setPatientsLoaded(patientsLoaded);
-                            callback.onProgress(progress);
-                        }
-                        
-                        log.info("Processed file {}/{}: {} - {} resources, {} patients loaded so far", 
-                                processedFiles, totalFiles, fileName, resourcesLoaded, patientsLoaded);
+                        filesToProcess.add(new FileData(fileName, jsonBytes));
                     }
                 }
             }
             
+            // Process files concurrently with thread-safe counters
+            AtomicInteger processedFiles = new AtomicInteger(0);
+            AtomicInteger totalResourcesLoaded = new AtomicInteger(0);
+            AtomicInteger totalPatientsLoaded = new AtomicInteger(0);
+            
+            // Create thread pool for concurrent processing (limit to avoid overwhelming Capella)
+            ExecutorService executor = Executors.newFixedThreadPool(Math.min(6, filesToProcess.size()));
+            
+            try {
+                // Process files concurrently
+                List<CompletableFuture<Void>> futures = filesToProcess.stream()
+                    .map(fileData -> CompletableFuture.runAsync(() -> {
+                        try {
+                            String fileName = fileData.fileName;
+                            String jsonContent = new String(fileData.content, java.nio.charset.StandardCharsets.UTF_8);
+                            
+                            // Update progress - BEFORE processing file
+                            if (callback != null) {
+                                int currentProcessed = processedFiles.get();
+                                SampleDataProgress progress = new SampleDataProgress(totalFiles, currentProcessed, fileName);
+                                progress.setStatus("IN_PROGRESS");
+                                progress.setMessage("Processing " + fileName + "...");
+                                progress.setResourcesLoaded(totalResourcesLoaded.get());
+                                progress.setPatientsLoaded(totalPatientsLoaded.get());
+                                callback.onProgress(progress);
+                            }
+                            
+                            // Process the data
+                            Map<String, Integer> resourceCounts = processJsonContent(jsonContent, request.getConnectionName(), request.getBucketName(), request.getSampleType());
+                            int resources = resourceCounts.getOrDefault("resources", 0);
+                            int patients = resourceCounts.getOrDefault("patients", 0);
+                            
+                            // Update counters atomically
+                            totalResourcesLoaded.addAndGet(resources);
+                            totalPatientsLoaded.addAndGet(patients);
+                            int completed = processedFiles.incrementAndGet();
+                            
+                            // Update progress - AFTER processing file
+                            if (callback != null) {
+                                SampleDataProgress progress = new SampleDataProgress(totalFiles, completed, fileName);
+                                progress.setStatus("IN_PROGRESS");
+                                progress.setMessage("Completed " + fileName + " - " + totalResourcesLoaded.get() + " resources loaded");
+                                progress.setResourcesLoaded(totalResourcesLoaded.get());
+                                progress.setPatientsLoaded(totalPatientsLoaded.get());
+                                callback.onProgress(progress);
+                            }
+                            
+                            log.info("Processed file {}/{}: {} - {} resources, {} patients loaded so far", 
+                                    completed, totalFiles, fileName, totalResourcesLoaded.get(), totalPatientsLoaded.get());
+                        } catch (Exception e) {
+                            log.error("Error processing file {}: {}", fileData.fileName, e.getMessage());
+                        }
+                    }, executor))
+                    .collect(java.util.stream.Collectors.toList());
+                
+                // Wait for all files to complete
+                CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
+                
+                // Update final values
+                resourcesLoaded = totalResourcesLoaded.get();
+                patientsLoaded = totalPatientsLoaded.get();
+                
+            } finally {
+                executor.shutdown();
+            }
+            
             // Final progress update
             if (callback != null) {
-                SampleDataProgress progress = new SampleDataProgress(totalFiles, processedFiles, "All files completed");
+                SampleDataProgress progress = new SampleDataProgress(totalFiles, processedFiles.get(), "All files completed");
                 progress.setStatus("COMPLETED");
                 progress.setMessage("Sample data loading completed successfully - " + resourcesLoaded + " resources (" + patientsLoaded + " patients) loaded");
                 progress.setResourcesLoaded(resourcesLoaded);

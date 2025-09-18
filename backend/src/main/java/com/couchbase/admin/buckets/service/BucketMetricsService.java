@@ -4,15 +4,19 @@ import com.couchbase.admin.buckets.model.BucketMetricsResponse;
 import com.couchbase.admin.buckets.model.BucketMetricData;
 import com.couchbase.admin.buckets.model.BucketMetricDataPoint;
 import com.couchbase.admin.connections.service.ConnectionService;
-import com.couchbase.admin.connections.service.ConnectionService.ConnectionDetails;
+import com.couchbase.client.java.Cluster;
+import com.couchbase.client.java.http.CouchbaseHttpClient;
+import com.couchbase.client.java.http.HttpResponse;
+import com.couchbase.client.java.http.HttpTarget;
+import com.couchbase.client.java.http.HttpPath;
+import com.couchbase.client.java.http.HttpPostOptions;
+import com.couchbase.client.java.http.HttpBody;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.http.*;
 import org.springframework.stereotype.Service;
-import org.springframework.web.client.RestTemplate;
 
 import java.util.*;
 
@@ -39,8 +43,8 @@ public class BucketMetricsService {
 
     public BucketMetricsResponse getBucketMetrics(String connectionName, String bucketName, String timeRange) {
         try {
-            ConnectionDetails connection = connectionService.getConnectionDetails(connectionName);
-            if (connection == null) {
+            Cluster cluster = connectionService.getConnection(connectionName);
+            if (cluster == null) {
                 throw new RuntimeException("Connection not found: " + connectionName);
             }
 
@@ -50,8 +54,8 @@ public class BucketMetricsService {
             // Build metrics requests
             List<Map<String, Object>> requests = buildMetricsRequests(bucketName, timeParams);
             
-            // Fetch metrics from Couchbase
-            List<Map<String, Object>> rawResponses = fetchMetricsFromCouchbase(connectionName, connection, requests);
+            // Fetch metrics from Couchbase using SDK's HTTP client
+            List<Map<String, Object>> rawResponses = fetchMetricsFromCouchbase(cluster, requests);
             
             // Process and return structured response
             return processMetricsResponse(rawResponses);
@@ -157,41 +161,30 @@ public class BucketMetricsService {
         return params;
     }
 
-    private List<Map<String, Object>> fetchMetricsFromCouchbase(String connectionName, ConnectionDetails connection, List<Map<String, Object>> requests) {
+    private List<Map<String, Object>> fetchMetricsFromCouchbase(Cluster cluster, List<Map<String, Object>> requests) {
         try {
-            String hostname = connectionService.getHostname(connectionName);
-            int port = connection.isSslEnabled() ? 18091 : 8091;
-            String protocol = connection.isSslEnabled() ? "https" : "http";
-            
-            String url = String.format("%s://%s:%d/pools/default/stats/range/", protocol, hostname, port);
-            
-            // Set up headers
-            HttpHeaders headers = new HttpHeaders();
-            headers.setContentType(MediaType.APPLICATION_JSON);
-            
-            // Add authentication
-            String credentials = connection.getUsername() + ":" + connection.getPassword();
-            String encodedCredentials = Base64.getEncoder().encodeToString(credentials.getBytes());
-            headers.set("Authorization", "Basic " + encodedCredentials);
+            // Use the cluster's HTTP client - this handles SSL certificates automatically
+            CouchbaseHttpClient httpClient = cluster.httpClient();
             
             // Convert requests to JSON
             String requestBody = objectMapper.writeValueAsString(requests);
-            // logger.debug("Bucket metrics request to {}: {}", url, requestBody);
             
-            HttpEntity<String> entity = new HttpEntity<>(requestBody, headers);
+            // Make the request using SDK's HTTP client
+            HttpResponse response = httpClient.post(
+                HttpTarget.manager(),
+                HttpPath.of("/pools/default/stats/range/"),
+                HttpPostOptions.httpPostOptions()
+                    .body(HttpBody.json(requestBody))
+                    .header("Content-Type", "application/json")
+            );
             
-            // Create RestTemplate instance (following pattern from other services)
-            RestTemplate restTemplate = new RestTemplate();
-            
-            // Make the request
-            ResponseEntity<String> response = restTemplate.exchange(url, HttpMethod.POST, entity, String.class);
-            
-            if (response.getStatusCode() == HttpStatus.OK) {
+            if (response.statusCode() >= 200 && response.statusCode() < 300) {
                 // Parse response as list of maps
+                String responseBody = response.contentAsString();
                 TypeReference<List<Map<String, Object>>> typeRef = new TypeReference<List<Map<String, Object>>>() {};
-                return objectMapper.readValue(response.getBody(), typeRef);
+                return objectMapper.readValue(responseBody, typeRef);
             } else {
-                throw new RuntimeException("Failed to fetch metrics: HTTP " + response.getStatusCode());
+                throw new RuntimeException("Failed to fetch metrics: HTTP " + response.statusCode());
             }
         } catch (Exception e) {
             logger.error("Error fetching bucket metrics from Couchbase", e);

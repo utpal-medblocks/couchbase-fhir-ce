@@ -74,7 +74,7 @@ const FTSIndexes = React.memo(function FTSIndexes() {
   );
 
   // Derived state
-  const connectionId = connection?.name;
+  const connectionId = connection?.connectionName;
   const activeBucket = bucketStore.getActiveBucket(connectionId);
   const selectedBucket = activeBucket?.bucketName || "";
   const { indexes, loading, error, progressLoading } = ftsIndexStore;
@@ -406,6 +406,7 @@ const FTSIndexes = React.memo(function FTSIndexes() {
               <Box sx={{ flex: 1, overflow: "auto", px: 2, py: 0 }}>
                 {selectedIndex ? (
                   <FTSIndexTreeDisplay
+                    key={selectedIndex.indexName}
                     ftsIndexData={selectedIndex.indexDefinition}
                   />
                 ) : (
@@ -429,7 +430,7 @@ const FTSIndexes = React.memo(function FTSIndexes() {
               <Box sx={{ flex: 1, overflow: "auto", p: 2 }}>
                 {selectedIndex ? (
                   <FtsMetricsCharts
-                    connectionName={connection?.name || ""}
+                    connectionName={connection?.connectionName || ""}
                     bucketName={selectedIndex.bucketName}
                     indexName={selectedIndex.indexName}
                   />
