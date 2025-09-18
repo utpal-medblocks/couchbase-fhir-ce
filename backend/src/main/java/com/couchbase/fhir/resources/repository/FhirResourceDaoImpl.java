@@ -78,6 +78,40 @@ public class FhirResourceDaoImpl<T extends IBaseResource> implements  FhirResour
         }
     }
 
+
+    @Override
+    public Optional<T> readVersion(String resourceType, String versionId, String id , String bucketName) {
+
+        try{
+            String connectionName =  getDefaultConnection();
+            bucketName = bucketName != null ? bucketName : DEFAULT_BUCKET;
+
+            Cluster cluster = connectionService.getConnection(connectionName);
+            if (cluster == null) {
+                throw new RuntimeException("No active connection found: " + connectionName);
+            }
+
+            String documentKey = resourceType + "/" + id + "/"+versionId;
+
+            String query = collectionRoutingService.buildReadVersionQuery(bucketName, resourceType, id , versionId);
+
+            logger.info("READ version query: {}", query);
+            QueryResult result = cluster.query(query, queryOptions()
+                    .parameters(JsonObject.create().put("key", documentKey)));
+
+            if (result.rowsAsObject().isEmpty()) return Optional.empty();
+
+            JsonObject json = result.rowsAsObject().get(0);
+            @SuppressWarnings("unchecked")
+            T resource = (T) fhirContext.newJsonParser().parseResource(json.toString());
+            return Optional.of(resource);
+
+        } catch (Exception e) {
+            logger.error("Failed to get {}/{}: {}", resourceType, id, e.getMessage());
+            throw new RuntimeException(e);
+        }
+    }
+
     public List<T> history(String resourceType, String id, DateParam since ,  String bucketName) {
         try {
             String connectionName = getDefaultConnection();

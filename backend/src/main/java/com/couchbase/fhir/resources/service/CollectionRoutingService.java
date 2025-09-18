@@ -219,4 +219,16 @@ public class CollectionRoutingService {
         return query.toString();
     }
 
+    public String buildReadVersionQuery(String bucketName, String resourceType,String id , String versionId) {
+        String collection = "Versions";
+        String documentKey = resourceType +"/"+ id + "/" + versionId;
+
+        return String.format(
+                "SELECT c.* " +
+                        "FROM `%s`.`%s`.`%s` c " +
+                        "USE KEYS '%s'",
+                bucketName, DEFAULT_SCOPE, collection, documentKey
+        );
+    }
+
 }

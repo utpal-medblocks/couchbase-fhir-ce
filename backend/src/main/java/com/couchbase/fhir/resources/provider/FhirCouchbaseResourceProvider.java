@@ -99,6 +99,24 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
                 new ResourceNotFoundException(theId));
     }
 
+
+    @Read(version = true)
+    public T readVersion(@IdParam IdType id) {
+        String logicalId = id.getIdPart();
+        String versionId = id.getVersionIdPart();
+
+        String bucketName = TenantContextHolder.getTenantId();
+        try {
+            bucketValidator.validateFhirBucketOrThrow(bucketName, "default");
+        } catch (FhirBucketValidationException e) {
+            throw new ca.uhn.fhir.rest.server.exceptions.InvalidRequestException(e.getMessage());
+        }
+
+        return dao.readVersion(resourceClass.getSimpleName(),versionId ,  logicalId , bucketName).orElseThrow(() ->
+                new ResourceNotFoundException(logicalId));
+
+    }
+
     @History
     public IBundleProvider history(@IdParam IdType theId , @Since DateParam since) {
         String bucketName = TenantContextHolder.getTenantId();
