@@ -66,8 +66,12 @@ public class ConnectionService {
                         env.timeoutConfig().managementTimeout(Duration.ofSeconds(15)); // Shorter timeout for fast failure
                         env.timeoutConfig().kvTimeout(Duration.ofSeconds(30));        // Longer timeout for FHIR document operations and transactions
                         
-                        // Transaction-specific timeouts for FHIR bundle processing
-                        env.transactionsConfig(txn -> txn.timeout(Duration.ofSeconds(60))); // Increase transaction timeout from 15s to 60s
+                        // Transaction-specific timeouts and durability for FHIR bundle processing
+                        env.transactionsConfig(txn -> {
+                            txn.timeout(Duration.ofSeconds(60)); // Increase transaction timeout from 15s to 60s
+                            // For better performance, use majority durability instead of default (which waits for all replicas)
+                            txn.durabilityLevel(com.couchbase.client.core.msg.kv.DurabilityLevel.MAJORITY);
+                        });
                         
                         // Optimize for FHIR workload: KV operations (POST/PUT/Transactions) + SQL++ queries + minimal admin HTTP
                         env.ioConfig().numKvConnections(8);                          // More KV connections for FHIR document operations and transactions

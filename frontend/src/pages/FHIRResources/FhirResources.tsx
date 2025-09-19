@@ -111,14 +111,27 @@ export default function FhirResources() {
     }
   }, [availableBuckets, selectedBucket]);
 
-  // Fetch bucket data on component mount if not already loaded
+  // Fetch bucket data on component mount and set up auto-refresh for collection counts
   useEffect(() => {
+    if (!connectionId) return;
+
+    const refreshCollectionCounts = () => {
+      console.log("🔄 Refreshing collection counts...");
+      return bucketStore.fetchBucketData(connectionId);
+    };
+
+    // Initial fetch
     const buckets = bucketStore.buckets[connectionId] || [];
-    if (connectionId && buckets.length === 0) {
-      // Only fetch if we don't have bucket data already
-      bucketStore.fetchBucketData(connectionId);
+    if (buckets.length === 0) {
+      console.log("🔄 Initial fetch of bucket data for collection counts...");
+      refreshCollectionCounts();
     }
-  }, [connectionId, bucketStore]);
+
+    // Auto-refresh collection counts every 20 seconds to catch document insertions
+    const interval = setInterval(refreshCollectionCounts, 20000);
+
+    return () => clearInterval(interval);
+  }, [connectionId]);
 
   const handleChangePage = (
     _: React.MouseEvent<HTMLButtonElement> | null,
@@ -197,35 +210,9 @@ export default function FhirResources() {
     setSelectedTab(3);
   };
 
-  const fetchDocumentKeys = async (
-    collectionName: string,
-    pageNum: number,
-    pageSize: number
-  ) => {
-    if (!selectedBucket || !connectionId) return;
+  // Manual refresh function removed - collection click now handles refresh
 
-    setDocumentKeysLoading(true);
-    try {
-      const response: DocumentKeyResponse =
-        await fhirResourceService.getDocumentKeys({
-          connectionName: connectionId,
-          bucketName: selectedBucket,
-          collectionName: collectionName,
-          page: pageNum,
-          pageSize: pageSize,
-          patientId: patientId || undefined,
-        });
-
-      setDocumentKeys(response.documentKeys);
-      setTotalCount(response.totalCount);
-    } catch (error) {
-      console.error("Failed to fetch document keys:", error);
-      setDocumentKeys([]);
-      setTotalCount(0);
-    } finally {
-      setDocumentKeysLoading(false);
-    }
-  };
+  // fetchDocumentKeys removed - not used in component (fetchDocumentMetadata is used instead)
 
   const fetchDocumentMetadata = async (
     collectionName: string,
