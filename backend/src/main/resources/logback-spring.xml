@@ -10,7 +10,7 @@
 
     <!-- Overwrite ~/Documents/fhir.log on each startup -->
     <appender name="FILE" class="ch.qos.logback.core.FileAppender">
-        <file>${user.home}/Documents/fhir.log</file>
+        <file>${user.home}/fhir.log</file>
         <append>false</append>
         <encoder>
         <pattern>%d{HH:mm:ss.SSS} %-5level %logger{36} - %msg%n</pattern>
