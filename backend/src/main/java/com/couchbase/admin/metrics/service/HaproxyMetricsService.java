@@ -87,26 +87,20 @@ public class HaproxyMetricsService {
             if (previousSnapshot != null && currentSnapshot != null) {
                 MetricDataPoint dataPoint = calculateMetrics(currentSnapshot, previousSnapshot);
                 
-                // For the first data point, add to ALL buffers to ensure none are empty
-                if (tick == 0) {
-                    STRIDE.keySet().forEach(timeRange -> {
-                        ConcurrentLinkedDeque<MetricDataPoint> buffer = buffers.get(timeRange);
+                // Add to appropriate buffers based on tick and stride
+                STRIDE.forEach((timeRange, stride) -> {
+                    ConcurrentLinkedDeque<MetricDataPoint> buffer = buffers.get(timeRange);
+                    
+                    // Always add to empty buffers OR when stride matches
+                    if (buffer.isEmpty() || tick % stride == 0) {
                         buffer.addLast(dataPoint);
-                    });
-                } else {
-                    // Add to appropriate buffers based on tick and stride
-                    STRIDE.forEach((timeRange, stride) -> {
-                        if (tick % stride == 0) {
-                            ConcurrentLinkedDeque<MetricDataPoint> buffer = buffers.get(timeRange);
-                            buffer.addLast(dataPoint);
-                            
-                            // Maintain capacity
-                            while (buffer.size() > CAPACITY.get(timeRange)) {
-                                buffer.removeFirst();
-                            }
+                        
+                        // Maintain capacity
+                        while (buffer.size() > CAPACITY.get(timeRange)) {
+                            buffer.removeFirst();
                         }
-                    });
-                }
+                    }
+                });
             }
             
             previousSnapshot = currentSnapshot;
