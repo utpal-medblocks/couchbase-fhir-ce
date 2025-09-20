@@ -49,7 +49,14 @@ export interface DocumentRequest {
 
 export class FhirResourceService {
   private static instance: FhirResourceService;
-  private baseURL = "http://localhost:8080/api/fhir-resources";
+  private baseURL: string;
+
+  constructor() {
+    // Use relative URL for containerized deployments (HAProxy routes /api/* to backend)
+    // In development, this will resolve to the dev server proxy
+    // In production, HAProxy routes /api/* requests to the backend service
+    this.baseURL = "/api/fhir-resources";
+  }
 
   static getInstance(): FhirResourceService {
     if (!FhirResourceService.instance) {
