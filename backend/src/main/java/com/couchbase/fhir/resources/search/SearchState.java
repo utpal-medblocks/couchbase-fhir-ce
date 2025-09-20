@@ -22,6 +22,7 @@ public class SearchState {
     private long timestamp;
     private long expiresAt;
     private String bucketName;
+    private String baseUrl; // Base URL extracted from original request for pagination links
     
     // Regular search specific fields
     private Map<String, String> originalSearchCriteria;
@@ -112,6 +113,11 @@ public class SearchState {
         
         public Builder bucketName(String bucketName) {
             searchState.bucketName = bucketName;
+            return this;
+        }
+        
+        public Builder baseUrl(String baseUrl) {
+            searchState.baseUrl = baseUrl;
             return this;
         }
         
@@ -302,5 +308,13 @@ public class SearchState {
     
     public void setPageSize(int pageSize) {
         this.pageSize = pageSize;
+    }
+    
+    public String getBaseUrl() {
+        return baseUrl;
+    }
+    
+    public void setBaseUrl(String baseUrl) {
+        this.baseUrl = baseUrl;
     }
 }

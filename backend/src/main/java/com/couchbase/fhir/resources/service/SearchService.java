@@ -276,7 +276,7 @@ public class SearchService {
         // Check if this is a _include search
         if (include != null) {
             Bundle result = handleIncludeSearch(resourceType, ftsQueries, include, count, 
-                                     summaryMode, elements, totalMode, bucketName);
+                                     summaryMode, elements, totalMode, bucketName, requestDetails);
             RequestPerfBagUtils.addTiming(requestDetails, "search_service", System.currentTimeMillis() - searchStartMs);
             RequestPerfBagUtils.addCount(requestDetails, "search_results", result.getTotal());
             return result;
@@ -285,7 +285,7 @@ public class SearchService {
         // Check if this is a chained search
         if (chainParam != null) {
             Bundle result = handleChainSearch(resourceType, ftsQueries, chainParam, count,
-                                   sortFields, summaryMode, elements, totalMode, bucketName);
+                                   sortFields, summaryMode, elements, totalMode, bucketName, requestDetails);
             RequestPerfBagUtils.addTiming(requestDetails, "search_service", System.currentTimeMillis() - searchStartMs);
             RequestPerfBagUtils.addCount(requestDetails, "search_results", result.getTotal());
             return result;
@@ -760,6 +760,7 @@ public class SearchService {
             
             // Only create SearchState if there are actually more results to paginate
             if (totalRevIncludeCount > revIncludeResources.size()) {
+                String baseUrl = extractBaseUrl(requestDetails, bucketName);
                 SearchState searchState = SearchState.builder()
                     .searchType("revinclude")
                     .primaryResourceType(primaryResourceType)
@@ -771,6 +772,7 @@ public class SearchService {
                     .currentRevIncludeOffset(revIncludeResources.size())  // Next offset = actual number of revinclude resources returned
                     .pageSize(count)
                     .bucketName(bucketName)
+                    .baseUrl(baseUrl)
                     .totalRevIncludeResources(totalRevIncludeCount)
                     .build();
                 
@@ -815,7 +817,7 @@ public class SearchService {
         if (continuationToken != null && totalRevIncludeCount > revIncludeResources.size()) {
             bundle.addLink()
                     .setRelation("next")
-                    .setUrl(buildNextPageUrl(continuationToken, revIncludeResources.size(), primaryResourceType, bucketName, count));
+                    .setUrl(buildNextPageUrl(continuationToken, revIncludeResources.size(), primaryResourceType, bucketName, count, extractBaseUrl(requestDetails, bucketName)));
         }
         
         logger.info("🔍 Returning _revinclude bundle: {} primary + {} revinclude resources", 
@@ -830,7 +832,7 @@ public class SearchService {
     private Bundle handleIncludeSearch(String primaryResourceType, List<SearchQuery> ftsQueries,
                                      Include include, int count,
                                      SummaryEnum summaryMode, Set<String> elements,
-                                     String totalMode, String bucketName) {
+                                     String totalMode, String bucketName, RequestDetails requestDetails) {
         
         logger.debug("🔍 Handling _include search: {} -> {}", primaryResourceType, include.getValue());
         logger.debug("🔍 HAPI Include details - ParamType: '{}', ParamName: '{}', ParamTargetType: '{}'", 
@@ -887,6 +889,7 @@ public class SearchService {
         logger.debug("🔍 Found {} {} resources", includedResources.size(), targetResourceType);
         
         // Step 4: Create search state for pagination (reuse revInclude fields for include)
+        String baseUrl = extractBaseUrl(requestDetails, bucketName);
         SearchState searchState = SearchState.builder()
             .searchType("include")
             .primaryResourceType(primaryResourceType)
@@ -898,6 +901,7 @@ public class SearchService {
             .currentPrimaryOffset(primaryResources.size()) // Current primary resources processed
             .pageSize(count)
             .bucketName(bucketName)
+            .baseUrl(baseUrl)
             .build();
         
         // Get total count of included resources (all Patient IDs that could be included)
@@ -938,7 +942,7 @@ public class SearchService {
             // Assume there might be more primary resources (we'd need total count for accuracy)
             bundle.addLink()
                     .setRelation("next")
-                    .setUrl(buildNextPageUrl(continuationToken, searchState.getCurrentPrimaryOffset(), primaryResourceType, bucketName, count));
+                    .setUrl(buildNextPageUrl(continuationToken, searchState.getCurrentPrimaryOffset(), primaryResourceType, bucketName, count, searchState.getBaseUrl()));
         }
         
         logger.debug("🔍 Returning _include bundle: {} primary + {} included resources", 
@@ -953,7 +957,7 @@ public class SearchService {
     private Bundle handleChainSearch(String primaryResourceType, List<SearchQuery> ftsQueries,
                                    ChainParam chainParam, int count, List<SortField> sortFields,
                                    SummaryEnum summaryMode, Set<String> elements,
-                                   String totalMode, String bucketName) {
+                                   String totalMode, String bucketName, RequestDetails requestDetails) {
 
         logger.debug("🔗 Handling chained search: {} with chain {}", primaryResourceType, chainParam);
 
@@ -996,6 +1000,7 @@ public class SearchService {
         );
         
         // Step 4: Create search state for pagination
+        String baseUrl = extractBaseUrl(requestDetails, bucketName);
         SearchState searchState = SearchState.builder()
             .searchType("chain")
             .primaryResourceType(primaryResourceType)
@@ -1006,6 +1011,7 @@ public class SearchService {
             .currentPrimaryOffset(primaryResources.size())
             .pageSize(count)
             .bucketName(bucketName)
+            .baseUrl(baseUrl)
             // Store chain-specific data using existing fields
             .revIncludeResourceType(chainParam.getTargetResourceType()) // Reuse for chain target type
             .revIncludeSearchParam(chainParam.getReferenceFieldPath()) // Store resolved reference field path for pagination
@@ -1033,7 +1039,7 @@ public class SearchService {
         if (primaryResources.size() == count && searchState.getCurrentPrimaryOffset() < totalPrimaryResourceCount) {
             bundle.addLink()
                     .setRelation("next")
-                    .setUrl(buildNextPageUrl(continuationToken, searchState.getCurrentPrimaryOffset(), primaryResourceType, bucketName, count));
+                    .setUrl(buildNextPageUrl(continuationToken, searchState.getCurrentPrimaryOffset(), primaryResourceType, bucketName, count, searchState.getBaseUrl()));
         }
         
         logger.debug("🔗 Returning chained search bundle: {} results, total: {}", primaryResources.size(), totalPrimaryResourceCount);
@@ -1103,7 +1109,7 @@ public class SearchService {
         if (searchState.hasMoreRevIncludeResources()) {
             bundle.addLink()
                     .setRelation("next")
-                    .setUrl(buildNextPageUrl(continuationToken, searchState.getCurrentRevIncludeOffset(), searchState.getRevIncludeResourceType(), searchState.getBucketName(), searchState.getPageSize()));
+                    .setUrl(buildNextPageUrl(continuationToken, searchState.getCurrentRevIncludeOffset(), searchState.getRevIncludeResourceType(), searchState.getBucketName(), searchState.getPageSize(), searchState.getBaseUrl()));
         }
         
         return bundle;
@@ -1150,7 +1156,7 @@ public class SearchService {
         if (searchState.hasMoreRegularResults()) {
             bundle.addLink()
                     .setRelation("next")
-                    .setUrl(buildNextPageUrl(continuationToken, searchState.getCurrentPrimaryOffset(), searchState.getPrimaryResourceType(), searchState.getBucketName(), searchState.getPageSize()));
+                    .setUrl(buildNextPageUrl(continuationToken, searchState.getCurrentPrimaryOffset(), searchState.getPrimaryResourceType(), searchState.getBucketName(), searchState.getPageSize(), searchState.getBaseUrl()));
         }
         
         logger.info("🔍 Returning regular pagination: {} results", results.size());
@@ -1217,7 +1223,7 @@ public class SearchService {
             // Assume there might be more (we'd need accurate total count)
             bundle.addLink()
                     .setRelation("next")
-                    .setUrl(buildNextPageUrl(continuationToken, searchState.getCurrentPrimaryOffset(), searchState.getPrimaryResourceType(), searchState.getBucketName(), searchState.getPageSize()));
+                    .setUrl(buildNextPageUrl(continuationToken, searchState.getCurrentPrimaryOffset(), searchState.getPrimaryResourceType(), searchState.getBucketName(), searchState.getPageSize(), searchState.getBaseUrl()));
         }
         
         logger.info("🔍 Returning include pagination: {} primary + {} included resources", primaryResources.size(), includedResources.size());
@@ -1414,10 +1420,53 @@ public class SearchService {
         return bundle;
     }
     
+    /**
+     * Extract base URL from RequestDetails for pagination links
+     * Format: http://hostname:port/fhir/bucketName
+     */
+    private String extractBaseUrl(RequestDetails requestDetails, String bucketName) {
+        if (requestDetails == null) {
+            return null;
+        }
+        
+        try {
+            String completeUrl = requestDetails.getCompleteUrl();
+            if (completeUrl != null) {
+                // Extract everything up to and including /fhir/bucketName
+                // Example: http://ec2-13-219-88-60.compute-1.amazonaws.com/fhir/test/Patient?...
+                // Should return: http://ec2-13-219-88-60.compute-1.amazonaws.com/fhir/test
+                int fhirIndex = completeUrl.indexOf("/fhir/");
+                if (fhirIndex != -1) {
+                    int bucketEndIndex = completeUrl.indexOf("/", fhirIndex + 6); // 6 = length of "/fhir/"
+                    if (bucketEndIndex != -1) {
+                        return completeUrl.substring(0, bucketEndIndex);
+                    } else {
+                        // No resource type after bucket, might be a bucket-level request
+                        int queryIndex = completeUrl.indexOf("?", fhirIndex + 6);
+                        if (queryIndex != -1) {
+                            return completeUrl.substring(0, queryIndex);
+                        } else {
+                            return completeUrl;
+                        }
+                    }
+                }
+            }
+        } catch (Exception e) {
+            logger.warn("Failed to extract base URL from request details: {}", e.getMessage());
+        }
+        
+        return null;
+    }
+    
     private String buildNextPageUrl(String continuationToken, int offset, String resourceType, String bucketName, int count) {
-        // TODO: Get proper base URL from request context
-        // For now, construct the full URL manually using the correct bucket name
-        String baseUrl = "http://localhost:8080/fhir/" + bucketName;
+        return buildNextPageUrl(continuationToken, offset, resourceType, bucketName, count, null);
+    }
+    
+    private String buildNextPageUrl(String continuationToken, int offset, String resourceType, String bucketName, int count, String baseUrl) {
+        // Use provided base URL or fall back to localhost
+        if (baseUrl == null) {
+            baseUrl = "http://localhost:8080/fhir/" + bucketName;
+        }
         
         // Use different parameter names that HAPI might handle better
         // Use _page instead of _getpages to avoid HAPI validation issues
@@ -1502,6 +1551,7 @@ public class SearchService {
             totalCount = getAccurateCount(ftsQueries, resourceType, bucketName);
             
             // Only create SearchState when pagination is actually needed
+            String baseUrl = extractBaseUrl(requestDetails, bucketName);
             SearchState searchState = SearchState.builder()
                 .searchType("regular")
                 .primaryResourceType(resourceType)
@@ -1512,6 +1562,7 @@ public class SearchService {
                 .currentPrimaryOffset(results.size())
                 .pageSize(count)
                 .bucketName(bucketName)
+                .baseUrl(baseUrl)
                 .build();
             
             continuationToken = searchStateManager.storeSearchState(searchState);
@@ -1541,7 +1592,7 @@ public class SearchService {
         if (continuationToken != null && totalCount > results.size()) {
             bundle.addLink()
                     .setRelation("next")
-                    .setUrl(buildNextPageUrl(continuationToken, results.size(), resourceType, bucketName, count));
+                    .setUrl(buildNextPageUrl(continuationToken, results.size(), resourceType, bucketName, count, extractBaseUrl(requestDetails, bucketName)));
         }
         
         logger.info("🔍 Returning paginated regular search: {} results, total: {}", results.size(), totalCount);
@@ -1827,7 +1878,7 @@ public class SearchService {
         if (primaryResources.size() == count && searchState.getCurrentPrimaryOffset() < searchState.getTotalPrimaryResources()) {
             bundle.addLink()
                     .setRelation("next")
-                    .setUrl(buildNextPageUrl(continuationToken, searchState.getCurrentPrimaryOffset(), searchState.getPrimaryResourceType(), searchState.getBucketName(), searchState.getPageSize()));
+                    .setUrl(buildNextPageUrl(continuationToken, searchState.getCurrentPrimaryOffset(), searchState.getPrimaryResourceType(), searchState.getBucketName(), searchState.getPageSize(), searchState.getBaseUrl()));
         }
         
         logger.info("🔗 Returning chain pagination: {} results", primaryResources.size());
