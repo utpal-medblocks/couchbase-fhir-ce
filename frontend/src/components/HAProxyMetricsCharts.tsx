@@ -475,22 +475,18 @@ const HAProxyMetricsCharts: React.FC<HAProxyMetricsChartsProps> = ({
       title: "Operations/Concurrency",
       metrics: [
         { key: "currentRate", label: "Current Rate", unit: "req/s" },
-        { key: "maxRate", label: "Max Rate", unit: "req/s" },
         {
           key: "currentConnections",
           label: "Current Connections",
           unit: "conn",
         },
       ],
-      colors: [chartColors.primary, chartColors.info, chartColors.teal],
+      colors: [chartColors.primary, chartColors.teal],
     },
     {
       title: "Latency",
-      metrics: [
-        { key: "currentLatency", label: "Current", unit: "ms" },
-        { key: "maxLatency", label: "Max", unit: "ms" },
-      ],
-      colors: [chartColors.warning, chartColors.error],
+      metrics: [{ key: "currentLatency", label: "Current", unit: "ms" }],
+      colors: [chartColors.warning],
     },
     {
       title: "Health",
