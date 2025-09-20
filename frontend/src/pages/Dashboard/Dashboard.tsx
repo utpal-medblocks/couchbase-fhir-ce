@@ -23,7 +23,7 @@ export default function Dashboard() {
       <Typography variant="h6" gutterBottom>
         Dashboard
       </Typography>
-      <Typography
+      {/* <Typography
         variant="subtitle2"
         color="text.secondary"
         sx={{ lineHeight: 1.0 }}
@@ -31,7 +31,7 @@ export default function Dashboard() {
         <em>
           Welcome to Couchbase FHIR CE - Community Edition Version {version}
         </em>
-      </Typography>
+      </Typography> */}
 
       {/* Connection Status - Only show real connection errors after backend is ready */}
       {error && backendReady && connection.isConnected === false && (

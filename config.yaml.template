@@ -57,3 +57,8 @@ fhir:
 app:
   autoConnect: true
   showConnectionDialog: false # Set to false to prevent dialog if YAML config is valid
+
+# HAProxy Metrics Configuration
+haproxy:
+  metrics:
+    host: "localhost" # Change to your server hostname for production deployments

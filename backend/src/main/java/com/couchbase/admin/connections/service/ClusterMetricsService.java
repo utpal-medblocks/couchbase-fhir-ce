@@ -310,6 +310,7 @@ public class ClusterMetricsService {
      * Clean up hostname for display purposes
      * Examples:
      * - svc-dqis-node-004.ubypte9g5yzpufiz.cloud.couchbase.com:8091 → svc-dqis-node-004
+     * - ec2-174-129-64-176.compute-1.amazonaws.com:8091 → ec2-174-129-64-176
      * - 127.0.0.1:8091 → 127.0.0.1
      * - localhost:8091 → localhost
      */
@@ -327,6 +328,14 @@ public class ClusterMetricsService {
                 String[] parts = hostname.split("\\.");
                 if (parts.length > 0) {
                     return parts[0]; // Return just the node identifier (e.g., svc-dqis-node-004)
+                }
+            }
+            
+            // For AWS hostnames (*.amazonaws.com), extract just the EC2 instance identifier
+            if (hostname.contains(".amazonaws.com")) {
+                String[] parts = hostname.split("\\.");
+                if (parts.length > 0) {
+                    return parts[0]; // Return just the EC2 instance identifier (e.g., ec2-174-129-64-176)
                 }
             }
             

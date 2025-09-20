@@ -28,8 +28,36 @@ export interface HaproxyMetricsResponse {
   error?: string;
 }
 
+export interface MetricDataPoint {
+  timestamp: number;
+  ops: number;
+  scur: number;
+  rate_max: number;
+  smax: number;
+  qcur: number;
+  latency: number;
+  latency_max: number;
+  cpu: number;
+  memory: number;
+  disk: number;
+  hrsp_4xx: number;
+  hrsp_5xx: number;
+  error_percent: number;
+}
+
+export interface HaproxyTimeSeriesResponse {
+  minute: MetricDataPoint[];
+  hour: MetricDataPoint[];
+  day: MetricDataPoint[];
+  week: MetricDataPoint[];
+  month: MetricDataPoint[];
+  current: any;
+  timestamp: number;
+}
+
 class HaproxyMetricsService {
   private baseUrl = "/api/dashboard";
+  private timeSeriesUrl = "/api/metrics";
 
   async getHaproxyMetrics(): Promise<HaproxyMetrics> {
     const controller = new AbortController();
@@ -108,6 +136,30 @@ class HaproxyMetricsService {
             : "DOWN"
           : "UNKNOWN",
     };
+  }
+
+  // Get time-series metrics for dashboard charts
+  async getTimeSeriesMetrics(): Promise<HaproxyTimeSeriesResponse> {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
+
+    try {
+      const response = await fetch(`${this.timeSeriesUrl}/haproxy-timeseries`, {
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const data: HaproxyTimeSeriesResponse = await response.json();
+      return data;
+    } catch (error) {
+      clearTimeout(timeoutId);
+      throw error;
+    }
   }
 }
 

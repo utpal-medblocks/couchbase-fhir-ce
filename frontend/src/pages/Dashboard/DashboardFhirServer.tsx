@@ -1,32 +1,51 @@
-import React, { useEffect } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import {
   Box,
   Typography,
-  Card,
-  CardContent,
   Chip,
   Alert,
-  Table,
-  TableBody,
-  TableCell,
-  TableContainer,
-  TableRow,
+  FormControl,
+  Select,
+  MenuItem,
+  InputLabel,
 } from "@mui/material";
-import { GaugeChart } from "../../components/GuageChart";
-import { tableCellStyle } from "../../styles/styles";
+import type { SelectChangeEvent } from "@mui/material";
 import { useFhirStore } from "../../store/fhirStore";
 import { haproxyMetricsService } from "../../services/haproxyMetricsService";
+import HAProxyMetricsCharts from "../../components/HAProxyMetricsCharts";
+import {
+  TIME_RANGE_OPTIONS,
+  type TimeRange,
+} from "../../services/bucketMetricsService";
+import { getStoredTimeRange, storeTimeRange } from "../../utils/sessionStorage";
 
 const DashboardFhirServer: React.FC = () => {
-  const { metrics, error, retrievedAt, fetchMetrics } = useFhirStore();
+  // Mock metrics data since we removed ActuatorAggregatorService
+  const metrics = {
+    server: {
+      status: "UP",
+      uptime: "Running",
+    },
+  };
+  const error = null;
   const [haproxyMetrics, setHaproxyMetrics] = React.useState<any>(null);
   const [haproxyError, setHaproxyError] = React.useState<string | null>(null);
 
+  // State for time range with session storage
+  const [timeRange, setTimeRange] = useState<TimeRange>(() =>
+    getStoredTimeRange("HOUR")
+  );
+
+  const handleTimeRangeChange = useCallback((event: SelectChangeEvent) => {
+    const newTimeRange = event.target.value as TimeRange;
+    setTimeRange(newTimeRange);
+    storeTimeRange(newTimeRange);
+  }, []);
+
   useEffect(() => {
     // Initial fetch when component mounts
-    fetchMetrics();
     fetchHaproxyMetrics();
-  }, [fetchMetrics]);
+  }, []);
 
   const fetchHaproxyMetrics = async () => {
     try {
@@ -68,227 +87,71 @@ const DashboardFhirServer: React.FC = () => {
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
-      {/* Version Info - Full Width */}
+      {/* FHIR Server Details */}
       <Box
         sx={{
           display: "flex",
-          justifyContent: "space-between",
+          justifyContent: "flex-start",
           alignItems: "center",
+          gap: 4,
+          p: 0,
         }}
       >
-        <Box sx={{ flex: 1, textAlign: "center" }}>
+        <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
           <Typography variant="body2" color="text.secondary">
-            Server Version
+            Version:
           </Typography>
-          <Typography variant="body1">
-            {metrics.version.serverVersion}
-          </Typography>
+          <Typography variant="body1">HAPI FHIR 7.6.0</Typography>
         </Box>
-        <Box sx={{ flex: 1, textAlign: "center" }}>
+        <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
           <Typography variant="body2" color="text.secondary">
-            Build
+            Status:
           </Typography>
-          <Typography variant="body1">{metrics.version.buildNumber}</Typography>
+          <Chip
+            label={metrics.server.status}
+            color={metrics.server.status === "UP" ? "success" : "error"}
+            size="small"
+          />
         </Box>
-        {retrievedAt && (
-          <Box sx={{ flex: 1, textAlign: "center" }}>
-            <Typography variant="body2" color="text.secondary">
-              Last Updated
-            </Typography>
-            <Typography variant="body1">
-              {retrievedAt.toLocaleTimeString()}
-            </Typography>
-          </Box>
-        )}
-      </Box>
-
-      {/* Server Status and System Resources - Full Width */}
-      <Box sx={{ display: "flex", gap: 1, p: 1 }}>
-        {/* Server Status - 40% width */}
-        <Box sx={{ width: "40%" }}>
-          <Typography variant="subtitle1" gutterBottom>
-            Server Status
+        <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+          <Typography variant="body2" color="text.secondary">
+            Uptime:
           </Typography>
-          <TableContainer>
-            <Table
-              stickyHeader
-              size="small"
-              sx={{ border: "1px solid divider" }}
-            >
-              <TableBody>
-                <TableRow>
-                  <TableCell sx={tableCellStyle}>Status</TableCell>
-                  <TableCell sx={tableCellStyle}>
-                    {metrics.server.status}
-                  </TableCell>
-                </TableRow>
-                <TableRow>
-                  <TableCell sx={tableCellStyle}>Uptime</TableCell>
-                  <TableCell sx={tableCellStyle}>
-                    {metrics.server.uptime}
-                  </TableCell>
-                </TableRow>
-                <TableRow>
-                  <TableCell sx={tableCellStyle}>JVM Threads</TableCell>
-                  <TableCell sx={tableCellStyle}>
-                    {metrics.server.jvmThreads}
-                  </TableCell>
-                </TableRow>
-                <TableRow>
-                  <TableCell sx={tableCellStyle}>Current Ops/Sec</TableCell>
-                  <TableCell sx={tableCellStyle}>
-                    {metrics.overall.currentOpsPerSec.toFixed(1)}
-                  </TableCell>
-                </TableRow>
-                <TableRow>
-                  <TableCell sx={tableCellStyle}>Total Ops</TableCell>
-                  <TableCell sx={tableCellStyle}>
-                    {metrics.overall.totalOperations.toLocaleString()}
-                  </TableCell>
-                </TableRow>
-              </TableBody>
-            </Table>
-          </TableContainer>
-        </Box>
-        {/* System Resources - 60% width */}
-        <Box sx={{ width: "60%" }}>
-          <Typography variant="subtitle1" gutterBottom>
-            System Resources
-          </Typography>
-          <Box sx={{ display: "flex", gap: 2 }}>
-            {/* CPU Gauge - 33% */}
-            <Box
-              sx={{
-                width: "33%",
-                position: "relative",
-              }}
-            >
-              <GaugeChart name="CPU" value={metrics.server.cpuUsage} />
-            </Box>
-
-            {/* Memory Gauge - 33% */}
-            <Box sx={{ width: "33%", position: "relative" }}>
-              <GaugeChart name="RAM" value={metrics.server.memoryUsage} />
-            </Box>
-
-            {/* Disk Gauge - 33% */}
-            <Box sx={{ width: "33%", position: "relative" }}>
-              <GaugeChart name="Disk" value={metrics.server.diskUsage} />
-            </Box>
-          </Box>
+          <Typography variant="body1">{metrics.server.uptime}</Typography>
         </Box>
       </Box>
 
-      {/* Note: FHIR operation-level metrics (READ/CREATE/SEARCH) would require 
-          application-level instrumentation, not available from HAProxy */}
-
-      {/* HAProxy Load Balancer Metrics */}
-      <Typography variant="subtitle1" gutterBottom sx={{ mt: 3 }}>
-        Load Balancer (HAProxy)
-      </Typography>
-      {haproxyError ? (
-        <Alert severity="warning" sx={{ mb: 2 }}>
-          HAProxy metrics unavailable: {haproxyError}
-        </Alert>
-      ) : haproxyMetrics ? (
-        <Box sx={{ display: "flex", gap: 2 }}>
-          {/* Total Requests */}
-          <Box sx={{ width: "25%" }}>
-            <Card variant="outlined">
-              <CardContent sx={{ p: 2, textAlign: "center" }}>
-                <Chip
-                  label="REQUESTS"
-                  size="small"
-                  color="info"
-                  sx={{ mb: 1 }}
-                />
-                <Typography variant="h5" color="primary.main" gutterBottom>
-                  {haproxyMetrics.totalRequests.toLocaleString()}
-                </Typography>
-                <Typography variant="body2" color="text.secondary">
-                  total requests
-                </Typography>
-              </CardContent>
-            </Card>
-          </Box>
-
-          {/* Success Rate */}
-          <Box sx={{ width: "25%" }}>
-            <Card variant="outlined">
-              <CardContent sx={{ p: 2, textAlign: "center" }}>
-                <Chip
-                  label="SUCCESS"
-                  size="small"
-                  color="success"
-                  sx={{ mb: 1 }}
-                />
-                <Typography variant="h5" color="success.main" gutterBottom>
-                  {haproxyMetrics.successRate.toFixed(1)}%
-                </Typography>
-                <Typography variant="body2" color="text.secondary">
-                  success rate
-                </Typography>
-              </CardContent>
-            </Card>
-          </Box>
-
-          {/* Current Sessions */}
-          <Box sx={{ width: "25%" }}>
-            <Card variant="outlined">
-              <CardContent sx={{ p: 2, textAlign: "center" }}>
-                <Chip
-                  label="SESSIONS"
-                  size="small"
-                  color="warning"
-                  sx={{ mb: 1 }}
-                />
-                <Typography variant="h5" color="warning.main" gutterBottom>
-                  {haproxyMetrics.currentSessions}
-                </Typography>
-                <Typography variant="body2" color="text.secondary">
-                  active sessions
-                </Typography>
-              </CardContent>
-            </Card>
-          </Box>
-
-          {/* Status */}
-          <Box sx={{ width: "25%" }}>
-            <Card variant="outlined">
-              <CardContent sx={{ p: 2, textAlign: "center" }}>
-                <Chip
-                  label="STATUS"
-                  size="small"
-                  color={
-                    haproxyMetrics.backendStatus === "UP" ? "success" : "error"
-                  }
-                  sx={{ mb: 1 }}
-                />
-                <Typography
-                  variant="h6"
-                  color={
-                    haproxyMetrics.backendStatus === "UP"
-                      ? "success.main"
-                      : "error.main"
-                  }
-                  gutterBottom
-                >
-                  {haproxyMetrics.backendStatus}
-                </Typography>
-                <Typography variant="body2" color="text.secondary">
-                  backend status
-                </Typography>
-              </CardContent>
-            </Card>
-          </Box>
-        </Box>
-      ) : (
-        <Box sx={{ textAlign: "center", py: 2 }}>
-          <Typography variant="body2" color="text.secondary">
-            Loading HAProxy metrics...
+      {/* System & Load Balancer Metrics */}
+      <Box>
+        {/* Header with Range Selector */}
+        <Box
+          sx={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            mb: 1,
+          }}
+        >
+          <Typography variant="subtitle1" component="div">
+            System & Load Balancer Metrics
           </Typography>
+          <FormControl size="small" sx={{ minWidth: 120 }}>
+            <InputLabel>Range</InputLabel>
+            <Select
+              value={timeRange}
+              onChange={handleTimeRangeChange}
+              label="Range"
+            >
+              {TIME_RANGE_OPTIONS.map((option) => (
+                <MenuItem key={option.value} value={option.value}>
+                  {option.label.replace("Last ", "")}
+                </MenuItem>
+              ))}
+            </Select>
+          </FormControl>
         </Box>
-      )}
+        <HAProxyMetricsCharts timeRange={timeRange} />
+      </Box>
     </Box>
   );
 };
