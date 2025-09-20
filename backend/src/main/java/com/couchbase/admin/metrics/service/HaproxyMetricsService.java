@@ -155,9 +155,14 @@ public class HaproxyMetricsService {
             logger.debug("Error calculating ops: {}", e.getMessage());
         }
         
-        // Graph 1: Client Latency metrics
-        double latency = getDoubleValue(current, "ttime");
-        double latencyMax = getDoubleValue(current, "ttime_max");
+        // Graph 1: Client Latency metrics (only if there's meaningful traffic)
+        long currentReqTot = getLongValue(current, "req_tot");
+        long previousReqTot = getLongValue(previous, "req_tot");
+        long requestDelta = currentReqTot - previousReqTot;
+        boolean hasMeaningfulTraffic = requestDelta >= 2; // Ignore health checks/admin polling
+        
+        double latency = hasMeaningfulTraffic ? getDoubleValue(current, "ttime") : 0.0;
+        double latencyMax = hasMeaningfulTraffic ? getDoubleValue(current, "ttime_max") : 0.0;
         
         // Graph 2: Throughput & Concurrency metrics
         long scur = getLongValue(current, "scur");
