@@ -1,0 +1,57 @@
+###################################################################################################
+# Couchbase FHIR CE - User Deployment Compose File
+#
+# This file is the "prebuilt images" version used by the one-liner installer (install.sh).
+# It intentionally:
+#   * Uses pre-published container images (no local build context)
+#   * Exposes ONLY port 80 via HAProxy (frontend + API routed internally)
+#   * Mounts the provided config.yaml into the backend container read-only
+#
+# Image Tags:
+#   Override by exporting FHIR_BACKEND_TAG / FHIR_FRONTEND_TAG before running install.sh, e.g.:
+#     FHIR_BACKEND_TAG=v1.0.0 FHIR_FRONTEND_TAG=v1.0.0 bash install.sh ./config.yaml
+#   Defaults below fall back to latest if not set.
+#
+# To run manually (after install.sh has laid down files):
+#   docker compose pull && docker compose up -d
+#
+# NOTE: For local development (building images from source) use the root-level docker-compose.yaml
+#       which has build contexts instead of static image references.
+###################################################################################################
+
+version: "3.8"
+
+services:
+  fhir-server:
+    image: ghcr.io/couchbaselabs/couchbase-fhir-ce/fhir-server:${FHIR_BACKEND_TAG:-latest}
+    environment:
+      - SPRING_PROFILES_ACTIVE=prod
+      - JAVA_OPTS=-Xms256m -Xmx1024m
+      - DEPLOYED_ENV=container
+    volumes:
+      - ./config.yaml:/config.yaml:ro
+    expose:
+      - "8080" # internal only; not published directly
+    restart: unless-stopped
+
+  fhir-admin:
+    image: ghcr.io/couchbaselabs/couchbase-fhir-ce/fhir-admin:${FHIR_FRONTEND_TAG:-latest}
+    depends_on:
+      - fhir-server
+    expose:
+      - "80" # internal only; served via haproxy
+    restart: unless-stopped
+
+  haproxy:
+    image: haproxy:2.9-alpine
+    ports:
+      - "80:80" # public entry point
+    volumes:
+      - ./haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    depends_on:
+      - fhir-admin
+      - fhir-server
+    restart: unless-stopped
+
+volumes: {}
+# End of file
