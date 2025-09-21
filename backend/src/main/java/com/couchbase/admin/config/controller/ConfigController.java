@@ -3,6 +3,8 @@ package com.couchbase.admin.config.controller;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.HttpStatus; 
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.info.BuildProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.yaml.snakeyaml.Yaml;
@@ -25,6 +27,22 @@ public class ConfigController {
 
     private static final Logger logger = LoggerFactory.getLogger(ConfigController.class);
     private static final String DEFAULT_CONFIG_FILE = "../config.yaml"; // Backend runs from backend/ subdirectory
+    private final String version;
+
+    public ConfigController(@Autowired(required = false) BuildProperties buildProperties) {
+        // Determine version: prefer build-info, then JAR manifest, else dev
+        String v = null;
+        if (buildProperties != null) {
+            try {
+                v = buildProperties.getVersion();
+            } catch (Exception ignored) { }
+        }
+        if (v == null) {
+            v = getClass().getPackage().getImplementationVersion();
+        }
+        this.version = v != null ? v : "dev";
+        logger.info("Application version resolved to: {}", this.version);
+    }
 
     /**
      * Load and return YAML configuration file
@@ -91,5 +109,15 @@ public class ConfigController {
         response.put("status", "UP");
         response.put("service", "ConfigController");
         return ResponseEntity.ok(response);
+    }
+
+    /**
+     * Version endpoint returning the backend application version.
+     */
+    @GetMapping("/version")
+    public ResponseEntity<Map<String, Object>> version() {
+        Map<String, Object> body = new HashMap<>();
+        body.put("version", this.version);
+        return ResponseEntity.ok(body);
     }
 }

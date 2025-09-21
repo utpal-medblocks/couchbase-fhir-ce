@@ -10,8 +10,6 @@ import {
   Typography,
   Button,
   Alert,
-  Card,
-  CardContent,
 } from "@mui/material";
 
 // Hooks and services
@@ -23,20 +21,19 @@ import { blueGrey } from "@mui/material/colors";
 import LinearProgressWithLabel from "../../components/LinearProgressWithLabel";
 import ChipsArray from "../../components/ChipsArray";
 import AddFhirBucketDialog from "./AddFhirBucketDialog";
-import type { FhirConfiguration } from "../../store/bucketStore";
 
 const DashboardCouchbaseServer: React.FC = () => {
   const { connection, metrics, metricsError, fetchMetrics } =
     useConnectionStore();
-  const { fetchFhirConfig } = useBucketStore();
+  const { fetchFhirConfig, getFhirConfig } = useBucketStore();
 
   // Dialog state
   const [dialogOpen, setDialogOpen] = useState(false);
   const [selectedBucketName, setSelectedBucketName] = useState("");
 
-  // Selected bucket and FHIR config state
-  const [selectedBucket, setSelectedBucket] = useState<string | null>(null);
-  const [fhirConfig, setFhirConfig] = useState<FhirConfiguration | null>(null);
+  // Track loading configs & local cache (bucketName -> config or null when fetched but absent)
+  const [loadingConfigs, setLoadingConfigs] = useState<boolean>(false);
+  const [bucketConfigs, setBucketConfigs] = useState<Record<string, any>>({});
 
   // Define borderStyle for use in Table sx prop
   const theme = useTheme();
@@ -92,29 +89,40 @@ const DashboardCouchbaseServer: React.FC = () => {
     setSelectedBucketName("");
   };
 
-  // Handle bucket row click
-  const handleBucketClick = async (
-    bucketName: string,
-    isFhirBucket: boolean
-  ) => {
-    setSelectedBucket(bucketName);
-
-    if (isFhirBucket && connection.connectionName) {
+  // Fetch all FHIR configs proactively (for buckets flagged isFhirBucket)
+  useEffect(() => {
+    const loadAll = async () => {
+      if (!connection.connectionName || !buckets.length) return;
+      setLoadingConfigs(true);
       try {
-        // Fetch FHIR config from API
-        const config = await fetchFhirConfig(
-          connection.connectionName,
-          bucketName
+        const fhirBuckets = buckets.filter((b: any) => b.isFhirBucket);
+        const results = await Promise.all(
+          fhirBuckets.map(async (b: any) => {
+            const cfg = await fetchFhirConfig(
+              connection.connectionName!,
+              b.name
+            );
+            return { name: b.name, cfg };
+          })
         );
-        setFhirConfig(config);
-      } catch (error) {
-        console.error(`Failed to fetch FHIR config for ${bucketName}:`, error);
-        setFhirConfig(null);
+        setBucketConfigs((prev) => {
+          const next = { ...prev };
+          results.forEach(({ name, cfg }) => {
+            // cfg could be null (not configured yet)
+            next[name] = cfg || null;
+          });
+          return next;
+        });
+      } finally {
+        setLoadingConfigs(false);
       }
-    } else {
-      setFhirConfig(null);
-    }
-  };
+    };
+    loadAll();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    buckets.map((b: any) => `${b.name}:${b.isFhirBucket}`).join("|"),
+    connection.connectionName,
+  ]);
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
@@ -251,28 +259,15 @@ const DashboardCouchbaseServer: React.FC = () => {
               <TableCell sx={tableHeaderStyle}>RAM Used</TableCell>
               <TableCell sx={tableHeaderStyle}>Disk Used</TableCell>
               <TableCell sx={tableHeaderStyle}>Items</TableCell>
-              <TableCell sx={tableHeaderStyle}>Ops/Sec</TableCell>
               <TableCell sx={tableHeaderStyle}>Status</TableCell>
               <TableCell sx={tableHeaderStyle}>FHIR</TableCell>
+              <TableCell sx={tableHeaderStyle}>Profile</TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
             {buckets.length > 0 ? (
               buckets.map((bucket, index) => (
-                <TableRow
-                  key={index}
-                  hover
-                  onClick={() =>
-                    handleBucketClick(bucket.name, bucket.isFhirBucket || false)
-                  }
-                  sx={{
-                    cursor: "pointer",
-                    backgroundColor:
-                      selectedBucket === bucket.name
-                        ? "action.selected"
-                        : "inherit",
-                  }}
-                >
+                <TableRow key={index}>
                   <TableCell sx={tableCellStyle}>{bucket.name}</TableCell>
                   <TableCell sx={tableCellStyle}>
                     {bucket.ramUsed} MB / {bucket.ramQuota} MB
@@ -282,9 +277,6 @@ const DashboardCouchbaseServer: React.FC = () => {
                   </TableCell>
                   <TableCell sx={tableCellStyle}>
                     {bucket.itemCount.toLocaleString()}
-                  </TableCell>
-                  <TableCell sx={tableCellStyle}>
-                    {bucket.opsPerSec.toFixed(1)}
                   </TableCell>
                   <TableCell sx={tableCellStyle}>
                     <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
@@ -335,6 +327,70 @@ const DashboardCouchbaseServer: React.FC = () => {
                       </Button>
                     )}
                   </TableCell>
+                  <TableCell sx={tableCellStyle}>
+                    {bucket.isFhirBucket ? (
+                      (() => {
+                        // Prefer local cache; fallback to store if not yet cached
+                        const cfg =
+                          bucketConfigs[bucket.name] !== undefined
+                            ? bucketConfigs[bucket.name]
+                            : connection.connectionName
+                            ? getFhirConfig(
+                                connection.connectionName,
+                                bucket.name
+                              )
+                            : null;
+                        if (cfg) {
+                          const profile = cfg.validation.profile;
+                          const mode = cfg.validation.mode;
+                          if (profile === "us-core") {
+                            return (
+                              <Typography
+                                variant="body2"
+                                sx={{
+                                  display: "flex",
+                                  alignItems: "center",
+                                  gap: 0.5,
+                                }}
+                              >
+                                <span role="img" aria-label="US Flag">
+                                  🇺🇸
+                                </span>{" "}
+                                us-core: {mode}
+                              </Typography>
+                            );
+                          }
+                          return (
+                            <Typography variant="body2">
+                              basic: {mode}
+                            </Typography>
+                          );
+                        }
+                        // Distinguish between not yet loaded vs loaded null config
+                        if (
+                          loadingConfigs &&
+                          bucketConfigs[bucket.name] === undefined
+                        ) {
+                          return (
+                            <Typography variant="body2" color="text.secondary">
+                              (loading)
+                            </Typography>
+                          );
+                        }
+                        return (
+                          <Typography
+                            variant="body2"
+                            color="text.secondary"
+                          ></Typography>
+                        );
+                      })()
+                    ) : (
+                      <Typography
+                        variant="body2"
+                        color="text.secondary"
+                      ></Typography>
+                    )}
+                  </TableCell>
                 </TableRow>
               ))
             ) : (
@@ -348,102 +404,7 @@ const DashboardCouchbaseServer: React.FC = () => {
         </Table>
       </TableContainer>
 
-      {/* FHIR Configuration Display */}
-      {selectedBucket && (
-        <Box sx={{ mt: 2 }}>
-          <Typography variant="subtitle1" gutterBottom>
-            FHIR Configuration for "{selectedBucket}"
-          </Typography>
-
-          {fhirConfig ? (
-            <Box sx={{ display: "flex", gap: 2, flexWrap: "wrap" }}>
-              {/* Left Box - Basic Configuration */}
-              <Box sx={{ flex: 1, minWidth: "300px" }}>
-                <Card variant="outlined" sx={{ height: "100%" }}>
-                  <CardContent>
-                    <Typography variant="h6" gutterBottom>
-                      Basic Configuration
-                    </Typography>
-
-                    <Typography variant="body2" sx={{ mb: 0 }}>
-                      <strong>FHIR Release:</strong> {fhirConfig.fhirRelease}
-                    </Typography>
-
-                    <Typography variant="body2" sx={{ mb: 0 }}>
-                      <strong>Validation:</strong>
-                      <ul style={{ margin: 0, paddingLeft: 20 }}>
-                        <li>Mode: {fhirConfig.validation.mode}</li>
-                        <li>
-                          Profile:{" "}
-                          {fhirConfig.validation.profile === "us-core"
-                            ? "US Core 6.1.0"
-                            : "none"}
-                        </li>
-                      </ul>
-                    </Typography>
-                  </CardContent>
-                </Card>
-              </Box>
-
-              {/* Right Box - Logs Configuration */}
-              <Box sx={{ flex: 1, minWidth: "300px" }}>
-                <Card variant="outlined" sx={{ height: "100%" }}>
-                  <CardContent>
-                    <Typography variant="h6" gutterBottom>
-                      Logs Configuration
-                    </Typography>
-
-                    <Typography variant="body2" sx={{ mb: 0 }}>
-                      <strong>Logs:</strong>
-                    </Typography>
-                    <Box sx={{ ml: 2 }}>
-                      <Typography variant="body2" color="text.secondary">
-                        • Enable System Logs:{" "}
-                        {fhirConfig.logs.enableSystem ? "Enabled" : "Disabled"}
-                      </Typography>
-                      <Typography variant="body2" color="text.secondary">
-                        • Enable CRUD Audit:{" "}
-                        {fhirConfig.logs.enableCRUDAudit
-                          ? "Enabled"
-                          : "Disabled"}
-                      </Typography>
-                      <Typography variant="body2" color="text.secondary">
-                        • Enable Search Audit:{" "}
-                        {fhirConfig.logs.enableSearchAudit
-                          ? "Enabled"
-                          : "Disabled"}
-                      </Typography>
-                      <Typography variant="body2" color="text.secondary">
-                        • Rotation By: {fhirConfig.logs.rotationBy}
-                      </Typography>
-                      <Typography variant="body2" color="text.secondary">
-                        • Number: {fhirConfig.logs.number}
-                      </Typography>
-                      <Typography variant="body2" color="text.secondary">
-                        • S3 Endpoint: {fhirConfig.logs.s3Endpoint || "(none)"}
-                      </Typography>
-                    </Box>
-                  </CardContent>
-                </Card>
-              </Box>
-            </Box>
-          ) : (
-            <Card variant="outlined">
-              <CardContent>
-                <Typography
-                  variant="body2"
-                  color="text.secondary"
-                  align="center"
-                >
-                  {buckets.find((b) => b.name === selectedBucket)?.isFhirBucket
-                    ? "Loading FHIR configuration..."
-                    : "This bucket is not FHIR-enabled. Click 'Add FHIR' to configure it."}
-                </Typography>
-              </CardContent>
-            </Card>
-          )}
-        </Box>
-      )}
+      {/* Detailed FHIR configuration panel removed per requirements */}
 
       {/* FHIR Conversion Dialog */}
       <AddFhirBucketDialog

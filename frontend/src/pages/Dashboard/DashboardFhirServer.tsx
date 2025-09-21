@@ -18,6 +18,7 @@ import {
   type TimeRange,
 } from "../../services/bucketMetricsService";
 import { getStoredTimeRange, storeTimeRange } from "../../utils/sessionStorage";
+import { fetchBackendVersion } from "../../services/versionService";
 
 const DashboardFhirServer: React.FC = () => {
   // Mock metrics data since we removed ActuatorAggregatorService
@@ -30,6 +31,7 @@ const DashboardFhirServer: React.FC = () => {
   const error = null;
   const [haproxyMetrics, setHaproxyMetrics] = React.useState<any>(null);
   const [haproxyError, setHaproxyError] = React.useState<string | null>(null);
+  const [backendVersion, setBackendVersion] = useState<string>("...");
 
   // State for time range with session storage
   const [timeRange, setTimeRange] = useState<TimeRange>(() =>
@@ -45,6 +47,7 @@ const DashboardFhirServer: React.FC = () => {
   useEffect(() => {
     // Initial fetch when component mounts
     fetchHaproxyMetrics();
+    fetchVersion();
   }, []);
 
   const fetchHaproxyMetrics = async () => {
@@ -57,6 +60,15 @@ const DashboardFhirServer: React.FC = () => {
         err instanceof Error ? err.message : "Failed to fetch HAProxy metrics"
       );
       setHaproxyMetrics(null);
+    }
+  };
+
+  const fetchVersion = async () => {
+    try {
+      const { version } = await fetchBackendVersion();
+      setBackendVersion(version);
+    } catch (e) {
+      setBackendVersion("unknown");
     }
   };
 
@@ -87,7 +99,7 @@ const DashboardFhirServer: React.FC = () => {
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
-      {/* FHIR Server Details */}
+      {/* Couchbase FHIR Server Details */}
       <Box
         sx={{
           display: "flex",
@@ -101,7 +113,7 @@ const DashboardFhirServer: React.FC = () => {
           <Typography variant="body2" color="text.secondary">
             Version:
           </Typography>
-          <Typography variant="body1">HAPI FHIR 7.6.0</Typography>
+          <Typography variant="body1">{backendVersion}</Typography>
         </Box>
         <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
           <Typography variant="body2" color="text.secondary">
@@ -112,12 +124,6 @@ const DashboardFhirServer: React.FC = () => {
             color={metrics.server.status === "UP" ? "success" : "error"}
             size="small"
           />
-        </Box>
-        <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-          <Typography variant="body2" color="text.secondary">
-            Uptime:
-          </Typography>
-          <Typography variant="body1">{metrics.server.uptime}</Typography>
         </Box>
       </Box>
 

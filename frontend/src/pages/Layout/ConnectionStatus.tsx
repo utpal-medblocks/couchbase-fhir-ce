@@ -14,7 +14,7 @@ const ConnectionStatus = () => {
   // Static FHIR configuration - backend manages the actual config
   const fhirConfig = {
     profile: "US Core",
-    endpoint: "/fhir/demo",
+    endpoint: "/fhir/<bucket-name>",
     version: "V4",
   };
 
