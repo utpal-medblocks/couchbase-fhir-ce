@@ -1,8 +1,8 @@
-name: Build and Push Coucbase FHIR Docker Images
+name: Build and Push Couchbase FHIR Docker Images
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [ master ]
     tags: [ 'v*' ]
 
 env:
