@@ -7,6 +7,7 @@ export interface DocumentKeyRequest {
   page?: number;
   pageSize?: number;
   patientId?: string;
+  resourceType?: string;
 }
 
 export interface DocumentKeyResponse {
@@ -113,6 +114,10 @@ export class FhirResourceService {
         params.append("patientId", request.patientId);
       }
 
+      if (request.resourceType) {
+        params.append("resourceType", request.resourceType);
+      }
+
       const response = await axios.get(
         `${this.baseURL}/document-metadata?${params}`
       );
@@ -164,6 +169,21 @@ export class FhirResourceService {
       return response.data;
     } catch (error) {
       console.error("Failed to get document:", error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get the list of FHIR resource types that go into the General collection
+   */
+  async getGeneralResourceTypes(): Promise<string[]> {
+    try {
+      const response = await axios.get(
+        `${this.baseURL}/general-resource-types`
+      );
+      return response.data;
+    } catch (error) {
+      console.error("Failed to get General resource types:", error);
       throw error;
     }
   }

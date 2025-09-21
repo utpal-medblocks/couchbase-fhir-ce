@@ -10,6 +10,8 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.List;
+import java.util.Arrays;
 
 /**
  * Configuration class that explicitly loads FHIR resource mapping from fhir.yml
@@ -59,6 +61,21 @@ public class FhirMappingConfiguration {
                     Map<String, String> collectionMapping = (Map<String, String>) mapping.get("collection_to_fts_index");
                     if (collectionMapping != null) {
                         config.setCollectionToFtsIndex(new HashMap<>(collectionMapping));
+                    }
+                    
+                    // Load General resourceTypes
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> generalMapping = (Map<String, Object>) mapping.get("general");
+                    if (generalMapping != null) {
+                        String resourceTypesStr = (String) generalMapping.get("resource_types");
+                        if (resourceTypesStr != null && !resourceTypesStr.trim().isEmpty()) {
+                            List<String> resourceTypesList = Arrays.asList(resourceTypesStr.split(","));
+                            // Trim whitespace from each resource type
+                            resourceTypesList = resourceTypesList.stream()
+                                    .map(String::trim)
+                                    .collect(java.util.stream.Collectors.toList());
+                            config.setGeneralResourceTypes(resourceTypesList);
+                        }
                     }
                 }                
             }

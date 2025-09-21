@@ -16,6 +16,7 @@ import {
   TablePagination,
   Button,
   CircularProgress,
+  Autocomplete,
 } from "@mui/material";
 import { useState, useEffect } from "react";
 import { tableHeaderStyle, tableCellStyle } from "../../styles/styles";
@@ -76,6 +77,13 @@ export default function FhirResources() {
     VersionHistoryItem[]
   >([]);
 
+  // General collection resourceTypes state
+  const [generalResourceTypes, setGeneralResourceTypes] = useState<string[]>(
+    []
+  );
+  const [selectedGeneralResourceType, setSelectedGeneralResourceType] =
+    useState<string | null>(null);
+
   // Get available buckets for FHIR (you might want to filter these)
   const availableBuckets = bucketStore.buckets[connectionId] || [];
 
@@ -85,7 +93,9 @@ export default function FhirResources() {
     ? collections
         .filter(
           (col) =>
-            col.bucketName === selectedBucket && col.scopeName === "Resources"
+            col.bucketName === selectedBucket &&
+            col.scopeName === "Resources" &&
+            col.collectionName !== "General" // Filter out General collection
         )
         .sort((a, b) => {
           // Always put "Patient" first
@@ -133,13 +143,35 @@ export default function FhirResources() {
     return () => clearInterval(interval);
   }, [connectionId]);
 
+  // Fetch General resourceTypes on component mount
+  useEffect(() => {
+    const fetchGeneralResourceTypes = async () => {
+      try {
+        const resourceTypes =
+          await fhirResourceService.getGeneralResourceTypes();
+        setGeneralResourceTypes(resourceTypes);
+      } catch (error) {
+        console.error("Failed to fetch General resource types:", error);
+      }
+    };
+
+    fetchGeneralResourceTypes();
+  }, []);
+
   const handleChangePage = (
     _: React.MouseEvent<HTMLButtonElement> | null,
     newPage: number
   ) => {
     setPage(newPage);
-    if (selectedCollection) {
-      fetchDocumentMetadata(selectedCollection, newPage, rowsPerPage);
+    const effectiveCollection =
+      selectedCollection || (selectedGeneralResourceType ? "General" : "");
+    if (effectiveCollection) {
+      fetchDocumentMetadata(
+        effectiveCollection,
+        newPage,
+        rowsPerPage,
+        selectedGeneralResourceType || undefined
+      );
     }
   };
 
@@ -147,19 +179,43 @@ export default function FhirResources() {
     const newRowsPerPage = parseInt(event.target.value, 10);
     setRowsPerPage(newRowsPerPage);
     setPage(0);
-    if (selectedCollection) {
-      fetchDocumentMetadata(selectedCollection, 0, newRowsPerPage);
+    const effectiveCollection =
+      selectedCollection || (selectedGeneralResourceType ? "General" : "");
+    if (effectiveCollection) {
+      fetchDocumentMetadata(
+        effectiveCollection,
+        0,
+        newRowsPerPage,
+        selectedGeneralResourceType || undefined
+      );
     }
   };
 
   const handleCollectionClick = (collectionName: string) => {
     setSelectedCollection(collectionName);
+    setSelectedGeneralResourceType(null); // Clear General selection
     setPage(0); // Reset to first page
     fetchDocumentMetadata(collectionName, 0, rowsPerPage);
   };
 
+  const handleGeneralResourceTypeSelection = (resourceType: string | null) => {
+    setSelectedGeneralResourceType(resourceType);
+    setSelectedCollection(""); // Clear regular collection selection
+    setPage(0); // Reset to first page
+    if (resourceType) {
+      // Fetch document metadata for General collection with specific resourceType
+      fetchDocumentMetadata("General", 0, rowsPerPage, resourceType);
+    } else {
+      // Clear document metadata when no resourceType is selected
+      setDocumentMetadata([]);
+      setTotalCount(0);
+    }
+  };
+
   const fetchDocumentContent = async (documentKey: string) => {
-    if (!selectedBucket || !selectedCollection || !connectionId) return;
+    const effectiveCollection =
+      selectedCollection || (selectedGeneralResourceType ? "General" : "");
+    if (!selectedBucket || !effectiveCollection || !connectionId) return;
 
     setDocumentLoading(true);
     setSelectedDocumentKey(documentKey);
@@ -178,7 +234,7 @@ export default function FhirResources() {
       const document = await fhirResourceService.getDocument({
         connectionName: connectionId,
         bucketName: selectedBucket,
-        collectionName: selectedCollection,
+        collectionName: effectiveCollection,
         documentKey: documentKey,
       });
 
@@ -217,21 +273,32 @@ export default function FhirResources() {
   const fetchDocumentMetadata = async (
     collectionName: string,
     pageNum: number,
-    pageSize: number
+    pageSize: number,
+    resourceType?: string
   ) => {
     if (!selectedBucket || !connectionId) return;
 
     setDocumentMetadataLoading(true);
     try {
+      const request: any = {
+        connectionName: connectionId,
+        bucketName: selectedBucket,
+        collectionName: collectionName,
+        page: pageNum,
+        pageSize: pageSize,
+        patientId: patientId || undefined,
+      };
+
+      // Add resourceType for General collection
+      if (
+        collectionName === "General" &&
+        (resourceType || selectedGeneralResourceType)
+      ) {
+        request.resourceType = resourceType || selectedGeneralResourceType;
+      }
+
       const response: DocumentMetadataResponse =
-        await fhirResourceService.getDocumentMetadata({
-          connectionName: connectionId,
-          bucketName: selectedBucket,
-          collectionName: collectionName,
-          page: pageNum,
-          pageSize: pageSize,
-          patientId: patientId || undefined,
-        });
+        await fhirResourceService.getDocumentMetadata(request);
 
       setDocumentMetadata(response.documents);
       setTotalCount(response.totalCount);
@@ -343,7 +410,7 @@ export default function FhirResources() {
         >
           <TableContainer
             sx={{
-              height: "100%",
+              flex: 1,
               overflowY: "auto",
               scrollbarWidth: "none", // Firefox
               msOverflowStyle: "none", // IE/Edge
@@ -396,6 +463,42 @@ export default function FhirResources() {
               </TableBody>
             </Table>
           </TableContainer>
+
+          {/* General Collection Search Selector */}
+          <Box sx={{ p: 1, borderTop: 1, borderColor: "divider" }}>
+            <Autocomplete
+              size="small"
+              options={generalResourceTypes}
+              value={selectedGeneralResourceType}
+              onChange={(_, newValue) =>
+                handleGeneralResourceTypeSelection(newValue)
+              }
+              renderInput={(params) => (
+                <TextField
+                  {...params}
+                  placeholder="Search General resources..."
+                  variant="outlined"
+                  size="small"
+                />
+              )}
+              clearOnBlur={false}
+              clearOnEscape
+              freeSolo={false}
+              filterOptions={(options, { inputValue }) =>
+                options.filter((option) =>
+                  option.toLowerCase().includes(inputValue.toLowerCase())
+                )
+              }
+              noOptionsText="No matching resources"
+              sx={{
+                "& .MuiOutlinedInput-root": {
+                  backgroundColor: selectedGeneralResourceType
+                    ? "action.selected"
+                    : "inherit",
+                },
+              }}
+            />
+          </Box>
         </Box>
 
         {/* Document IDs Box - 30% */}
@@ -437,9 +540,9 @@ export default function FhirResources() {
                   </TableRow>
                 ) : (
                   documentMetadata.map((metadata) => {
-                    // For General collection, use resourceType if available, otherwise use collection name
+                    // For General collection, use selected resourceType, otherwise use collection name
                     const resourceType =
-                      metadata.resourceType || selectedCollection;
+                      selectedGeneralResourceType || selectedCollection;
                     const documentKey = `${resourceType}/${metadata.id}`;
                     const isVersioned = parseInt(metadata.versionId) > 1;
 
