@@ -66,9 +66,9 @@ const HAProxyMetricsCharts: React.FC<HAProxyMetricsChartsProps> = ({
   );
 
   // Fetch metrics data
-  const fetchMetrics = useCallback(async () => {
+  const fetchMetrics = useCallback(async (isRefresh = false) => {
     try {
-      setLoading(true);
+      setLoading(!isRefresh);
       setError(null);
       const data = await haproxyMetricsService.getTimeSeriesMetrics();
       setMetricsData(data);
@@ -84,7 +84,9 @@ const HAProxyMetricsCharts: React.FC<HAProxyMetricsChartsProps> = ({
     fetchMetrics();
 
     // Set up polling every 30 seconds
-    const interval = setInterval(fetchMetrics, 30000);
+    const interval = setInterval(() => {
+      fetchMetrics(true); // isRefresh = true to prevent loading spinner
+    }, 20000);
     return () => clearInterval(interval);
   }, [fetchMetrics, timeRange]); // Re-fetch when timeRange changes
 
