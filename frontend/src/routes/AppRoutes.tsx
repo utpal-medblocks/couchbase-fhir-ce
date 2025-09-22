@@ -13,13 +13,13 @@ const AppRoutes: React.FC = () => {
   return (
     <Routes>
       <Route path="/" element={<Navigate to="/dashboard" replace />} />
-      <Route element={<ProtectedRoute />}>
+      {/* <Route element={<ProtectedRoute />}> */}
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/buckets" element={<Buckets />} />
         <Route path="/fhir-resources" element={<FhirResources />} />
         <Route path="/auditlogs" element={<AuditLogs />} />
         <Route path="/systemlogs" element={<SystemLogs />} />
-      </Route>
+      {/* </Route> */}
       {/* Catch-all route for unmatched paths - redirect to dashboard */}
       <Route path="*" element={<Navigate to="/dashboard" replace />} />
     </Routes>
