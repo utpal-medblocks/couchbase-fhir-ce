@@ -94,10 +94,35 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
         } catch (FhirBucketValidationException e) {
             throw new ca.uhn.fhir.rest.server.exceptions.InvalidRequestException(e.getMessage());
         }
-        
-        return dao.read(resourceClass.getSimpleName(), theId.getIdPart() , bucketName).orElseThrow(() ->
+
+        return dao.read(getResourceTypeName(), theId.getIdPart() , bucketName).orElseThrow(() ->
                 new ResourceNotFoundException(theId));
     }
+
+
+    @Read(version = true)
+    public T readVersion(@IdParam IdType id) {
+        String logicalId = id.getIdPart();
+        String versionId = id.getVersionIdPart();
+
+        String bucketName = TenantContextHolder.getTenantId();
+        try {
+            bucketValidator.validateFhirBucketOrThrow(bucketName, "default");
+        } catch (FhirBucketValidationException e) {
+            throw new ca.uhn.fhir.rest.server.exceptions.InvalidRequestException(e.getMessage());
+        }
+
+
+        if(versionId != null){
+            return dao.readVersion(getResourceTypeName(),versionId ,  logicalId , bucketName).orElseThrow(() ->
+                    new ResourceNotFoundException(logicalId));
+        }else{
+            return dao.read(getResourceTypeName(), logicalId , bucketName).orElseThrow(() ->
+                    new ResourceNotFoundException(logicalId));
+        }
+
+    }
+
 
     @Create
     public MethodOutcome create(@ResourceParam T resource) throws IOException {
@@ -132,7 +157,7 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
             logger.debug("🔍 ResourceProvider: Added US Core profile: {}", profiles.get(0));
         }
         
-        logger.debug("🔍 ResourceProvider: Processing {} for bucket: {}", resourceClass.getSimpleName(), bucketName);
+        logger.debug("🔍 ResourceProvider: Processing {} for bucket: {}", getResourceTypeName(), bucketName);
         logger.debug("🔍 ResourceProvider: Bucket config - strict: {}, enforceUSCore: {}, validationDisabled: {}", 
             bucketConfig.isStrictValidation(), bucketConfig.isEnforceUSCore(), bucketConfig.isValidationDisabled());
         
@@ -177,25 +202,25 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
                     throw new UnprocessableEntityException("FHIR Validation failed (strict mode):\n" + issues.toString());
                 } else if (bucketConfig.isLenientValidation()) {
                     // Lenient mode: log warnings but continue
-                    logger.warn("FHIR Validation warnings for {} (lenient mode - continuing):", resourceClass.getSimpleName());
+                    logger.warn("FHIR Validation warnings for {} (lenient mode - continuing):", getResourceTypeName());
                     result.getMessages().forEach(msg -> 
                         logger.warn("  {}: {} - {}", msg.getSeverity(), msg.getLocationString(), msg.getMessage())
                     );
                 }
             } else {
-                logger.debug("🔍 ResourceProvider: ✅ FHIR validation PASSED for {} in bucket {}", resourceClass.getSimpleName(), bucketName);
+                logger.debug("🔍 ResourceProvider: ✅ FHIR validation PASSED for {} in bucket {}", getResourceTypeName(), bucketName);
             }
         } else {
             logger.debug("🔍 ResourceProvider: FHIR Validation DISABLED for bucket: {}", bucketName);
         }
 
 
-        T created =  dao.create( resource.getClass().getSimpleName() , resource , bucketName).orElseThrow(() ->
+        T created =  dao.create( resource.getResourceType().toString() , resource , bucketName).orElseThrow(() ->
                 new InternalErrorException("Failed to create resource"));
         MethodOutcome outcome = new MethodOutcome();
         outcome.setCreated(true);
         outcome.setResource(created);
-        outcome.setId(new IdType(resourceClass.getSimpleName(), created.getIdElement().getIdPart()));
+        outcome.setId(new IdType(resource.getResourceType().toString(), created.getIdElement().getIdPart()));
         return outcome;
     }
 
@@ -211,11 +236,11 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
             throw new ca.uhn.fhir.rest.server.exceptions.InvalidRequestException(e.getMessage());
         }
 
-        Resource currentResource= dao.read(resourceClass.getSimpleName(), theId.getIdPart() , bucketName).orElseThrow(() ->
+        Resource currentResource= dao.read(getResourceTypeName(), theId.getIdPart() , bucketName).orElseThrow(() ->
                 new ResourceNotFoundException(theId));
 
         @SuppressWarnings("unchecked")
-        List<Resource> olderVersions = (List<Resource>) dao.history(resourceClass.getSimpleName(), theId.getIdPart() , since , bucketName);
+        List<Resource> olderVersions = (List<Resource>) dao.history(getResourceTypeName(), theId.getIdPart() , since , bucketName);
 
         List<Resource> allVersions = new ArrayList<>();
         allVersions.add(currentResource);
@@ -244,7 +269,7 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
             throw new ca.uhn.fhir.rest.server.exceptions.InvalidRequestException(e.getMessage());
         }
 
-        String resourceType = resourceClass.getSimpleName();
+        String resourceType = resource.getResourceType().toString();
         
         if (theId != null && theId.hasIdPart()) {
             // ID-based PUT: PUT /Patient/123
@@ -288,7 +313,7 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
      * Perform the actual PUT operation for both ID-based and conditional updates
      */
     private MethodOutcome performPut(T resource, String expectedId, String bucketName, boolean isConditionalCreate) throws IOException {
-        String resourceType = resourceClass.getSimpleName();
+        String resourceType = resource.getResourceType().toString();
         String resourceId = resource.getIdElement() != null ? resource.getIdElement().getIdPart() : "new";
         
         logger.debug("🔄 PUT {}: Processing {} for ID {}", resourceType, 
@@ -339,7 +364,7 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
             throw new ca.uhn.fhir.rest.server.exceptions.InvalidRequestException(e.getMessage());
         }
 
-        String resourceType = resourceClass.getSimpleName();
+        String resourceType = getResourceTypeName();
         
         if (theId != null && theId.hasIdPart()) {
             // ID-based DELETE: DELETE /Patient/123
@@ -439,7 +464,7 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
         @ca.uhn.fhir.rest.annotation.Patch
     public MethodOutcome patch(@IdParam IdType theId, PatchTypeEnum patchType, @ResourceParam String patchBody) throws IOException {
         String resourceId = theId.getIdPart();
-        String resourceType = resourceClass.getSimpleName();
+        String resourceType = getResourceTypeName();
         
         logger.debug("🔧 ResourceProvider: Delegating PATCH for {}/{} to PatchService", resourceType, resourceId);
         
@@ -456,7 +481,7 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
 
     @Search(allowUnknownParams = true)
     public Bundle search(RequestDetails requestDetails) {
-        String resourceType = resourceClass.getSimpleName();
+        String resourceType = getResourceTypeName();
         
         // Check if this is a pagination request
         Map<String, String[]> params = requestDetails.getParameters();
@@ -563,5 +588,14 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
     @Override
     public Class<T> getResourceType() {
         return resourceClass;
+    }
+
+    public String getResourceTypeName(){
+        try{
+             return  ((Resource) resourceClass.getDeclaredConstructor().newInstance())
+                    .getResourceType().toString();
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
     }
 }
