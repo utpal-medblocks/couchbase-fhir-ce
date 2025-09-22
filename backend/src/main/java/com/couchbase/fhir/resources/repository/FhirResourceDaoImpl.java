@@ -2,6 +2,7 @@ package com.couchbase.fhir.resources.repository;
 import ca.uhn.fhir.context.FhirContext;
 import ca.uhn.fhir.parser.JsonParser;
 import ca.uhn.fhir.parser.LenientErrorHandler;
+import ca.uhn.fhir.rest.param.DateParam;
 import com.couchbase.admin.connections.service.ConnectionService;
 import com.couchbase.client.java.Cluster;
 import com.couchbase.client.java.query.QueryResult;
@@ -73,6 +74,43 @@ public class FhirResourceDaoImpl<T extends IBaseResource> implements  FhirResour
 
         } catch (Exception e) {
             logger.error("Failed to get {}/{}: {}", resourceType, id, e.getMessage());
+            throw new RuntimeException(e);
+        }
+    }
+
+    @Override
+    public List<T> history(String resourceType, String id, DateParam since , String bucketName) {
+        try {
+            String connectionName = getDefaultConnection();
+            bucketName = bucketName != null ? bucketName : DEFAULT_BUCKET;
+
+            Cluster cluster = connectionService.getConnection(connectionName);
+            if (cluster == null) {
+                throw new RuntimeException("No active connection found: " + connectionName);
+            }
+
+            // Query all versions from version collection
+            String query = collectionRoutingService.buildHistoryQuery(bucketName, resourceType, id , since);
+
+
+            logger.info("HISTORY query: {}", query);
+
+            QueryResult result = cluster.query(query, queryOptions()
+                    .parameters(JsonObject.create()
+                            .put("resourceType", resourceType)
+                            .put("id", id)));
+
+            List<T> resources = new ArrayList<>();
+            List<JsonObject> rows = result.rowsAs(JsonObject.class);
+            JsonParser parser = (JsonParser) fhirContext.newJsonParser();
+            parser.setParserErrorHandler(new LenientErrorHandler().setErrorOnInvalidValue(false));
+            rows.stream()
+                    .map(row -> (T) parser.parseResource(row.toString()))
+                    .forEach(resources::add);
+            return resources;
+
+        } catch (Exception e) {
+            logger.error("Failed to get history for {}/{}: {}", resourceType, id, e.getMessage());
             throw new RuntimeException(e);
         }
     }
