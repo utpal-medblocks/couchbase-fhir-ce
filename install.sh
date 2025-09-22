@@ -1,6 +1,14 @@
 #!/bin/bash
 
 # Couchbase FHIR CE Install Script
+# 
+# This script ONLY downloads:
+# - docker-compose.yml (container definitions)
+# - haproxy.cfg (load balancer config)  
+# - checksums.txt (file integrity verification)
+# - Pre-built images from ghcr.io/couchbaselabs/*
+# No executable code is downloaded or run from external sources.
+#
 # Usage: curl -sSL https://raw.githubusercontent.com/couchbaselabs/couchbase-fhir-ce/master/install.sh | bash -s -- ./config.yaml
 
 set -e
@@ -47,13 +55,32 @@ cd "$INSTALL_DIR"
 
 echo "📁 Working in directory: $(pwd)"
 
-# Download docker-compose.yml from GitHub
-echo "📥 Downloading docker-compose.yml..."
+# Download files from GitHub
+echo "📥 Downloading installation files..."
 curl -sSL https://raw.githubusercontent.com/couchbaselabs/couchbase-fhir-ce/master/docker-compose.user.yml -o docker-compose.yml
-
-# Download haproxy.cfg from GitHub
-echo "📥 Downloading haproxy.cfg..."
 curl -sSL https://raw.githubusercontent.com/couchbaselabs/couchbase-fhir-ce/master/haproxy.cfg -o haproxy.cfg
+curl -sSL https://raw.githubusercontent.com/couchbaselabs/couchbase-fhir-ce/master/checksums.txt -o checksums.txt
+
+# Verify file integrity
+echo "🔐 Verifying file integrity..."
+if command -v sha256sum &> /dev/null; then
+    if ! sha256sum -c checksums.txt --quiet 2>/dev/null; then
+        echo "❌ Warning: File integrity verification failed. Files may have been tampered with."
+        echo "   Proceeding anyway, but please report this issue."
+    else
+        echo "✅ File integrity verified"
+    fi
+elif command -v shasum &> /dev/null; then
+    # macOS fallback
+    if ! shasum -a 256 -c checksums.txt --quiet 2>/dev/null; then
+        echo "❌ Warning: File integrity verification failed. Files may have been tampered with."
+        echo "   Proceeding anyway, but please report this issue."
+    else
+        echo "✅ File integrity verified"
+    fi
+else
+    echo "⚠️  Warning: Cannot verify file integrity (sha256sum/shasum not available)"
+fi
 
 # Copy user's config file
 echo "📋 Using config file: $CONFIG_FILE"
@@ -80,24 +107,49 @@ if $DOCKER_COMPOSE ps | grep -q "Up"; then
     echo "✅ Couchbase FHIR CE is now running!"
     
     # Auto-detect hostname for access URL
-    if command -v curl &> /dev/null && curl -s --max-time 2 http://169.254.169.254/latest/meta-data/public-hostname &> /dev/null; then
-        # Running on AWS EC2
-        HOSTNAME=$(curl -s http://169.254.169.254/latest/meta-data/public-hostname)
-        echo "🌐 Access the FHIR server at: http://$HOSTNAME"
-    elif [ -n "$HOSTNAME" ] && [ "$HOSTNAME" != "localhost" ]; then
-        # Use system hostname if available
-        echo "🌐 Access the FHIR server at: http://$HOSTNAME"
-    else
-        # Default to localhost
-        echo "🌐 Access the FHIR server at: http://localhost"
+    ACCESS_URL=""
+    
+    # Try AWS EC2 metadata
+    if command -v curl &> /dev/null; then
+        AWS_HOSTNAME=$(curl -s --max-time 2 http://169.254.169.254/latest/meta-data/public-hostname 2>/dev/null || echo "")
+        if [ -n "$AWS_HOSTNAME" ]; then
+            ACCESS_URL="http://$AWS_HOSTNAME"
+        fi
     fi
+    
+    # Try Google Cloud metadata
+    if [ -z "$ACCESS_URL" ] && command -v curl &> /dev/null; then
+        GCP_IP=$(curl -s --max-time 2 -H "Metadata-Flavor: Google" http://metadata.google.internal/computeMetadata/v1/instance/network-interfaces/0/access-configs/0/external-ip 2>/dev/null || echo "")
+        if [ -n "$GCP_IP" ]; then
+            ACCESS_URL="http://$GCP_IP"
+        fi
+    fi
+    
+    # Try Azure metadata
+    if [ -z "$ACCESS_URL" ] && command -v curl &> /dev/null; then
+        AZURE_IP=$(curl -s --max-time 2 -H "Metadata:true" "http://169.254.169.254/metadata/instance/network/interface/0/ipv4/ipAddress/0/publicIpAddress?api-version=2021-02-01&format=text" 2>/dev/null || echo "")
+        if [ -n "$AZURE_IP" ]; then
+            ACCESS_URL="http://$AZURE_IP"
+        fi
+    fi
+    
+    # Fallback to localhost or show generic message
+    if [ -n "$ACCESS_URL" ]; then
+        echo "🌐 Access the FHIR server at: $ACCESS_URL"
+    else
+        echo "🌐 Access the FHIR server at: http://localhost"
+        echo "   Note: If running on a remote server, use your server's external hostname or IP address"
+    fi
+    
     echo ""
     echo "📋 Useful commands:"
+    echo "   cd $INSTALL_DIR"
     echo "   View logs:    $DOCKER_COMPOSE logs -f"
     echo "   Stop:         $DOCKER_COMPOSE down"
     echo "   Restart:      $DOCKER_COMPOSE restart"
     echo "   Status:       $DOCKER_COMPOSE ps"
 else
-    echo "❌ Error: Containers failed to start. Check logs with: $DOCKER_COMPOSE logs"
+    echo "❌ Error: Containers failed to start. Check logs with:"
+    echo "   cd $INSTALL_DIR && $DOCKER_COMPOSE logs"
     exit 1
 fi
