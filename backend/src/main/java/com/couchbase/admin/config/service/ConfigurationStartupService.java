@@ -17,6 +17,11 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.Map;
+import java.util.LinkedHashMap;
+
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.LoggerContext;
+import org.slf4j.LoggerFactory;
 
 /**
  * Service that automatically loads configuration and establishes connections on application startup
@@ -25,7 +30,9 @@ import java.util.Map;
 public class ConfigurationStartupService {
 
     private static final Logger logger = LoggerFactory.getLogger(ConfigurationStartupService.class);
-    private static final String DEFAULT_CONFIG_FILE = "../config.yaml";
+    private static final String DEFAULT_CONFIG_FILE = "../config.yaml"; // relative to backend working dir (/app)
+    private static final String CONFIG_SYS_PROP = "fhir.config";        // -Dfhir.config=/path/to/config.yaml
+    private static final String CONFIG_ENV_VAR = "FHIR_CONFIG_FILE";    // environment override
     private static final String DEFAULT_CONNECTION_NAME = "default";
 
     @Autowired
@@ -50,13 +57,26 @@ public class ConfigurationStartupService {
      * Load config.yaml and establish connection
      */
     private void loadConfigurationAndConnect() {
-        // Try to load YAML config
-        Path configFile = Paths.get(DEFAULT_CONFIG_FILE);
+        // Resolve configuration file path with precedence:
+        // 1. System property -Dfhir.config
+        // 2. Env var FHIR_CONFIG_FILE
+        // 3. Default relative ../config.yaml
+        String overrideSys = System.getProperty(CONFIG_SYS_PROP);
+        String overrideEnv = System.getenv(CONFIG_ENV_VAR);
+        String chosenPath = overrideSys != null ? overrideSys : (overrideEnv != null ? overrideEnv : DEFAULT_CONFIG_FILE);
+
+        Path configFile = Paths.get(chosenPath);
         if (!configFile.isAbsolute()) {
-            configFile = Paths.get(System.getProperty("user.dir")).resolve(DEFAULT_CONFIG_FILE);
+            configFile = Paths.get(System.getProperty("user.dir")).resolve(configFile).normalize();
         }
 
-        logger.info("🔧 Looking for configuration file: {}", configFile.toAbsolutePath());
+        if (overrideSys != null) {
+            logger.info("🔧 Using config override via system property ({}): {}", CONFIG_SYS_PROP, configFile);
+        } else if (overrideEnv != null) {
+            logger.info("🔧 Using config override via environment variable ({}): {}", CONFIG_ENV_VAR, configFile);
+        } else {
+            logger.info("🔧 Using default config path: {}", configFile);
+        }
 
         if (!Files.exists(configFile)) {
             logger.info("📋 No config.yaml found - FHIR Server will start without auto-connection");
@@ -82,6 +102,19 @@ public class ConfigurationStartupService {
             return;
         }
 
+        // Apply logging level overrides if present: logging.levels:
+        //   com.couchbase.admin: DEBUG
+        //   com.couchbase.fhir: INFO
+        @SuppressWarnings("unchecked")
+        Map<String, Object> loggingSection = (Map<String, Object>) yamlData.get("logging");
+        if (loggingSection != null) {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> levels = (Map<String, Object>) loggingSection.get("levels");
+            if (levels != null && !levels.isEmpty()) {
+                applyLoggingLevels(levels);
+            }
+        }
+
         // Extract connection configuration
         @SuppressWarnings("unchecked")
         Map<String, Object> connectionConfig = (Map<String, Object>) yamlData.get("connection");
@@ -91,13 +124,14 @@ public class ConfigurationStartupService {
             return;
         }
 
-        // Extract app configuration
+        // Extract app configuration and determine autoConnect behavior.
+        // New logic: if a connection section exists and app.autoConnect is NOT explicitly false, we auto-connect.
         @SuppressWarnings("unchecked")
         Map<String, Object> appConfig = (Map<String, Object>) yamlData.get("app");
-        boolean autoConnect = appConfig != null && Boolean.TRUE.equals(appConfig.get("autoConnect"));
-        
+        boolean autoConnectExplicitFalse = appConfig != null && Boolean.FALSE.equals(appConfig.get("autoConnect"));
+        boolean autoConnect = !autoConnectExplicitFalse; // default true when connection section present
         if (!autoConnect) {
-            logger.info("📋 autoConnect is disabled in config.yaml - skipping auto-connection");
+            logger.info("📋 autoConnect explicitly disabled (app.autoConnect=false) - skipping auto-connection");
             return;
         }
 
@@ -132,6 +166,26 @@ public class ConfigurationStartupService {
                 logger.info("📋 FHIR Server started but no connection established - use frontend or REST API to connect");
             }
         }
+    }
+
+    /**
+     * Apply logging levels supplied in config.yaml under logging.levels
+     */
+    private void applyLoggingLevels(Map<String, Object> levels) {
+        LoggerContext context = (LoggerContext) LoggerFactory.getILoggerFactory();
+        // Keep insertion order for deterministic logging of what changed
+        Map<String, Object> ordered = new LinkedHashMap<>(levels);
+        ordered.forEach((k, v) -> {
+            if (v == null) return;
+            String levelStr = v.toString().trim().toUpperCase();
+            try {
+                Level lvl = Level.valueOf(levelStr);
+                context.getLogger(k).setLevel(lvl);
+                logger.info("🪵 Logging level override: {} -> {}", k, lvl);
+            } catch (IllegalArgumentException ex) {
+                logger.warn("⚠️ Ignoring invalid log level '{}' for logger '{}'. Valid: TRACE, DEBUG, INFO, WARN, ERROR", levelStr, k);
+            }
+        });
     }
 
     /**

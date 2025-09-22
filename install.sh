@@ -78,7 +78,19 @@ sleep 5
 if $DOCKER_COMPOSE ps | grep -q "Up"; then
     echo ""
     echo "✅ Couchbase FHIR CE is now running!"
-    echo "🌐 Access the FHIR server at: http://localhost"
+    
+    # Auto-detect hostname for access URL
+    if command -v curl &> /dev/null && curl -s --max-time 2 http://169.254.169.254/latest/meta-data/public-hostname &> /dev/null; then
+        # Running on AWS EC2
+        HOSTNAME=$(curl -s http://169.254.169.254/latest/meta-data/public-hostname)
+        echo "🌐 Access the FHIR server at: http://$HOSTNAME"
+    elif [ -n "$HOSTNAME" ] && [ "$HOSTNAME" != "localhost" ]; then
+        # Use system hostname if available
+        echo "🌐 Access the FHIR server at: http://$HOSTNAME"
+    else
+        # Default to localhost
+        echo "🌐 Access the FHIR server at: http://localhost"
+    fi
     echo ""
     echo "📋 Useful commands:"
     echo "   View logs:    $DOCKER_COMPOSE logs -f"
