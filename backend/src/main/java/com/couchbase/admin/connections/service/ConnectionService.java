@@ -1,6 +1,5 @@
 package com.couchbase.admin.connections.service;
 
-import com.couchbase.admin.connections.model.Connection;
 import com.couchbase.admin.connections.model.ConnectionRequest;
 import com.couchbase.admin.connections.model.ConnectionResponse;
 import com.couchbase.client.java.Cluster;
@@ -14,7 +13,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
-import java.util.ArrayList;
 
 @Service
 public class ConnectionService {
@@ -36,18 +34,21 @@ public class ConnectionService {
         private final String connectionString;
         private final String username;
         private final String password;
+        private final String serverType;
         
-        public ConnectionDetails(boolean sslEnabled, String connectionString, String username, String password) {
+        public ConnectionDetails(boolean sslEnabled, String connectionString, String username, String password, String serverType) {
             this.sslEnabled = sslEnabled;
             this.connectionString = connectionString;
             this.username = username;
             this.password = password;
+            this.serverType = serverType;
         }
         
         public boolean isSslEnabled() { return sslEnabled; }
         public String getConnectionString() { return connectionString; }
         public String getUsername() { return username; }
         public String getPassword() { return password; }
+        public String getServerType() { return serverType; }
     }
     
     /**
@@ -63,12 +64,27 @@ public class ConnectionService {
                         env.timeoutConfig().connectTimeout(Duration.ofSeconds(10));
                         env.timeoutConfig().queryTimeout(Duration.ofSeconds(15));     // Shorter timeout for fast failure
                         env.timeoutConfig().managementTimeout(Duration.ofSeconds(15)); // Shorter timeout for fast failure
-                        env.timeoutConfig().kvTimeout(Duration.ofSeconds(10));        // Key-Value operation timeout
+                        env.timeoutConfig().kvTimeout(Duration.ofSeconds(30));        // Longer timeout for FHIR document operations and transactions
                         
-                        // Optimize connection pooling for reuse
-                        env.ioConfig().numKvConnections(4);                          // More connections per node
-                        env.ioConfig().maxHttpConnections(12);                       // More HTTP connections
-                        env.ioConfig().idleHttpConnectionTimeout(Duration.ofSeconds(30)); // Keep connections alive longer
+                        // Transaction-specific timeouts and durability for FHIR bundle processing
+                        env.transactionsConfig(txn -> {
+                            txn.timeout(Duration.ofSeconds(60)); // Increase transaction timeout from 15s to 60s
+                            // For better performance, use majority durability instead of default (which waits for all replicas)
+                            txn.durabilityLevel(com.couchbase.client.core.msg.kv.DurabilityLevel.MAJORITY);
+                        });
+                        
+                        // Optimize for FHIR workload: KV operations (POST/PUT/Transactions) + SQL++ queries + minimal admin HTTP
+                        env.ioConfig().numKvConnections(8);                          // More KV connections for FHIR document operations and transactions
+                        env.ioConfig().maxHttpConnections(4);                        // Minimal HTTP connections - only for admin UI operations
+                        env.ioConfig().idleHttpConnectionTimeout(Duration.ofMinutes(2)); // Reasonable timeout for admin operations
+                        
+                        // TCP keep-alive is handled automatically by the SDK for Capella
+                        
+                        // SQL++ query-focused optimizations (main FHIR workload)
+                        env.ioConfig().enableMutationTokens(false);                  // Not needed for read-heavy SQL++ queries
+                        env.ioConfig().configPollInterval(Duration.ofSeconds(30));   // Less frequent config polling for stable Capella
+                        
+                        // Query service optimizations are set via ClusterOptions, not environment
                         
                         // Use best effort retry strategy with default settings
                         env.retryStrategy(com.couchbase.client.core.retry.BestEffortRetryStrategy.INSTANCE);
@@ -139,8 +155,8 @@ public class ConnectionService {
             // Store the new connection
             activeConnections.put(request.getName(), cluster);
             
-            // Store connection details including SSL status
-            connectionDetails.put(request.getName(), new ConnectionDetails(request.isSslEnabled(), request.getConnectionString(), request.getUsername(), request.getPassword()));
+            // Store connection details including SSL status and server type
+            connectionDetails.put(request.getName(), new ConnectionDetails(request.isSslEnabled(), request.getConnectionString(), request.getUsername(), request.getPassword(), request.getServerType()));
             
             logger.info("Successfully created and stored connection: {}", request.getName());
             
@@ -314,32 +330,6 @@ public class ConnectionService {
             logger.warn("Could not extract cluster name from connection string: {}", connectionString);
             return "Unknown Cluster";
         }
-    }
-    
-    // Legacy methods for compatibility
-    public List<Connection> getAllConnections() {
-        // TODO: Implement actual connection retrieval logic
-        return new ArrayList<>();
-    }
-    
-    public Connection getConnectionById(String id) {
-        // TODO: Implement actual connection retrieval logic
-        return null;
-    }
-    
-    public Connection createConnection(Connection connection) {
-        // TODO: Implement actual connection creation logic
-        return connection;
-    }
-    
-    public boolean deleteConnection(String id) {
-        // TODO: Implement actual connection deletion logic
-        return true;
-    }
-    
-    public boolean testConnection(Connection connection) {
-        // TODO: Implement actual connection testing logic
-        return true;
     }
     
     /**

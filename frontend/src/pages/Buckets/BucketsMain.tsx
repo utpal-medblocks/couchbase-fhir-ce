@@ -37,7 +37,7 @@ const BucketsMain = () => {
   );
   const [lastRefreshed, setLastRefreshed] = useState<Date | null>(null);
 
-  const connectionId = connection.name;
+  const connectionId = connection.connectionName;
 
   // Get bucket data
   const activeBucket = bucketStore.getActiveBucket(connectionId);
@@ -270,7 +270,7 @@ const BucketsMain = () => {
           <Box sx={{ flex: 1, p: 1 }}>
             {activeBucket ? (
               <BucketMetricsCharts
-                connectionName={connection?.name || ""}
+                connectionName={connection?.connectionName || ""}
                 bucketName={activeBucket.bucketName}
                 timeRange={timeRange}
               />

@@ -1,7 +1,6 @@
 package com.couchbase.admin.dashboard.controller;
 
 import com.couchbase.admin.dashboard.model.DashboardMetrics;
-import com.couchbase.admin.dashboard.service.ActuatorAggregatorService;
 import com.couchbase.admin.connections.service.ClusterMetricsService;
 import com.couchbase.admin.connections.service.ConnectionService;
 import com.couchbase.admin.connections.model.ClusterMetrics;
@@ -34,9 +33,6 @@ import java.util.Base64;
 @CrossOrigin(origins = "*")
 public class DashboardMetricsController {
 
-    @Autowired
-    private ActuatorAggregatorService actuatorAggregatorService;
-    
     @Autowired
     private ClusterMetricsService clusterMetricsService;
     
@@ -84,96 +80,50 @@ public class DashboardMetricsController {
 
     @GetMapping("/health")
     public ResponseEntity<Map<String, Object>> getHealthStatus() {
-        try {
-            DashboardMetrics metrics = actuatorAggregatorService.getAggregatedMetrics();
-            Map<String, Object> healthResponse = new HashMap<>();
-            healthResponse.put("status", metrics.getHealth().getStatus());
-            healthResponse.put("details", metrics.getHealth().getDetails());
-            healthResponse.put("timestamp", System.currentTimeMillis());
-            return ResponseEntity.ok(healthResponse);
-        } catch (Exception e) {
-            Map<String, Object> errorResponse = new HashMap<>();
-            errorResponse.put("status", "ERROR");
-            errorResponse.put("error", e.getMessage());
-            errorResponse.put("timestamp", System.currentTimeMillis());
-            return ResponseEntity.ok(errorResponse);
-        }
+        Map<String, Object> healthResponse = new HashMap<>();
+        healthResponse.put("status", "UP");
+        healthResponse.put("details", Map.of("service", "FHIR Server", "status", "Running"));
+        healthResponse.put("timestamp", System.currentTimeMillis());
+        return ResponseEntity.ok(healthResponse);
     }
 
     @GetMapping("/system")
     public ResponseEntity<Map<String, Object>> getSystemMetrics() {
-        try {
-            DashboardMetrics metrics = actuatorAggregatorService.getAggregatedMetrics();
-            Map<String, Object> systemResponse = new HashMap<>();
-            systemResponse.put("systemMetrics", metrics.getSystemMetrics());
-            systemResponse.put("jvmMetrics", metrics.getJvmMetrics());
-            systemResponse.put("timestamp", System.currentTimeMillis());
-            return ResponseEntity.ok(systemResponse);
-        } catch (Exception e) {
-            Map<String, Object> errorResponse = new HashMap<>();
-            errorResponse.put("error", e.getMessage());
-            errorResponse.put("timestamp", System.currentTimeMillis());
-            return ResponseEntity.ok(errorResponse);
-        }
+        Map<String, Object> systemResponse = new HashMap<>();
+        systemResponse.put("message", "System metrics moved to HAProxy time-series endpoint");
+        systemResponse.put("endpoint", "/api/metrics/haproxy-timeseries");
+        systemResponse.put("timestamp", System.currentTimeMillis());
+        return ResponseEntity.ok(systemResponse);
     }
 
     @GetMapping("/application")
     public ResponseEntity<Map<String, Object>> getApplicationMetrics() {
-        try {
-            DashboardMetrics metrics = actuatorAggregatorService.getAggregatedMetrics();
-            Map<String, Object> appResponse = new HashMap<>();
-            appResponse.put("applicationInfo", metrics.getApplicationInfo());
-            appResponse.put("applicationMetrics", metrics.getApplicationMetrics());
-            appResponse.put("uptime", metrics.getUptime());
-            appResponse.put("timestamp", System.currentTimeMillis());
-            return ResponseEntity.ok(appResponse);
-        } catch (Exception e) {
-            Map<String, Object> errorResponse = new HashMap<>();
-            errorResponse.put("error", e.getMessage());
-            errorResponse.put("timestamp", System.currentTimeMillis());
-            return ResponseEntity.ok(errorResponse);
-        }
+        Map<String, Object> appResponse = new HashMap<>();
+        appResponse.put("applicationInfo", Map.of("name", "FHIR Server", "version", "1.0.0"));
+        appResponse.put("message", "Application metrics moved to HAProxy time-series endpoint");
+        appResponse.put("endpoint", "/api/metrics/haproxy-timeseries");
+        appResponse.put("timestamp", System.currentTimeMillis());
+        return ResponseEntity.ok(appResponse);
     }
 
     @GetMapping("/refresh")
     public ResponseEntity<Map<String, Object>> refreshMetrics() {
-        try {
-            // Clear cache and get fresh metrics
-            actuatorAggregatorService.getAggregatedMetrics();
-            Map<String, Object> response = new HashMap<>();
-            response.put("message", "Metrics refreshed successfully");
-            response.put("timestamp", System.currentTimeMillis());
-            return ResponseEntity.ok(response);
-        } catch (Exception e) {
-            Map<String, Object> errorResponse = new HashMap<>();
-            errorResponse.put("error", "Failed to refresh metrics: " + e.getMessage());
-            errorResponse.put("timestamp", System.currentTimeMillis());
-            return ResponseEntity.ok(errorResponse);
-        }
+        Map<String, Object> response = new HashMap<>();
+        response.put("message", "Metrics auto-refresh every 6 seconds via HAProxy service");
+        response.put("endpoint", "/api/metrics/haproxy-timeseries");
+        response.put("timestamp", System.currentTimeMillis());
+        return ResponseEntity.ok(response);
     }
 
     @GetMapping("/summary")
     public ResponseEntity<Map<String, Object>> getSummary() {
-        try {
-            DashboardMetrics metrics = actuatorAggregatorService.getAggregatedMetrics();
-            Map<String, Object> summary = new HashMap<>();
-            summary.put("health", metrics.getHealth().getStatus());
-            summary.put("uptime", metrics.getUptime());
-            summary.put("timestamp", metrics.getTimestamp());
-            
-            // Add key system metrics
-            if (metrics.getSystemMetrics() != null) {
-                summary.put("cpu", metrics.getSystemMetrics().get("cpu"));
-                summary.put("memory", metrics.getSystemMetrics().get("memory"));
-            }
-            
-            return ResponseEntity.ok(summary);
-        } catch (Exception e) {
-            Map<String, Object> errorResponse = new HashMap<>();
-            errorResponse.put("error", e.getMessage());
-            errorResponse.put("timestamp", System.currentTimeMillis());
-            return ResponseEntity.ok(errorResponse);
-        }
+        Map<String, Object> summary = new HashMap<>();
+        summary.put("health", "UP");
+        summary.put("service", "FHIR Server");
+        summary.put("message", "Full metrics available at HAProxy time-series endpoint");
+        summary.put("endpoint", "/api/metrics/haproxy-timeseries");
+        summary.put("timestamp", System.currentTimeMillis());
+        return ResponseEntity.ok(summary);
     }
 
     private boolean isRunningInContainer() {
@@ -185,17 +135,12 @@ public class DashboardMetricsController {
     }
 
     @GetMapping("/fhir-metrics")
-    public ResponseEntity<DashboardMetrics> getFhirMetrics() {
-        try {
-            DashboardMetrics metrics = actuatorAggregatorService.getAggregatedMetrics();
-            return ResponseEntity.ok(metrics);
-        } catch (Exception e) {
-            DashboardMetrics errorMetrics = new DashboardMetrics();
-            Map<String, Object> errorInfo = new HashMap<>();
-            errorInfo.put("error", "Failed to fetch FHIR metrics: " + e.getMessage());
-            errorMetrics.setApplicationInfo(errorInfo);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(errorMetrics);
-        }
+    public ResponseEntity<Map<String, Object>> getFhirMetrics() {
+        Map<String, Object> response = new HashMap<>();
+        response.put("message", "FHIR metrics moved to HAProxy time-series endpoint");
+        response.put("endpoint", "/api/metrics/haproxy-timeseries");
+        response.put("timestamp", System.currentTimeMillis());
+        return ResponseEntity.ok(response);
     }
 
     @GetMapping("/haproxy-metrics")

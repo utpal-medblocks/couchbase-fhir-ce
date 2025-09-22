@@ -8,13 +8,13 @@ const ConnectionStatus = () => {
   const { connection, metrics } = useConnectionStore();
 
   const nodes = metrics?.nodes || [];
-  const clusterName = metrics?.clusterName || "No Connection";
+  const clusterName = connection.name;
   const clusterVersion = nodes.length > 0 ? nodes[0].version : "No Connection";
 
   // Static FHIR configuration - backend manages the actual config
   const fhirConfig = {
     profile: "US Core",
-    endpoint: "/fhir/demo",
+    endpoint: "/fhir/<bucket-name>",
     version: "V4",
   };
 

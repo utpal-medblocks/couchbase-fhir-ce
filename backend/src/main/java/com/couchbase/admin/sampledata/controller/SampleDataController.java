@@ -113,6 +113,7 @@ public class SampleDataController {
     @PostMapping("/load-with-progress")
     public SseEmitter loadSampleDataWithProgress(@RequestBody SampleDataRequest request) {
         SseEmitter emitter = new SseEmitter(300000L); // 5 minute timeout
+        final boolean[] completed = {false}; // Track completion state
         
         logger.info("Starting sample data load with progress for connection: {}, bucket: {}", 
                 request.getConnectionName(), request.getBucketName());
@@ -122,33 +123,40 @@ public class SampleDataController {
             try {
                 sampleDataService.loadSampleDataWithProgress(request, (progress) -> {
                     try {
-                        // Send progress update via SSE
-                        emitter.send(SseEmitter.event()
-                                .name("progress")
-                                .data(progress));
-                        
-                        // Complete the SSE stream when done
-                        if ("COMPLETED".equals(progress.getStatus()) || "ERROR".equals(progress.getStatus())) {
-                            emitter.complete();
+                        // Only send if not completed
+                        if (!completed[0]) {
+                            emitter.send(SseEmitter.event()
+                                    .name("progress")
+                                    .data(progress));
+                            
+                            // Complete the SSE stream when done
+                            if ("COMPLETED".equals(progress.getStatus()) || "ERROR".equals(progress.getStatus())) {
+                                completed[0] = true;
+                                emitter.complete();
+                            }
                         }
                     } catch (Exception e) {
-                        logger.error("Error sending progress update: {}", e.getMessage());
-                        emitter.completeWithError(e);
+                        // Silently ignore emitter errors - client may have disconnected
+                        logger.debug("Progress update skipped (client likely disconnected): {}", e.getMessage());
                     }
                 });
             } catch (Exception e) {
                 logger.error("Error during sample data loading: {}", e.getMessage());
                 try {
-                    emitter.send(SseEmitter.event()
-                            .name("error")
-                            .data(new SampleDataProgress() {{
-                                setStatus("ERROR");
-                                setMessage("Failed to load sample data: " + e.getMessage());
-                            }}));
+                    if (!completed[0]) {
+                        emitter.send(SseEmitter.event()
+                                .name("error")
+                                .data(new SampleDataProgress() {{
+                                    setStatus("ERROR");
+                                    setMessage("Failed to load sample data: " + e.getMessage());
+                                }}));
+                        completed[0] = true;
+                        emitter.completeWithError(e);
+                    }
                 } catch (Exception sendError) {
-                    logger.error("Error sending error event: {}", sendError.getMessage());
+                    // Silently ignore - client disconnected
+                    logger.debug("Error event skipped (client likely disconnected): {}", sendError.getMessage());
                 }
-                emitter.completeWithError(e);
             }
         });
         

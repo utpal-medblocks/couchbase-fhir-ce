@@ -1,29 +1,6 @@
 <configuration>
-    <!-- Remove the status listener now that we've diagnosed -->
-    <!-- <statusListener class="ch.qos.logback.core.status.OnConsoleStatusListener" /> -->
-    
+    <!-- Container-friendly logging: STDOUT only (12-factor). -->
     <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
-        <encoder>
-            <pattern>%d{HH:mm:ss.SSS} %-5level %logger{36} - %msg%n</pattern>
-        </encoder>
-    </appender>
-
-    <!-- Overwrite ~/Documents/fhir.log on each startup -->
-    <appender name="FILE" class="ch.qos.logback.core.FileAppender">
-        <file>${user.home}/Documents/fhir.log</file>
-        <append>false</append>
-        <encoder>
-        <pattern>%d{HH:mm:ss.SSS} %-5level %logger{36} - %msg%n</pattern>
-        </encoder>
-    </appender>
-
-    <!-- RollingFileAppender for log rotation -->
-    <appender name="ROLLING" class="ch.qos.logback.core.rolling.RollingFileAppender">
-        <file>logs/app.log</file>
-        <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
-            <fileNamePattern>logs/app-%d{yyyy-MM-dd_HH}.log</fileNamePattern>
-            <maxHistory>30</maxHistory>
-        </rollingPolicy>
         <encoder>
             <pattern>%d{HH:mm:ss.SSS} %-5level %logger{36} - %msg%n</pattern>
         </encoder>
@@ -31,8 +8,6 @@
 
     <root level="INFO">
         <appender-ref ref="STDOUT"/>
-        <appender-ref ref="ROLLING"/>
-        <appender-ref ref="FILE"/>
     </root>
 
     <!-- Your Couchbase loggers -->
@@ -45,9 +20,8 @@
     <logger name="com.couchbase.transactions" level="ERROR"/>
     <logger name="com.couchbase.tracing" level="ERROR"/>
 
-    <logger name="com.couchbase.admin" level="DEBUG"/>
-    <logger name="com.couchbase.fhir" level="DEBUG"/>
-    <logger name="com.couchbase.common" level="DEBUG"/>
+    <!-- Package-specific loggers now default to root level; override via config.yaml: logging.levels -->
+    <!-- (Removed explicit DEBUG to allow runtime configuration) -->
 
     <!-- Suppress noisy HAPI FHIR parser warnings -->
     <logger name="ca.uhn.fhir.parser.LenientErrorHandler" level="ERROR"/>

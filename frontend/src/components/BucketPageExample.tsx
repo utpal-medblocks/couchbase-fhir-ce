@@ -10,7 +10,7 @@ export const BucketPageExample: React.FC = () => {
   const bucketStore = useBucketStore();
 
   // Get the current connection ID (you'd get this from your routing/context)
-  const connectionId = connectionStore.connection.name;
+  const connectionId = connectionStore.connection.connectionName;
 
   // Get only FHIR buckets for the dropdown
   const fhirBuckets = bucketStore.getFhirBuckets(connectionId);

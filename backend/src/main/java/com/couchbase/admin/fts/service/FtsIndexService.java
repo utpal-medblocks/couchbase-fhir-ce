@@ -4,18 +4,20 @@ import com.couchbase.admin.fts.model.FtsIndex;
 import com.couchbase.admin.fts.model.FtsIndexDetails;
 import com.couchbase.admin.fts.model.FtsProgressData;
 import com.couchbase.admin.connections.service.ConnectionService;
-import com.couchbase.admin.connections.service.ConnectionService.ConnectionDetails;
+import com.couchbase.client.java.Cluster;
+import com.couchbase.client.java.http.CouchbaseHttpClient;
+import com.couchbase.client.java.http.HttpResponse;
+import com.couchbase.client.java.http.HttpTarget;
+import com.couchbase.client.java.http.HttpPath;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
-import org.springframework.web.client.RestTemplate;
-import org.springframework.http.*;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.Base64;
 
 /**
  * Service for managing FTS index information
@@ -27,6 +29,8 @@ public class FtsIndexService {
     
     @Autowired
     private ConnectionService connectionService;
+    
+    private final ObjectMapper objectMapper = new ObjectMapper();
     
     /**
      * Get all FTS index details for a specific bucket and scope
@@ -62,49 +66,30 @@ public class FtsIndexService {
     }
     
     /**
-     * Get FTS index definitions from the REST API
+     * Get FTS index definitions from the REST API using SDK's HTTP client
      */
     public List<FtsIndex> getFtsIndexDefinitions(String connectionName, String bucketName, String scopeName) {
         try {
-            ConnectionDetails connection = connectionService.getConnectionDetails(connectionName);
-            if (connection == null) {
-                log.warn("Could not get connection details for FTS index definitions");
+            Cluster cluster = connectionService.getConnection(connectionName);
+            if (cluster == null) {
+                log.warn("Could not get cluster connection for FTS index definitions");
                 return new ArrayList<>();
             }
             
-            // Determine the correct port based on SSL
-            int ftsPort = connection.isSslEnabled() ? 18094 : 8094;
-            String protocol = connection.isSslEnabled() ? "https" : "http";
-            String hostname = connectionService.getHostname(connectionName);
+            // Use the cluster's HTTP client - this handles SSL certificates automatically
+            CouchbaseHttpClient httpClient = cluster.httpClient();
             
-            // Construct the FTS API URL for getting index definitions
-            String ftsUrl = String.format("%s://%s:%d/api/bucket/%s/scope/%s/index", 
-                protocol, hostname, ftsPort, bucketName, scopeName);
-            
-            // Make HTTP request
-            RestTemplate restTemplate = new RestTemplate();
-            
-            // Set up basic authentication
-            String auth = connection.getUsername() + ":" + connection.getPassword();
-            String encodedAuth = Base64.getEncoder().encodeToString(auth.getBytes());
-            
-            HttpHeaders headers = new HttpHeaders();
-            headers.set("Authorization", "Basic " + encodedAuth);
-            headers.setContentType(MediaType.APPLICATION_JSON);
-            
-            HttpEntity<String> entity = new HttpEntity<>(headers);
-            
-            ResponseEntity<?> response = restTemplate.exchange(
-                ftsUrl, 
-                HttpMethod.GET, 
-                entity, 
-                Map.class
+            // Make HTTP request to FTS API using SDK's HTTP client
+            HttpResponse response = httpClient.get(
+                HttpTarget.search(), // Use the search (FTS) target
+                HttpPath.of("/api/bucket/{}/scope/{}/index", bucketName, scopeName)
             );
             
-            if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
+            if (response.statusCode() >= 200 && response.statusCode() < 300) {
+                String responseBody = response.contentAsString();
                 @SuppressWarnings("unchecked")
-                Map<String, Object> responseBody = (Map<String, Object>) response.getBody();
-                return parseFtsIndexDefinitions(responseBody);
+                Map<String, Object> responseMap = objectMapper.readValue(responseBody, Map.class);
+                return parseFtsIndexDefinitions(responseMap);
             }
             
         } catch (Exception e) {
@@ -115,58 +100,42 @@ public class FtsIndexService {
     }
     
     /**
-     * Get FTS progress data for multiple indexes using CB Console API
+     * Get FTS progress data for multiple indexes using CB Console API with SDK's HTTP client
      */
     public List<FtsProgressData> getFtsProgress(String connectionName, List<String> indexNames, String bucketName, String scopeName) {
         List<FtsProgressData> progressResults = new ArrayList<>();
         
-        ConnectionDetails connection = connectionService.getConnectionDetails(connectionName);
-        if (connection == null) {
-            log.error("Could not get connection details for FTS progress");
+        Cluster cluster = connectionService.getConnection(connectionName);
+        if (cluster == null) {
+            log.error("Could not get cluster connection for FTS progress");
             return progressResults;
         }
         
-        // Determine the correct port for CB Console (8091/18091 with _p proxy)
-        int consolePort = connection.isSslEnabled() ? 18091 : 8091;
-        String protocol = connection.isSslEnabled() ? "https" : "http";
-        String hostname = connectionService.getHostname(connectionName);
-        
-        RestTemplate restTemplate = new RestTemplate();
-        
-        // Set up basic authentication
-        String auth = connection.getUsername() + ":" + connection.getPassword();
-        String encodedAuth = Base64.getEncoder().encodeToString(auth.getBytes());
-        
-        HttpHeaders headers = new HttpHeaders();
-        headers.set("Authorization", "Basic " + encodedAuth);
-        headers.setContentType(MediaType.APPLICATION_JSON);
-        
-        HttpEntity<String> entity = new HttpEntity<>(headers);
+        // Use the cluster's HTTP client - this handles SSL certificates automatically
+        CouchbaseHttpClient httpClient = cluster.httpClient();
         
         // Fetch progress for each index
         for (String indexName : indexNames) {
             try {
                 // Build CB Console progress API URL with _p proxy
-                String progressUrl = String.format("%s://%s:%d/_p/fts/api/stats/index/%s.%s.%s/progress", 
-                    protocol, hostname, consolePort, bucketName, scopeName, indexName);
+                String apiPath = String.format("/_p/fts/api/stats/index/%s.%s.%s/progress", 
+                    bucketName, scopeName, indexName);
                 
-                // log.debug("Fetching FTS progress from: {}", progressUrl);
-                
-                ResponseEntity<Map> response = restTemplate.exchange(
-                    progressUrl, 
-                    HttpMethod.GET, 
-                    entity, 
-                    Map.class
+                HttpResponse response = httpClient.get(
+                    HttpTarget.manager(), // Use manager target for console API
+                    HttpPath.of(apiPath)
                 );
                 
-                if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
-                    Map<String, Object> progressData = response.getBody();
+                if (response.statusCode() >= 200 && response.statusCode() < 300) {
+                    String responseBody = response.contentAsString();
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> progressData = objectMapper.readValue(responseBody, Map.class);
                     FtsProgressData progress = parseProgressData(indexName, progressData);
                     progressResults.add(progress);
                     // log.debug("Successfully fetched progress for index: {}", indexName);
                 } else {
-                    log.error("Failed to get progress for index: {} - Status: {}", indexName, response.getStatusCode());
-                    addErrorProgress(progressResults, indexName, "HTTP " + response.getStatusCode());
+                    log.error("Failed to get progress for index: {} - Status: {}", indexName, response.statusCode());
+                    addErrorProgress(progressResults, indexName, "HTTP " + response.statusCode());
                 }
                 
             } catch (Exception e) {

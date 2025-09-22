@@ -241,12 +241,29 @@ public class FhirDocumentAdminService {
              .append("` resource ");
         
         // Add FTS search condition (without pagination in FTS - we'll use LIMIT/OFFSET)
-        query.append("WHERE SEARCH(resource, { \"match_all\": {} }, ")
-             .append("{ \"index\": \"")
-             .append(request.getBucketName())
-             .append(".Resources.fts")
-             .append(request.getCollectionName())
-             .append("\" })");
+        if ("General".equals(request.getCollectionName()) && 
+            request.getResourceType() != null && !request.getResourceType().trim().isEmpty()) {
+            // For General collection with resourceType filter, use conjuncts
+            query.append("WHERE SEARCH(resource, { \"query\": { \"conjuncts\": [ ")
+                 .append("{ \"field\": \"resourceType\", \"match\": \"")
+                 .append(request.getResourceType())
+                 .append("\" }, ")
+                 .append("{ \"match_all\": {} } ")
+                 .append("] } }, ")
+                 .append("{ \"index\": \"")
+                 .append(request.getBucketName())
+                 .append(".Resources.fts")
+                 .append(request.getCollectionName())
+                 .append("\" })");
+        } else {
+            // For named collections or General without resourceType filter, use match_all
+            query.append("WHERE SEARCH(resource, { \"match_all\": {} }, ")
+                 .append("{ \"index\": \"")
+                 .append(request.getBucketName())
+                 .append(".Resources.fts")
+                 .append(request.getCollectionName())
+                 .append("\" })");
+        }
         
         // Add patient filtering if specified
         if (request.getPatientId() != null && !request.getPatientId().trim().isEmpty()) {
@@ -311,12 +328,29 @@ public class FhirDocumentAdminService {
                      .append("` resource ");
             
             // Add FTS search condition for count
-            countQuery.append("WHERE SEARCH(resource, { \"match_all\": {} }, ")
-                     .append("{ \"index\": \"")
-                     .append(request.getBucketName())
-                     .append(".Resources.fts")
-                     .append(request.getCollectionName())
-                     .append("\" })");
+            if ("General".equals(request.getCollectionName()) && 
+                request.getResourceType() != null && !request.getResourceType().trim().isEmpty()) {
+                // For General collection with resourceType filter, use conjuncts
+                countQuery.append("WHERE SEARCH(resource, { \"query\": { \"conjuncts\": [ ")
+                         .append("{ \"field\": \"resourceType\", \"match\": \"")
+                         .append(request.getResourceType())
+                         .append("\" }, ")
+                         .append("{ \"match_all\": {} } ")
+                         .append("] } }, ")
+                         .append("{ \"index\": \"")
+                         .append(request.getBucketName())
+                         .append(".Resources.fts")
+                         .append(request.getCollectionName())
+                         .append("\" })");
+            } else {
+                // For named collections or General without resourceType filter, use match_all
+                countQuery.append("WHERE SEARCH(resource, { \"match_all\": {} }, ")
+                         .append("{ \"index\": \"")
+                         .append(request.getBucketName())
+                         .append(".Resources.fts")
+                         .append(request.getCollectionName())
+                         .append("\" })");
+            }
             
             // Add same patient filtering as main query
             if (request.getPatientId() != null && !request.getPatientId().trim().isEmpty()) {

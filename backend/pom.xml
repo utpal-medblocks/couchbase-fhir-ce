@@ -10,7 +10,7 @@
 	</parent>
 	<groupId>com.couchbase</groupId>
 	<artifactId>backend</artifactId>
-	<version>0.0.1-SNAPSHOT</version>
+	<version>0.9.0-beta.1</version>
 	<name>backend</name>
 	<description>Couchbase FHIR Server Community Edition</description>
 	<url>https://github.com/couchbaselabs/couchbase-fhir-ce</url>
@@ -194,6 +194,13 @@
 						</exclude>
 					</excludes>
 				</configuration>
+				<executions>
+					<execution>
+						<goals>
+							<goal>build-info</goal>
+						</goals>
+					</execution>
+				</executions>
 			</plugin>
 		</plugins>
 	</build>

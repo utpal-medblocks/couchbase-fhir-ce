@@ -5,6 +5,8 @@ import org.springframework.stereotype.Component;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.List;
+import java.util.ArrayList;
 
 /**
  * Configuration class for FHIR resource to collection mapping.
@@ -16,6 +18,7 @@ public class FhirResourceMappingConfig {
     
     private Map<String, String> resourceToCollection = new HashMap<>();
     private Map<String, String> collectionToFtsIndex = new HashMap<>();
+    private List<String> generalResourceTypes = new ArrayList<>();
     
     public FhirResourceMappingConfig() {
     }
@@ -34,6 +37,14 @@ public class FhirResourceMappingConfig {
     
     public void setCollectionToFtsIndex(Map<String, String> collectionToFtsIndex) {
         this.collectionToFtsIndex = collectionToFtsIndex;
+    }
+    
+    public List<String> getGeneralResourceTypes() {
+        return generalResourceTypes;
+    }
+    
+    public void setGeneralResourceTypes(List<String> generalResourceTypes) {
+        this.generalResourceTypes = generalResourceTypes;
     }
     
     /**

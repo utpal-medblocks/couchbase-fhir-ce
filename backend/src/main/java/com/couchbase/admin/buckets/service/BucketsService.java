@@ -7,15 +7,19 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
-import org.springframework.web.client.RestTemplate;
-import org.springframework.http.*;
+import com.couchbase.client.java.http.CouchbaseHttpClient;
+import com.couchbase.client.java.http.HttpResponse;
+import com.couchbase.client.java.http.HttpTarget;
+import com.couchbase.client.java.http.HttpPath;
+import com.couchbase.client.java.http.HttpPostOptions;
+import com.couchbase.client.java.http.HttpBody;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.HashMap;
 import java.util.Arrays;
-import java.util.Base64;
 
 /**
  * Service for managing bucket information and metrics
@@ -28,6 +32,8 @@ public class BucketsService {
     
     @Autowired
     private ConnectionService connectionService;
+    
+    private final ObjectMapper objectMapper = new ObjectMapper();
     
     /**
      * Get all FHIR-enabled bucket names
@@ -88,48 +94,34 @@ public class BucketsService {
     }
     
     /**
-     * Get detailed metrics for a specific bucket using Couchbase REST APIs
+     * Get detailed metrics for a specific bucket using Couchbase SDK's HTTP client
      */
     private BucketDetails getBucketMetrics(String bucketName, String connectionName) {
         try {
-            // Get connection details
-            ConnectionDetails connection = getConnectionDetails(connectionName);
-            if (connection == null) {
-                log.warn("Could not get connection details for bucket metrics");
+            // Get the cluster connection
+            Cluster cluster = connectionService.getConnection(connectionName);
+            if (cluster == null) {
+                log.warn("Could not get cluster connection for bucket metrics");
                 return null;
             }
             
-            // Construct the bucket stats API URL
-            String bucketStatsUrl = String.format("http://%s:8091/pools/default/buckets/%s", 
-                connection.getHostname(), bucketName);
+            // Use the cluster's HTTP client - this handles SSL certificates automatically
+            CouchbaseHttpClient httpClient = cluster.httpClient();
             
-            // Make HTTP request to get bucket stats
-            RestTemplate restTemplate = new RestTemplate();
-            
-            // Set up basic authentication
-            String auth = connection.getUsername() + ":" + connection.getPassword();
-            String encodedAuth = Base64.getEncoder().encodeToString(auth.getBytes());
-            
-            HttpHeaders headers = new HttpHeaders();
-            headers.set("Authorization", "Basic " + encodedAuth);
-            headers.setContentType(MediaType.APPLICATION_JSON);
-            
-            HttpEntity<String> entity = new HttpEntity<>(headers);
-            
-            ResponseEntity<?> response = restTemplate.exchange(
-                bucketStatsUrl, 
-                HttpMethod.GET, 
-                entity, 
-                Map.class
+            // Make HTTP request to get bucket stats using SDK's HTTP client
+            HttpResponse response = httpClient.get(
+                HttpTarget.manager(),
+                HttpPath.of("/pools/default/buckets/{}", bucketName)
             );
             
-            if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
+            if (response.statusCode() >= 200 && response.statusCode() < 300) {
+                String responseBody = response.contentAsString();
                 @SuppressWarnings("unchecked")
-                Map<String, Object> bucketStatsMap = (Map<String, Object>) response.getBody();
+                Map<String, Object> bucketStatsMap = objectMapper.readValue(responseBody, Map.class);
                 BucketDetails details = parseBucketStats(bucketName, bucketStatsMap);
                 
                 // Fetch collection metrics for this bucket
-                Map<String, Map<String, Object>> collectionMetrics = fetchCollectionMetrics(connection, bucketName);
+                Map<String, Map<String, Object>> collectionMetrics = fetchCollectionMetrics(cluster, bucketName);
                 details.setCollectionMetrics(collectionMetrics);
                 
                 return details;
@@ -207,12 +199,12 @@ public class BucketsService {
         return details;
     }
     
-    private Map<String, Map<String, Object>> fetchCollectionMetrics(ConnectionDetails connection, String bucketName) {
+    private Map<String, Map<String, Object>> fetchCollectionMetrics(Cluster cluster, String bucketName) {
         Map<String, Map<String, Object>> collectionMetrics = new HashMap<>();
         
         try {
             // First, get scopes and collections for the bucket
-            Map<String, List<String>> scopeCollections = fetchScopesAndCollections(connection, bucketName);
+            Map<String, List<String>> scopeCollections = fetchScopesAndCollections(cluster, bucketName);
             
             // For each scope, fetch collection metrics
             for (Map.Entry<String, List<String>> entry : scopeCollections.entrySet()) {
@@ -220,49 +212,36 @@ public class BucketsService {
                 List<String> collections = entry.getValue();
                 
                 // Fetch metrics for all collections in this scope
-                Map<String, Object> scopeMetrics = fetchCollectionMetricsForScope(connection, bucketName, scopeName, collections);
+                Map<String, Object> scopeMetrics = fetchCollectionMetricsForScope(cluster, bucketName, scopeName, collections);
                 collectionMetrics.put(scopeName, scopeMetrics);
             }
             
         } catch (Exception e) {
-            log.error("Error fetching collection metrics for bucket: {} on connection: {}", bucketName, connection.getHostname(), e);
+            log.error("Error fetching collection metrics for bucket: {}", bucketName, e);
         }
         
         return collectionMetrics;
     }
     
-    private Map<String, List<String>> fetchScopesAndCollections(ConnectionDetails connection, String bucketName) {
+    private Map<String, List<String>> fetchScopesAndCollections(Cluster cluster, String bucketName) {
         Map<String, List<String>> scopeCollections = new HashMap<>();
         
         try {
-            // Construct the scopes API URL
-            String scopesUrl = String.format("http://%s:8091/pools/default/buckets/%s/scopes", 
-                connection.getHostname(), bucketName);
+            // Use the cluster's HTTP client - this handles SSL certificates automatically
+            CouchbaseHttpClient httpClient = cluster.httpClient();
             
-            RestTemplate restTemplate = new RestTemplate();
-            
-            // Set up basic authentication
-            String auth = connection.getUsername() + ":" + connection.getPassword();
-            String encodedAuth = Base64.getEncoder().encodeToString(auth.getBytes());
-            
-            HttpHeaders headers = new HttpHeaders();
-            headers.set("Authorization", "Basic " + encodedAuth);
-            headers.setContentType(MediaType.APPLICATION_JSON);
-            
-            HttpEntity<String> entity = new HttpEntity<>(headers);
-            
-            ResponseEntity<?> response = restTemplate.exchange(
-                scopesUrl, 
-                HttpMethod.GET, 
-                entity, 
-                Map.class
+            // Make HTTP request to get scopes using SDK's HTTP client
+            HttpResponse response = httpClient.get(
+                HttpTarget.manager(),
+                HttpPath.of("/pools/default/buckets/{}/scopes", bucketName)
             );
             
-            if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
+            if (response.statusCode() >= 200 && response.statusCode() < 300) {
+                String responseBody = response.contentAsString();
                 @SuppressWarnings("unchecked")
-                Map<String, Object> responseBody = (Map<String, Object>) response.getBody();
+                Map<String, Object> responseMap = objectMapper.readValue(responseBody, Map.class);
                 @SuppressWarnings("unchecked")
-                List<Map<String, Object>> scopes = (List<Map<String, Object>>) responseBody.get("scopes");
+                List<Map<String, Object>> scopes = (List<Map<String, Object>>) responseMap.get("scopes");
                 
                 if (scopes != null) {
                     for (Map<String, Object> scope : scopes) {
@@ -289,7 +268,7 @@ public class BucketsService {
         return scopeCollections;
     }
     
-    private Map<String, Object> fetchCollectionMetricsForScope(ConnectionDetails connection, String bucketName, 
+    private Map<String, Object> fetchCollectionMetricsForScope(Cluster cluster, String bucketName, 
                                                               String scopeName, List<String> collections) {
         Map<String, Object> scopeMetrics = new HashMap<>();
         
@@ -303,7 +282,7 @@ public class BucketsService {
             );
             
             // Call the Couchbase stats API to get collection metrics
-            List<Map<String, Object>> apiResponse = fetchCollectionStatsFromAPI(connection, bucketName, scopeName, metrics);
+            List<Map<String, Object>> apiResponse = fetchCollectionStatsFromAPI(cluster, bucketName, scopeName, metrics);
             
             // Parse the response and map to collection data
             Map<String, Object> collectionsData = parseCollectionMetricsResponse(apiResponse, collections);
@@ -328,14 +307,11 @@ public class BucketsService {
         return scopeMetrics;
     }
     
-    private List<Map<String, Object>> fetchCollectionStatsFromAPI(ConnectionDetails connection, String bucketName, 
+    private List<Map<String, Object>> fetchCollectionStatsFromAPI(Cluster cluster, String bucketName, 
                                                                  String scopeName, List<String> metrics) {
         try {
-            // Construct the stats API URL (same as your Electron app)
-            int port = connection.isSecure() ? 18091 : 8091;
-            String protocol = connection.isSecure() ? "https" : "http";
-            String statsUrl = String.format("%s://%s:%d/pools/default/stats/range", 
-                protocol, connection.getHostname(), port);
+            // Use the cluster's HTTP client - this handles SSL certificates automatically
+            CouchbaseHttpClient httpClient = cluster.httpClient();
             
             // Construct the data payload with multiple metrics (same structure as your Electron app)
             List<Map<String, Object>> requestData = new ArrayList<>();
@@ -360,30 +336,21 @@ public class BucketsService {
                 requestData.add(metricRequest);
             }
             
-            // Make the API call
-            RestTemplate restTemplate = new RestTemplate();
-            
-            // Set up basic authentication
-            String auth = connection.getUsername() + ":" + connection.getPassword();
-            String encodedAuth = Base64.getEncoder().encodeToString(auth.getBytes());
-            
-            HttpHeaders headers = new HttpHeaders();
-            headers.set("Authorization", "Basic " + encodedAuth);
-            headers.setContentType(MediaType.APPLICATION_JSON);
-            
-            HttpEntity<List<Map<String, Object>>> entity = new HttpEntity<>(requestData, headers);
-            
-            ResponseEntity<?> response = restTemplate.exchange(
-                statsUrl, 
-                HttpMethod.POST, 
-                entity, 
-                List.class
+            // Make the API call using SDK's HTTP client
+            String requestBody = objectMapper.writeValueAsString(requestData);
+            HttpResponse response = httpClient.post(
+                HttpTarget.manager(),
+                HttpPath.of("/pools/default/stats/range"),
+                HttpPostOptions.httpPostOptions()
+                    .body(HttpBody.json(requestBody))
+                    .header("Content-Type", "application/json")
             );
             
-            if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
+            if (response.statusCode() >= 200 && response.statusCode() < 300) {
+                String responseBody = response.contentAsString();
                 @SuppressWarnings("unchecked")
-                List<Map<String, Object>> responseBody = (List<Map<String, Object>>) response.getBody();
-                return responseBody;
+                List<Map<String, Object>> responseList = objectMapper.readValue(responseBody, List.class);
+                return responseList;
             }
             
         } catch (Exception e) {
@@ -469,52 +436,6 @@ public class BucketsService {
         return collectionsData;
     }
     
-    private ConnectionDetails getConnectionDetails(String connectionName) {
-        try {
-            // Get connection details from connection service
-            String hostname = connectionService.getHostname(connectionName);
-            int port = connectionService.getPort(connectionName);
-            var connectionDetails = connectionService.getConnectionDetails(connectionName);
-            
-            if (hostname != null && connectionDetails != null) {
-                ConnectionDetails connection = new ConnectionDetails();
-                connection.setHostname(hostname);
-                connection.setPort(port);
-                connection.setUsername(connectionDetails.getUsername());
-                connection.setPassword(connectionDetails.getPassword());
-                
-                // Determine if connection is secure based on port or other indicators
-                // This logic might need adjustment based on your ConnectionService implementation
-                connection.setSecure(port == 18091 || hostname.startsWith("https://"));
-                
-                return connection;
-            }
-        } catch (Exception e) {
-            log.error("Error getting connection details for: {}", connectionName, e);
-        }
-        
-        return null;
-    }
-    
-    // Helper class for connection details
-    private static class ConnectionDetails {
-        private String hostname;
-        private int port;
-        private String username;
-        private String password;
-        private boolean secure;
-        
-        // Getters and setters
-        public String getHostname() { return hostname; }
-        public void setHostname(String hostname) { this.hostname = hostname; }
-        public void setPort(int port) { this.port = port; }
-        public String getUsername() { return username; }
-        public void setUsername(String username) { this.username = username; }
-        public String getPassword() { return password; }
-        public void setPassword(String password) { this.password = password; }
-        public boolean isSecure() { return secure; }
-        public void setSecure(boolean secure) { this.secure = secure; }
-    }
     
     /**
      * Check if a bucket is FHIR-enabled by looking for the configuration document

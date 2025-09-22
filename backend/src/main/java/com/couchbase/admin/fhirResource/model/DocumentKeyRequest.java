@@ -7,6 +7,7 @@ public class DocumentKeyRequest {
     private String bucketName;
     private String collectionName;
     private String patientId; // Optional filter for patient-specific documents
+    private String resourceType; // Optional filter for General collection resourceType
     private int page = 0;
     private int pageSize = 10;
 
@@ -56,5 +57,13 @@ public class DocumentKeyRequest {
 
     public void setPageSize(int pageSize) {
         this.pageSize = pageSize;
+    }
+
+    public String getResourceType() {
+        return resourceType;
+    }
+
+    public void setResourceType(String resourceType) {
+        this.resourceType = resourceType;
     }
 }

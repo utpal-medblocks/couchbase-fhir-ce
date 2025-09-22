@@ -5,6 +5,7 @@ import com.couchbase.admin.fhirResource.model.DocumentKeyResponse;
 import com.couchbase.admin.fhirResource.model.DocumentMetadata;
 import com.couchbase.admin.fhirResource.model.DocumentMetadataResponse;
 import com.couchbase.admin.fhirResource.service.FhirDocumentAdminService;
+import com.couchbase.common.config.FhirResourceMappingConfig;
 import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -21,6 +22,9 @@ public class FhirDocumentAdminController {
     
     @Autowired
     private FhirDocumentAdminService fhirDocumentAdminService;
+    
+    @Autowired
+    private FhirResourceMappingConfig fhirResourceMappingConfig;
     
     /**
      * Get document keys for a specific FHIR collection with pagination
@@ -58,7 +62,7 @@ public class FhirDocumentAdminController {
     
     /**
      * Get document metadata using FTS search for a specific FHIR collection with pagination
-     * GET /api/fhir-resources/document-metadata?connectionName=myConn&bucketName=synthea&collectionName=Patient&page=0&pageSize=10&patientId=optional
+     * GET /api/fhir-resources/document-metadata?connectionName=myConn&bucketName=synthea&collectionName=Patient&page=0&pageSize=10&patientId=optional&resourceType=Device
      */
     @GetMapping("/document-metadata")
     public ResponseEntity<DocumentMetadataResponse> getDocumentMetadata(
@@ -67,11 +71,12 @@ public class FhirDocumentAdminController {
             @RequestParam String collectionName,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "10") int pageSize,
-            @RequestParam(required = false) String patientId) {
+            @RequestParam(required = false) String patientId,
+            @RequestParam(required = false) String resourceType) {
         
         try {
-            logger.debug("Getting document metadata for connection: {}, bucket: {}, collection: {}, page: {}, pageSize: {}, patientId: {}", 
-                       connectionName, bucketName, collectionName, page, pageSize, patientId);
+            logger.debug("Getting document metadata for connection: {}, bucket: {}, collection: {}, page: {}, pageSize: {}, patientId: {}, resourceType: {}", 
+                       connectionName, bucketName, collectionName, page, pageSize, patientId, resourceType);
             
             DocumentKeyRequest request = new DocumentKeyRequest();
             request.setBucketName(bucketName);
@@ -79,6 +84,7 @@ public class FhirDocumentAdminController {
             request.setPage(page);
             request.setPageSize(pageSize);
             request.setPatientId(patientId);
+            request.setResourceType(resourceType);
             
             DocumentMetadataResponse response = fhirDocumentAdminService.getDocumentMetadata(request, connectionName);
             
@@ -139,6 +145,25 @@ public class FhirDocumentAdminController {
             
         } catch (Exception e) {
             logger.error("Failed to get document", e);
+            return ResponseEntity.internalServerError().build();
+        }
+    }
+    
+    /**
+     * Get the list of FHIR resource types that go into the General collection
+     * GET /api/fhir-resources/general-resource-types
+     */
+    @GetMapping("/general-resource-types")
+    public ResponseEntity<List<String>> getGeneralResourceTypes() {
+        try {
+            logger.debug("Getting General collection resource types");
+            
+            List<String> resourceTypes = fhirResourceMappingConfig.getGeneralResourceTypes();
+            
+            return ResponseEntity.ok(resourceTypes);
+            
+        } catch (Exception e) {
+            logger.error("Failed to get General resource types", e);
             return ResponseEntity.internalServerError().build();
         }
     }

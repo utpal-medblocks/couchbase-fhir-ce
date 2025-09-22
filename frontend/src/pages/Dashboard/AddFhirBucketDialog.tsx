@@ -275,49 +275,18 @@ const AddFhirBucketDialog: React.FC<AddFhirBucketDialogProps> = ({
             <Typography variant="body2" sx={{ mb: 2 }}>
               Ready to convert bucket with the following configuration:
             </Typography>
-            <Box sx={{ display: "flex", gap: 2, mb: 2 }}>
-              <Alert severity="info" sx={{ flex: 1 }}>
-                <Typography variant="body2">
-                  <strong>FHIR Release:</strong> {fhirConfig.fhirRelease}
-                  <br />
-                  <strong>Profiles:</strong>{" "}
-                  {fhirConfig.validation.profile === "us-core"
-                    ? "US Core 6.1.0"
-                    : "none"}
-                  <br />
-                  <strong>Validation:</strong>
-                  <ul style={{ margin: 0, paddingLeft: 20 }}>
-                    <li>Mode: {fhirConfig.validation.mode}</li>
-                  </ul>
-                </Typography>
-              </Alert>
-              <Alert severity="info" sx={{ flex: 1 }}>
-                <Typography variant="body2">
-                  <strong>Logs:</strong>
-                  <ul style={{ margin: 0, paddingLeft: 20 }}>
-                    <li>
-                      Enable System Logs:{" "}
-                      {fhirConfig.logs.enableSystem ? "Enabled" : "Disabled"}
-                    </li>
-                    <li>
-                      Enable CRUD Audit:{" "}
-                      {fhirConfig.logs.enableCRUDAudit ? "Enabled" : "Disabled"}
-                    </li>
-                    <li>
-                      Enable Search Audit:{" "}
-                      {fhirConfig.logs.enableSearchAudit
-                        ? "Enabled"
-                        : "Disabled"}
-                    </li>
-                    <li>Rotation By: {fhirConfig.logs.rotationBy}</li>
-                    <li>Number: {fhirConfig.logs.number}</li>
-                    <li>
-                      S3 Endpoint: {fhirConfig.logs.s3Endpoint || "(none)"}
-                    </li>
-                  </ul>
-                </Typography>
-              </Alert>
-            </Box>
+            <Alert severity="info" sx={{ mb: 2 }}>
+              <Typography variant="body2">
+                <strong>FHIR Release:</strong> {fhirConfig.fhirRelease}
+                <br />
+                <strong>Profile:</strong>{" "}
+                {fhirConfig.validation.profile === "us-core"
+                  ? "US Core 6.1.0"
+                  : "none"}
+                <br />
+                <strong>Validation Mode:</strong> {fhirConfig.validation.mode}
+              </Typography>
+            </Alert>
           </Box>
         )}
 

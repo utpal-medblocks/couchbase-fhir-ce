@@ -25,7 +25,7 @@ const Buckets = () => {
 
   // Get connection info from the new connection store
   const connection = useConnectionStore((state) => state.connection);
-  const connectionId = connection.name;
+  const connectionId = connection.connectionName;
 
   // Get bucket store data
   const bucketStore = useBucketStore();
