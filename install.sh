@@ -64,20 +64,29 @@ curl -sSL https://raw.githubusercontent.com/couchbaselabs/couchbase-fhir-ce/mast
 # Verify file integrity
 echo "🔐 Verifying file integrity..."
 if command -v sha256sum &> /dev/null; then
-    if ! sha256sum -c checksums.txt --quiet 2>/dev/null; then
+    # Create temporary checksums for downloaded files only
+    echo "357763e433c6b119fc1aa0fabf4cf754a7ccf46fd6c65e10cae1034dc2f21f37  docker-compose.yml" > temp_checksums.txt
+    echo "707181e53db555589ea67814c57677d8f15dc3edefc06ceec8b7526fc4e2f405  haproxy.cfg" >> temp_checksums.txt
+    
+    if ! sha256sum -c temp_checksums.txt --quiet 2>/dev/null; then
         echo "❌ Warning: File integrity verification failed. Files may have been tampered with."
         echo "   Proceeding anyway, but please report this issue."
     else
         echo "✅ File integrity verified"
     fi
+    rm -f temp_checksums.txt
 elif command -v shasum &> /dev/null; then
     # macOS fallback
-    if ! shasum -a 256 -c checksums.txt --quiet 2>/dev/null; then
+    echo "357763e433c6b119fc1aa0fabf4cf754a7ccf46fd6c65e10cae1034dc2f21f37  docker-compose.yml" > temp_checksums.txt
+    echo "707181e53db555589ea67814c57677d8f15dc3edefc06ceec8b7526fc4e2f405  haproxy.cfg" >> temp_checksums.txt
+    
+    if ! shasum -a 256 -c temp_checksums.txt --quiet 2>/dev/null; then
         echo "❌ Warning: File integrity verification failed. Files may have been tampered with."
         echo "   Proceeding anyway, but please report this issue."
     else
         echo "✅ File integrity verified"
     fi
+    rm -f temp_checksums.txt
 else
     echo "⚠️  Warning: Cannot verify file integrity (sha256sum/shasum not available)"
 fi
@@ -111,8 +120,8 @@ if $DOCKER_COMPOSE ps | grep -q "Up"; then
     
     # Try AWS EC2 metadata
     if command -v curl &> /dev/null; then
-        AWS_HOSTNAME=$(curl -s --max-time 2 http://169.254.169.254/latest/meta-data/public-hostname 2>/dev/null || echo "")
-        if [ -n "$AWS_HOSTNAME" ]; then
+        AWS_HOSTNAME=$(curl -s --max-time 3 --connect-timeout 2 http://169.254.169.254/latest/meta-data/public-hostname 2>/dev/null || echo "")
+        if [ -n "$AWS_HOSTNAME" ] && [ "$AWS_HOSTNAME" != "" ]; then
             ACCESS_URL="http://$AWS_HOSTNAME"
         fi
     fi
