@@ -650,7 +650,7 @@ public class SearchService {
                 encodeElements.add("resourceType");
                 encodeElements.add("meta");
                 
-                String resourceType = resource.getClass().getSimpleName();
+                String resourceType = resource.fhirType();
                 for (String element : elements) {
                     encodeElements.add(resourceType + "." + element);
                 }
@@ -1263,7 +1263,7 @@ public class SearchService {
      */
     private List<String> extractResourceReferences(List<Resource> resources) {
         return resources.stream()
-                .map(resource -> resource.getClass().getSimpleName() + "/" + resource.getIdElement().getIdPart())
+                .map(resource -> resource.fhirType() + "/" + resource.getIdElement().getIdPart())
                 .collect(Collectors.toList());
     }
     
@@ -1649,7 +1649,7 @@ public class SearchService {
             try {
                 logger.debug("🔍 Processing resource {}/{}: {} (ID: {})", 
                            i + 1, primaryResources.size(), 
-                           resource.getClass().getSimpleName(), 
+                           resource.fhirType(), 
                            resource.getIdElement().getIdPart());
                 
                 // Use reflection to get the field value
@@ -1667,10 +1667,10 @@ public class SearchService {
                         logger.debug("🔍 Added ID to list: {}", id);
                     }
                 } else {
-                    logger.debug("🔍 No reference value found for parameter '{}' in resource {}", searchParam, resource.getClass().getSimpleName());
+                    logger.debug("🔍 No reference value found for parameter '{}' in resource {}", searchParam, resource.fhirType());
                 }
             } catch (Exception e) {
-                logger.warn("Failed to extract reference from {}: {}", resource.getClass().getSimpleName(), e.getMessage());
+                logger.warn("Failed to extract reference from {}: {}", resource.fhirType(), e.getMessage());
             }
         }
         
@@ -1682,12 +1682,12 @@ public class SearchService {
      * Extract reference value from a resource using the search parameter
      */
     private String extractReferenceFromResource(Resource resource, String searchParam) {
-        logger.debug("🔍 Looking for reference field '{}' in resource {}", searchParam, resource.getClass().getSimpleName());
+        logger.debug("🔍 Looking for reference field '{}' in resource {}", searchParam, resource.fhirType());
         
         // Get the HAPI search parameter to resolve the correct field path
         try {
             RuntimeSearchParam hapiSearchParam = fhirContext
-                    .getResourceDefinition(resource.getClass().getSimpleName())
+                    .getResourceDefinition(resource.fhirType())
                     .getSearchParam(searchParam);
             
             if (hapiSearchParam != null && hapiSearchParam.getPath() != null) {
