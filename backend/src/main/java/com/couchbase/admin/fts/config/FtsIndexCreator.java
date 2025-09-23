@@ -15,9 +15,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.core.io.ResourceLoader;
 import org.springframework.core.io.Resource;
-import org.springframework.core.io.ClassPathResource;
 import org.springframework.core.io.support.PathMatchingResourcePatternResolver;
 
 import java.nio.file.Files;
@@ -38,14 +36,12 @@ import java.nio.file.Paths;
 public class FtsIndexCreator {
     
     private static final Logger logger = LoggerFactory.getLogger(FtsIndexCreator.class);
-    private static final String FTS_INDEXES_PATH = "classpath:fts-indexes/*.json";
+    private static final String FTS_INDEXES_PATH = "classpath:/fts-indexes/*.json";
     private final ObjectMapper objectMapper = new ObjectMapper();
     
     @Autowired
     private ConnectionService connectionService;
     
-    @Autowired
-    private ResourceLoader resourceLoader;
     
 
     
@@ -128,36 +124,14 @@ public class FtsIndexCreator {
             
             // Find all JSON files in fts-indexes directory
             PathMatchingResourcePatternResolver resolver = new PathMatchingResourcePatternResolver();
-            Resource[] resources;
+            Resource[] resources = resolver.getResources(FTS_INDEXES_PATH);
             
-            try {
-                resources = resolver.getResources(FTS_INDEXES_PATH);
-                if (resources.length == 0) {
-                    logger.warn("⚠️ No FTS index files found at: {}", FTS_INDEXES_PATH);
-                    return;
-                }
-            } catch (Exception e) {
-                logger.error("❌ Failed to load FTS index files from: {} - {}", FTS_INDEXES_PATH, e.getMessage());
-                // Try alternative path without trailing slash
-                try {
-                    String alternativePath = "classpath:fts-indexes/*.json";
-                    logger.info("🔄 Trying alternative path: {}", alternativePath);
-                    resources = resolver.getResources(alternativePath);
-                    if (resources.length == 0) {
-                        logger.error("❌ No FTS index files found at alternative path either. Skipping FTS index creation.");
-                        return;
-                    }
-                } catch (Exception e2) {
-                    logger.error("❌ Alternative path also failed: {}", e2.getMessage());
-                    // Try loading individual files by name as a fallback
-                    logger.info("🔄 Trying to load individual FTS index files by name...");
-                    resources = loadFtsIndexFilesByName();
-                    if (resources.length == 0) {
-                        logger.error("❌ No FTS index files could be loaded. Skipping FTS index creation.");
-                        return;
-                    }
-                }
+            if (resources.length == 0) {
+                logger.warn("⚠️ No FTS index files found at: {}", FTS_INDEXES_PATH);
+                return;
             }
+            
+            logger.info("📋 Found {} FTS index files", resources.length);
             
             int successCount = 0;
             int skippedCount = 0;
@@ -279,72 +253,5 @@ public class FtsIndexCreator {
         }
     }
     
-    /**
-     * Fallback method to load FTS index files by known filenames
-     * This is used when the pattern-based loading fails
-     */
-    private Resource[] loadFtsIndexFilesByName() {
-        String[] knownFiles = {
-            "ftsCondition.json",
-            "ftsDiagnosticReport.json", 
-            "ftsDocumentReference.json",
-            "ftsEncounter.json",
-            "ftsGeneral.json",
-            "ftsImmunization.json",
-            "ftsMedicationRequest.json",
-            "ftsObservation.json",
-            "ftsPatient.json",
-            "ftsProcedure.json",
-            "ftsServiceRequest.json",
-            "ftsVersions.json"
-        };
-        
-        java.util.List<Resource> resourceList = new java.util.ArrayList<>();
-        
-        for (String filename : knownFiles) {
-            boolean found = false;
-            try {
-                // Try multiple approaches to load the resource
-                String[] pathsToTry = {
-                    "classpath:fts-indexes/" + filename,
-                    "classpath:/fts-indexes/" + filename,
-                    "fts-indexes/" + filename,
-                    "/fts-indexes/" + filename
-                };
-                
-                for (String path : pathsToTry) {
-                    try {
-                        Resource resource;
-                        if (path.startsWith("classpath:")) {
-                            resource = resourceLoader.getResource(path);
-                        } else {
-                            resource = new ClassPathResource(path);
-                        }
-                        
-                        logger.debug("🔍 Trying path: {} for file: {} (exists: {})", path, filename, resource.exists());
-                        
-                        if (resource.exists()) {
-                            resourceList.add(resource);
-                            logger.debug("✅ Found FTS index file: {} via path: {}", filename, path);
-                            found = true;
-                            break;
-                        }
-                    } catch (Exception pathException) {
-                        logger.debug("⚠️ Path failed: {} - {}", path, pathException.getMessage());
-                    }
-                }
-                
-                if (!found) {
-                    logger.debug("⚠️ FTS index file not found after trying all paths: {}", filename);
-                }
-                
-            } catch (Exception e) {
-                logger.warn("❌ Failed to load FTS index file: {} - {}", filename, e.getMessage());
-            }
-        }
-        
-        logger.info("📋 Loaded {} FTS index files using fallback method", resourceList.size());
-        return resourceList.toArray(new Resource[0]);
-    }
     
 }
