@@ -118,11 +118,15 @@ if $DOCKER_COMPOSE ps | grep -q "Up"; then
     # Auto-detect hostname for access URL
     ACCESS_URL=""
     
-    # Try AWS EC2 metadata
+    # Try AWS EC2 metadata (IMDSv2)
     if command -v curl &> /dev/null; then
-        AWS_HOSTNAME=$(curl -s --max-time 3 --connect-timeout 2 http://169.254.169.254/latest/meta-data/public-hostname 2>/dev/null || echo "")
-        if [ -n "$AWS_HOSTNAME" ] && [ "$AWS_HOSTNAME" != "" ]; then
-            ACCESS_URL="http://$AWS_HOSTNAME"
+        # Get token first (IMDSv2 requirement)
+        AWS_TOKEN=$(curl -s --max-time 3 --connect-timeout 2 -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600" 2>/dev/null || echo "")
+        if [ -n "$AWS_TOKEN" ]; then
+            AWS_HOSTNAME=$(curl -s --max-time 3 --connect-timeout 2 -H "X-aws-ec2-metadata-token: $AWS_TOKEN" http://169.254.169.254/latest/meta-data/public-hostname 2>/dev/null || echo "")
+            if [ -n "$AWS_HOSTNAME" ] && [ "$AWS_HOSTNAME" != "" ]; then
+                ACCESS_URL="http://$AWS_HOSTNAME"
+            fi
         fi
     fi
     
