@@ -15,6 +15,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.io.ResourceLoader;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.core.io.support.PathMatchingResourcePatternResolver;
@@ -42,6 +43,9 @@ public class FtsIndexCreator {
     
     @Autowired
     private ConnectionService connectionService;
+    
+    @Autowired
+    private ResourceLoader resourceLoader;
     
 
     
@@ -298,14 +302,42 @@ public class FtsIndexCreator {
         java.util.List<Resource> resourceList = new java.util.ArrayList<>();
         
         for (String filename : knownFiles) {
+            boolean found = false;
             try {
-                ClassPathResource resource = new ClassPathResource("fts-indexes/" + filename);
-                if (resource.exists()) {
-                    resourceList.add(resource);
-                    logger.debug("✅ Found FTS index file: {}", filename);
-                } else {
-                    logger.debug("⚠️ FTS index file not found: {}", filename);
+                // Try multiple approaches to load the resource
+                String[] pathsToTry = {
+                    "classpath:fts-indexes/" + filename,
+                    "classpath:/fts-indexes/" + filename,
+                    "fts-indexes/" + filename,
+                    "/fts-indexes/" + filename
+                };
+                
+                for (String path : pathsToTry) {
+                    try {
+                        Resource resource;
+                        if (path.startsWith("classpath:")) {
+                            resource = resourceLoader.getResource(path);
+                        } else {
+                            resource = new ClassPathResource(path);
+                        }
+                        
+                        logger.debug("🔍 Trying path: {} for file: {} (exists: {})", path, filename, resource.exists());
+                        
+                        if (resource.exists()) {
+                            resourceList.add(resource);
+                            logger.debug("✅ Found FTS index file: {} via path: {}", filename, path);
+                            found = true;
+                            break;
+                        }
+                    } catch (Exception pathException) {
+                        logger.debug("⚠️ Path failed: {} - {}", path, pathException.getMessage());
+                    }
                 }
+                
+                if (!found) {
+                    logger.debug("⚠️ FTS index file not found after trying all paths: {}", filename);
+                }
+                
             } catch (Exception e) {
                 logger.warn("❌ Failed to load FTS index file: {} - {}", filename, e.getMessage());
             }
