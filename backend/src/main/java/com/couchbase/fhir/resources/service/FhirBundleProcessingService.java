@@ -58,6 +58,10 @@ public class FhirBundleProcessingService {
     
     @Autowired
     private DeleteService deleteService;
+    
+    @Autowired
+    private SearchService searchService;
+    
 
     // Default connection and bucket names
     private static final String DEFAULT_CONNECTION = "default";
@@ -148,8 +152,10 @@ public class FhirBundleProcessingService {
             }
 
             // Step 3: Extract all resources from Bundle using HAPI utility
-            List<IBaseResource> allResources = BundleUtil.toListOfResources(fhirContext, bundle);
-            logger.info("📋 Extracted {} resources from Bundle", allResources.size());
+            // DISABLED: BundleUtil.toListOfResources() may pre-process references and create contained resources
+            // List<IBaseResource> allResources = BundleUtil.toListOfResources(fhirContext, bundle);
+            // logger.info("📋 Extracted {} resources from Bundle", allResources.size());
+            logger.info("📋 Skipping BundleUtil.toListOfResources() to avoid early reference processing");
 
             // Step 4: Process entries sequentially with proper UUID resolution and ACID transaction support
             List<ProcessedEntry> processedEntries;
@@ -347,8 +353,29 @@ public class FhirBundleProcessingService {
         for (int i = 0; i < bundle.getEntry().size(); i++) {
             Bundle.BundleEntryComponent entry = bundle.getEntry().get(i);
             Resource resource = entry.getResource();
-            String resourceType = resource.getResourceType().name();
             Bundle.HTTPVerb method = entry.getRequest() != null ? entry.getRequest().getMethod() : Bundle.HTTPVerb.POST;
+            
+            // Handle GET requests (no resource, only request)
+            if (resource == null) {
+                if (method == Bundle.HTTPVerb.GET) {
+                    logger.info("🔄 Processing entry {}/{}: GET request", i+1, bundle.getEntry().size());
+                    try {
+                        Bundle.BundleEntryComponent getResponseEntry = processGetRequest(entry, cluster, bucketName);
+                        processedEntries.add(ProcessedEntry.success("GET", "search", "search", getResponseEntry));
+                        continue;
+                    } catch (Exception e) {
+                        logger.error("❌ Failed to process GET request: {}", e.getMessage());
+                        Bundle.BundleEntryComponent errorEntry = createErrorResponseEntry("500 Internal Server Error", 
+                            "Failed to process GET request: " + e.getMessage());
+                        processedEntries.add(ProcessedEntry.failed("Failed to process GET request: " + e.getMessage()));
+                        continue;
+                    }
+                } else {
+                    throw new RuntimeException("Bundle entry has no resource but method is not GET: " + method);
+                }
+            }
+            
+            String resourceType = resource.getResourceType().name();
             
             logger.info("🔄 Processing entry {}/{}: {} {} resource", i+1, bundle.getEntry().size(), method, resourceType);
 
@@ -432,6 +459,13 @@ public class FhirBundleProcessingService {
 
         for (Bundle.BundleEntryComponent entry : bundle.getEntry()) {
             Resource resource = entry.getResource();
+            
+            // Skip entries without resources (e.g., GET requests in batches)
+            if (resource == null) {
+                logger.debug("📝 Skipping entry without resource (likely a GET request)");
+                continue;
+            }
+            
             String resourceType = resource.getResourceType().name();
 
             logger.debug("📝 Processing entry - ResourceType: {}, FullUrl: {}, Initial ID: {}",
@@ -442,19 +476,20 @@ public class FhirBundleProcessingService {
             String actualResourceId = generateResourceId(resourceType);
             logger.debug("🆔 Generated new server ID for {}: {} (ignoring any client-supplied ID)", resourceType, actualResourceId);
 
-            // Map urn:uuid references to the new server-generated ID
-            if (entry.getFullUrl() != null && entry.getFullUrl().startsWith("urn:uuid:")) {
-                String uuidFullUrl = entry.getFullUrl(); // "urn:uuid:550e8400-e29b-41d4-a716-446655440000"
+            // Map fullUrl references to the new server-generated ID
+            // Handle both proper UUIDs ("urn:uuid:...") and simple identifiers ("qr-pgp")
+            if (entry.getFullUrl() != null && !entry.getFullUrl().isEmpty()) {
+                String fullUrl = entry.getFullUrl();
                 String mappedReference = resourceType + "/" + actualResourceId; // "Patient/abc123-def456-..."
-                uuidToIdMapping.put(uuidFullUrl, mappedReference);
-                logger.debug("🔗 UUID mapping: {} → {}", uuidFullUrl, mappedReference);
+                uuidToIdMapping.put(fullUrl, mappedReference);
+                logger.info("🔗 FullUrl mapping: {} → {}", fullUrl, mappedReference);
             }
 
             // ✅ Always set the server-generated ID on the resource (overwrite any client ID)
             resource.setId(actualResourceId);
         }
 
-        logger.debug("📊 Final UUID mapping: {}", uuidToIdMapping);
+        logger.info("📊 Final UUID mapping: {}", uuidToIdMapping);
         return uuidToIdMapping;
     }
 
@@ -484,32 +519,41 @@ public class FhirBundleProcessingService {
             String originalRef = reference.getReference();
             logger.debug("🔍 Processing reference: {}", originalRef);
 
-            if (originalRef != null && originalRef.contains("urn:uuid:")) {
-                // Handle both "urn:uuid:xxx" and "ResourceType/urn:uuid:xxx" formats
-                String uuid = null;
-                if (originalRef.startsWith("urn:uuid:")) {
-                    uuid = originalRef; // Direct UUID reference
-                } else if (originalRef.contains("/urn:uuid:")) {
-                    // Extract just the urn:uuid part
-                    int uuidIndex = originalRef.indexOf("urn:uuid:");
-                    uuid = originalRef.substring(uuidIndex);
-                }
+            if (originalRef != null && !originalRef.isEmpty()) {
+                // Try to resolve the reference using our fullUrl mapping
+                String actualReference = uuidToIdMapping.get(originalRef);
 
-                if (uuid != null) {
-                    String actualReference = uuidToIdMapping.get(uuid);
+                if (actualReference != null) {
+                    reference.setReference(actualReference);
+                    logger.info("🔗 Resolved reference in {}: {} → {}", resourceType, originalRef, actualReference);
+                } else {
+                    // Handle legacy "urn:uuid:" format for backwards compatibility
+                    if (originalRef.contains("urn:uuid:")) {
+                        String uuid = null;
+                        if (originalRef.startsWith("urn:uuid:")) {
+                            uuid = originalRef; // Direct UUID reference
+                        } else if (originalRef.contains("/urn:uuid:")) {
+                            // Extract just the urn:uuid part
+                            int uuidIndex = originalRef.indexOf("urn:uuid:");
+                            uuid = originalRef.substring(uuidIndex);
+                        }
 
-                    if (actualReference != null) {
-                        reference.setReference(actualReference);
-                        logger.debug("🔗 Resolved reference in {}: {} → {}", resourceType, originalRef, actualReference);
-                    } else {
-                        logger.warn("⚠️ Could not resolve UUID reference: {} (uuid: {})", originalRef, uuid);
+                        if (uuid != null) {
+                            actualReference = uuidToIdMapping.get(uuid);
+                            if (actualReference != null) {
+                                reference.setReference(actualReference);
+                                logger.debug("🔗 Resolved UUID reference in {}: {} → {}", resourceType, originalRef, actualReference);
+                            }
+                        }
+                    }
+                    
+                    if (actualReference == null) {
+                        logger.warn("⚠️ Could not resolve reference: {} in {}", originalRef, resourceType);
                         logger.debug("⚠️ Available mappings: {}", uuidToIdMapping.keySet());
                     }
-                } else {
-                    logger.warn("⚠️ Could not extract UUID from reference: {}", originalRef);
                 }
             } else {
-                logger.debug("📝 Non-UUID reference (skipping): {}", originalRef);
+                logger.debug("📝 Empty reference (skipping)");
             }
         }
     }
@@ -823,4 +867,80 @@ public class FhirBundleProcessingService {
         
         return message;
     }
+    
+    /**
+     * Process GET request in Bundle (search or read by ID)
+     */
+    private Bundle.BundleEntryComponent processGetRequest(Bundle.BundleEntryComponent entry, Cluster cluster, String bucketName) {
+        String url = entry.getRequest().getUrl();
+        logger.debug("🔍 Processing GET URL: {}", url);
+        
+        if (url.contains("?")) {
+            // Search operation: "Patient?name=John&_count=20"
+            return processSearchRequest(url, bucketName);
+        } else if (url.matches("\\w+/[\\w-]+")) {
+            // Read by ID: "Patient/123" - TODO: Implement later
+            logger.warn("⚠️ Read by ID not implemented yet: {}", url);
+            return createErrorResponseEntry("501 Not Implemented", "Read by ID not implemented yet: " + url);
+        } else {
+            // Invalid URL format
+            logger.warn("⚠️ Invalid GET URL format: {}", url);
+            return createErrorResponseEntry("400 Bad Request", "Invalid URL format: " + url);
+        }
+    }
+    
+    /**
+     * Process search request: "Patient?name=John&_count=20"
+     */
+    private Bundle.BundleEntryComponent processSearchRequest(String url, String bucketName) {
+        try {
+            // Parse URL: "Patient?name=John&_count=20"
+            String[] parts = url.split("\\?", 2);
+            String resourceType = parts[0];
+            String queryString = parts.length > 1 ? parts[1] : "";
+            
+            logger.info("🔍 Executing search: {} with params: {}", resourceType, queryString);
+            
+            // Parse query string using HAPI utility
+            Map<String, String[]> params = ca.uhn.fhir.util.UrlUtil.parseQueryString(queryString);
+            
+            // Call SearchService directly (add thin facade method)
+            Bundle searchResults = searchService.searchDirect(resourceType, params);
+            
+            // Create response entry
+            Bundle.BundleEntryComponent responseEntry = new Bundle.BundleEntryComponent();
+            responseEntry.setResource(searchResults);
+            responseEntry.setResponse(new Bundle.BundleEntryResponseComponent().setStatus("200 OK"));
+            
+            logger.info("✅ Search completed: {} results for {}", 
+                       searchResults.getEntry() != null ? searchResults.getEntry().size() : 0, resourceType);
+            
+            return responseEntry;
+            
+        } catch (Exception e) {
+            logger.error("❌ Search failed: {}", e.getMessage());
+            return createErrorResponseEntry("500 Internal Server Error", "Search failed: " + e.getMessage());
+        }
+    }
+    
+    
+    /**
+     * Create error response entry for Bundle
+     */
+    private Bundle.BundleEntryComponent createErrorResponseEntry(String status, String message) {
+        Bundle.BundleEntryComponent errorEntry = new Bundle.BundleEntryComponent();
+        
+        // Create OperationOutcome for error
+        org.hl7.fhir.r4.model.OperationOutcome outcome = new org.hl7.fhir.r4.model.OperationOutcome();
+        outcome.addIssue()
+            .setSeverity(org.hl7.fhir.r4.model.OperationOutcome.IssueSeverity.ERROR)
+            .setCode(org.hl7.fhir.r4.model.OperationOutcome.IssueType.PROCESSING)
+            .setDiagnostics(message);
+        
+        errorEntry.setResource(outcome);
+        errorEntry.setResponse(new Bundle.BundleEntryResponseComponent().setStatus(status));
+        
+        return errorEntry;
+    }
+    
 }

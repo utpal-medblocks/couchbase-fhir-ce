@@ -9,6 +9,7 @@ import com.couchbase.fhir.resources.service.FhirBundleProcessingService;
 import com.couchbase.fhir.resources.service.FhirBucketConfigService;
 import com.couchbase.fhir.resources.service.FhirBucketConfigService.FhirBucketConfig;
 
+import ca.uhn.fhir.context.FhirContext;
 import ca.uhn.fhir.parser.IParser;
 import org.hl7.fhir.r4.model.Bundle;
 import org.slf4j.Logger;
@@ -35,6 +36,9 @@ public class BundleTransactionProvider implements IResourceProvider {
     
     @Autowired 
     private IParser jsonParser; // Reuse singleton parser
+    
+    @Autowired
+    private FhirContext fhirContext;
 
     /**
      * Tell HAPI that this provider handles Bundle resources
@@ -49,22 +53,44 @@ public class BundleTransactionProvider implements IResourceProvider {
      * This method is called by HAPI FHIR when a Bundle is POSTed to the server
      */
     @Transaction
-    public Bundle transaction(@TransactionParam Bundle bundle) {
-        // Validate Bundle type - must be transaction or batch
-        if (bundle.getType() != Bundle.BundleType.TRANSACTION && 
-            bundle.getType() != Bundle.BundleType.BATCH) {
-            throw new InvalidRequestException("Bundle type must be 'transaction' or 'batch', but was: " + 
-                                            (bundle.getType() != null ? bundle.getType().toCode() : "null"));
+    public Bundle transaction(@TransactionParam Bundle bundle, ca.uhn.fhir.rest.api.server.RequestDetails requestDetails) {
+        // Try to get the raw JSON from the interceptor cache first
+        byte[] cachedBody = (byte[]) requestDetails.getUserData().get("_req_body");
+        String bundleJson = null;
+        
+        if (cachedBody != null && cachedBody.length > 0) {
+            bundleJson = new String(cachedBody, java.nio.charset.StandardCharsets.UTF_8);
+            logger.info("🔧 Using raw JSON from interceptor cache to avoid HAPI reference preprocessing");
+        } else {
+            // FAIL FAST - don't silently degrade to broken reference behavior
+            throw new InvalidRequestException("Bundle processing requires raw request body - interceptor may not be configured properly");
         }
+        
+        // Parse the raw JSON to get Bundle type for validation
+        // Create a special parser that doesn't process references
+        Bundle rawBundle = null;
+        try {
+            IParser noReferenceParser = fhirContext.newJsonParser();
+            noReferenceParser.setOverrideResourceIdWithBundleEntryFullUrl(false);
+            noReferenceParser.setStripVersionsFromReferences(false);
+            rawBundle = noReferenceParser.parseResource(Bundle.class, bundleJson);
+        } catch (Exception e) {
+            throw new InvalidRequestException("Failed to parse Bundle JSON: " + e.getMessage());
+        }
+        
+        // Validate Bundle type - must be transaction or batch
+        if (rawBundle.getType() != Bundle.BundleType.TRANSACTION && 
+            rawBundle.getType() != Bundle.BundleType.BATCH) {
+            throw new InvalidRequestException("Bundle type must be 'transaction' or 'batch', but was: " + 
+                                            (rawBundle.getType() != null ? rawBundle.getType().toCode() : "null"));
+        }
+        
         try {
             String bucketName = TenantContextHolder.getTenantId();
             String connectionName = "default"; // Could be made configurable
             
             logger.info("🚀 Processing Bundle {} for tenant: {}", 
-                       bundle.getType().toCode(), bucketName);
-            
-            // Convert Bundle to JSON using singleton parser
-            String bundleJson = jsonParser.encodeResourceToString(bundle);
+                       rawBundle.getType().toCode(), bucketName);
             
             // Get complete bucket-specific validation configuration
             FhirBucketConfig bucketConfig = bucketConfigService.getFhirBucketConfig(bucketName);

@@ -122,7 +122,7 @@ public class TokenSearchHelper {
         try {
             // Introspect field type using HAPI
             String fieldType = introspectFieldType(fhirContext, resourceType, fieldPath);
-            
+            logger.debug("🔍 TokenSearchHelper: introspectFieldType: {}", fieldType);
             switch (fieldType.toLowerCase()) {
                 case "codeableconcept":
                     return buildCodeableConceptQuery(fieldPath, token);
@@ -130,6 +130,8 @@ public class TokenSearchHelper {
                     return buildCodingQuery(fieldPath, token);
                 case "identifier":
                     return buildIdentifierQuery(fieldPath, token);
+                case "contactpoint":
+                    return buildContactPointQuery(fieldPath, token);
                 case "code":
                 case "boolean":
                 case "string":
@@ -223,6 +225,23 @@ public class TokenSearchHelper {
                     SearchQuery.match(token.code).field(fieldPath + ".value")
             );
         } else {
+            return SearchQuery.match(token.code).field(fieldPath + ".value");
+        }
+    }
+
+    /**
+     * Build query for ContactPoint type (path.value + path.system)
+     * For telecom searches like Patient.telecom
+     */
+    private static SearchQuery buildContactPointQuery(String fieldPath, TokenParam token) {
+        if (token.system != null) {
+            // Search with both system (phone/email) and value
+            return SearchQuery.conjuncts(
+                    SearchQuery.match(token.system).field(fieldPath + ".system"),
+                    SearchQuery.match(token.code).field(fieldPath + ".value")
+            );
+        } else {
+            // Search just the value field (phone number, email address)
             return SearchQuery.match(token.code).field(fieldPath + ".value");
         }
     }

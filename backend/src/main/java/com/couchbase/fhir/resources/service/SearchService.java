@@ -138,6 +138,16 @@ public class SearchService {
     }
     
     /**
+     * Direct search for Bundle processing (thin facade)
+     */
+    public Bundle searchDirect(String resourceType, Map<String, String[]> params) {
+        ca.uhn.fhir.rest.server.servlet.ServletRequestDetails requestDetails = 
+            new ca.uhn.fhir.rest.server.servlet.ServletRequestDetails();
+        requestDetails.setParameters(params);
+        return search(resourceType, requestDetails);
+    }
+    
+    /**
      * Full search operation returning complete Bundle with resources.
      * 
      * @param resourceType FHIR resource type
