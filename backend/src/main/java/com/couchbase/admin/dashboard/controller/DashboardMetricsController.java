@@ -154,7 +154,6 @@ public class DashboardMetricsController {
             return ResponseEntity.ok(response);
         } catch (Exception e) {
             // Only log the error message, not the full stack trace to reduce noise
-            System.err.println("HAProxy metrics fetch failed: " + e.getMessage());
             Map<String, Object> errorResponse = new HashMap<>();
             errorResponse.put("error", "HAProxy metrics unavailable");
             errorResponse.put("timestamp", System.currentTimeMillis());
