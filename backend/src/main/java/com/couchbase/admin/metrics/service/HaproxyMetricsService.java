@@ -107,7 +107,7 @@ public class HaproxyMetricsService {
             tick++;
             
         } catch (Exception e) {
-            logger.error("❌ Error collecting HAProxy metrics: {}", e.getMessage());
+            // logger.error("❌ Error collecting HAProxy metrics: {}", e.getMessage());
         }
     }
     

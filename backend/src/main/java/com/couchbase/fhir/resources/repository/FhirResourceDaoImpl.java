@@ -141,8 +141,6 @@ public class FhirResourceDaoImpl<T extends IBaseResource> implements  FhirResour
             }
 
             String documentKey = resourceType + "/" + resource.getIdElement().getIdPart();
-            System.out.println("document key --- ");
-            System.out.println(documentKey);
             String resourceJson = fhirContext.newJsonParser().encodeResourceToString(resource);
 
             String insertQuery = collectionRoutingService.buildInsertQuery(bucketName, resourceType);

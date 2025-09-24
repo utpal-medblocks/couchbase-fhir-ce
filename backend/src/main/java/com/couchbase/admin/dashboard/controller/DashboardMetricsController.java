@@ -49,30 +49,24 @@ public class DashboardMetricsController {
     // @Cacheable(value = "dashboardMetrics", unless = "#result.body == null") // Temporarily disabled to test bucket discovery
     public ResponseEntity<ClusterMetrics> getDashboardMetrics(@RequestParam(required = false) String connectionName) {
         long startTime = System.currentTimeMillis();
-        // System.out.println("🚀 DashboardMetricsController: Getting Couchbase cluster metrics");
         
         try {
             // Get connection name - use provided or get the first active connection
             if (connectionName == null || connectionName.isEmpty()) {
                 List<String> activeConnections = connectionService.getActiveConnections();
                 if (activeConnections.isEmpty()) {
-                    System.out.println("❌ No active Couchbase connections found");
                     return ResponseEntity.badRequest().build();
                 }
                 connectionName = activeConnections.get(0);
             }
             
-            // System.out.println("🔍 Getting cluster metrics for connection: " + connectionName);
             ClusterMetrics clusterMetrics = clusterMetricsService.getClusterMetrics(connectionName);
             
             long endTime = System.currentTimeMillis();
-            // System.out.println("✅ DashboardMetricsController: Couchbase cluster metrics retrieved in " + (endTime - startTime) + "ms");
-            // System.out.println("📊 Cluster: " + clusterMetrics.getClusterName() + " | Nodes: " + clusterMetrics.getNodes().size() + " | Buckets: " + clusterMetrics.getBuckets().size());
             
             return ResponseEntity.ok(clusterMetrics);
         } catch (Exception e) {
             long endTime = System.currentTimeMillis();
-            System.out.println("❌ DashboardMetricsController: Failed to get cluster metrics after " + (endTime - startTime) + "ms: " + e.getMessage());
             e.printStackTrace();
             return ResponseEntity.status(500).build();
         }
