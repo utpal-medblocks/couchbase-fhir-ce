@@ -1,10 +1,10 @@
-FROM maven:3.9-eclipse-temurin-21 AS builder
+FROM maven:3.9.7-eclipse-temurin-17 AS builder
 WORKDIR /app
 COPY . .
 RUN ./mvnw clean package -DskipTests
 RUN ls target/*
 
-FROM eclipse-temurin:21-jre-alpine
+FROM eclipse-temurin:17-jre-alpine
 WORKDIR /app
 # Create non-root user
 RUN addgroup -S appgroup && adduser -S appuser -G appgroup
