@@ -12,8 +12,6 @@ import org.springframework.stereotype.Service;
 import java.time.Instant;
 import java.util.List;
 
-import com.couchbase.fhir.resources.service.CollectionRoutingService;
-
 /**
  * Service for handling FHIR DELETE operations with proper tombstone management.
  * DELETE operations are idempotent and use soft delete with tombstones.
@@ -31,9 +29,6 @@ public class DeleteService {
     private static final String DEFAULT_SCOPE = "Resources";
     private static final String VERSIONS_COLLECTION = "Versions";
     private static final String TOMBSTONES_COLLECTION = "Tombstones";
-    
-    @Autowired
-    private IParser jsonParser;
     
     @Autowired
     private FhirAuditService auditService;

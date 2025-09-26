@@ -11,16 +11,10 @@ fhir:
         - name: "config"
           description: "Tenant configuration, feature flags"
           indexes:
-            - name: "PRIMARY"
-              type: "primary"
-              sql: "CREATE PRIMARY INDEX ON `{bucket}`.`Admin`.`config` WITH {'defer_build': true}"
 
         - name: "users"
           description: "User management, authentication"
           indexes:
-            - name: "PRIMARY"
-              type: "primary"
-              sql: "CREATE PRIMARY INDEX ON `{bucket}`.`Admin`.`users` WITH {'defer_build': true}"
 
     resources:
       name: "Resources"
@@ -77,21 +71,6 @@ fhir:
         - name: "Tombstones"
           description: "FHIR Tombstones resources"
           indexes:
-
-  build_commands:
-    - name: "Build Deferred Indexes"
-      description: "Finds all deferred indexes and generates BUILD INDEX statements to run."
-      query: |
-        SELECT RAW CONCAT("BUILD INDEX ON ", k ,  "(['", CONCAT2 ("','", inames), "']);")
-        FROM system:indexes AS s
-        LET bid = CONCAT("`",s.bucket_id, "`"),
-            sid = CONCAT("`", s.scope_id, "`"),
-            kid = CONCAT("`", s.keyspace_id, "`"),
-            k = NVL2(bid, CONCAT2(".", bid, sid, kid), kid)
-        WHERE s.namespace_id = "default"
-        GROUP BY k
-        LETTING inames = ARRAY_AGG(s.name) FILTER (WHERE s.state = 'deferred')
-        HAVING ARRAY_LENGTH(inames) > 0
 
 # FHIR Resource to Collection Mapping Configuration
 mapping:

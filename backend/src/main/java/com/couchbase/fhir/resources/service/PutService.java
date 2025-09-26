@@ -13,8 +13,6 @@ import org.springframework.stereotype.Service;
 
 import java.util.List;
 
-import com.couchbase.fhir.resources.service.CollectionRoutingService;
-
 /**
  * Service for handling FHIR PUT operations (create or update resources with client-controlled IDs).
  * PUT operations always use the client-supplied ID and handle proper FHIR versioning.
@@ -128,8 +126,6 @@ public class PutService {
                                          com.couchbase.client.java.transactions.TransactionAttemptContext txContext,
                                          Cluster cluster, String bucketName) {
         String resourceType = resource.getResourceType().name();
-        String resourceId = resource.getIdElement().getIdPart();
-        
         // Step 1: Copy existing resource to Versions collection (if it exists) and get next version
         int nextVersion = copyExistingResourceToVersions(cluster, bucketName, resourceType, documentKey);
         

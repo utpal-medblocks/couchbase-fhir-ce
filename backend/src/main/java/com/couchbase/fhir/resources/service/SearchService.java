@@ -2,10 +2,6 @@ package com.couchbase.fhir.resources.service;
 
 import ca.uhn.fhir.context.FhirContext;
 import ca.uhn.fhir.context.RuntimeSearchParam;
-import ca.uhn.fhir.context.RuntimeResourceDefinition;
-import ca.uhn.fhir.rest.api.RestSearchParameterTypeEnum;
-import jakarta.annotation.PostConstruct;
-import java.util.Collections;
 import ca.uhn.fhir.rest.api.SummaryEnum;
 import ca.uhn.fhir.rest.api.server.RequestDetails;
 import com.couchbase.fhir.resources.interceptor.RequestPerfBagUtils;
@@ -74,6 +70,9 @@ public class SearchService {
     @Autowired
     private FhirConfig fhirConfig;
     
+    @Autowired
+    private FtsKvSearchService ftsKvSearchService;
+    
     /**
      * Lightweight resolution for conditional operations.
      * Uses the same search logic but with LIMIT 2 for fast ambiguity detection.
@@ -103,31 +102,26 @@ public class SearchService {
         SearchQueryResult searchQueryResult = buildSearchQueries(resourceType, criteria);
         List<SearchQuery> ftsQueries = searchQueryResult.getFtsQueries();
         
-        // Execute lightweight search with LIMIT 2
+        // Execute lightweight search with LIMIT 2 using new FTS/KV architecture
         try {
-            String query = queryBuilder.buildIdOnly(ftsQueries, resourceType, 0, 2, null);  // LIMIT 2
+            logger.debug("🚀 Using FTS/KV for resolveOne: {}", resourceType);
             
-            logger.debug("🔍 Resolve query: {}", query);
+            // Use FTS/KV to get document keys only (much faster than full documents)
+            List<String> documentKeys = ftsKvSearchService.searchForIds(ftsQueries, resourceType, 2);
             
-            // Get appropriate DAO for the resource type
-            @SuppressWarnings("unchecked")
-            Class<? extends Resource> resourceClassType = (Class<? extends Resource>) fhirContext.getResourceDefinition(resourceType).getImplementingClass();
-            FhirResourceDaoImpl<?> dao = serviceFactory.getService(resourceClassType);
+            logger.debug("🚀 FTS/KV resolveOne: Found {} document keys for {}", documentKeys.size(), resourceType);
             
-            @SuppressWarnings("unchecked")
-            List<Resource> results = (List<Resource>) dao.search(resourceType, query);
-            
-            logger.debug("🔍 SearchService.resolveOne: Found {} matches for {}", results.size(), resourceType);
-            
-            // Analyze results
-            if (results.isEmpty()) {
+            // Analyze results based on document keys (no need to retrieve full documents)
+            if (documentKeys.isEmpty()) {
                 return ResolveResult.zero();
-            } else if (results.size() == 1) {
-                String resourceId = results.get(0).getIdElement().getIdPart();
-                logger.debug("🔍 SearchService.resolveOne: Single match found: {}", resourceId);
+            } else if (documentKeys.size() == 1) {
+                // Extract resource ID from document key (format: "ResourceType/id")
+                String documentKey = documentKeys.get(0);
+                String resourceId = documentKey.substring(documentKey.lastIndexOf("/") + 1);
+                logger.debug("🚀 FTS/KV resolveOne: Single match found: {}", resourceId);
                 return ResolveResult.one(resourceId);
             } else {
-                logger.warn("🔍 SearchService.resolveOne: Multiple matches found ({}), returning MANY", results.size());
+                logger.warn("🚀 FTS/KV resolveOne: Multiple matches found ({}), returning MANY", documentKeys.size());
                 return ResolveResult.many();
             }
             
@@ -208,10 +202,12 @@ public class SearchService {
                         e -> e.getValue()[0]
                 ));
         
-        // Parse FHIR standard parameters
-        SummaryEnum summaryMode = parseSummaryParameter(searchParams);
-        Set<String> elements = parseElementsParameter(searchParams);
-        int count = parseCountParameter(searchParams);
+    // Parse FHIR standard parameters
+    SummaryEnum summaryMode = parseSummaryParameter(searchParams);
+    Set<String> elements = parseElementsParameter(searchParams);
+    int count = parseCountParameter(searchParams);
+    // Capture whether user explicitly provided _count BEFORE we strip control params
+    boolean userExplicitCount = searchParams.containsKey("_count");
         List<SortField> sortFields = parseSortParameter(searchParams);
         String totalMode = parseTotalParameter(searchParams);
         
@@ -242,7 +238,7 @@ public class SearchService {
         // Check for chained parameters (must be done before removing control parameters)
         ChainParam chainParam = detectChainParameter(searchParams, resourceType);
         
-        // Remove control parameters from search criteria
+    // Remove control parameters from search criteria (we already captured userExplicitCount)
         searchParams.remove("_summary");
         searchParams.remove("_elements");
         searchParams.remove("_count");
@@ -259,13 +255,9 @@ public class SearchService {
         // Build search queries - use allParams to handle multiple values for the same parameter
         SearchQueryResult searchQueryResult = buildSearchQueries(resourceType, allParams);
         List<SearchQuery> ftsQueries = searchQueryResult.getFtsQueries();
-        List<String> n1qlFilters = searchQueryResult.getN1qlFilters();
+        // Note: N1QL filters removed - using pure FTS/KV architecture
         
-        logger.debug("🔍 SearchService: Built {} FTS queries and {} N1QL filters for {}", 
-                   ftsQueries.size(), n1qlFilters.size(), resourceType);
-        if (!n1qlFilters.isEmpty()) {
-            logger.debug("🔍 SearchService: N1QL filters: {}", n1qlFilters);
-        }
+        logger.debug("🔍 SearchService: Built {} FTS queries for {}", ftsQueries.size(), resourceType);
         // Handle count-only queries
         if ("accurate".equals(totalMode) && count == 0) {
             Bundle result = handleCountOnlyQuery(ftsQueries, resourceType, bucketName);
@@ -276,7 +268,7 @@ public class SearchService {
         
         // Check if this is a _revinclude search
         if (revInclude != null) {
-            Bundle result = handleRevIncludeSearch(resourceType, ftsQueries, n1qlFilters, revInclude, count, 
+            Bundle result = handleRevIncludeSearch(resourceType, ftsQueries, revInclude, count, 
                                         summaryMode, elements, totalMode, bucketName, requestDetails);
             RequestPerfBagUtils.addTiming(requestDetails, "search_service", System.currentTimeMillis() - searchStartMs);
             RequestPerfBagUtils.addCount(requestDetails, "search_results", result.getTotal());
@@ -301,8 +293,12 @@ public class SearchService {
             return result;
         }
         
-        // Check if this should be a paginated regular search
-        if (shouldPaginate(searchParams, count)) {
+        // Check if this should be a paginated regular search.
+        // If user explicitly set _count we now treat it as a simple capped result request (no pagination state, no accurate total count query).
+        if (userExplicitCount) {
+            logger.debug("🔍 User specified _count ({}); skipping pagination & count query.", count);
+        }
+        if (shouldPaginate(searchParams, count) && !userExplicitCount) {
             Bundle result = handlePaginatedRegularSearch(resourceType, ftsQueries, searchParams, count, 
                                               sortFields, summaryMode, elements, totalMode, bucketName, requestDetails);
             // Track search timing
@@ -311,9 +307,10 @@ public class SearchService {
             return result;
         }
         
-        // Execute regular search (non-paginated)
-        Bundle result = executeRegularSearch(resourceType, ftsQueries, n1qlFilters, count, sortFields, 
-                                  summaryMode, elements, totalMode, bucketName);
+        // Execute regular search (non-paginated) using FTS/KV architecture
+        logger.info("🚀 Using FTS/KV architecture for {} search", resourceType);
+        Bundle result = executeRegularSearchFtsKv(resourceType, ftsQueries, count, sortFields, 
+                                                 summaryMode, elements, totalMode, bucketName, requestDetails, userExplicitCount);
         // Track search timing
         RequestPerfBagUtils.addTiming(requestDetails, "search_service", System.currentTimeMillis() - searchStartMs);
         RequestPerfBagUtils.addCount(requestDetails, "search_results", result.getTotal());
@@ -452,41 +449,8 @@ public class SearchService {
             }
         }
         
-        logger.debug("🔍 buildSearchQueries: Built {} FTS queries and {} N1QL filters", ftsQueries.size(), filters.size());
+        logger.debug("🔍 buildSearchQueries: Built {} FTS queries (N1QL filters removed in FTS/KV architecture)", ftsQueries.size());
         return new SearchQueryResult(ftsQueries, filters);
-    }
-    
-    /**
-     * Build lightweight ID-only query for resolveOne operations
-     */
-    private String buildResolveOneQuery(List<SearchQuery> ftsQueries, String resourceType, String bucketName) {
-        if (ftsQueries.isEmpty()) {
-            // No search criteria - return simple query (no need to check deleted field)
-            return String.format(
-                "SELECT META().id as id FROM `%s`.`Resources`.`%s` LIMIT 2",
-                bucketName, resourceType
-            );
-        }
-        
-        // Use FTS query but project only ID
-        String fullQuery = queryBuilder.buildIdOnly(ftsQueries, resourceType, 0, 2, null);
-        
-        // Replace SELECT clause to get only META().id
-        return fullQuery.replaceFirst(
-            "SELECT resource\\.\\*",
-            "SELECT META(resource).id as id"
-        );
-    }
-    
-    /**
-     * Extract resource ID from query result
-     */
-    private String extractResourceId(JsonObject row) {
-        String fullId = row.getString("id");
-        if (fullId != null && fullId.contains("/")) {
-            return fullId.substring(fullId.lastIndexOf("/") + 1);
-        }
-        return fullId;
     }
     
     /**
@@ -618,6 +582,7 @@ public class SearchService {
         return switch (fhirField) {
             case "_lastUpdated", "lastUpdated" -> "meta.lastUpdated";
             case "_id" -> "id";
+            case "name" -> "name.family";  // For Patient sorting, use family name
             default -> fhirField;
         };
     }
@@ -678,31 +643,30 @@ public class SearchService {
     }
     
     /**
-     * Execute regular search without _revinclude
+     * Execute regular search using FTS/KV architecture (NEW)
+     * This replaces the N1QL SEARCH approach with direct FTS + KV operations
      */
-    private Bundle executeRegularSearch(String resourceType, List<SearchQuery> ftsQueries, List<String> n1qlFilters, int count,
-                                      List<SortField> sortFields, SummaryEnum summaryMode, 
-                                      Set<String> elements, String totalMode, String bucketName) {
+    private Bundle executeRegularSearchFtsKv(String resourceType, List<SearchQuery> ftsQueries, int count,
+                                           List<SortField> sortFields, SummaryEnum summaryMode, 
+                                           Set<String> elements, String totalMode, String bucketName,
+                                           RequestDetails requestDetails, boolean userExplicitCount) {
         
-        String query = queryBuilder.build(ftsQueries, n1qlFilters, resourceType, 0, count, sortFields);
+        logger.info("🚀 Using FTS/KV architecture for {} search", resourceType);
         
-        // Get appropriate DAO for the resource type
-        @SuppressWarnings("unchecked")
-        Class<? extends Resource> resourceClassType = (Class<? extends Resource>) fhirContext.getResourceDefinition(resourceType).getImplementingClass();
-        FhirResourceDaoImpl<?> dao = serviceFactory.getService(resourceClassType);
-        
-        @SuppressWarnings("unchecked")
-        List<Resource> results = (List<Resource>) dao.search(resourceType, query);
+        // Execute FTS/KV search
+        List<Resource> results = ftsKvSearchService.searchWithTiming(ftsQueries, resourceType, 0, count, sortFields, requestDetails);
         
         // Build Bundle response
         Bundle bundle = new Bundle();
         bundle.setType(Bundle.BundleType.SEARCHSET);
         
         // Set total count
-        if ("accurate".equals(totalMode)) {
-            int accurateTotal = getAccurateCount(ftsQueries, resourceType, bucketName);
-            bundle.setTotal(accurateTotal);
+        if ("accurate".equals(totalMode) && !userExplicitCount) {
+            // Only do count query if user didn't specify explicit count
+            long accurateTotal = ftsKvSearchService.getCount(ftsQueries, resourceType);
+            bundle.setTotal((int) accurateTotal);
         } else {
+            // For user explicit count, just return the number of results we got
             bundle.setTotal(results.size());
         }
         
@@ -716,7 +680,7 @@ public class SearchService {
                     .setMode(Bundle.SearchEntryMode.MATCH);
         }
         
-        logger.debug("🔍 SearchService.search: Returning {} results for {}", results.size(), resourceType);
+        logger.info("🚀 FTS/KV SearchService: Returning {} results for {}", results.size(), resourceType);
         return bundle;
     }
     
@@ -724,15 +688,15 @@ public class SearchService {
      * Handle _revinclude search with two-query strategy
      */
     private Bundle handleRevIncludeSearch(String primaryResourceType, List<SearchQuery> ftsQueries,
-                                        List<String> n1qlFilters, Include revInclude, int count,
+                                        Include revInclude, int count,
                                         SummaryEnum summaryMode, Set<String> elements,
                                         String totalMode, String bucketName, RequestDetails requestDetails) {
         
         logger.info("🔍 Handling _revinclude search: {} -> {}", 
                    primaryResourceType, revInclude.getValue());
         
-        // Step 1: Execute primary resource search to get full documents
-        List<Resource> primaryResources = executePrimaryResourceSearch(primaryResourceType, ftsQueries, n1qlFilters, count, bucketName, requestDetails);
+        // Step 1: Execute primary resource search to get full documents using FTS/KV
+        List<Resource> primaryResources = executePrimaryResourceSearchFtsKv(primaryResourceType, ftsQueries, count, bucketName, requestDetails);
         
         if (primaryResources.isEmpty()) {
             logger.info("🔍 No primary resources found, returning empty bundle");
@@ -865,15 +829,8 @@ public class SearchService {
         }
         logger.debug("🔍 Target resource type for inclusion: '{}'", targetResourceType);
 
-        // Step 1: Execute primary resource search to get full resources (no count needed for _include)
-        String query = queryBuilder.build(ftsQueries, new ArrayList<>(), primaryResourceType, 0, count, null);
-        
-        @SuppressWarnings("unchecked")
-        Class<? extends Resource> primaryResourceClassType = (Class<? extends Resource>) fhirContext.getResourceDefinition(primaryResourceType).getImplementingClass();
-        FhirResourceDaoImpl<?> primaryDao = serviceFactory.getService(primaryResourceClassType);
-        
-        @SuppressWarnings("unchecked")
-        List<Resource> primaryResources = (List<Resource>) primaryDao.search(primaryResourceType, query);
+        // Step 1: Execute primary resource search using FTS/KV architecture
+        List<Resource> primaryResources = ftsKvSearchService.searchWithTiming(ftsQueries, primaryResourceType, 0, count, null, requestDetails);
         
         if (primaryResources.isEmpty()) {
             logger.info("🔍 No primary resources found, returning empty bundle");
@@ -1131,19 +1088,13 @@ public class SearchService {
     private Bundle handleRegularPaginationInternal(SearchState searchState, String continuationToken, int offset, int count) {
         logger.debug("🔍 Handling regular pagination: offset={}, count={}", offset, count);
         
-        // Execute query using cached FTS queries and sort fields
-        String query = queryBuilder.build(searchState.getCachedFtsQueries(), 
-                                        new ArrayList<>(), 
-                                        searchState.getPrimaryResourceType(), 
-                                        offset, count, 
-                                        searchState.getSortFields());
-        
-        @SuppressWarnings("unchecked")
-        Class<? extends Resource> resourceClassType = (Class<? extends Resource>) fhirContext.getResourceDefinition(searchState.getPrimaryResourceType()).getImplementingClass();
-        FhirResourceDaoImpl<?> dao = serviceFactory.getService(resourceClassType);
-        
-        @SuppressWarnings("unchecked")
-        List<Resource> results = (List<Resource>) dao.search(searchState.getPrimaryResourceType(), query);
+        // Execute query using cached FTS queries and sort fields via FTS/KV architecture
+        List<Resource> results = ftsKvSearchService.search(
+            searchState.getCachedFtsQueries(), 
+            searchState.getPrimaryResourceType(), 
+            offset, count, 
+            searchState.getSortFields()
+        );
         
         // Update search state
         searchState.setCurrentPrimaryOffset(offset + results.size());
@@ -1179,19 +1130,13 @@ public class SearchService {
     private Bundle handleIncludePaginationInternal(SearchState searchState, String continuationToken, int offset, int count) {
         logger.debug("🔍 Handling include pagination: offset={}, count={}", offset, count);
         
-        // Execute query for next batch of primary resources using cached FTS queries
-        String query = queryBuilder.build(searchState.getCachedFtsQueries(), 
-                                        new ArrayList<>(), 
-                                        searchState.getPrimaryResourceType(), 
-                                        offset, count, 
-                                        searchState.getSortFields());
-        
-        @SuppressWarnings("unchecked")
-        Class<? extends Resource> primaryResourceClassType = (Class<? extends Resource>) fhirContext.getResourceDefinition(searchState.getPrimaryResourceType()).getImplementingClass();
-        FhirResourceDaoImpl<?> primaryDao = serviceFactory.getService(primaryResourceClassType);
-        
-        @SuppressWarnings("unchecked")
-        List<Resource> primaryResources = (List<Resource>) primaryDao.search(searchState.getPrimaryResourceType(), query);
+        // Execute query for next batch of primary resources using FTS/KV architecture
+        List<Resource> primaryResources = ftsKvSearchService.search(
+            searchState.getCachedFtsQueries(), 
+            searchState.getPrimaryResourceType(), 
+            offset, count, 
+            searchState.getSortFields()
+        );
         
         // Extract reference IDs from this batch of primary resources
         List<String> includeResourceIds = extractReferenceIds(primaryResources, searchState.getRevIncludeSearchParam());
@@ -1245,27 +1190,10 @@ public class SearchService {
     /**
      * Execute primary resource search to get full documents
      */
-    private List<Resource> executePrimaryResourceSearch(String resourceType, List<SearchQuery> ftsQueries, 
-                                                      List<String> n1qlFilters, int count, String bucketName, RequestDetails requestDetails) {
-        String query = queryBuilder.build(ftsQueries, n1qlFilters, resourceType, 0, count, null);
-        
-        logger.debug("🔍 Primary resource query: {}", query);
-        
-        try {
-            @SuppressWarnings("unchecked")
-            Class<? extends Resource> resourceClassType = (Class<? extends Resource>) fhirContext.getResourceDefinition(resourceType).getImplementingClass();
-            FhirResourceDaoImpl<?> dao = serviceFactory.getService(resourceClassType);
-            
-            // Execute DAO search with timing
-            List<Resource> results = executeDAOSearchWithTiming(dao, resourceType, query, requestDetails);
-            
-            logger.debug("🔍 Primary resource search returned {} resources for {}", results.size(), resourceType);
-            return results;
-            
-        } catch (Exception e) {
-            logger.error("Failed to execute primary resource search for {}: {}", resourceType, e.getMessage());
-            throw new InvalidRequestException("Failed to execute search: " + e.getMessage());
-        }
+    private List<Resource> executePrimaryResourceSearchFtsKv(String resourceType, List<SearchQuery> ftsQueries, 
+                                                           int count, String bucketName, RequestDetails requestDetails) {
+        // Use FTS/KV architecture for primary resource search
+        return ftsKvSearchService.searchWithTiming(ftsQueries, resourceType, 0, count, null, requestDetails);
     }
     
     /**
@@ -1277,42 +1205,10 @@ public class SearchService {
                 .collect(Collectors.toList());
     }
     
-    /**
-     * Extract resource IDs from a list of resources
-     */
-    private List<String> extractResourceIds(List<Resource> resources) {
-        return resources.stream()
-                .map(resource -> resource.getIdElement().getIdPart())
-                .collect(Collectors.toList());
-    }
-    
     private List<String> executeIdOnlySearch(String resourceType, List<SearchQuery> ftsQueries, 
-                                           List<String> n1qlFilters, int count, String bucketName) {
-        String query = queryBuilder.build(ftsQueries, n1qlFilters, resourceType, 0, count, null);
-        
-        logger.debug("🔍 Original query: {}", query);
-        
-        // Modify query to select only IDs
-        String idOnlyQuery = query.replace("SELECT resource.* ", "SELECT raw resource.id ");
-        
-        logger.debug("🔍 Modified ID-only query: {}", idOnlyQuery);
-        
-        try {
-            Cluster cluster = connectionService.getConnection("default");
-            QueryResult result = cluster.query(idOnlyQuery);
-            
-            List<String> ids = new ArrayList<>();
-            // With SELECT raw resource.id, the results are raw strings
-            List<String> rawResults = result.rowsAs(String.class);
-            ids.addAll(rawResults);
-            
-            logger.debug("🔍 ID-only search returned {} IDs for {}: {}", ids.size(), resourceType, ids);
-            return ids;
-            
-        } catch (Exception e) {
-            logger.error("Failed to execute ID-only search for {}: {}", resourceType, e.getMessage());
-            throw new InvalidRequestException("Failed to execute search: " + e.getMessage());
-        }
+                                           int count, String bucketName) {
+        // Use FTS/KV for ID-only search
+        return ftsKvSearchService.searchForIds(ftsQueries, resourceType, count);
     }
     
     private List<Resource> executeRevIncludeResourceSearch(String resourceType, String searchParam,
@@ -1349,46 +1245,18 @@ public class SearchService {
         List<SortField> sortFields = new ArrayList<>();
         sortFields.add(new SortField("meta.lastUpdated", true)); // true = descending
         
-        // Execute the query - get full documents, not just IDs
-        String query = queryBuilder.build(revIncludeQueries, new ArrayList<>(), resourceType, offset, count, sortFields);
-        
-        @SuppressWarnings("unchecked")
-        Class<? extends Resource> resourceClassType = (Class<? extends Resource>) fhirContext.getResourceDefinition(resourceType).getImplementingClass();
-        FhirResourceDaoImpl<?> dao = serviceFactory.getService(resourceClassType);
-        
+        // Execute the query using FTS/KV architecture instead of N1QL
         List<Resource> results;
         if (requestDetails != null) {
-            // Execute DAO search with timing for first-time requests
-            results = executeDAOSearchWithTiming(dao, resourceType, query, requestDetails);
+            // Execute FTS/KV search with timing for first-time requests
+            results = ftsKvSearchService.searchWithTiming(revIncludeQueries, resourceType, offset, count, sortFields, requestDetails);
         } else {
-            // For pagination requests, use direct DAO call (no timing needed)
-            @SuppressWarnings("unchecked")
-            List<Resource> directResults = (List<Resource>) dao.search(resourceType, query);
-            results = directResults;
+            // For pagination requests, use direct FTS/KV call (no timing needed)
+            results = ftsKvSearchService.search(revIncludeQueries, resourceType, offset, count, sortFields);
         }
         
         logger.debug("🔍 RevInclude search returned {} {} resources", results.size(), resourceType);
         return results;
-    }
-    
-    private List<Resource> getPrimaryResourcesByIds(String resourceType, List<String> ids, String bucketName) {
-        List<Resource> resources = new ArrayList<>();
-        
-        @SuppressWarnings("unchecked")
-        Class<? extends Resource> resourceClassType = (Class<? extends Resource>) fhirContext.getResourceDefinition(resourceType).getImplementingClass();
-        FhirResourceDaoImpl<?> dao = serviceFactory.getService(resourceClassType);
-        
-        for (String id : ids) {
-            try {
-                @SuppressWarnings("unchecked")
-                Optional<Resource> resource = (Optional<Resource>) dao.read(resourceType, id, bucketName);
-                resource.ifPresent(resources::add);
-            } catch (Exception e) {
-                logger.warn("Failed to retrieve {} with ID {}: {}", resourceType, id, e.getMessage());
-            }
-        }
-        
-        return resources;
     }
     
     private int getTotalRevIncludeCount(String resourceType, String searchParam, 
@@ -1406,17 +1274,10 @@ public class SearchService {
             revIncludeQueries.add(SearchQuery.disjuncts(referenceQueries.toArray(new SearchQuery[0])));
         }
         
-        String countQuery = queryBuilder.buildCountQuery(revIncludeQueries, resourceType);
-        
+        // Use FTS/KV count instead of N1QL count query
         try {
-            Cluster cluster = connectionService.getConnection("default");
-            QueryResult result = cluster.query(countQuery);
-            List<JsonObject> rows = result.rowsAs(JsonObject.class);
-            
-            if (!rows.isEmpty()) {
-                return rows.get(0).getInt("total");
-            }
-            return 0;
+            long count = ftsKvSearchService.getCount(revIncludeQueries, resourceType);
+            return (int) count;
         } catch (Exception e) {
             logger.warn("Failed to get revinclude count for {}: {}", resourceType, e.getMessage());
             return 0;
@@ -1466,10 +1327,6 @@ public class SearchService {
         }
         
         return null;
-    }
-    
-    private String buildNextPageUrl(String continuationToken, int offset, String resourceType, String bucketName, int count) {
-        return buildNextPageUrl(continuationToken, offset, resourceType, bucketName, count, null);
     }
     
     private String buildNextPageUrl(String continuationToken, int offset, String resourceType, String bucketName, int count, String baseUrl) {
@@ -1540,15 +1397,9 @@ public class SearchService {
         
         logger.debug("🔍 Handling paginated regular search for {} with count {}", resourceType, count);
         
-        // Execute first page
-        String query = queryBuilder.build(ftsQueries, new ArrayList<>(), resourceType, 0, count, sortFields);
-        
-        @SuppressWarnings("unchecked")
-        Class<? extends Resource> resourceClassType = (Class<? extends Resource>) fhirContext.getResourceDefinition(resourceType).getImplementingClass();
-        FhirResourceDaoImpl<?> dao = serviceFactory.getService(resourceClassType);
-        
-        // Execute DAO search with timing
-        List<Resource> results = executeDAOSearchWithTiming(dao, resourceType, query, requestDetails);
+        // Execute first page using FTS/KV architecture
+        logger.debug("🚀 Using FTS/KV for paginated search: {}", resourceType);
+        List<Resource> results = ftsKvSearchService.searchWithTiming(ftsQueries, resourceType, 0, count, sortFields, requestDetails);
         
         // Optimized counting and SearchState creation: Only create SearchState if pagination is actually needed
         int totalCount;
@@ -1558,7 +1409,7 @@ public class SearchService {
         if (needsPagination) {
             // We got exactly the requested count, so there might be more - do count query and create SearchState
             logger.debug("🔍 Got exactly {} results, enabling pagination (doing count query)", count);
-            totalCount = getAccurateCount(ftsQueries, resourceType, bucketName);
+            totalCount = (int) ftsKvSearchService.getCount(ftsQueries, resourceType);
             
             // Only create SearchState when pagination is actually needed
             String baseUrl = extractBaseUrl(requestDetails, bucketName);
@@ -1910,7 +1761,7 @@ public class SearchService {
         List<SearchQuery> chainQueries = chainQueryResult.getFtsQueries();
         
         // Execute ID-only search to get referenced resource IDs (reuse existing method)
-        return executeIdOnlySearch(targetResourceType, chainQueries, new ArrayList<>(), 1000, bucketName); // Large limit for chain query
+        return executeIdOnlySearch(targetResourceType, chainQueries, 1000, bucketName); // Large limit for chain query
     }
     
     /**
@@ -1954,15 +1805,8 @@ public class SearchService {
             primaryQueries.addAll(additionalQueries);
         }
         
-        // Execute the query
-        String query = queryBuilder.build(primaryQueries, new ArrayList<>(), primaryResourceType, offset, count, sortFields);
-        
-        @SuppressWarnings("unchecked")
-        Class<? extends Resource> resourceClassType = (Class<? extends Resource>) fhirContext.getResourceDefinition(primaryResourceType).getImplementingClass();
-        FhirResourceDaoImpl<?> dao = serviceFactory.getService(resourceClassType);
-        
-        @SuppressWarnings("unchecked")
-        List<Resource> results = (List<Resource>) dao.search(primaryResourceType, query);
+        // Execute the query using FTS/KV architecture
+        List<Resource> results = ftsKvSearchService.search(primaryQueries, primaryResourceType, offset, count, sortFields);
         
         logger.info("🔗 Primary chain search returned {} {} resources", results.size(), primaryResourceType);
         return results;

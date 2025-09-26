@@ -7,7 +7,6 @@ import com.couchbase.client.java.Cluster;
 import com.couchbase.client.java.Collection;
 import com.couchbase.client.java.Bucket;
 import com.couchbase.common.fhir.FhirMetaHelper;
-import com.couchbase.fhir.resources.service.CollectionRoutingService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.hl7.fhir.r4.model.Resource;
 import org.slf4j.Logger;

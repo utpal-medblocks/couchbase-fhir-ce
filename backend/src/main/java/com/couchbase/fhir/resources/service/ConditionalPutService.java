@@ -1,15 +1,11 @@
 package com.couchbase.fhir.resources.service;
 
-import ca.uhn.fhir.context.FhirContext;
 import ca.uhn.fhir.rest.api.MethodOutcome;
 import ca.uhn.fhir.rest.server.exceptions.InternalErrorException;
 import ca.uhn.fhir.rest.server.exceptions.PreconditionFailedException;
 import com.couchbase.admin.connections.service.ConnectionService;
 import com.couchbase.client.java.Cluster;
-import com.couchbase.client.java.json.JsonObject;
-import com.couchbase.client.java.query.QueryResult;
 import com.couchbase.fhir.resources.config.TenantContextHolder;
-import com.couchbase.fhir.resources.util.Ftsn1qlQueryBuilder;
 import com.couchbase.fhir.resources.validation.FhirBucketValidator;
 import com.couchbase.fhir.resources.validation.FhirBucketValidationException;
 import org.hl7.fhir.r4.model.Resource;
@@ -19,7 +15,6 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -36,9 +31,6 @@ import java.util.Map;
 public class ConditionalPutService {
     
     private static final Logger logger = LoggerFactory.getLogger(ConditionalPutService.class);
-    
-    @Autowired
-    private FhirContext fhirContext;
     
     @Autowired
     private FhirBucketValidator bucketValidator;
