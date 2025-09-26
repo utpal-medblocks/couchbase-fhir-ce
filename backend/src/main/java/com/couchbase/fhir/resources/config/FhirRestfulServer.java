@@ -97,6 +97,8 @@ public class FhirRestfulServer extends RestfulServer {
             
             setFhirContext(fhirContext); // Use the injected context
             setTenantIdentificationStrategy(new UrlBaseTenantIdentificationStrategy());
+            
+            
             registerInterceptor(new MultiTenantInterceptor());
             registerInterceptor(bucketValidationInterceptor);
             registerInterceptor(cleanExceptionInterceptor);
@@ -109,6 +111,8 @@ public class FhirRestfulServer extends RestfulServer {
             // Fallback to original behavior
             setFhirContext(fhirContext);
             setTenantIdentificationStrategy(new UrlBaseTenantIdentificationStrategy());
+            
+            
             registerInterceptor(new MultiTenantInterceptor());
             registerInterceptor(bucketValidationInterceptor);
             registerInterceptor(cleanExceptionInterceptor);

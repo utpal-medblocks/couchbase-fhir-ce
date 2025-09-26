@@ -600,6 +600,23 @@
                 }
               }
             },
+            "encounter": {
+              "dynamic": false,
+              "enabled": true,
+              "properties": {
+                "reference": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "index": true,
+                      "name": "reference",
+                      "type": "text"
+                    }
+                  ]
+                }
+              }
+            },
             "expirationDate": {
               "dynamic": false,
               "enabled": true,

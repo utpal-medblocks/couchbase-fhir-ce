@@ -6,9 +6,9 @@ import com.couchbase.client.java.Cluster;
 import com.couchbase.client.java.ClusterOptions;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
-import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -18,6 +18,10 @@ import java.util.stream.Collectors;
 public class ConnectionService {
     
     private static final Logger logger = LoggerFactory.getLogger(ConnectionService.class);
+    
+    // Configurable HTTP connection pool size for high-concurrency tuning
+    @Value("${couchbase.connection.max-http-connections:32}")
+    private int maxHttpConnections;
     
     // Store active connections
     private final Map<String, Cluster> activeConnections = new ConcurrentHashMap<>();
@@ -58,43 +62,24 @@ public class ConnectionService {
         logger.info("Creating connection: {}", request.getName());
         
         try {
+            // Use Couchbase SDK defaults with targeted HTTP connection tuning
+            // Per Couchbase dev recommendation: increase maxHttpConnections for high concurrency
             ClusterOptions options = ClusterOptions.clusterOptions(request.getUsername(), request.getPassword())
                     .environment(env -> {
-                        // Aggressive timeouts to prevent hanging on auth failures
-                        env.timeoutConfig().connectTimeout(Duration.ofSeconds(10));
-                        env.timeoutConfig().queryTimeout(Duration.ofSeconds(15));     // Shorter timeout for fast failure
-                        env.timeoutConfig().managementTimeout(Duration.ofSeconds(15)); // Shorter timeout for fast failure
-                        env.timeoutConfig().kvTimeout(Duration.ofSeconds(30));        // Longer timeout for FHIR document operations and transactions
+                        // TARGETED TUNING: Increase HTTP connections for high-concurrency FHIR workloads
+                        // Per Couchbase dev: Start with 32 and increase (16, 32, 64, 128) until performance degrades
+                        env.ioConfig().maxHttpConnections(maxHttpConnections);
                         
-                        // Transaction-specific timeouts and durability for FHIR bundle processing
-                        env.transactionsConfig(txn -> {
-                            txn.timeout(Duration.ofSeconds(60)); // Increase transaction timeout from 15s to 60s
-                            // For better performance, use majority durability instead of default (which waits for all replicas)
-                            txn.durabilityLevel(com.couchbase.client.core.msg.kv.DurabilityLevel.MAJORITY);
-                        });
+                        logger.info("🔧 Using maxHttpConnections: {} (configurable via couchbase.connection.max-http-connections)", maxHttpConnections);
                         
-                        // Optimize for FHIR workload: KV operations (POST/PUT/Transactions) + SQL++ queries + minimal admin HTTP
-                        env.ioConfig().numKvConnections(8);                          // More KV connections for FHIR document operations and transactions
-                        env.ioConfig().maxHttpConnections(4);                        // Minimal HTTP connections - only for admin UI operations
-                        env.ioConfig().idleHttpConnectionTimeout(Duration.ofMinutes(2)); // Reasonable timeout for admin operations
-                        
-                        // TCP keep-alive is handled automatically by the SDK for Capella
-                        
-                        // SQL++ query-focused optimizations (main FHIR workload)
-                        env.ioConfig().enableMutationTokens(false);                  // Not needed for read-heavy SQL++ queries
-                        env.ioConfig().configPollInterval(Duration.ofSeconds(30));   // Less frequent config polling for stable Capella
-                        
-                        // Query service optimizations are set via ClusterOptions, not environment
-                        
-                        // Use best effort retry strategy with default settings
-                        env.retryStrategy(com.couchbase.client.core.retry.BestEffortRetryStrategy.INSTANCE);
+                        // Keep all other settings at SDK defaults for optimal performance
                     });
             
             Cluster cluster = Cluster.connect(request.getConnectionString(), options);
             
-            // IMPORTANT: Test the connection immediately with a strict timeout
+            // IMPORTANT: Test the connection immediately with a reasonable timeout
             try {
-                logger.info("🔍 Validating connection with 15-second timeout...");
+                logger.info("🔍 Validating connection with 10-second timeout...");
                 
                 // Use CompletableFuture with timeout to prevent hanging
                 java.util.concurrent.CompletableFuture<Void> validationFuture = 
@@ -106,8 +91,8 @@ public class ConnectionService {
                         }
                     });
                 
-                // Wait with strict timeout - if this times out, it's likely an auth issue
-                validationFuture.get(15, java.util.concurrent.TimeUnit.SECONDS);
+                // Wait with reasonable timeout - if this times out, it's likely an auth issue
+                validationFuture.get(10, java.util.concurrent.TimeUnit.SECONDS);
                 
                 logger.info("✅ Connection validation successful for: {}", request.getName());
             } catch (java.util.concurrent.TimeoutException timeoutError) {
@@ -189,7 +174,13 @@ public class ConnectionService {
      * Get an active connection by name
      */
     public Cluster getConnection(String connectionName) {
-        return activeConnections.get(connectionName);
+        Cluster cluster = activeConnections.get(connectionName);
+        if (cluster != null) {
+            logger.debug("Reusing existing connection: {} (total active: {})", connectionName, activeConnections.size());
+        } else {
+            logger.warn("No active connection found for: {} (available: {})", connectionName, activeConnections.keySet());
+        }
+        return cluster;
     }
     
     /**

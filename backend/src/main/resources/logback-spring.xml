@@ -30,5 +30,12 @@
     <logger name="ca.uhn.fhir.context.support.DefaultProfileValidationSupport" level="ERROR"/>
 
     <!-- Suppress HAPI FHIR's exception interceptor stack traces - we handle our own clean error logging -->
-    <logger name="ca.uhn.fhir.rest.server.interceptor.ExceptionHandlingInterceptor" level="ERROR"/>
+    <logger name="ca.uhn.fhir.rest.server.interceptor.ExceptionHandlingInterceptor" level="OFF"/>
+    
+    <!-- Suppress RestfulServer stack traces for expected FHIR errors -->
+    <logger name="ca.uhn.fhir.rest.server.RestfulServer" level="ERROR"/>
+    
+    <!-- Suppress all Tomcat client disconnection errors (common with improved performance) -->
+    <logger name="org.apache.catalina.core.ContainerBase.[Catalina].[localhost].[/].[fhirServlet]" level="OFF"/>
+    <logger name="org.apache.catalina.connector.ClientAbortException" level="OFF"/>
 </configuration>
