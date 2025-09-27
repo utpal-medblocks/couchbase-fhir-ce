@@ -69,7 +69,7 @@ public class ConditionalPutService {
         }
         
         // Use SearchService to resolve the condition
-        ResolveResult resolveResult = searchService.resolveOne(resourceType, searchCriteria);
+        ResolveResult resolveResult = searchService.resolveConditional(resourceType, searchCriteria);
         
         switch (resolveResult.getStatus()) {
             case ZERO:

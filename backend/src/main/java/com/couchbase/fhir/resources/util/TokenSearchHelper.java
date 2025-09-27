@@ -132,6 +132,8 @@ public class TokenSearchHelper {
                     return buildIdentifierQuery(fieldPath, token);
                 case "contactpoint":
                     return buildContactPointQuery(fieldPath, token);
+                case "booleantype":
+                    return buildBooleanQuery(fieldPath, token);
                 case "code":
                 case "boolean":
                 case "string":
@@ -244,6 +246,19 @@ public class TokenSearchHelper {
             // Search just the value field (phone number, email address)
             return SearchQuery.match(token.code).field(fieldPath + ".value");
         }
+    }
+
+    /**
+     * Build query for boolean types (true/false values)
+     */
+    private static SearchQuery buildBooleanQuery(String fieldPath, TokenParam token) {
+        // For boolean fields, we need to match the actual boolean value, not string representation
+        boolean boolValue = Boolean.parseBoolean(token.code);
+        logger.debug("🔍 TokenSearchHelper: Building boolean query for field '{}' with value: {} (parsed as {})", 
+                    fieldPath, token.code, boolValue);
+        
+        // Use proper boolean field query for FTS boolean field handling
+        return SearchQuery.booleanField(boolValue).field(fieldPath);
     }
 
     /**

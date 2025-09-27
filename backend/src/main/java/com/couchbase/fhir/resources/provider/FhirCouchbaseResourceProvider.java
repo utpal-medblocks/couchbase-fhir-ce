@@ -365,10 +365,7 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
             logger.debug("🔍 DELETE {}: Conditional criteria: {}", resourceType, searchCriteria);
             
             // Use SearchService to resolve the condition
-            com.couchbase.fhir.resources.service.ResolveResult resolveResult = searchService.resolveOne(resourceType, searchCriteria);
-
-            // com.couchbase.fhir.resources.service.ResolveResult resolveResult = 
-            //     searchService.resolveOne(resourceType, searchCriteria);
+            com.couchbase.fhir.resources.service.ResolveResult resolveResult = searchService.resolveConditional(resourceType, searchCriteria);
             
             switch (resolveResult.getStatus()) {
                 case ZERO:

@@ -6,7 +6,6 @@ import com.couchbase.client.java.search.result.SearchResult;
 import com.couchbase.client.java.search.result.SearchRow;
 import com.couchbase.client.java.search.SearchOptions;
 import com.couchbase.client.java.search.sort.SearchSort;
-import com.couchbase.fhir.resources.util.Ftsn1qlQueryBuilder.SortField;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -33,7 +32,21 @@ public class FtsSearchService {
     private CollectionRoutingService collectionRoutingService;
     
     /**
-     * Execute FTS search and return document keys only
+     * Execute FTS search for maximum keys (new pagination strategy)
+     * Always fetches up to 1000 keys with offset=0 for optimal pagination
+     * 
+     * @param ftsQueries List of FTS search queries
+     * @param resourceType FHIR resource type
+     * @param sortFields Sort fields for ordering results
+     * @return FtsSearchResult containing up to 1000 document keys
+     */
+    public FtsSearchResult searchForAllKeys(List<SearchQuery> ftsQueries, String resourceType, 
+                                          List<SearchSort> sortFields) {
+        return searchForKeys(ftsQueries, resourceType, 0, 1000, sortFields);
+    }
+    
+    /**
+     * Execute FTS search and return document keys only (legacy method)
      * 
      * @param ftsQueries List of FTS search queries
      * @param resourceType FHIR resource type
@@ -43,7 +56,7 @@ public class FtsSearchService {
      * @return FtsSearchResult containing document keys and metadata
      */
     public FtsSearchResult searchForKeys(List<SearchQuery> ftsQueries, String resourceType, 
-                                       int from, int size, List<SortField> sortFields) {
+                                       int from, int size, List<SearchSort> sortFields) {
         
         try {
             // Get connection and FTS index
@@ -59,9 +72,7 @@ public class FtsSearchService {
             
             // Build FTS SearchQuery using SDK API (not JSON string)
             SearchQuery combinedQuery = buildCombinedSearchQuery(ftsQueries, resourceType);
-            
-            logger.info("🔍 Direct FTS Query: index={}, query={}", ftsIndex, combinedQuery);
-            
+                        
             // Build and log options
             SearchOptions searchOptions = buildOptions(from, size, sortFields);
 
@@ -76,20 +87,15 @@ public class FtsSearchService {
             }
 
             long ftsStartTime = System.currentTimeMillis();
-            logger.debug("🔍 FTS: Starting search query execution...");
             SearchResult searchResult = cluster.searchQuery(ftsIndex, combinedQuery, searchOptions);
             
-            long afterQueryTime = System.currentTimeMillis();
-            logger.debug("🔍 FTS: Query executed in {} ms, processing results...", 
-                        afterQueryTime - ftsStartTime);
-            
+            long afterQueryTime = System.currentTimeMillis();            
             // Extract document keys from search results
             List<String> documentKeys = new ArrayList<>();
             for (SearchRow row : searchResult.rows()) {
                 // FTS returns document IDs, which are our document keys
                 String documentKey = row.id();
                 documentKeys.add(documentKey);
-                logger.debug("🔍 FTS returned document key: {}", documentKey);
             }
             
             long ftsElapsedTime = System.currentTimeMillis() - ftsStartTime;
@@ -198,40 +204,28 @@ public class FtsSearchService {
     /**
      * Build SearchOptions with sort & standard flags.
      */
-    private SearchOptions buildOptions(int from, int size, List<SortField> sortFields) {
+    private SearchOptions buildOptions(int from, int size, List<SearchSort> sortFields) {
         SearchOptions opts = SearchOptions.searchOptions()
             .timeout(Duration.ofSeconds(30))
             .limit(size)
             .skip(from)
             .includeLocations(false)
             .disableScoring(true);
-        List<SearchSort> sorts = convertSort(sortFields);
-        if (!sorts.isEmpty()) {
+        if (sortFields != null && !sortFields.isEmpty()) {
             // Cast to Object[] to satisfy varargs on older SDK signatures
-            opts.sort((Object[]) sorts.toArray(new SearchSort[0]));
-            logger.debug("🔍 FTS: Added {} sort fields", sorts.size());
+            opts.sort((Object[]) sortFields.toArray(new SearchSort[0]));
+            logger.debug("🔍 FTS: Added {} sort fields", sortFields.size());
         }
         return opts;
     }
 
-    private List<SearchSort> convertSort(List<SortField> sortFields) {
-        List<SearchSort> sorts = new ArrayList<>();
-        if (sortFields == null) return sorts;
-        for (SortField sf : sortFields) {
-            if (sf == null || sf.field == null) continue;
-            // Use byField for compatibility
-            sorts.add(SearchSort.byField(sf.field).desc(sf.descending));
-        }
-        return sorts;
-    }
 
     /**
      * Produce lightweight JSON string of options (since SDK doesn't expose export()).
      */
-    private String exportOptions(SearchOptions options, int from, int size, List<SortField> sortFields) {
-        String sorts = (sortFields == null || sortFields.isEmpty()) ? "[]" : sortFields.stream()
-            .map(sf -> '{' + "\"field\":\"" + sf.field + "\",\"descending\":" + sf.descending + '}')
-            .collect(Collectors.joining(",","[", "]"));
+    private String exportOptions(SearchOptions options, int from, int size, List<SearchSort> sortFields) {
+        String sorts = (sortFields == null || sortFields.isEmpty()) ? "[]" : 
+            "[" + sortFields.size() + "_sort_fields]";
         return '{' +
             "\"from\":" + from + ',' +
             "\"size\":" + size + ',' +

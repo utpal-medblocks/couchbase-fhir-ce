@@ -5,24 +5,21 @@ import ca.uhn.fhir.context.RuntimeSearchParam;
 import ca.uhn.fhir.rest.api.SummaryEnum;
 import ca.uhn.fhir.rest.api.server.RequestDetails;
 import com.couchbase.fhir.resources.interceptor.RequestPerfBagUtils;
-import com.couchbase.fhir.resources.interceptor.DAOTimingContext;
 import ca.uhn.fhir.rest.server.exceptions.InvalidRequestException;
-import com.couchbase.client.java.Cluster;
-import com.couchbase.client.java.json.JsonObject;
-import com.couchbase.client.java.query.QueryResult;
 import com.couchbase.client.java.search.SearchQuery;
+import com.couchbase.client.java.search.sort.SearchSort;
 import com.couchbase.fhir.resources.config.TenantContextHolder;
 import com.couchbase.fhir.resources.repository.FhirResourceDaoImpl;
 import com.couchbase.fhir.resources.search.validation.FhirSearchParameterPreprocessor;
 import com.couchbase.fhir.resources.search.validation.FhirSearchValidationException;
 import com.couchbase.fhir.resources.util.*;
-import com.couchbase.fhir.resources.util.Ftsn1qlQueryBuilder.SortField;
 import com.couchbase.fhir.resources.validation.FhirBucketValidator;
 import com.couchbase.fhir.resources.validation.FhirBucketValidationException;
 import com.couchbase.fhir.resources.search.SearchQueryResult;
 import com.couchbase.fhir.resources.search.SearchState;
 import com.couchbase.fhir.resources.search.SearchStateManager;
 import com.couchbase.fhir.resources.search.ChainParam;
+import com.couchbase.fhir.resources.search.PaginationState;
 import ca.uhn.fhir.model.api.Include;
 import org.hl7.fhir.r4.model.Bundle;
 import org.hl7.fhir.r4.model.Resource;
@@ -37,15 +34,17 @@ import java.util.*;
 import java.util.stream.Collectors;
 
 /**
- * Centralized search service for FHIR resources with two primary modes:
- * 1. resolveOne() - Lightweight ID-only resolution for conditional operations
- * 2. search() - Full search operations returning complete Bundle responses
+ * Centralized search service for FHIR resources using the new FTS/KV pagination strategy.
+ * Provides fast, scalable search operations with optimal pagination performance.
  */
 @Service
 public class SearchService {
     
     private static final Logger logger = LoggerFactory.getLogger(SearchService.class);
     
+    // New pagination constants
+    private static final int DEFAULT_PAGE_SIZE = 50;  // Up from 20
+    private static final int MAX_FTS_FETCH_SIZE = 1000;  // Max doc keys per FTS query
     @Autowired
     private FhirContext fhirContext;
     
@@ -64,8 +63,6 @@ public class SearchService {
     @Autowired
     private SearchStateManager searchStateManager;
     
-    @Autowired
-    private Ftsn1qlQueryBuilder queryBuilder;
     
     @Autowired
     private FhirConfig fhirConfig;
@@ -74,61 +71,52 @@ public class SearchService {
     private FtsKvSearchService ftsKvSearchService;
     
     /**
-     * Lightweight resolution for conditional operations.
-     * Uses the same search logic but with LIMIT 2 for fast ambiguity detection.
-     * 
-     * NOTE: Race condition exists with FTS-based searches.
-     * Rapid conditional PUTs may create duplicates due to FTS indexing delays.
-     * This is a known limitation that requires alternative solutions.
+     * Resolve conditional operations by finding matching resources.
+     * Returns result indicating ZERO, ONE(id), or MANY matches for conditional operations.
      * 
      * @param resourceType FHIR resource type (e.g., "Patient")
      * @param criteria Search criteria as key-value pairs
      * @return ResolveResult indicating ZERO, ONE(id), or MANY matches
      */
-    public ResolveResult resolveOne(String resourceType, Map<String, List<String>> criteria) {
-        String bucketName = TenantContextHolder.getTenantId();
+    public ResolveResult resolveConditional(String resourceType, Map<String, List<String>> criteria) {
+        logger.debug("🔍 Resolving conditional operation: {} with criteria: {}", resourceType, criteria);
         
-        logger.debug("🔍 SearchService.resolveOne: {} with criteria: {}", resourceType, criteria);
+        // Use regular search with small limit for conditional operations
+        Bundle result = searchForConditional(resourceType, criteria, 2);
         
-        // Validate FHIR bucket
-        try {
-            bucketValidator.validateFhirBucketOrThrow(bucketName, "default");
-        } catch (FhirBucketValidationException e) {
-            throw e; // Re-throw as-is since it already extends InvalidRequestException
+        int totalResults = result.getTotal();
+        if (totalResults == 0) {
+            return ResolveResult.zero();
+        } else if (totalResults == 1) {
+            String resourceId = result.getEntry().get(0).getResource().getIdElement().getIdPart();
+            logger.debug("🔍 Conditional operation: Single match found: {}", resourceId);
+            return ResolveResult.one(resourceId);
+        } else {
+            logger.warn("🔍 Conditional operation: Multiple matches found ({}), returning MANY", totalResults);
+            return ResolveResult.many();
         }
+    }
+    
+    /**
+     * Internal search method for conditional operations with small result limit
+     */
+    private Bundle searchForConditional(String resourceType, Map<String, List<String>> criteria, int limit) {
+        // Convert Map<String, List<String>> to Map<String, String[]> for search
+        Map<String, String[]> searchParams = criteria.entrySet().stream()
+                .collect(Collectors.toMap(
+                        Map.Entry::getKey,
+                        e -> e.getValue().toArray(new String[0])
+                ));
         
-        // Build search queries using the same logic as regular search
-        // criteria is already Map<String, List<String>> so we can use it directly
-        SearchQueryResult searchQueryResult = buildSearchQueries(resourceType, criteria);
-        List<SearchQuery> ftsQueries = searchQueryResult.getFtsQueries();
+        // Create minimal request details
+        ca.uhn.fhir.rest.server.servlet.ServletRequestDetails requestDetails = 
+            new ca.uhn.fhir.rest.server.servlet.ServletRequestDetails();
+        requestDetails.setParameters(searchParams);
         
-        // Execute lightweight search with LIMIT 2 using new FTS/KV architecture
-        try {
-            logger.debug("🚀 Using FTS/KV for resolveOne: {}", resourceType);
-            
-            // Use FTS/KV to get document keys only (much faster than full documents)
-            List<String> documentKeys = ftsKvSearchService.searchForIds(ftsQueries, resourceType, 2);
-            
-            logger.debug("🚀 FTS/KV resolveOne: Found {} document keys for {}", documentKeys.size(), resourceType);
-            
-            // Analyze results based on document keys (no need to retrieve full documents)
-            if (documentKeys.isEmpty()) {
-                return ResolveResult.zero();
-            } else if (documentKeys.size() == 1) {
-                // Extract resource ID from document key (format: "ResourceType/id")
-                String documentKey = documentKeys.get(0);
-                String resourceId = documentKey.substring(documentKey.lastIndexOf("/") + 1);
-                logger.debug("🚀 FTS/KV resolveOne: Single match found: {}", resourceId);
-                return ResolveResult.one(resourceId);
-            } else {
-                logger.warn("🚀 FTS/KV resolveOne: Multiple matches found ({}), returning MANY", documentKeys.size());
-                return ResolveResult.many();
-            }
-            
-        } catch (Exception e) {
-            logger.error("❌ SearchService.resolveOne failed for {}: {}", resourceType, e.getMessage());
-            throw new InvalidRequestException("Failed to resolve conditional operation: " + e.getMessage());
-        }
+        // Override count parameter to limit results
+        searchParams.put("_count", new String[]{String.valueOf(limit)});
+        
+        return search(resourceType, requestDetails);
     }
     
     /**
@@ -208,7 +196,7 @@ public class SearchService {
     int count = parseCountParameter(searchParams);
     // Capture whether user explicitly provided _count BEFORE we strip control params
     boolean userExplicitCount = searchParams.containsKey("_count");
-        List<SortField> sortFields = parseSortParameter(searchParams);
+        List<SearchSort> sortFields = parseSortParameter(searchParams);
         String totalMode = parseTotalParameter(searchParams);
         
         // Check for _revinclude parameter using HAPI's Include class
@@ -293,24 +281,10 @@ public class SearchService {
             return result;
         }
         
-        // Check if this should be a paginated regular search.
-        // If user explicitly set _count we now treat it as a simple capped result request (no pagination state, no accurate total count query).
-        if (userExplicitCount) {
-            logger.debug("🔍 User specified _count ({}); skipping pagination & count query.", count);
-        }
-        if (shouldPaginate(searchParams, count) && !userExplicitCount) {
-            Bundle result = handlePaginatedRegularSearch(resourceType, ftsQueries, searchParams, count, 
-                                              sortFields, summaryMode, elements, totalMode, bucketName, requestDetails);
-            // Track search timing
-            RequestPerfBagUtils.addTiming(requestDetails, "search_service", System.currentTimeMillis() - searchStartMs);
-            RequestPerfBagUtils.addCount(requestDetails, "search_results", result.getTotal());
-            return result;
-        }
-        
-        // Execute regular search (non-paginated) using FTS/KV architecture
-        logger.info("🚀 Using FTS/KV architecture for {} search", resourceType);
-        Bundle result = executeRegularSearchFtsKv(resourceType, ftsQueries, count, sortFields, 
-                                                 summaryMode, elements, totalMode, bucketName, requestDetails, userExplicitCount);
+        // Always use the new pagination strategy for regular searches
+        logger.info("🚀 Using new pagination strategy for {} search (userExplicitCount={})", resourceType, userExplicitCount);
+        Bundle result = executeSearchWithNewPagination(resourceType, ftsQueries, count, sortFields, 
+                                                      summaryMode, elements, totalMode, bucketName, requestDetails);
         // Track search timing
         RequestPerfBagUtils.addTiming(requestDetails, "search_service", System.currentTimeMillis() - searchStartMs);
         RequestPerfBagUtils.addCount(requestDetails, "search_results", result.getTotal());
@@ -365,10 +339,6 @@ public class SearchService {
             // paramName is already resolved by HAPI FHIR's getSearchParam() method below
             List<String> values = entry.getValue();
             
-            if (paramName.equalsIgnoreCase("_revinclude")) {
-                // Skip _revinclude for now in resolveOne mode
-                continue;
-            }
             
             RuntimeSearchParam searchParam = fhirContext
                     .getResourceDefinition(resourceType)
@@ -467,20 +437,11 @@ public class SearchService {
     }
     
     /**
-     * Get accurate count using FTS COUNT query
+     * Get accurate count using pure FTS count
      */
     private int getAccurateCount(List<SearchQuery> ftsQueries, String resourceType, String bucketName) {
         try {
-            String countQuery = queryBuilder.buildCountQuery(ftsQueries, resourceType);
-            
-            Cluster cluster = connectionService.getConnection("default");
-            QueryResult result = cluster.query(countQuery);
-            List<JsonObject> rows = result.rowsAs(JsonObject.class);
-            
-            if (!rows.isEmpty()) {
-                return rows.get(0).getInt("total");
-            }
-            return 0;
+            return (int) ftsKvSearchService.getCount(ftsQueries, resourceType);
         } catch (Exception e) {
             logger.warn("Failed to get accurate count for {}: {}", resourceType, e.getMessage());
             return 0;
@@ -527,26 +488,26 @@ public class SearchService {
     private int parseCountParameter(Map<String, String> searchParams) {
         String countValue = searchParams.get("_count");
         if (countValue == null || countValue.isEmpty()) {
-            return 20; // Default count
+            return DEFAULT_PAGE_SIZE; // New default: 50
         }
         
         try {
             int count = Integer.parseInt(countValue);
-            if (count <= 0) return 20;
-            if (count > 100) return 100; // Maximum limit
+            if (count <= 0) return DEFAULT_PAGE_SIZE;
+            if (count > MAX_FTS_FETCH_SIZE) return MAX_FTS_FETCH_SIZE; // Max 1000
             return count;
         } catch (NumberFormatException e) {
-            return 20;
+            return DEFAULT_PAGE_SIZE;
         }
     }
     
-    private List<SortField> parseSortParameter(Map<String, String> searchParams) {
+    private List<SearchSort> parseSortParameter(Map<String, String> searchParams) {
         String sortValue = searchParams.get("_sort");
         if (sortValue == null || sortValue.isEmpty()) {
             return new ArrayList<>();
         }
         
-        List<SortField> sortFields = new ArrayList<>();
+        List<SearchSort> sortFields = new ArrayList<>();
         String[] fields = sortValue.split(",");
         
         for (String field : fields) {
@@ -558,7 +519,7 @@ public class SearchService {
             
             if (fieldName.matches("^[a-zA-Z0-9._]+$")) {
                 String mappedField = mapFhirFieldToFtsPath(fieldName);
-                sortFields.add(new SortField(mappedField, isDescending));
+                sortFields.add(SearchSort.byField(mappedField).desc(isDescending));
             }
         }
         
@@ -642,33 +603,57 @@ public class SearchService {
         }
     }
     
+    
     /**
-     * Execute regular search using FTS/KV architecture (NEW)
-     * This replaces the N1QL SEARCH approach with direct FTS + KV operations
+     * Execute search using new pagination strategy (FTS gets all keys, KV-only for subsequent pages)
      */
-    private Bundle executeRegularSearchFtsKv(String resourceType, List<SearchQuery> ftsQueries, int count,
-                                           List<SortField> sortFields, SummaryEnum summaryMode, 
-                                           Set<String> elements, String totalMode, String bucketName,
-                                           RequestDetails requestDetails, boolean userExplicitCount) {
+    private Bundle executeSearchWithNewPagination(String resourceType, List<SearchQuery> ftsQueries, int pageSize,
+                                                 List<SearchSort> sortFields, SummaryEnum summaryMode, 
+                                                 Set<String> elements, String totalMode, String bucketName,
+                                                 RequestDetails requestDetails) {
         
-        logger.info("🚀 Using FTS/KV architecture for {} search", resourceType);
+        logger.info("🚀 New Pagination Strategy: {} (page size: {}, fetching up to 1000 keys from FTS)", resourceType, pageSize);
         
-        // Execute FTS/KV search
-        List<Resource> results = ftsKvSearchService.searchWithTiming(ftsQueries, resourceType, 0, count, sortFields, requestDetails);
+        // Step 1: Execute FTS to get ALL document keys (up to 1000)
+        FtsSearchService.FtsSearchResult ftsResult = ftsKvSearchService.searchForAllKeys(
+            ftsQueries, resourceType, sortFields);
         
-        // Build Bundle response
+        List<String> allDocumentKeys = ftsResult.getDocumentKeys();
+        logger.info("🚀 FTS returned {} total document keys for {}", allDocumentKeys.size(), resourceType);
+        
+        // Step 2: Determine if pagination is needed
+        boolean needsPagination = allDocumentKeys.size() > pageSize;
+        
+        // Step 3: Get documents for first page
+        List<String> firstPageKeys = allDocumentKeys.size() <= pageSize ? 
+            allDocumentKeys : 
+            allDocumentKeys.subList(0, pageSize);
+            
+        List<Resource> results = ftsKvSearchService.getDocumentsFromKeys(firstPageKeys, resourceType);
+        
+        // Step 4: Create pagination state if needed
+        String continuationToken = null;
+        if (needsPagination) {
+            String baseUrl = extractBaseUrl(requestDetails, bucketName);
+            PaginationState paginationState = PaginationState.builder()
+                .searchType("regular")
+                .resourceType(resourceType)
+                .allDocumentKeys(allDocumentKeys)
+                .pageSize(pageSize)
+                .currentOffset(pageSize) // Next page starts after first page
+                .bucketName(bucketName)
+                .baseUrl(baseUrl)
+                .build();
+                
+            continuationToken = searchStateManager.storePaginationState(paginationState);
+            logger.info("✅ Created PaginationState: token={}, totalKeys={}, pages={}", 
+                       continuationToken, allDocumentKeys.size(), paginationState.getTotalPages());
+        }
+        
+        // Step 5: Build Bundle response
         Bundle bundle = new Bundle();
         bundle.setType(Bundle.BundleType.SEARCHSET);
-        
-        // Set total count
-        if ("accurate".equals(totalMode) && !userExplicitCount) {
-            // Only do count query if user didn't specify explicit count
-            long accurateTotal = ftsKvSearchService.getCount(ftsQueries, resourceType);
-            bundle.setTotal((int) accurateTotal);
-        } else {
-            // For user explicit count, just return the number of results we got
-            bundle.setTotal(results.size());
-        }
+        bundle.setTotal(allDocumentKeys.size()); // Total is exact count from FTS
         
         // Add resources to bundle with filtering
         for (Resource resource : results) {
@@ -680,123 +665,224 @@ public class SearchService {
                     .setMode(Bundle.SearchEntryMode.MATCH);
         }
         
-        logger.info("🚀 FTS/KV SearchService: Returning {} results for {}", results.size(), resourceType);
+        // Add next link if pagination is needed
+        if (continuationToken != null && allDocumentKeys.size() > pageSize) {
+            bundle.addLink()
+                    .setRelation("next")
+                    .setUrl(buildNextPageUrl(continuationToken, pageSize, resourceType, bucketName, pageSize, extractBaseUrl(requestDetails, bucketName)));
+        }
+        
+        logger.info("🚀 New Pagination: Returning {} results, total: {}, pages: {}", 
+                   results.size(), allDocumentKeys.size(), needsPagination ? "multiple" : "single");
         return bundle;
     }
     
     /**
-     * Handle _revinclude search with two-query strategy
+     * Handle continuation token for new pagination strategy (KV-only subsequent pages)
+     */
+    private Bundle handleContinuationTokenNewPagination(String continuationToken, String resourceType,
+                                                       SummaryEnum summaryMode, Set<String> elements,
+                                                       String bucketName, RequestDetails requestDetails) {
+        
+        logger.info("🔑 KV-Only Pagination: Processing continuation token for {}", resourceType);
+        
+        // Retrieve pagination state
+        PaginationState paginationState = searchStateManager.getPaginationState(continuationToken);
+        if (paginationState == null) {
+            logger.warn("❌ Pagination state not found or expired for token: {}", continuationToken);
+            throw new IllegalArgumentException("Invalid or expired continuation token");
+        }
+        
+        // Get document keys for current page
+        List<String> currentPageKeys = paginationState.getNextPageKeys();
+        if (currentPageKeys.isEmpty()) {
+            logger.info("🔑 No more results for pagination token: {}", continuationToken);
+            return createEmptyBundle();
+        }
+        
+        logger.info("🔑 KV-Only: Fetching {} documents for page {}/{}", 
+                   currentPageKeys.size(), paginationState.getCurrentPage(), paginationState.getTotalPages());
+        
+        // For mixed resource types (like _revinclude), we need to group keys by resource type
+        List<Resource> results = new ArrayList<>();
+        if ("revinclude".equals(paginationState.getSearchType())) {
+            // Group keys by resource type and retrieve from appropriate collections
+            Map<String, List<String>> keysByResourceType = currentPageKeys.stream()
+                .collect(Collectors.groupingBy(key -> key.substring(0, key.indexOf("/"))));
+            
+            for (Map.Entry<String, List<String>> entry : keysByResourceType.entrySet()) {
+                String keyResourceType = entry.getKey();
+                List<String> keysForType = entry.getValue();
+                logger.debug("🔑 Retrieving {} {} documents", keysForType.size(), keyResourceType);
+                List<Resource> resourcesForType = ftsKvSearchService.getDocumentsFromKeys(keysForType, keyResourceType);
+                results.addAll(resourcesForType);
+            }
+        } else {
+            // Regular pagination - all keys are same resource type
+            results = ftsKvSearchService.getDocumentsFromKeys(currentPageKeys, resourceType);
+        }
+        
+        // Update pagination state for next page
+        paginationState.setCurrentOffset(paginationState.getCurrentOffset() + currentPageKeys.size());
+        
+        // Check if this was the last page and cleanup if needed
+        boolean isLastPage = !paginationState.hasMoreResults();
+        if (isLastPage) {
+            searchStateManager.removePaginationState(continuationToken);
+            logger.info("🔑 Last page reached, cleaned up pagination state: {}", continuationToken);
+        }
+        
+        // Build Bundle response
+        Bundle bundle = new Bundle();
+        bundle.setType(Bundle.BundleType.SEARCHSET);
+        bundle.setTotal(paginationState.getTotalResults()); // Total is known from initial FTS
+        
+        // Add resources to bundle with filtering
+        for (Resource resource : results) {
+            Resource filteredResource = applyResourceFiltering(resource, summaryMode, elements);
+            bundle.addEntry()
+                    .setResource(filteredResource)
+                    .setFullUrl(resourceType + "/" + filteredResource.getIdElement().getIdPart())
+                    .getSearch()
+                    .setMode(Bundle.SearchEntryMode.MATCH);
+        }
+        
+        // Add next link if more results available
+        if (paginationState.hasMoreResults()) {
+            String baseUrl = extractBaseUrl(requestDetails, bucketName);
+            bundle.addLink()
+                    .setRelation("next")
+                    .setUrl(buildNextPageUrl(continuationToken, paginationState.getPageSize(), 
+                                           resourceType, bucketName, paginationState.getPageSize(), baseUrl));
+        }
+        
+        logger.info("🔑 KV-Only Pagination: Returning {} results, page {}/{}, total: {}", 
+                   results.size(), paginationState.getCurrentPage(), paginationState.getTotalPages(), 
+                   paginationState.getTotalResults());
+        return bundle;
+    }
+    
+    /**
+     * Handle _revinclude search with new pagination strategy
      */
     private Bundle handleRevIncludeSearch(String primaryResourceType, List<SearchQuery> ftsQueries,
                                         Include revInclude, int count,
                                         SummaryEnum summaryMode, Set<String> elements,
                                         String totalMode, String bucketName, RequestDetails requestDetails) {
         
-        logger.info("🔍 Handling _revinclude search: {} -> {}", 
+        logger.info("🔍 Handling _revinclude search with new pagination: {} -> {}", 
                    primaryResourceType, revInclude.getValue());
         
-        // Step 1: Execute primary resource search to get full documents using FTS/KV
-        List<Resource> primaryResources = executePrimaryResourceSearchFtsKv(primaryResourceType, ftsQueries, count, bucketName, requestDetails);
+        // Step 1: Execute primary resource search to get ALL document keys (up to 1000)
+        FtsSearchService.FtsSearchResult primaryFtsResult = ftsKvSearchService.searchForAllKeys(
+            ftsQueries, primaryResourceType, null); // No sorting for _revinclude
         
-        if (primaryResources.isEmpty()) {
+        List<String> allPrimaryKeys = primaryFtsResult.getDocumentKeys();
+        if (allPrimaryKeys.isEmpty()) {
             logger.info("🔍 No primary resources found, returning empty bundle");
             return createEmptyBundle();
         }
         
-        // Step 2: Check if we have too many primary resources
-        int primaryResourceCount = primaryResources.size();
-        if (primaryResourceCount == count) {
-            logger.warn("🔍 Too many primary resources found ({}), asking user to refine search", primaryResourceCount);
-            throw new InvalidRequestException("Too many primary resources found. Please refine your search criteria to reduce the number of matching resources.");
+        logger.info("🔍 Found {} primary resource keys for _revinclude", allPrimaryKeys.size());
+        
+        // Step 2: Get primary resources for reference extraction (we need the actual resources to get references)
+        List<Resource> allPrimaryResources = ftsKvSearchService.getDocumentsFromKeys(allPrimaryKeys, primaryResourceType);
+        List<String> primaryResourceReferences = extractResourceReferences(allPrimaryResources);
+        
+        // Step 3: Execute _revinclude search to get ALL secondary resource keys
+        // For _revinclude, the target type is the resource type that contains the reference (e.g., "Observation" in "Observation:subject")
+        String revIncludeResourceType = revInclude.getParamType(); // This gives us "Observation" from "Observation:subject"
+        List<Resource> allSecondaryResources = executeRevIncludeResourceSearch(
+            revIncludeResourceType, 
+            revInclude.getParamName(),
+            primaryResourceReferences, 
+            MAX_FTS_FETCH_SIZE, // Get up to 1000 secondary resources
+            0, // offset = 0
+            bucketName);
+        
+        logger.info("🔍 Found {} secondary resources for _revinclude", allSecondaryResources.size());
+        
+        // Step 4: Combine all document keys (primary first, then secondary)
+        List<String> allDocumentKeys = new ArrayList<>();
+        allDocumentKeys.addAll(allPrimaryKeys);
+        
+        // Add secondary resource keys
+        for (Resource secondary : allSecondaryResources) {
+            String secondaryKey = secondary.getResourceType().name() + "/" + secondary.getIdElement().getIdPart();
+            allDocumentKeys.add(secondaryKey);
         }
         
-        // Step 3: Extract full references from primary resources for revinclude search
-        List<String> primaryResourceReferences = extractResourceReferences(primaryResources);
+        // Limit to MAX_FTS_FETCH_SIZE total
+        if (allDocumentKeys.size() > MAX_FTS_FETCH_SIZE) {
+            logger.info("🔍 Truncating _revinclude results from {} to {} (max limit)", 
+                       allDocumentKeys.size(), MAX_FTS_FETCH_SIZE);
+            allDocumentKeys = allDocumentKeys.subList(0, MAX_FTS_FETCH_SIZE);
+        }
         
-        // Step 4: Calculate how many revinclude resources we need for first page
-        int revIncludeCount = count - primaryResourceCount;
+        // Step 5: Determine if pagination is needed
+        boolean needsPagination = allDocumentKeys.size() > count;
         
-        // Step 5: Search for revinclude resources (sorted by lastUpdated DESC)
-        List<Resource> revIncludeResources = executeRevIncludeResourceSearch(
-            revInclude.getParamType(), revInclude.getParamName(), 
-            primaryResourceReferences, revIncludeCount, bucketName, requestDetails);
+        // Step 6: Combine primary and secondary resources for first page
+        List<Resource> allResources = new ArrayList<>();
+        allResources.addAll(allPrimaryResources);
+        allResources.addAll(allSecondaryResources);
         
-        // Only create SearchState if pagination is actually needed
+        // Get first page from combined resources
+        List<Resource> firstPageResources = allResources.size() <= count ? 
+            allResources : 
+            allResources.subList(0, count);
+        
+        // Step 7: Create pagination state if needed
         String continuationToken = null;
-        int totalRevIncludeCount = 0;
-        boolean needsPagination = (revIncludeResources.size() == revIncludeCount); // Got exactly what we requested
-        
         if (needsPagination) {
-            // Get total count of revinclude resources for accurate pagination
-            totalRevIncludeCount = getTotalRevIncludeCount(
-                revInclude.getParamType(), revInclude.getParamName(), 
-                primaryResourceReferences, bucketName);
-            
-            // Only create SearchState if there are actually more results to paginate
-            if (totalRevIncludeCount > revIncludeResources.size()) {
-                String baseUrl = extractBaseUrl(requestDetails, bucketName);
-                SearchState searchState = SearchState.builder()
-                    .searchType("revinclude")
-                    .primaryResourceType(primaryResourceType)
-                    .primaryResourceIds(primaryResourceReferences)
-                    .revIncludeResourceType(revInclude.getParamType())
-                    .revIncludeSearchParam(revInclude.getParamName())
-                    .totalPrimaryResources(primaryResourceCount)
-                    .currentPrimaryOffset(primaryResourceCount) // All primary resources returned in first page
-                    .currentRevIncludeOffset(revIncludeResources.size())  // Next offset = actual number of revinclude resources returned
-                    .pageSize(count)
-                    .bucketName(bucketName)
-                    .baseUrl(baseUrl)
-                    .totalRevIncludeResources(totalRevIncludeCount)
-                    .build();
+            String baseUrl = extractBaseUrl(requestDetails, bucketName);
+            PaginationState paginationState = PaginationState.builder()
+                .searchType("revinclude")
+                .resourceType(primaryResourceType)
+                .allDocumentKeys(allDocumentKeys)
+                .pageSize(count)
+                .currentOffset(count) // Next page starts after first page
+                .bucketName(bucketName)
+                .baseUrl(baseUrl)
+                .primaryResourceCount(allPrimaryKeys.size()) // Track primary vs secondary split
+                .build();
                 
-                continuationToken = searchStateManager.storeSearchState(searchState);
-                logger.info("✅ Created SearchState for _revinclude pagination: token={}, totalRevInclude={}", 
-                           continuationToken, totalRevIncludeCount);
-            } else {
-                logger.debug("🔍 _revinclude: Got all results, no pagination needed");
-            }
-        } else {
-            logger.debug("🔍 _revinclude: Got {} results (less than requested {}), no pagination needed", 
-                        revIncludeResources.size(), revIncludeCount);
-            totalRevIncludeCount = revIncludeResources.size();
+            continuationToken = searchStateManager.storePaginationState(paginationState);
+            logger.info("✅ Created PaginationState for _revinclude: token={}, totalKeys={}, primaryCount={}", 
+                       continuationToken, allDocumentKeys.size(), allPrimaryKeys.size());
         }
         
-        // Step 6: Build response bundle
+        // Step 8: Build Bundle response
         Bundle bundle = new Bundle();
         bundle.setType(Bundle.BundleType.SEARCHSET);
-        bundle.setTotal(primaryResourceCount + totalRevIncludeCount);
+        bundle.setTotal(allDocumentKeys.size()); // Total is exact count
         
-        // Add primary resources (search mode = "match")
-        for (Resource resource : primaryResources) {
+        // Add resources to bundle with appropriate search mode
+        for (Resource resource : firstPageResources) {
             Resource filteredResource = applyResourceFiltering(resource, summaryMode, elements);
+            String resourceType = resource.getResourceType().name();
+            
+            // Determine if this is a primary or secondary resource
+            Bundle.SearchEntryMode searchMode = resourceType.equals(primaryResourceType) ? 
+                Bundle.SearchEntryMode.MATCH : Bundle.SearchEntryMode.INCLUDE;
+            
             bundle.addEntry()
                     .setResource(filteredResource)
-                    .setFullUrl(primaryResourceType + "/" + filteredResource.getIdElement().getIdPart())
+                    .setFullUrl(resourceType + "/" + filteredResource.getIdElement().getIdPart())
                     .getSearch()
-                    .setMode(Bundle.SearchEntryMode.MATCH);
+                    .setMode(searchMode);
         }
         
-        // Add revinclude resources (search mode = "include")
-        for (Resource resource : revIncludeResources) {
-            Resource filteredResource = applyResourceFiltering(resource, summaryMode, elements);
-            bundle.addEntry()
-                    .setResource(filteredResource)
-                    .setFullUrl(revInclude.getParamType() + "/" + filteredResource.getIdElement().getIdPart())
-                    .getSearch()
-                    .setMode(Bundle.SearchEntryMode.INCLUDE);
-        }
-        
-        // Add next link only if we have a continuation token and more resources
-        if (continuationToken != null && totalRevIncludeCount > revIncludeResources.size()) {
+        // Add next link if pagination is needed
+        if (continuationToken != null && allDocumentKeys.size() > count) {
             bundle.addLink()
                     .setRelation("next")
-                    .setUrl(buildNextPageUrl(continuationToken, revIncludeResources.size(), primaryResourceType, bucketName, count, extractBaseUrl(requestDetails, bucketName)));
+                    .setUrl(buildNextPageUrl(continuationToken, count, primaryResourceType, bucketName, count, extractBaseUrl(requestDetails, bucketName)));
         }
         
-        logger.info("🔍 Returning _revinclude bundle: {} primary + {} revinclude resources", 
-                   primaryResourceCount, revIncludeResources.size());
-        
+        logger.info("🔍 New _revinclude: Returning {} results, total: {}, primary: {}, secondary: {}", 
+                   firstPageResources.size(), allDocumentKeys.size(), allPrimaryKeys.size(), 
+                   allDocumentKeys.size() - allPrimaryKeys.size());
         return bundle;
     }
     
@@ -829,8 +915,11 @@ public class SearchService {
         }
         logger.debug("🔍 Target resource type for inclusion: '{}'", targetResourceType);
 
-        // Step 1: Execute primary resource search using FTS/KV architecture
-        List<Resource> primaryResources = ftsKvSearchService.searchWithTiming(ftsQueries, primaryResourceType, 0, count, null, requestDetails);
+        // Step 1: Execute primary resource search using new pagination strategy
+        FtsSearchService.FtsSearchResult ftsResult = ftsKvSearchService.searchForAllKeys(ftsQueries, primaryResourceType, null);
+        List<String> firstPageKeys = ftsResult.getDocumentKeys().size() <= count ? 
+            ftsResult.getDocumentKeys() : ftsResult.getDocumentKeys().subList(0, count);
+        List<Resource> primaryResources = ftsKvSearchService.getDocumentsFromKeys(firstPageKeys, primaryResourceType);
         
         if (primaryResources.isEmpty()) {
             logger.info("🔍 No primary resources found, returning empty bundle");
@@ -922,7 +1011,7 @@ public class SearchService {
      * Handle chained search with two-query strategy
      */
     private Bundle handleChainSearch(String primaryResourceType, List<SearchQuery> ftsQueries,
-                                   ChainParam chainParam, int count, List<SortField> sortFields,
+                                   ChainParam chainParam, int count, List<SearchSort> sortFields,
                                    SummaryEnum summaryMode, Set<String> elements,
                                    String totalMode, String bucketName, RequestDetails requestDetails) {
 
@@ -1014,9 +1103,21 @@ public class SearchService {
     }
     
     /**
-     * Handle pagination requests for both regular and _revinclude searches
+     * Handle pagination requests for both legacy and new pagination strategies
      */
     public Bundle handleRevIncludePagination(String continuationToken, int offset, int count) {
+        // First, try the new pagination strategy
+        PaginationState paginationState = searchStateManager.getPaginationState(continuationToken);
+        if (paginationState != null) {
+            logger.info("🔑 Using new pagination strategy for token: {}", continuationToken);
+            // For new pagination, we ignore offset/count from URL and use the stored page size
+            // This is because the new strategy manages pagination internally
+            return handleContinuationTokenNewPagination(continuationToken, paginationState.getResourceType(),
+                                                       SummaryEnum.FALSE, null, // TODO: Store these in PaginationState if needed
+                                                       paginationState.getBucketName(), null); // TODO: Store RequestDetails if needed
+        }
+        
+        // Fall back to legacy SearchState handling
         SearchState searchState = searchStateManager.retrieveSearchState(continuationToken);
         
         if (searchState == null) {
@@ -1027,6 +1128,8 @@ public class SearchService {
             searchStateManager.removeSearchState(continuationToken);
             throw new InvalidRequestException("Search results have expired. Please repeat your original search.");
         }
+        
+        logger.info("🔍 Using legacy pagination strategy for token: {}", continuationToken);
         
         // Route to appropriate pagination handler based on search type
         if (searchState.isRevIncludeSearch()) {
@@ -1088,13 +1191,14 @@ public class SearchService {
     private Bundle handleRegularPaginationInternal(SearchState searchState, String continuationToken, int offset, int count) {
         logger.debug("🔍 Handling regular pagination: offset={}, count={}", offset, count);
         
-        // Execute query using cached FTS queries and sort fields via FTS/KV architecture
-        List<Resource> results = ftsKvSearchService.search(
-            searchState.getCachedFtsQueries(), 
-            searchState.getPrimaryResourceType(), 
-            offset, count, 
-            searchState.getSortFields()
-        );
+        // Execute query using cached FTS queries with new pagination strategy
+        FtsSearchService.FtsSearchResult ftsResult = ftsKvSearchService.searchForAllKeys(
+            searchState.getCachedFtsQueries(), searchState.getPrimaryResourceType(), searchState.getSortFields());
+        List<String> allKeys = ftsResult.getDocumentKeys();
+        int fromIndex = Math.min(offset, allKeys.size());
+        int toIndex = Math.min(offset + count, allKeys.size());
+        List<String> pageKeys = fromIndex < toIndex ? allKeys.subList(fromIndex, toIndex) : List.of();
+        List<Resource> results = ftsKvSearchService.getDocumentsFromKeys(pageKeys, searchState.getPrimaryResourceType());
         
         // Update search state
         searchState.setCurrentPrimaryOffset(offset + results.size());
@@ -1130,13 +1234,14 @@ public class SearchService {
     private Bundle handleIncludePaginationInternal(SearchState searchState, String continuationToken, int offset, int count) {
         logger.debug("🔍 Handling include pagination: offset={}, count={}", offset, count);
         
-        // Execute query for next batch of primary resources using FTS/KV architecture
-        List<Resource> primaryResources = ftsKvSearchService.search(
-            searchState.getCachedFtsQueries(), 
-            searchState.getPrimaryResourceType(), 
-            offset, count, 
-            searchState.getSortFields()
-        );
+        // Execute query for next batch of primary resources using new pagination strategy
+        FtsSearchService.FtsSearchResult ftsResult = ftsKvSearchService.searchForAllKeys(
+            searchState.getCachedFtsQueries(), searchState.getPrimaryResourceType(), searchState.getSortFields());
+        List<String> allKeys = ftsResult.getDocumentKeys();
+        int fromIndex = Math.min(offset, allKeys.size());
+        int toIndex = Math.min(offset + count, allKeys.size());
+        List<String> pageKeys = fromIndex < toIndex ? allKeys.subList(fromIndex, toIndex) : List.of();
+        List<Resource> primaryResources = ftsKvSearchService.getDocumentsFromKeys(pageKeys, searchState.getPrimaryResourceType());
         
         // Extract reference IDs from this batch of primary resources
         List<String> includeResourceIds = extractReferenceIds(primaryResources, searchState.getRevIncludeSearchParam());
@@ -1188,15 +1293,6 @@ public class SearchService {
     // Helper methods for _revinclude implementation
     
     /**
-     * Execute primary resource search to get full documents
-     */
-    private List<Resource> executePrimaryResourceSearchFtsKv(String resourceType, List<SearchQuery> ftsQueries, 
-                                                           int count, String bucketName, RequestDetails requestDetails) {
-        // Use FTS/KV architecture for primary resource search
-        return ftsKvSearchService.searchWithTiming(ftsQueries, resourceType, 0, count, null, requestDetails);
-    }
-    
-    /**
      * Extract full resource references from a list of resources
      */
     private List<String> extractResourceReferences(List<Resource> resources) {
@@ -1205,17 +1301,7 @@ public class SearchService {
                 .collect(Collectors.toList());
     }
     
-    private List<String> executeIdOnlySearch(String resourceType, List<SearchQuery> ftsQueries, 
-                                           int count, String bucketName) {
-        // Use FTS/KV for ID-only search
-        return ftsKvSearchService.searchForIds(ftsQueries, resourceType, count);
-    }
     
-    private List<Resource> executeRevIncludeResourceSearch(String resourceType, String searchParam,
-                                                         List<String> primaryResourceIds, int count, 
-                                                         String bucketName, RequestDetails requestDetails) {
-        return executeRevIncludeResourceSearch(resourceType, searchParam, primaryResourceIds, count, 0, bucketName, requestDetails);
-    }
     
     private List<Resource> executeRevIncludeResourceSearch(String resourceType, String searchParam,
                                                          List<String> primaryResourceIds, int count,
@@ -1241,47 +1327,21 @@ public class SearchService {
             revIncludeQueries.add(SearchQuery.disjuncts(referenceQueries.toArray(new SearchQuery[0])));
         }
         
-        // Add automatic sorting by meta.lastUpdated DESC (most recent first)
-        List<SortField> sortFields = new ArrayList<>();
-        sortFields.add(new SortField("meta.lastUpdated", true)); // true = descending
+        // No automatic sorting for revinclude - preserve FTS relevance order
+        List<SearchSort> sortFields = null;
         
         // Execute the query using FTS/KV architecture instead of N1QL
         List<Resource> results;
-        if (requestDetails != null) {
-            // Execute FTS/KV search with timing for first-time requests
-            results = ftsKvSearchService.searchWithTiming(revIncludeQueries, resourceType, offset, count, sortFields, requestDetails);
-        } else {
-            // For pagination requests, use direct FTS/KV call (no timing needed)
-            results = ftsKvSearchService.search(revIncludeQueries, resourceType, offset, count, sortFields);
-        }
+        // Execute revinclude search using new pagination strategy
+        FtsSearchService.FtsSearchResult ftsResult = ftsKvSearchService.searchForAllKeys(revIncludeQueries, resourceType, sortFields);
+        List<String> allKeys = ftsResult.getDocumentKeys();
+        int fromIndex = Math.min(offset, allKeys.size());
+        int toIndex = Math.min(offset + count, allKeys.size());
+        List<String> pageKeys = fromIndex < toIndex ? allKeys.subList(fromIndex, toIndex) : List.of();
+        results = ftsKvSearchService.getDocumentsFromKeys(pageKeys, resourceType);
         
         logger.debug("🔍 RevInclude search returned {} {} resources", results.size(), resourceType);
         return results;
-    }
-    
-    private int getTotalRevIncludeCount(String resourceType, String searchParam, 
-                                      List<String> primaryResourceIds, String bucketName) {
-        // Build count query for revinclude resources
-        List<SearchQuery> revIncludeQueries = new ArrayList<>();
-        
-        List<SearchQuery> referenceQueries = new ArrayList<>();
-        for (String primaryReference : primaryResourceIds) {
-            // primaryReference is already in format "CarePlan/1234", use it directly
-            referenceQueries.add(SearchQuery.match(primaryReference).field(searchParam + ".reference"));
-        }
-        
-        if (!referenceQueries.isEmpty()) {
-            revIncludeQueries.add(SearchQuery.disjuncts(referenceQueries.toArray(new SearchQuery[0])));
-        }
-        
-        // Use FTS/KV count instead of N1QL count query
-        try {
-            long count = ftsKvSearchService.getCount(revIncludeQueries, resourceType);
-            return (int) count;
-        } catch (Exception e) {
-            logger.warn("Failed to get revinclude count for {}: {}", resourceType, e.getMessage());
-            return 0;
-        }
     }
     
     private Bundle createEmptyBundle() {
@@ -1386,79 +1446,7 @@ public class SearchService {
     }
     
     
-    /**
-     * Handle paginated regular search (first page)
-     */
-    private Bundle handlePaginatedRegularSearch(String resourceType, List<SearchQuery> ftsQueries,
-                                              Map<String, String> searchParams, int count,
-                                              List<SortField> sortFields, SummaryEnum summaryMode,
-                                              Set<String> elements, String totalMode, String bucketName,
-                                              RequestDetails requestDetails) {
-        
-        logger.debug("🔍 Handling paginated regular search for {} with count {}", resourceType, count);
-        
-        // Execute first page using FTS/KV architecture
-        logger.debug("🚀 Using FTS/KV for paginated search: {}", resourceType);
-        List<Resource> results = ftsKvSearchService.searchWithTiming(ftsQueries, resourceType, 0, count, sortFields, requestDetails);
-        
-        // Optimized counting and SearchState creation: Only create SearchState if pagination is actually needed
-        int totalCount;
-        String continuationToken = null;
-        boolean needsPagination = (results.size() == count); // Only paginate if we got exactly the requested count
-        
-        if (needsPagination) {
-            // We got exactly the requested count, so there might be more - do count query and create SearchState
-            logger.debug("🔍 Got exactly {} results, enabling pagination (doing count query)", count);
-            totalCount = (int) ftsKvSearchService.getCount(ftsQueries, resourceType);
-            
-            // Only create SearchState when pagination is actually needed
-            String baseUrl = extractBaseUrl(requestDetails, bucketName);
-            SearchState searchState = SearchState.builder()
-                .searchType("regular")
-                .primaryResourceType(resourceType)
-                .originalSearchCriteria(new HashMap<>(searchParams))
-                .cachedFtsQueries(new ArrayList<>(ftsQueries))
-                .sortFields(sortFields != null ? new ArrayList<>(sortFields) : new ArrayList<>())
-                .totalPrimaryResources(totalCount)
-                .currentPrimaryOffset(results.size())
-                .pageSize(count)
-                .bucketName(bucketName)
-                .baseUrl(baseUrl)
-                .build();
-            
-            continuationToken = searchStateManager.storeSearchState(searchState);
-            logger.info("✅ Created SearchState for pagination: token={}, total={}", continuationToken, totalCount);
-        } else {
-            // We got fewer results than requested, so this is all of them - no pagination needed
-            logger.debug("🔍 Got {} results (less than requested {}), no pagination needed", results.size(), count);
-            totalCount = results.size();
-        }
-        
-        // Build Bundle response
-        Bundle bundle = new Bundle();
-        bundle.setType(Bundle.BundleType.SEARCHSET);
-        bundle.setTotal(totalCount);
-        
-        // Add resources to bundle with filtering
-        for (Resource resource : results) {
-            Resource filteredResource = applyResourceFiltering(resource, summaryMode, elements);
-            bundle.addEntry()
-                    .setResource(filteredResource)
-                    .setFullUrl(resourceType + "/" + filteredResource.getIdElement().getIdPart())
-                    .getSearch()
-                    .setMode(Bundle.SearchEntryMode.MATCH);
-        }
-        
-        // Add next link only if we have a continuation token (pagination enabled) and there are more results
-        if (continuationToken != null && totalCount > results.size()) {
-            bundle.addLink()
-                    .setRelation("next")
-                    .setUrl(buildNextPageUrl(continuationToken, results.size(), resourceType, bucketName, count, extractBaseUrl(requestDetails, bucketName)));
-        }
-        
-        logger.info("🔍 Returning paginated regular search: {} results, total: {}", results.size(), totalCount);
-        return bundle;
-    }
+    
     
     // ========== Include Search Helper Methods ==========
     
@@ -1760,8 +1748,11 @@ public class SearchService {
         SearchQueryResult chainQueryResult = buildSearchQueries(targetResourceType, chainCriteria);
         List<SearchQuery> chainQueries = chainQueryResult.getFtsQueries();
         
-        // Execute ID-only search to get referenced resource IDs (reuse existing method)
-        return executeIdOnlySearch(targetResourceType, chainQueries, 1000, bucketName); // Large limit for chain query
+        // Execute FTS search to get referenced resource IDs
+        FtsSearchService.FtsSearchResult ftsResult = ftsKvSearchService.searchForAllKeys(chainQueries, targetResourceType, null);
+        return ftsResult.getDocumentKeys().stream()
+                .map(key -> key.substring(key.lastIndexOf("/") + 1)) // Extract ID from "ResourceType/id"
+                .collect(Collectors.toList());
     }
     
     /**
@@ -1770,7 +1761,7 @@ public class SearchService {
     private List<Resource> executePrimaryChainSearch(String primaryResourceType, String referenceFieldPath,
                                                    String targetResourceType, List<String> referencedIds,
                                                    List<SearchQuery> additionalQueries, int count,
-                                                   List<SortField> sortFields, String bucketName) {
+                                                   List<SearchSort> sortFields, String bucketName) {
         return executePrimaryChainSearch(primaryResourceType, referenceFieldPath, targetResourceType,
                                        referencedIds, additionalQueries, count, sortFields, 0, bucketName);
     }
@@ -1781,7 +1772,7 @@ public class SearchService {
     private List<Resource> executePrimaryChainSearch(String primaryResourceType, String referenceFieldPath,
                                                    String targetResourceType, List<String> referencedIds,
                                                    List<SearchQuery> additionalQueries, int count,
-                                                   List<SortField> sortFields, int offset, String bucketName) {
+                                                   List<SearchSort> sortFields, int offset, String bucketName) {
         
         logger.debug("🔗 Executing primary chain search: {} where {} references {} IDs: {}", 
                    primaryResourceType, referenceFieldPath, targetResourceType, referencedIds);
@@ -1805,10 +1796,18 @@ public class SearchService {
             primaryQueries.addAll(additionalQueries);
         }
         
-        // Execute the query using FTS/KV architecture
-        List<Resource> results = ftsKvSearchService.search(primaryQueries, primaryResourceType, offset, count, sortFields);
+        // Use new pagination strategy: get up to 1000 keys, then slice for requested page
+        FtsSearchService.FtsSearchResult ftsResult = ftsKvSearchService.searchForAllKeys(primaryQueries, primaryResourceType, sortFields);
+        List<String> allDocumentKeys = ftsResult.getDocumentKeys();
         
-        logger.info("🔗 Primary chain search returned {} {} resources", results.size(), primaryResourceType);
+        // Get documents for the requested page (handle offset by slicing the keys)
+        int fromIndex = Math.min(offset, allDocumentKeys.size());
+        int toIndex = Math.min(offset + count, allDocumentKeys.size());
+        List<String> pageKeys = fromIndex < toIndex ? allDocumentKeys.subList(fromIndex, toIndex) : List.of();
+        
+        List<Resource> results = ftsKvSearchService.getDocumentsFromKeys(pageKeys, primaryResourceType);
+        logger.info("🔗 Primary chain search (new pagination) returned {} {} resources from {} total keys (offset: {})", 
+                   results.size(), primaryResourceType, allDocumentKeys.size(), offset);
         return results;
     }
     
@@ -1838,27 +1837,5 @@ public class SearchService {
         }
         
         return getAccurateCount(primaryQueries, primaryResourceType, bucketName);
-    }
-    
-    /**
-     * Execute DAO search with detailed timing breakdown for PerfBag
-     */
-    private List<Resource> executeDAOSearchWithTiming(FhirResourceDaoImpl<?> dao, String resourceType, String query, RequestDetails requestDetails) {
-        // Start timing context for DAO
-        DAOTimingContext.start();
-        
-        @SuppressWarnings("unchecked")
-        List<Resource> results = (List<Resource>) dao.search(resourceType, query);
-        
-        // Get detailed timing breakdown
-        DAOTimingContext timingContext = DAOTimingContext.getAndClear();
-        if (timingContext != null) {
-            RequestPerfBagUtils.addTiming(requestDetails, "query_execution", timingContext.getQueryExecutionMs());
-            RequestPerfBagUtils.addTiming(requestDetails, "hapi_parsing", timingContext.getHapiParsingMs());
-        }
-        
-        RequestPerfBagUtils.incrementCount(requestDetails, "dao_calls");
-        
-        return results;
     }
 }

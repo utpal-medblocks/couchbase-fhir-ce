@@ -20,8 +20,11 @@ public class SearchStateManager {
     
     private static final Logger logger = LoggerFactory.getLogger(SearchStateManager.class);
     
-    // In-memory cache for search states
+    // In-memory cache for search states (legacy)
     private final Map<String, SearchState> searchStateCache = new ConcurrentHashMap<>();
+    
+    // In-memory cache for new pagination states
+    private final Map<String, PaginationState> paginationStateCache = new ConcurrentHashMap<>();
     
     @Value("${fhir.search.state.ttl.minutes:15}")
     private int searchStateTtlMinutes;
@@ -52,7 +55,50 @@ public class SearchStateManager {
     }
     
     /**
-     * Retrieve a search state by token
+     * Store pagination state and return token (new pagination strategy)
+     */
+    public String storePaginationState(PaginationState paginationState) {
+        String token = UUID.randomUUID().toString().replace("-", "");
+        paginationStateCache.put(token, paginationState);
+        
+        logger.debug("Stored pagination state with token: {} (expires in {} minutes)", 
+                    token, searchStateTtlMinutes);
+        return token;
+    }
+    
+    /**
+     * Retrieve pagination state by token (new pagination strategy)
+     */
+    public PaginationState getPaginationState(String token) {
+        PaginationState state = paginationStateCache.get(token);
+        
+        if (state == null) {
+            logger.debug("Pagination state not found for token: {}", token);
+            return null;
+        }
+        
+        if (state.isExpired()) {
+            logger.debug("Pagination state expired for token: {}, removing", token);
+            paginationStateCache.remove(token);
+            return null;
+        }
+        
+        logger.debug("Retrieved pagination state for token: {}", token);
+        return state;
+    }
+    
+    /**
+     * Remove pagination state from cache (new pagination strategy)
+     */
+    public void removePaginationState(String token) {
+        if (token != null) {
+            paginationStateCache.remove(token);
+            logger.debug("Removed pagination state for token: {}", token);
+        }
+    }
+    
+    /**
+     * Retrieve a search state by token (legacy)
      * 
      * @param token The token to look up
      * @return SearchState if found and not expired, null otherwise
@@ -105,28 +151,41 @@ public class SearchStateManager {
     /**
      * Get current cache size (for monitoring)
      * 
-     * @return Number of cached search states
+     * @return Number of cached search states (legacy + new pagination)
      */
     public int getCacheSize() {
-        return searchStateCache.size();
+        return searchStateCache.size() + paginationStateCache.size();
     }
     
     /**
-     * Background cleanup task to remove expired search states
+     * Get pagination cache size (for monitoring)
+     */
+    public int getPaginationCacheSize() {
+        return paginationStateCache.size();
+    }
+    
+    /**
+     * Background cleanup task to remove expired search states (both legacy and new pagination)
      */
     @Scheduled(fixedDelayString = "#{${fhir.search.state.cleanup.interval.minutes:5} * 60 * 1000}")
     public void cleanupExpiredStates() {
-        int initialSize = searchStateCache.size();
+        // Clean up legacy search states
+        int initialLegacySize = searchStateCache.size();
+        searchStateCache.entrySet().removeIf(entry -> entry.getValue().isExpired());
+        int finalLegacySize = searchStateCache.size();
+        int removedLegacyCount = initialLegacySize - finalLegacySize;
         
-        searchStateCache.entrySet().removeIf(entry -> 
-            entry.getValue().isExpired());
+        // Clean up new pagination states
+        int initialPaginationSize = paginationStateCache.size();
+        paginationStateCache.entrySet().removeIf(entry -> entry.getValue().isExpired());
+        int finalPaginationSize = paginationStateCache.size();
+        int removedPaginationCount = initialPaginationSize - finalPaginationSize;
         
-        int finalSize = searchStateCache.size();
-        int removedCount = initialSize - finalSize;
-        
-        if (removedCount > 0) {
-            logger.info("Cleaned up {} expired search states. Cache size: {} -> {}", 
-                       removedCount, initialSize, finalSize);
+        int totalRemoved = removedLegacyCount + removedPaginationCount;
+        if (totalRemoved > 0) {
+            logger.info("Cleaned up {} expired states (legacy: {}, pagination: {}). Cache sizes: legacy {} -> {}, pagination {} -> {}", 
+                       totalRemoved, removedLegacyCount, removedPaginationCount,
+                       initialLegacySize, finalLegacySize, initialPaginationSize, finalPaginationSize);
         }
     }
     

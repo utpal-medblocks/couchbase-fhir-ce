@@ -1,7 +1,7 @@
 package com.couchbase.fhir.resources.search;
 
 import com.couchbase.client.java.search.SearchQuery;
-import com.couchbase.fhir.resources.util.Ftsn1qlQueryBuilder.SortField;
+import com.couchbase.client.java.search.sort.SearchSort;
 import java.util.List;
 import java.util.Map;
 
@@ -27,7 +27,7 @@ public class SearchState {
     // Regular search specific fields
     private Map<String, String> originalSearchCriteria;
     private List<SearchQuery> cachedFtsQueries;
-    private List<SortField> sortFields;
+    private List<SearchSort> sortFields;
     
     // RevInclude search specific fields
     private List<String> primaryResourceIds;
@@ -137,7 +137,7 @@ public class SearchState {
             return this;
         }
         
-        public Builder sortFields(List<SortField> sortFields) {
+        public Builder sortFields(List<SearchSort> sortFields) {
             searchState.sortFields = sortFields;
             return this;
         }
@@ -206,11 +206,11 @@ public class SearchState {
         this.cachedFtsQueries = cachedFtsQueries;
     }
     
-    public List<SortField> getSortFields() {
+    public List<SearchSort> getSortFields() {
         return sortFields;
     }
     
-    public void setSortFields(List<SortField> sortFields) {
+    public void setSortFields(List<SearchSort> sortFields) {
         this.sortFields = sortFields;
     }
     
