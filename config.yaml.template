@@ -9,6 +9,23 @@ connection:
   password: "password"
   serverType: "Server" # "Server" or "Capella"
   sslEnabled: false
+
+# Couchbase SDK Performance Tuning (Optional - defaults optimized for high-concurrency FHIR workloads)
+couchbase:
+  sdk:
+    # Connection Pool Configuration
+    max-http-connections: 128      # HTTP connections for N1QL/Analytics/Search (default: 128)
+    num-kv-connections: 8          # KV connections per node (default: 8)
+    
+    # Timeout Configuration (in seconds)
+    query-timeout-seconds: 30      # N1QL query timeout (default: 30)
+    search-timeout-seconds: 30     # FTS search timeout (default: 30)
+    kv-timeout-seconds: 10         # Key-Value operation timeout (default: 10)
+    connect-timeout-seconds: 10    # Initial connection timeout (default: 10)
+    disconnect-timeout-seconds: 10 # Graceful disconnect timeout (default: 10)
+    
+    # Advanced Options
+    enable-mutation-tokens: true   # Enable mutation tokens for consistency (default: true)
   # sslCertificate: |
   # "-----BEGIN CERTIFICATE----
   #   MIIDDDCCAfSgAwIBAgIIGFbWQXbe3TEwDQYJKoZIhvcNAQELBQAwJDEiMCAGA1UE

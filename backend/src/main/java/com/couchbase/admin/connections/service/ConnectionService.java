@@ -4,11 +4,13 @@ import com.couchbase.admin.connections.model.ConnectionRequest;
 import com.couchbase.admin.connections.model.ConnectionResponse;
 import com.couchbase.client.java.Cluster;
 import com.couchbase.client.java.ClusterOptions;
+import com.couchbase.client.java.env.ClusterEnvironment;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -19,9 +21,30 @@ public class ConnectionService {
     
     private static final Logger logger = LoggerFactory.getLogger(ConnectionService.class);
     
-    // Configurable HTTP connection pool size for high-concurrency tuning
-    @Value("${couchbase.connection.max-http-connections:32}")
+    // SDK Configuration Parameters with sensible defaults for high-concurrency FHIR workloads
+    @Value("${couchbase.sdk.max-http-connections:128}")
     private int maxHttpConnections;
+    
+    @Value("${couchbase.sdk.num-kv-connections:8}")
+    private int numKvConnections;
+    
+    @Value("${couchbase.sdk.query-timeout-seconds:30}")
+    private int queryTimeoutSeconds;
+    
+    @Value("${couchbase.sdk.search-timeout-seconds:30}")
+    private int searchTimeoutSeconds;
+    
+    @Value("${couchbase.sdk.kv-timeout-seconds:10}")
+    private int kvTimeoutSeconds;
+    
+    @Value("${couchbase.sdk.connect-timeout-seconds:10}")
+    private int connectTimeoutSeconds;
+    
+    @Value("${couchbase.sdk.disconnect-timeout-seconds:10}")
+    private int disconnectTimeoutSeconds;
+    
+    @Value("${couchbase.sdk.enable-mutation-tokens:true}")
+    private boolean enableMutationTokens;
     
     // Store active connections
     private final Map<String, Cluster> activeConnections = new ConcurrentHashMap<>();
@@ -62,18 +85,32 @@ public class ConnectionService {
         logger.info("Creating connection: {}", request.getName());
         
         try {
-            // Use Couchbase SDK defaults with targeted HTTP connection tuning
-            // Per Couchbase dev recommendation: increase maxHttpConnections for high concurrency
+            // Configure cluster environment with comprehensive SDK tuning for high-concurrency FHIR workloads
+            ClusterEnvironment env = ClusterEnvironment.builder()
+                .timeoutConfig(timeoutConfig -> timeoutConfig
+                    .queryTimeout(Duration.ofSeconds(queryTimeoutSeconds))
+                    .searchTimeout(Duration.ofSeconds(searchTimeoutSeconds))
+                    .kvTimeout(Duration.ofSeconds(kvTimeoutSeconds))
+                    .connectTimeout(Duration.ofSeconds(connectTimeoutSeconds))
+                    .disconnectTimeout(Duration.ofSeconds(disconnectTimeoutSeconds)))
+                .ioConfig(io -> io
+                    .maxHttpConnections(maxHttpConnections)
+                    .numKvConnections(numKvConnections)
+                    .enableMutationTokens(enableMutationTokens)
+                    )
+                .build();
+            
             ClusterOptions options = ClusterOptions.clusterOptions(request.getUsername(), request.getPassword())
-                    .environment(env -> {
-                        // TARGETED TUNING: Increase HTTP connections for high-concurrency FHIR workloads
-                        // Per Couchbase dev: Start with 32 and increase (16, 32, 64, 128) until performance degrades
-                        env.ioConfig().maxHttpConnections(maxHttpConnections);
-                        
-                        logger.info("🔧 Using maxHttpConnections: {} (configurable via couchbase.connection.max-http-connections)", maxHttpConnections);
-                        
-                        // Keep all other settings at SDK defaults for optimal performance
-                    });
+                    .environment(env);
+                    
+            logger.info("🔧 SDK Configuration Applied:");
+            logger.info("   - maxHttpConnections: {} (couchbase.sdk.max-http-connections)", maxHttpConnections);
+            logger.info("   - numKvConnections: {} (couchbase.sdk.num-kv-connections)", numKvConnections);
+            logger.info("   - queryTimeout: {}s (couchbase.sdk.query-timeout-seconds)", queryTimeoutSeconds);
+            logger.info("   - searchTimeout: {}s (couchbase.sdk.search-timeout-seconds)", searchTimeoutSeconds);
+            logger.info("   - kvTimeout: {}s (couchbase.sdk.kv-timeout-seconds)", kvTimeoutSeconds);
+            logger.info("   - connectTimeout: {}s (couchbase.sdk.connect-timeout-seconds)", connectTimeoutSeconds);
+            logger.info("   - enableMutationTokens: {} (couchbase.sdk.enable-mutation-tokens)", enableMutationTokens);
             
             Cluster cluster = Cluster.connect(request.getConnectionString(), options);
             
