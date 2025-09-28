@@ -14,7 +14,6 @@ import org.springframework.stereotype.Service;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.stream.Collectors;
 
 /**
  * Direct FTS search service that returns document keys only.
@@ -76,18 +75,25 @@ public class FtsSearchService {
             // Build and log options
             SearchOptions searchOptions = buildOptions(from, size, sortFields);
 
-            if (logger.isDebugEnabled()) {
+            if (logger.isInfoEnabled()) {
                 try {
                     String queryJson = combinedQuery.export().toString();
                     String optionsJson = exportOptions(searchOptions, from, size, sortFields);
-                    logger.debug("🔍 FTS Request Payload:\n  query={}\n  options={}", queryJson, optionsJson);
+                    logger.info("🔍 FTS Request Payload:\n  query={}\n  options={}, Index={}", queryJson, optionsJson, ftsIndex);
                 } catch (Exception e) {
-                    logger.debug("🔍 Failed to export FTS request payload: {}", e.getMessage());
+                    logger.error("🔍 Failed to export FTS request payload: {}", e.getMessage());
                 }
             }
 
             long ftsStartTime = System.currentTimeMillis();
             SearchResult searchResult = cluster.searchQuery(ftsIndex, combinedQuery, searchOptions);
+            
+            // Check for FTS errors in the result metadata
+            if (searchResult.metaData().errors() != null && !searchResult.metaData().errors().isEmpty()) {
+                String errorMsg = searchResult.metaData().errors().toString();
+                logger.error("❌ FTS search returned errors for {}: {}", resourceType, errorMsg);
+                throw new RuntimeException("FTS search failed: " + errorMsg);
+            }
             
             long afterQueryTime = System.currentTimeMillis();            
             // Extract document keys from search results
@@ -150,6 +156,13 @@ public class FtsSearchService {
             }
 
             SearchResult searchResult = cluster.searchQuery(ftsIndex, combinedQuery, countOptions);
+            
+            // Check for FTS errors in the result metadata
+            if (searchResult.metaData().errors() != null && !searchResult.metaData().errors().isEmpty()) {
+                String errorMsg = searchResult.metaData().errors().toString();
+                logger.error("❌ FTS count query returned errors for {}: {}", resourceType, errorMsg);
+                throw new RuntimeException("FTS count failed: " + errorMsg);
+            }
             
             long totalCount = searchResult.metaData().metrics().totalRows();
             long ftsElapsedTime = System.currentTimeMillis() - ftsStartTime;

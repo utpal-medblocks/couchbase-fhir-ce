@@ -443,8 +443,9 @@ public class SearchService {
         try {
             return (int) ftsKvSearchService.getCount(ftsQueries, resourceType);
         } catch (Exception e) {
-            logger.warn("Failed to get accurate count for {}: {}", resourceType, e.getMessage());
-            return 0;
+            logger.error("❌ FTS count query failed for {}: {}", resourceType, e.getMessage());
+            // Propagate the error instead of silently returning 0
+            throw new InvalidRequestException("Search failed: " + e.getMessage(), e);
         }
     }
     
