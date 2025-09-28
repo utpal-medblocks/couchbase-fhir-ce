@@ -504,7 +504,11 @@ public class SearchService {
     private List<SearchSort> parseSortParameter(Map<String, String> searchParams) {
         String sortValue = searchParams.get("_sort");
         if (sortValue == null || sortValue.isEmpty()) {
-            return new ArrayList<>();
+            // Default sorting by meta.lastUpdated descending when no explicit sort specified
+            List<SearchSort> defaultSort = new ArrayList<>();
+            defaultSort.add(SearchSort.byField("meta.lastUpdated").desc(true));
+            logger.debug("🔍 No explicit sort specified, using default: meta.lastUpdated desc");
+            return defaultSort;
         }
         
         List<SearchSort> sortFields = new ArrayList<>();
@@ -792,25 +796,31 @@ public class SearchService {
         // Step 3: Execute _revinclude search to get ALL secondary resource keys
         // For _revinclude, the target type is the resource type that contains the reference (e.g., "Observation" in "Observation:subject")
         String revIncludeResourceType = revInclude.getParamType(); // This gives us "Observation" from "Observation:subject"
-        List<Resource> allSecondaryResources = executeRevIncludeResourceSearch(
-            revIncludeResourceType, 
-            revInclude.getParamName(),
-            primaryResourceReferences, 
-            MAX_FTS_FETCH_SIZE, // Get up to 1000 secondary resources
-            0, // offset = 0
-            bucketName);
+        // Build FTS query for revinclude resources to get keys only
+        List<SearchQuery> revIncludeQueries = new ArrayList<>();
+        List<SearchQuery> referenceQueries = new ArrayList<>();
+        for (String primaryReference : primaryResourceReferences) {
+            referenceQueries.add(SearchQuery.match(primaryReference).field(revInclude.getParamName() + ".reference"));
+        }
+        if (!referenceQueries.isEmpty()) {
+            revIncludeQueries.add(SearchQuery.disjuncts(referenceQueries.toArray(new SearchQuery[0])));
+        }
         
-        logger.info("🔍 Found {} secondary resources for _revinclude", allSecondaryResources.size());
+        // Use default sorting for consistent ordering
+        List<SearchSort> revIncludeSortFields = new ArrayList<>();
+        revIncludeSortFields.add(SearchSort.byField("meta.lastUpdated").desc(true));
+        
+        // Get ALL secondary resource keys (up to 1000)
+        FtsSearchService.FtsSearchResult secondaryFtsResult = ftsKvSearchService.searchForAllKeys(
+            revIncludeQueries, revIncludeResourceType, revIncludeSortFields);
+        List<String> allSecondaryKeys = secondaryFtsResult.getDocumentKeys();
+        
+        logger.info("🔍 Found {} secondary resource keys for _revinclude", allSecondaryKeys.size());
         
         // Step 4: Combine all document keys (primary first, then secondary)
         List<String> allDocumentKeys = new ArrayList<>();
         allDocumentKeys.addAll(allPrimaryKeys);
-        
-        // Add secondary resource keys
-        for (Resource secondary : allSecondaryResources) {
-            String secondaryKey = secondary.getResourceType().name() + "/" + secondary.getIdElement().getIdPart();
-            allDocumentKeys.add(secondaryKey);
-        }
+        allDocumentKeys.addAll(allSecondaryKeys); // Secondary keys are already in correct format
         
         // Limit to MAX_FTS_FETCH_SIZE total
         if (allDocumentKeys.size() > MAX_FTS_FETCH_SIZE) {
@@ -822,15 +832,23 @@ public class SearchService {
         // Step 5: Determine if pagination is needed
         boolean needsPagination = allDocumentKeys.size() > count;
         
-        // Step 6: Combine primary and secondary resources for first page
-        List<Resource> allResources = new ArrayList<>();
-        allResources.addAll(allPrimaryResources);
-        allResources.addAll(allSecondaryResources);
+        // Step 6: Get only the documents needed for the first page (OPTIMIZATION)
+        List<String> firstPageKeys = allDocumentKeys.size() <= count ? 
+            allDocumentKeys : 
+            allDocumentKeys.subList(0, count);
         
-        // Get first page from combined resources
-        List<Resource> firstPageResources = allResources.size() <= count ? 
-            allResources : 
-            allResources.subList(0, count);
+        // Fetch documents for first page only - group by resource type for mixed collections
+        List<Resource> firstPageResources = new ArrayList<>();
+        Map<String, List<String>> keysByResourceType = firstPageKeys.stream()
+            .collect(Collectors.groupingBy(key -> key.substring(0, key.indexOf("/"))));
+        
+        for (Map.Entry<String, List<String>> entry : keysByResourceType.entrySet()) {
+            String keyResourceType = entry.getKey();
+            List<String> keysForType = entry.getValue();
+            logger.debug("🔍 Fetching {} {} documents for first page", keysForType.size(), keyResourceType);
+            List<Resource> resourcesForType = ftsKvSearchService.getDocumentsFromKeys(keysForType, keyResourceType);
+            firstPageResources.addAll(resourcesForType);
+        }
         
         // Step 7: Create pagination state if needed
         String continuationToken = null;
