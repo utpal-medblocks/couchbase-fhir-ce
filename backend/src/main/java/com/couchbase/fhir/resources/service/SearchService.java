@@ -211,16 +211,20 @@ public class SearchService {
             }
         }
         
-        // Check for _include parameter using HAPI's Include class
-        String includeValue = searchParams.get("_include");
-        Include include = null;
-        if (includeValue != null) {
-            try {
-                include = new Include(includeValue);
-                logger.debug("🔍 Parsed HAPI Include: {}", include);
-            } catch (Exception e) {
-                throw new InvalidRequestException("Invalid _include parameter: " + includeValue + " - " + e.getMessage());
+        // Check for _include parameters (can be multiple) using HAPI's Include class
+        List<Include> includes = new ArrayList<>();
+        List<String> includeValues = allParams.get("_include");
+        if (includeValues != null && !includeValues.isEmpty()) {
+            for (String includeValue : includeValues) {
+                try {
+                    Include include = new Include(includeValue);
+                    includes.add(include);
+                    logger.debug("🔍 Parsed HAPI Include: {}", include);
+                } catch (Exception e) {
+                    throw new InvalidRequestException("Invalid _include parameter: " + includeValue + " - " + e.getMessage());
+                }
             }
+            logger.info("🔍 Total _include parameters: {}", includes.size());
         }
         
         // Check for chained parameters (must be done before removing control parameters)
@@ -263,18 +267,18 @@ public class SearchService {
             return result;
         }
         
-        // Check if this is a _include search
-        if (include != null) {
+        // Check if this is a _include search (can have multiple _include parameters)
+        if (!includes.isEmpty()) {
             try {
-                logger.info("🔍 About to call handleIncludeSearch for {} with include: {}", resourceType, include.getValue());
-                Bundle result = handleIncludeSearch(resourceType, ftsQueries, include, count, 
+                logger.info("🔍 About to call handleMultipleIncludeSearch for {} with {} includes", resourceType, includes.size());
+                Bundle result = handleMultipleIncludeSearch(resourceType, ftsQueries, includes, count, 
                                          summaryMode, elements, totalMode, bucketName, requestDetails);
-                logger.info("🔍 handleIncludeSearch completed successfully");
+                logger.info("🔍 handleMultipleIncludeSearch completed successfully");
                 RequestPerfBagUtils.addTiming(requestDetails, "search_service", System.currentTimeMillis() - searchStartMs);
                 RequestPerfBagUtils.addCount(requestDetails, "search_results", result.getTotal());
                 return result;
             } catch (Exception e) {
-                logger.error("🔍 ❌ Exception in handleIncludeSearch: {} - {}", e.getClass().getName(), e.getMessage(), e);
+                logger.error("🔍 ❌ Exception in handleMultipleIncludeSearch: {} - {}", e.getClass().getName(), e.getMessage(), e);
                 throw e; // Re-throw to let HAPI handle it
             }
         }
@@ -913,7 +917,97 @@ public class SearchService {
     }
     
     /**
-     * Handle _include search with two-query strategy
+     * Handle multiple _include searches
+     */
+    private Bundle handleMultipleIncludeSearch(String primaryResourceType, List<SearchQuery> ftsQueries,
+                                              List<Include> includes, int count,
+                                              SummaryEnum summaryMode, Set<String> elements,
+                                              String totalMode, String bucketName, RequestDetails requestDetails) {
+        
+        logger.info("🔍 ===== ENTERING handleMultipleIncludeSearch =====");
+        logger.info("🔍 Handling {} _include parameters for {}", includes.size(), primaryResourceType);
+        
+        // Step 1: Execute primary resource search once (shared across all includes)
+        FtsSearchService.FtsSearchResult ftsResult = ftsKvSearchService.searchForAllKeys(ftsQueries, primaryResourceType, null);
+        List<String> firstPageKeys = ftsResult.getDocumentKeys().size() <= count ? 
+            ftsResult.getDocumentKeys() : ftsResult.getDocumentKeys().subList(0, count);
+        List<Resource> primaryResources = ftsKvSearchService.getDocumentsFromKeys(firstPageKeys, primaryResourceType);
+        
+        if (primaryResources.isEmpty()) {
+            logger.info("🔍 No primary resources found, returning empty bundle");
+            return createEmptyBundle();
+        }
+        
+        logger.info("🔍 Found {} primary resources", primaryResources.size());
+        
+        // Step 2: Process each _include parameter and collect all included resources
+        List<Resource> allIncludedResources = new ArrayList<>();
+        Set<String> processedResourceIds = new java.util.HashSet<>(); // Track to avoid duplicates
+        
+        for (Include include : includes) {
+            logger.info("🔍 Processing _include: {}", include.getValue());
+            
+            // Extract references for this include parameter
+            List<String> includeReferences = extractReferencesFromResources(primaryResources, include.getParamName());
+            
+            if (includeReferences.isEmpty()) {
+                logger.warn("🔍 No references found for _include parameter '{}'", include.getValue());
+                continue;
+            }
+            
+            logger.info("🔍 Found {} references for '{}'", includeReferences.size(), include.getParamName());
+            
+            // Get resources for these references
+            List<Resource> includedResources = getResourcesByReferences(includeReferences, bucketName);
+            
+            // Add only unique resources (avoid duplicates across multiple _include parameters)
+            for (Resource resource : includedResources) {
+                String resourceId = resource.fhirType() + "/" + resource.getIdElement().getIdPart();
+                if (!processedResourceIds.contains(resourceId)) {
+                    allIncludedResources.add(resource);
+                    processedResourceIds.add(resourceId);
+                }
+            }
+            
+            logger.info("🔍 Added {} unique resources from _include '{}'", includedResources.size(), include.getValue());
+        }
+        
+        logger.info("🔍 Total unique included resources: {}", allIncludedResources.size());
+        
+        // Step 3: Build response bundle
+        Bundle bundle = new Bundle();
+        bundle.setType(Bundle.BundleType.SEARCHSET);
+        bundle.setTotal(primaryResources.size()); // Only count primary resources per FHIR spec
+        
+        // Add primary resources (search mode = "match")
+        for (Resource resource : primaryResources) {
+            Resource filteredResource = applyResourceFiltering(resource, summaryMode, elements);
+            bundle.addEntry()
+                    .setResource(filteredResource)
+                    .setFullUrl(primaryResourceType + "/" + filteredResource.getIdElement().getIdPart())
+                    .getSearch()
+                    .setMode(Bundle.SearchEntryMode.MATCH);
+        }
+        
+        // Add all included resources (search mode = "include")
+        for (Resource resource : allIncludedResources) {
+            Resource filteredResource = applyResourceFiltering(resource, summaryMode, elements);
+            String resourceType = filteredResource.fhirType();
+            bundle.addEntry()
+                    .setResource(filteredResource)
+                    .setFullUrl(resourceType + "/" + filteredResource.getIdElement().getIdPart())
+                    .getSearch()
+                    .setMode(Bundle.SearchEntryMode.INCLUDE);
+        }
+        
+        logger.info("🔍 Returning bundle: {} primary + {} included resources", 
+                   primaryResources.size(), allIncludedResources.size());
+        
+        return bundle;
+    }
+    
+    /**
+     * Handle _include search with two-query strategy (DEPRECATED - use handleMultipleIncludeSearch)
      */
     private Bundle handleIncludeSearch(String primaryResourceType, List<SearchQuery> ftsQueries,
                                      Include include, int count,
