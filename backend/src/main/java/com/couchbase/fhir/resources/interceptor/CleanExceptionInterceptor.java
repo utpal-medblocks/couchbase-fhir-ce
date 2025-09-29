@@ -25,7 +25,11 @@ public class CleanExceptionInterceptor {
     public boolean handleException(RequestDetails theRequestDetails, Throwable theException) {
         // Handle null exception case to prevent NPE
         if (theException == null) {
-            logger.warn("🔍 handleException called with null exception");
+            logger.warn("🔍 handleException called with null exception - this indicates a bug");
+            logger.warn("🔍 Stack trace at point of null exception:", new Exception("Stack trace for debugging"));
+            logger.warn("🔍 Request details: {} {}", 
+                theRequestDetails.getRequestType(), 
+                theRequestDetails.getCompleteUrl());
             return true; // Continue with default handling
         }
         

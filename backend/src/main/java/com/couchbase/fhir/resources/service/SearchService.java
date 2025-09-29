@@ -265,11 +265,18 @@ public class SearchService {
         
         // Check if this is a _include search
         if (include != null) {
-            Bundle result = handleIncludeSearch(resourceType, ftsQueries, include, count, 
-                                     summaryMode, elements, totalMode, bucketName, requestDetails);
-            RequestPerfBagUtils.addTiming(requestDetails, "search_service", System.currentTimeMillis() - searchStartMs);
-            RequestPerfBagUtils.addCount(requestDetails, "search_results", result.getTotal());
-            return result;
+            try {
+                logger.info("🔍 About to call handleIncludeSearch for {} with include: {}", resourceType, include.getValue());
+                Bundle result = handleIncludeSearch(resourceType, ftsQueries, include, count, 
+                                         summaryMode, elements, totalMode, bucketName, requestDetails);
+                logger.info("🔍 handleIncludeSearch completed successfully");
+                RequestPerfBagUtils.addTiming(requestDetails, "search_service", System.currentTimeMillis() - searchStartMs);
+                RequestPerfBagUtils.addCount(requestDetails, "search_results", result.getTotal());
+                return result;
+            } catch (Exception e) {
+                logger.error("🔍 ❌ Exception in handleIncludeSearch: {} - {}", e.getClass().getName(), e.getMessage(), e);
+                throw e; // Re-throw to let HAPI handle it
+            }
         }
         
         // Check if this is a chained search
@@ -913,14 +920,23 @@ public class SearchService {
                                      SummaryEnum summaryMode, Set<String> elements,
                                      String totalMode, String bucketName, RequestDetails requestDetails) {
         
-        logger.debug("🔍 Handling _include search: {} -> {}", primaryResourceType, include.getValue());
-        logger.debug("🔍 HAPI Include details - ParamType: '{}', ParamName: '{}', ParamTargetType: '{}'", 
+        logger.info("🔍 ===== ENTERING handleIncludeSearch =====");
+        logger.info("🔍 Handling _include search: {} -> {}", primaryResourceType, include.getValue());
+        logger.info("🔍 HAPI Include details - ParamType: '{}', ParamName: '{}', ParamTargetType: '{}'", 
                    include.getParamType(), include.getParamName(), include.getParamTargetType());
         
         // Let's see what HAPI knows about this search parameter
-        RuntimeSearchParam searchParam = fhirContext
-                .getResourceDefinition(include.getParamType())
-                .getSearchParam(include.getParamName());
+        logger.info("🔍 Looking up search parameter definition from HAPI...");
+        RuntimeSearchParam searchParam = null;
+        try {
+            searchParam = fhirContext
+                    .getResourceDefinition(include.getParamType())
+                    .getSearchParam(include.getParamName());
+            logger.info("🔍 Search parameter lookup completed, result: {}", searchParam != null ? "found" : "not found");
+        } catch (Exception e) {
+            logger.error("🔍 ❌ Error looking up search parameter: {} - {}", e.getClass().getName(), e.getMessage(), e);
+            throw e;
+        }
         if (searchParam != null) {
             logger.debug("🔍 HAPI SearchParam details - Path: '{}', Type: '{}'", 
                        searchParam.getPath(), searchParam.getParamType());
@@ -945,23 +961,23 @@ public class SearchService {
             return createEmptyBundle();
         }
         
-        // Step 2: Extract reference IDs from primary resources
+        // Step 2: Extract full reference strings from primary resources
         logger.info("🔍 Found {} primary resources, extracting references for parameter '{}'", 
                    primaryResources.size(), include.getParamName());
-        List<String> includeResourceIds = extractReferenceIds(primaryResources, include.getParamName());
+        List<String> includeReferences = extractReferencesFromResources(primaryResources, include.getParamName());
         
-        if (includeResourceIds.isEmpty()) {
-            logger.warn("🔍 No reference IDs found in {} primary resources for parameter '{}', returning primary resources only", 
+        if (includeReferences.isEmpty()) {
+            logger.warn("🔍 No references found in {} primary resources for parameter '{}', returning primary resources only", 
                        primaryResources.size(), include.getParamName());
             return buildBundleWithPrimaryResourcesOnly(primaryResources, primaryResourceType, summaryMode, elements);
         }
         
-        logger.debug("🔍 Extracted {} reference IDs: {}", includeResourceIds.size(), includeResourceIds);
+        logger.debug("🔍 Extracted {} references: {}", includeReferences.size(), includeReferences);
         
-        // Step 3: Get included resources by their IDs  
-        logger.debug("🔍 Looking up {} {} resources by IDs: {}", includeResourceIds.size(), targetResourceType, includeResourceIds);
-        List<Resource> includedResources = getResourcesByIds(targetResourceType, includeResourceIds, bucketName);
-        logger.debug("🔍 Found {} {} resources", includedResources.size(), targetResourceType);
+        // Step 3: Group references by resource type and get included resources
+        // References can be heterogeneous (e.g., "Observation/123", "VisionPrescription/456")
+        List<Resource> includedResources = getResourcesByReferences(includeReferences, bucketName);
+        logger.info("🔍 Retrieved {} included resources from {} references", includedResources.size(), includeReferences.size());
         
         // Step 4: Create search state for pagination (reuse revInclude fields for include)
         String baseUrl = extractBaseUrl(requestDetails, bucketName);
@@ -1002,11 +1018,13 @@ public class SearchService {
         }
         
         // Add included resources (search mode = "include")
+        // Note: included resources can be of different types (heterogeneous)
         for (Resource resource : includedResources) {
             Resource filteredResource = applyResourceFiltering(resource, summaryMode, elements);
+            String resourceType = filteredResource.fhirType(); // Use actual resource type
             bundle.addEntry()
                     .setResource(filteredResource)
-                    .setFullUrl(targetResourceType + "/" + filteredResource.getIdElement().getIdPart())
+                    .setFullUrl(resourceType + "/" + filteredResource.getIdElement().getIdPart())
                     .getSearch()
                     .setMode(Bundle.SearchEntryMode.INCLUDE);
         }
@@ -1520,22 +1538,26 @@ public class SearchService {
                            resource.fhirType(), 
                            resource.getIdElement().getIdPart());
                 
-                // Use reflection to get the field value
-                // For now, we'll handle common cases like "subject", "patient", etc.
-                String referenceValue = extractReferenceFromResource(resource, searchParam);
-                logger.debug("🔍 Reference value for '{}': {}", searchParam, referenceValue);
+                // Extract all reference values from this resource (may be multiple for list fields)
+                List<String> referenceValues = extractReferencesFromResource(resource, searchParam);
+                logger.debug("🔍 Found {} reference values for '{}': {}", referenceValues.size(), searchParam, referenceValues);
                 
-                if (referenceValue != null) {
-                    // Extract ID from reference (e.g., "Patient/123" -> "123")
-                    String id = extractIdFromReference(referenceValue);
-                    logger.debug("🔍 Extracted ID: {}", id);
-                    
-                    if (id != null && !referenceIds.contains(id)) {
-                        referenceIds.add(id);
-                        logger.debug("🔍 Added ID to list: {}", id);
+                // Extract IDs from each reference
+                for (String referenceValue : referenceValues) {
+                    if (referenceValue != null) {
+                        // Extract ID from reference (e.g., "Patient/123" -> "123")
+                        String id = extractIdFromReference(referenceValue);
+                        logger.debug("🔍 Extracted ID: {}", id);
+                        
+                        if (id != null && !referenceIds.contains(id)) {
+                            referenceIds.add(id);
+                            logger.debug("🔍 Added ID to list: {}", id);
+                        }
                     }
-                } else {
-                    logger.debug("🔍 No reference value found for parameter '{}' in resource {}", searchParam, resource.fhirType());
+                }
+                
+                if (referenceValues.isEmpty()) {
+                    logger.debug("🔍 No reference values found for parameter '{}' in resource {}", searchParam, resource.fhirType());
                 }
             } catch (Exception e) {
                 logger.warn("Failed to extract reference from {}: {}", resource.fhirType(), e.getMessage());
@@ -1547,7 +1569,201 @@ public class SearchService {
     }
     
     /**
-     * Extract reference value from a resource using the search parameter
+     * Extract full reference strings from resources (for heterogeneous _include)
+     */
+    private List<String> extractReferencesFromResources(List<Resource> resources, String searchParam) {
+        List<String> allReferences = new ArrayList<>();
+        
+        for (Resource resource : resources) {
+            List<String> references = extractReferencesFromResource(resource, searchParam);
+            allReferences.addAll(references);
+        }
+        
+        logger.debug("🔍 Extracted {} total reference strings from {} resources", allReferences.size(), resources.size());
+        return allReferences;
+    }
+    
+    /**
+     * Get resources by their full reference strings (e.g., "Patient/123", "Observation/456")
+     * Groups by resource type and does batch KV lookups for each type
+     */
+    private List<Resource> getResourcesByReferences(List<String> references, String bucketName) {
+        if (references == null || references.isEmpty()) {
+            return new ArrayList<>();
+        }
+        
+        // Group references by resource type
+        Map<String, List<String>> referencesByType = new java.util.HashMap<>();
+        
+        for (String reference : references) {
+            if (reference == null || !reference.contains("/")) {
+                logger.warn("🔍 Invalid reference format: {}", reference);
+                continue;
+            }
+            
+            String[] parts = reference.split("/", 2);
+            String resourceType = parts[0];
+            String id = parts[1];
+            
+            referencesByType.computeIfAbsent(resourceType, k -> new ArrayList<>()).add(id);
+        }
+        
+        logger.info("🔍 Grouped {} references into {} resource types: {}", 
+                   references.size(), referencesByType.size(), referencesByType.keySet());
+        
+        // Retrieve resources for each type
+        List<Resource> allResources = new ArrayList<>();
+        
+        for (Map.Entry<String, List<String>> entry : referencesByType.entrySet()) {
+            String resourceType = entry.getKey();
+            List<String> ids = entry.getValue();
+            
+            logger.info("🔍 Retrieving {} {} resources", ids.size(), resourceType);
+            
+            try {
+                List<Resource> typeResources = getResourcesByIds(resourceType, ids, bucketName);
+                allResources.addAll(typeResources);
+                logger.info("🔍 Retrieved {}/{} {} resources", typeResources.size(), ids.size(), resourceType);
+            } catch (Exception e) {
+                logger.error("🔍 Failed to retrieve {} resources: {}", resourceType, e.getMessage(), e);
+                // Continue with other types even if one fails
+            }
+        }
+        
+        logger.info("🔍 Total resources retrieved: {}/{}", allResources.size(), references.size());
+        return allResources;
+    }
+    
+    /**
+     * Extract reference values from a resource using the search parameter (handles lists)
+     */
+    private List<String> extractReferencesFromResource(Resource resource, String searchParam) {
+        List<String> references = new ArrayList<>();
+        
+        logger.debug("🔍 Looking for reference field '{}' in resource {}", searchParam, resource.fhirType());
+        
+        // Get the HAPI search parameter to resolve the correct field path
+        try {
+            RuntimeSearchParam hapiSearchParam = fhirContext
+                    .getResourceDefinition(resource.fhirType())
+                    .getSearchParam(searchParam);
+            
+            if (hapiSearchParam != null && hapiSearchParam.getPath() != null) {
+                String path = hapiSearchParam.getPath();
+                logger.debug("🔍 HAPI path for '{}': {}", searchParam, path);
+                
+                // Use FHIRPathParser to resolve casting expressions
+                FHIRPathParser.ParsedExpression parsed = FHIRPathParser.parse(path);
+                String fieldPath = parsed.getPrimaryFieldPath();
+                
+                if (fieldPath != null) {
+                    logger.debug("🔍 Resolved field path: {}", fieldPath);
+                    
+                    // Navigate through the path and extract all references
+                    references.addAll(navigatePathAndExtractReferences(resource, fieldPath));
+                }
+            }
+        } catch (Exception e) {
+            logger.warn("🔍 Failed to resolve field path for '{}': {}", searchParam, e.getMessage());
+        }
+        
+        // Fallback to old single-value method for simple cases
+        if (references.isEmpty()) {
+            String singleRef = extractReferenceFromResource(resource, searchParam);
+            if (singleRef != null) {
+                references.add(singleRef);
+            }
+        }
+        
+        return references;
+    }
+    
+    /**
+     * Navigate through a field path and extract all reference values
+     * Handles nested paths like "entry.item" where entry is a list
+     */
+    private List<String> navigatePathAndExtractReferences(Object currentObject, String fieldPath) {
+        List<String> references = new ArrayList<>();
+        
+        if (currentObject == null || fieldPath == null || fieldPath.isEmpty()) {
+            return references;
+        }
+        
+        logger.debug("🔍 Navigating path '{}' on object type {}", fieldPath, currentObject.getClass().getSimpleName());
+        
+        // Split the path into parts
+        String[] pathParts = fieldPath.split("\\.");
+        List<Object> currentObjects = new ArrayList<>();
+        currentObjects.add(currentObject);
+        
+        // Navigate through each part of the path
+        for (int i = 0; i < pathParts.length; i++) {
+            String part = pathParts[i];
+            List<Object> nextObjects = new ArrayList<>();
+            
+            logger.debug("🔍 Processing path part {}/{}: '{}'", i + 1, pathParts.length, part);
+            
+            for (Object obj : currentObjects) {
+                try {
+                    // Convert field name to getter method name
+                    String getterName = "get" + part.substring(0, 1).toUpperCase() + part.substring(1);
+                    logger.debug("🔍 Calling {} on {}", getterName, obj.getClass().getSimpleName());
+                    
+                    java.lang.reflect.Method getter = obj.getClass().getMethod(getterName);
+                    Object result = getter.invoke(obj);
+                    
+                    if (result != null) {
+                        // Check if result is a list/collection
+                        if (result instanceof java.util.List) {
+                            java.util.List<?> list = (java.util.List<?>) result;
+                            logger.debug("🔍 Got list with {} items", list.size());
+                            nextObjects.addAll(list);
+                        } else {
+                            logger.debug("🔍 Got single object: {}", result.getClass().getSimpleName());
+                            nextObjects.add(result);
+                        }
+                    } else {
+                        logger.debug("🔍 Getter returned null");
+                    }
+                } catch (Exception e) {
+                    logger.debug("🔍 Error calling getter for '{}': {}", part, e.getMessage());
+                }
+            }
+            
+            currentObjects = nextObjects;
+            
+            if (currentObjects.isEmpty()) {
+                logger.debug("🔍 No objects left to process after part '{}'", part);
+                break;
+            }
+        }
+        
+        // Now extract references from the final objects
+        logger.debug("🔍 Have {} final objects to extract references from", currentObjects.size());
+        for (Object obj : currentObjects) {
+            try {
+                // Try to get the reference value - the object should be a Reference type
+                if (obj instanceof org.hl7.fhir.r4.model.Reference) {
+                    org.hl7.fhir.r4.model.Reference ref = (org.hl7.fhir.r4.model.Reference) obj;
+                    String refValue = ref.getReference();
+                    if (refValue != null) {
+                        logger.debug("🔍 Extracted reference: {}", refValue);
+                        references.add(refValue);
+                    }
+                } else {
+                    logger.debug("🔍 Final object is not a Reference: {}", obj.getClass().getSimpleName());
+                }
+            } catch (Exception e) {
+                logger.debug("🔍 Error extracting reference from {}: {}", obj.getClass().getSimpleName(), e.getMessage());
+            }
+        }
+        
+        logger.debug("🔍 Total references extracted: {}", references.size());
+        return references;
+    }
+    
+    /**
+     * Extract reference value from a resource using the search parameter (OLD METHOD - kept for fallback)
      */
     private String extractReferenceFromResource(Resource resource, String searchParam) {
         logger.debug("🔍 Looking for reference field '{}' in resource {}", searchParam, resource.fhirType());
