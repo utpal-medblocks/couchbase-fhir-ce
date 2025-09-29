@@ -1686,8 +1686,8 @@ public class SearchService {
             return new ArrayList<>();
         }
         
-        // Group references by resource type
-        Map<String, List<String>> referencesByType = new java.util.HashMap<>();
+        // Group references by resource type and deduplicate IDs
+        Map<String, Set<String>> referencesByType = new java.util.HashMap<>();
         
         for (String reference : references) {
             if (reference == null || !reference.contains("/")) {
@@ -1699,7 +1699,7 @@ public class SearchService {
             String resourceType = parts[0];
             String id = parts[1];
             
-            referencesByType.computeIfAbsent(resourceType, k -> new ArrayList<>()).add(id);
+            referencesByType.computeIfAbsent(resourceType, k -> new java.util.HashSet<>()).add(id);
         }
         
         logger.info("🔍 Grouped {} references into {} resource types: {}", 
@@ -1708,11 +1708,13 @@ public class SearchService {
         // Retrieve resources for each type
         List<Resource> allResources = new ArrayList<>();
         
-        for (Map.Entry<String, List<String>> entry : referencesByType.entrySet()) {
+        for (Map.Entry<String, Set<String>> entry : referencesByType.entrySet()) {
             String resourceType = entry.getKey();
-            List<String> ids = entry.getValue();
+            Set<String> idSet = entry.getValue();
+            List<String> ids = new ArrayList<>(idSet); // Convert to list for batch retrieval
             
-            logger.info("🔍 Retrieving {} {} resources", ids.size(), resourceType);
+            logger.info("🔍 Retrieving {} unique {} resources (from {} total references)", 
+                       ids.size(), resourceType, references.stream().filter(r -> r.startsWith(resourceType + "/")).count());
             
             try {
                 List<Resource> typeResources = getResourcesByIds(resourceType, ids, bucketName);
