@@ -34,11 +34,16 @@ public class BucketMetricsService {
 
     // Bucket-level metric names based on user requirements
     private static final String[] BUCKET_METRIC_NAMES = {
-        "kv_ops",                      // Total Operations
-        "kv_vb_resident_items_ratio",  // Resident Ratio
-        "kv_ep_cache_miss_ratio",      // Cache Miss Ratio
-        "n1ql_request_time",           // Query Request Time in ns
-        "n1ql_requests"                // N1QL Request Rate
+        "sys_cpu_utilization_rate",         // System CPU Rate
+        "sys_mem_actual_free",              // Free RAM in GB
+        "kv_vb_resident_items_ratio",       // Resident Ratio (Cache Performance - unchanged)
+        "kv_ep_cache_miss_ratio",           // Cache Miss Ratio (Cache Performance - unchanged)
+        "kv_ops",                           // Total Operations
+        "kv_ops_get",                       // Get Operations
+        "kv_ops_set",                       // Set Operations
+        "fts_total_queries",                // Search Queries/sec
+        "fts_total_queries_rejected_by_herder",  // Search Rejected/sec
+        "fts_curr_batches_blocked_by_herder"     // Search Blocked/sec
     };
 
     public BucketMetricsResponse getBucketMetrics(String connectionName, String bucketName, String timeRange) {
@@ -77,12 +82,17 @@ public class BucketMetricsService {
             
             // Build metric labels
             List<Map<String, String>> metric = new ArrayList<>();
-            metric.add(Map.of("label", "name", "value", metricName));
+            metric.add(Map.of("label", "name", "value", getBaseMetricName(metricName)));
             
-            // Add bucket label for specific metrics only (not for kv_ops or n1ql metrics based on working Postman payload)
-            if (!"kv_ops".equals(metricName) && 
-                !"n1ql_request_time".equals(metricName) && 
-                !"n1ql_requests".equals(metricName)) {
+            // Add operation label for Get/Set operations
+            if ("kv_ops_get".equals(metricName)) {
+                metric.add(Map.of("label", "op", "value", "get"));
+            } else if ("kv_ops_set".equals(metricName)) {
+                metric.add(Map.of("label", "op", "value", "set"));
+            }
+            
+            // Add bucket label for specific metrics only (not for system, kv_ops or fts metrics)
+            if (metricName.startsWith("kv_vb_") || metricName.startsWith("kv_ep_")) {
                 metric.add(Map.of("label", "bucket", "value", bucketName));
             }
             
@@ -94,15 +104,23 @@ public class BucketMetricsService {
             request.put("metric", metric);
             
             // Set aggregation and functions based on metric type
-            if ("kv_ops".equals(metricName) || "n1ql_requests".equals(metricName)) {
+            if (isSystemMetric(metricName)) {
+                // System metrics
+                if ("sys_cpu_utilization_rate".equals(metricName)) {
+                    request.put("nodesAggregation", "avg");
+                } else if ("sys_mem_actual_free".equals(metricName)) {
+                    request.put("nodesAggregation", "sum");
+                }
+            } else if (isOperationMetric(metricName)) {
+                // Operations metrics (kv_ops, kv_ops_get, kv_ops_set)
                 request.put("nodesAggregation", "sum");
                 request.put("applyFunctions", Arrays.asList("irate", "sum"));
-            } else if ("n1ql_request_time".equals(metricName)) {
-                // For n1ql time metrics, use irate like in working Postman payload
-                request.put("applyFunctions", Arrays.asList("irate"));
-                // No nodesAggregation for n1ql time metrics (matches Postman payload)
+            } else if (isSearchMetric(metricName)) {
+                // Search metrics (fts_*)
+                request.put("nodesAggregation", "sum");
+                request.put("applyFunctions", Arrays.asList("irate", "sum"));
             } else {
-                // request.put("nodesAggregation", "special");
+                // Cache performance metrics (unchanged)
                 if ("kv_vb_resident_items_ratio".equals(metricName)) {
                     // No apply functions for resident ratio
                 } else {
@@ -115,6 +133,25 @@ public class BucketMetricsService {
         }
         
         return requests;
+    }
+    
+    private String getBaseMetricName(String metricName) {
+        if ("kv_ops_get".equals(metricName) || "kv_ops_set".equals(metricName)) {
+            return "kv_ops";
+        }
+        return metricName;
+    }
+    
+    private boolean isSystemMetric(String metricName) {
+        return metricName.startsWith("sys_");
+    }
+    
+    private boolean isOperationMetric(String metricName) {
+        return metricName.equals("kv_ops") || metricName.equals("kv_ops_get") || metricName.equals("kv_ops_set");
+    }
+    
+    private boolean isSearchMetric(String metricName) {
+        return metricName.startsWith("fts_");
     }
 
     private Map<String, Object> calculateTimeParameters(String timeRange) {
@@ -229,6 +266,12 @@ public class BucketMetricsService {
                                 if (numValue.isNaN() || numValue.isInfinite()) {
                                     numValue = null;
                                 }
+                                
+                                // Convert RAM from bytes to GB
+                                if ("sys_mem_actual_free".equals(metricName) && numValue != null) {
+                                    numValue = numValue / (1024 * 1024 * 1024); // Convert bytes to GB
+                                }
+                                
                                 // Convert scientific notation for ratios (e.g., 1.00e+02 = 100)
                                 // Ratios should be in percentage form already, but scientific notation needs conversion
                                 if (metricName.contains("ratio") && numValue != null) {
@@ -262,16 +305,26 @@ public class BucketMetricsService {
 
     private String getMetricLabel(String metricName) {
         switch (metricName) {
-            case "kv_ops":
-                return "Total Ops";
+            case "sys_cpu_utilization_rate":
+                return "CPU Rate";
+            case "sys_mem_actual_free":
+                return "Free RAM";
             case "kv_vb_resident_items_ratio":
                 return "Resident Ratio";
             case "kv_ep_cache_miss_ratio":
                 return "Cache Miss Ratio";
-            case "n1ql_request_time":
-                return "Query Request Time";
-            case "n1ql_requests":
-                return "N1QL Request Rate";
+            case "kv_ops":
+                return "Total Ops";
+            case "kv_ops_get":
+                return "Get Ops";
+            case "kv_ops_set":
+                return "Set Ops";
+            case "fts_total_queries":
+                return "Queries";
+            case "fts_total_queries_rejected_by_herder":
+                return "Rejected";
+            case "fts_curr_batches_blocked_by_herder":
+                return "Blocked";
             default:
                 return metricName;
         }
@@ -279,15 +332,21 @@ public class BucketMetricsService {
 
     private String getMetricUnit(String metricName) {
         switch (metricName) {
-            case "kv_ops":
-                return "ops/sec";
+            case "sys_cpu_utilization_rate":
+                return "%";
+            case "sys_mem_actual_free":
+                return "GB";
             case "kv_vb_resident_items_ratio":
             case "kv_ep_cache_miss_ratio":
                 return "ratio";
-            case "n1ql_request_time":
-                return "ns";
-            case "n1ql_requests":
-                return "req/sec";
+            case "kv_ops":
+            case "kv_ops_get":
+            case "kv_ops_set":
+                return "ops/sec";
+            case "fts_total_queries":
+            case "fts_total_queries_rejected_by_herder":
+            case "fts_curr_batches_blocked_by_herder":
+                return "/sec";
             default:
                 return "";
         }
