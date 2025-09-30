@@ -6,8 +6,8 @@
   "sourceName": "",
   "sourceUUID": "",
   "planParams": {
-    "maxPartitionsPerPIndex": 171,
-    "indexPartitions": 6
+    "maxPartitionsPerPIndex": 1024,
+    "indexPartitions": 1
   },
   "params": {
     "doc_config": {
@@ -293,6 +293,34 @@
                       "type": "datetime"
                     }
                   ]
+                },
+                "tag": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "properties": {
+                    "code": {
+                      "dynamic": false,
+                      "enabled": true,
+                      "fields": [
+                        {
+                          "index": true,
+                          "name": "code",
+                          "type": "text"
+                        }
+                      ]
+                    },
+                    "system": {
+                      "dynamic": false,
+                      "enabled": true,
+                      "fields": [
+                        {
+                          "index": true,
+                          "name": "system",
+                          "type": "text"
+                        }
+                      ]
+                    }
+                  }
                 }
               }
             },

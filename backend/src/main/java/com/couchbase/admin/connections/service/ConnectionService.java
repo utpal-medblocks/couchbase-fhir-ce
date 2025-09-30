@@ -86,7 +86,7 @@ public class ConnectionService {
         
         try {
             // Configure cluster environment with comprehensive SDK tuning for high-concurrency FHIR workloads
-            ClusterEnvironment env = ClusterEnvironment.builder()
+            ClusterEnvironment.Builder envBuilder = ClusterEnvironment.builder()
                 .timeoutConfig(timeoutConfig -> timeoutConfig
                     .queryTimeout(Duration.ofSeconds(queryTimeoutSeconds))
                     .searchTimeout(Duration.ofSeconds(searchTimeoutSeconds))
@@ -97,8 +97,15 @@ public class ConnectionService {
                     .maxHttpConnections(maxHttpConnections)
                     .numKvConnections(numKvConnections)
                     .enableMutationTokens(enableMutationTokens)
-                    )
-                .build();
+                    );
+            
+            // Enable TLS/SSL if required (for Capella or secure connections)
+            if (request.isSslEnabled() || request.getConnectionString().startsWith("couchbases://")) {
+                logger.info("🔒 Enabling TLS/SSL for secure connection");
+                envBuilder.securityConfig(security -> security.enableTls(true));
+            }
+            
+            ClusterEnvironment env = envBuilder.build();
             
             ClusterOptions options = ClusterOptions.clusterOptions(request.getUsername(), request.getPassword())
                     .environment(env);
