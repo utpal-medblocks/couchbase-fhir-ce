@@ -5,6 +5,7 @@ import com.couchbase.admin.connections.model.ConnectionResponse;
 import com.couchbase.client.java.Cluster;
 import com.couchbase.client.java.ClusterOptions;
 import com.couchbase.client.java.env.ClusterEnvironment;
+import com.couchbase.client.core.msg.kv.DurabilityLevel;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -45,6 +46,12 @@ public class ConnectionService {
     
     @Value("${couchbase.sdk.enable-mutation-tokens:true}")
     private boolean enableMutationTokens;
+    
+    // Transaction Configuration
+    // For single-node development, use NONE to avoid durability errors
+    // For production multi-node clusters, use MAJORITY or MAJORITY_AND_PERSIST_TO_ACTIVE
+    @Value("${couchbase.sdk.transaction-durability:NONE}")
+    private String transactionDurability;
     
     // Store active connections
     private final Map<String, Cluster> activeConnections = new ConcurrentHashMap<>();
@@ -96,8 +103,34 @@ public class ConnectionService {
                 .ioConfig(io -> io
                     .maxHttpConnections(maxHttpConnections)
                     .numKvConnections(numKvConnections)
-                    .enableMutationTokens(enableMutationTokens)
-                    );
+                    .enableMutationTokens(enableMutationTokens))
+                .transactionsConfig(transactions -> {
+                    // Configure transaction durability based on cluster setup
+                    // NONE: Single-node development (no replicas needed)
+                    // MAJORITY: Production multi-node (recommended)
+                    // MAJORITY_AND_PERSIST_TO_ACTIVE: Highest durability
+                    DurabilityLevel durabilityLevel;
+                    switch (transactionDurability.toUpperCase()) {
+                        case "MAJORITY":
+                            durabilityLevel = DurabilityLevel.MAJORITY;
+                            logger.info("🔒 Transaction durability: MAJORITY (requires replicas)");
+                            break;
+                        case "MAJORITY_AND_PERSIST_TO_ACTIVE":
+                            durabilityLevel = DurabilityLevel.MAJORITY_AND_PERSIST_TO_ACTIVE;
+                            logger.info("🔒 Transaction durability: MAJORITY_AND_PERSIST_TO_ACTIVE (highest durability)");
+                            break;
+                        case "PERSIST_TO_MAJORITY":
+                            durabilityLevel = DurabilityLevel.PERSIST_TO_MAJORITY;
+                            logger.info("🔒 Transaction durability: PERSIST_TO_MAJORITY");
+                            break;
+                        case "NONE":
+                        default:
+                            durabilityLevel = DurabilityLevel.NONE;
+                            logger.info("⚠️  Transaction durability: NONE (suitable for single-node development only)");
+                            break;
+                    }
+                    transactions.durabilityLevel(durabilityLevel);
+                });
             
             // Enable TLS/SSL if required (for Capella or secure connections)
             if (request.isSslEnabled() || request.getConnectionString().startsWith("couchbases://")) {
@@ -118,6 +151,7 @@ public class ConnectionService {
             logger.info("   - kvTimeout: {}s (couchbase.sdk.kv-timeout-seconds)", kvTimeoutSeconds);
             logger.info("   - connectTimeout: {}s (couchbase.sdk.connect-timeout-seconds)", connectTimeoutSeconds);
             logger.info("   - enableMutationTokens: {} (couchbase.sdk.enable-mutation-tokens)", enableMutationTokens);
+            logger.info("   - transactionDurability: {} (couchbase.sdk.transaction-durability)", transactionDurability);
             
             Cluster cluster = Cluster.connect(request.getConnectionString(), options);
             

@@ -24,6 +24,13 @@ couchbase:
     connect-timeout-seconds: 10    # Initial connection timeout (default: 10)
     disconnect-timeout-seconds: 10 # Graceful disconnect timeout (default: 10)
     
+    # Transaction Configuration
+    # NONE: Single-node development (no replicas needed) - DEFAULT
+    # MAJORITY: Production multi-node (requires replicas)
+    # MAJORITY_AND_PERSIST_TO_ACTIVE: Highest durability (requires replicas + persistence)
+    # PERSIST_TO_MAJORITY: Persist to majority (requires replicas + persistence)
+    transaction-durability: NONE   # Transaction durability level (default: NONE for dev/test)
+    
     # Advanced Options
     enable-mutation-tokens: true   # Enable mutation tokens for consistency (default: true)
   # sslCertificate: |
