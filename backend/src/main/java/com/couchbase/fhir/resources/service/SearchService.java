@@ -70,6 +70,9 @@ public class SearchService {
     @Autowired
     private FtsKvSearchService ftsKvSearchService;
     
+    @Autowired
+    private BatchKvService batchKvService;
+    
     /**
      * Resolve conditional operations by finding matching resources.
      * Returns result indicating ZERO, ONE(id), or MANY matches for conditional operations.
@@ -1803,7 +1806,7 @@ public class SearchService {
                 try {
                     // Convert field name to getter method name
                     String getterName = "get" + part.substring(0, 1).toUpperCase() + part.substring(1);
-                    logger.debug("🔍 Calling {} on {}", getterName, obj.getClass().getSimpleName());
+                    // logger.debug("🔍 Calling {} on {}", getterName, obj.getClass().getSimpleName());
                     
                     java.lang.reflect.Method getter = obj.getClass().getMethod(getterName);
                     Object result = getter.invoke(obj);
@@ -1812,10 +1815,10 @@ public class SearchService {
                         // Check if result is a list/collection
                         if (result instanceof java.util.List) {
                             java.util.List<?> list = (java.util.List<?>) result;
-                            logger.debug("🔍 Got list with {} items", list.size());
+                            // logger.debug("🔍 Got list with {} items", list.size());
                             nextObjects.addAll(list);
                         } else {
-                            logger.debug("🔍 Got single object: {}", result.getClass().getSimpleName());
+                            // logger.debug("🔍 Got single object: {}", result.getClass().getSimpleName());
                             nextObjects.add(result);
                         }
                     } else {
@@ -1843,7 +1846,7 @@ public class SearchService {
                     org.hl7.fhir.r4.model.Reference ref = (org.hl7.fhir.r4.model.Reference) obj;
                     String refValue = ref.getReference();
                     if (refValue != null) {
-                        logger.debug("🔍 Extracted reference: {}", refValue);
+                        // logger.debug("🔍 Extracted reference: {}", refValue);
                         references.add(refValue);
                     }
                 } else {
@@ -1969,7 +1972,7 @@ public class SearchService {
     }
     
     /**
-     * Get resources by their IDs (similar to getPrimaryResourcesByIds but more generic)
+     * Get resources by their IDs using optimized async batch KV retrieval
      */
     private List<Resource> getResourcesByIds(String resourceType, List<String> ids, String bucketName) {
         if (ids == null || ids.isEmpty()) {
@@ -1978,14 +1981,17 @@ public class SearchService {
         
         logger.debug("🔍 Getting {} resources by IDs from bucket '{}': {}", resourceType, bucketName, ids);
         
-        @SuppressWarnings("unchecked")
-        Class<? extends Resource> resourceClassType = (Class<? extends Resource>) fhirContext.getResourceDefinition(resourceType).getImplementingClass();
-        FhirResourceDaoImpl<?> dao = serviceFactory.getService(resourceClassType);
-        
         try {
-            // Use optimized bulk read instead of individual reads
-            @SuppressWarnings("unchecked")
-            List<Resource> resources = (List<Resource>) dao.readMultiple(resourceType, ids, bucketName);
+            // Convert IDs to document keys (e.g., "123" -> "Patient/123")
+            List<String> documentKeys = ids.stream()
+                .map(id -> resourceType + "/" + id)
+                .collect(java.util.stream.Collectors.toList());
+            
+            // Set tenant context for BatchKvService
+            TenantContextHolder.setTenantId(bucketName);
+            
+            // Use BatchKvService for optimized async parallel retrieval
+            List<Resource> resources = batchKvService.getDocuments(documentKeys, resourceType);
 
             logger.debug("🔍 Successfully retrieved {}/{} {} resources", resources.size(), ids.size(), resourceType);
             return resources;

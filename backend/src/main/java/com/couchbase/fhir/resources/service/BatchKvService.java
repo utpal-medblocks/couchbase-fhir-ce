@@ -3,7 +3,6 @@ package com.couchbase.fhir.resources.service;
 import ca.uhn.fhir.context.FhirContext;
 import ca.uhn.fhir.parser.JsonParser;
 import ca.uhn.fhir.parser.LenientErrorHandler;
-import com.couchbase.client.java.Cluster;
 import com.couchbase.client.java.Collection;
 import com.couchbase.client.java.kv.GetOptions;
 import com.couchbase.client.java.kv.GetResult;
@@ -60,34 +59,25 @@ public class BatchKvService {
         Stopwatch stopwatch = Stopwatch.createStarted();
         
         try {
-            // Get connection and collection
-            Cluster cluster = connectionService.getConnection("default");
-            if (cluster == null) {
-                throw new RuntimeException("No active connection found");
-            }
-            
+            // Get cached collection (avoids lookup overhead + triggers lazy warmup)
             String targetCollection = collectionRoutingService.getTargetCollection(resourceType);
-            Collection collection = cluster.bucket(bucketName)
-                    .scope(DEFAULT_SCOPE)
-                    .collection(targetCollection);
+            Collection collection = connectionService.getCollection("default", bucketName, DEFAULT_SCOPE, targetCollection);
             
-            // Execute batch KV operations
+            // Execute async KV operations in parallel for maximum performance
             List<CompletableFuture<GetResult>> futures = new ArrayList<>();
             
             for (String documentKey : documentKeys) {
-                CompletableFuture<GetResult> future = collection.reactive().get(documentKey,
-                    GetOptions.getOptions().timeout(Duration.ofSeconds(10))).toFuture();
+                CompletableFuture<GetResult> future = collection.async().get(documentKey,
+                    GetOptions.getOptions().timeout(Duration.ofSeconds(10)));
                 futures.add(future);
             }
             
             // Wait for all KV operations to complete
-            CompletableFuture<Void> allFutures = CompletableFuture.allOf(
-                futures.toArray(new CompletableFuture[0]));
-            
-            allFutures.get(30, TimeUnit.SECONDS); // Overall timeout
+            CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]))
+                .get(30, TimeUnit.SECONDS); // Overall timeout
             
             long kvTimeMs = stopwatch.elapsed(TimeUnit.MILLISECONDS);
-            logger.info("🔑 KV operations completed in {} ms", kvTimeMs);
+            logger.info("🔑 Async KV operations completed in {} ms ({} docs)", kvTimeMs, documentKeys.size());
             DAOTimingContext.recordQueryTime(kvTimeMs);
             
             // Parse results into FHIR resources
@@ -104,18 +94,12 @@ public class BatchKvService {
                         String json = result.contentAsObject().toString();
                         Resource resource = (Resource) parser.parseResource(json);
                         resources.add(resource);
-                        
-                        logger.debug("🔑 Parsed document {}: {} ({})", 
-                                   i + 1, documentKeys.get(i), resource.fhirType());
                     } else {
                         logger.warn("🔑 Document not found: {}", documentKeys.get(i));
-                        // Add null placeholder to maintain order if needed
-                        // For now, we skip missing documents
                     }
                 } catch (Exception e) {
                     logger.warn("🔑 Failed to retrieve/parse document {}: {}", 
                               documentKeys.get(i), e.getMessage());
-                    // Continue with other documents
                 }
             }
             
@@ -153,22 +137,16 @@ public class BatchKvService {
         logger.debug("🔑 Batch KV retrieval (raw JSON): {} documents for {}", documentKeys.size(), resourceType);
         
         try {
-            Cluster cluster = connectionService.getConnection("default");
-            if (cluster == null) {
-                throw new RuntimeException("No active connection found");
-            }
-            
+            // Get cached collection (avoids lookup overhead)
             String targetCollection = collectionRoutingService.getTargetCollection(resourceType);
-            Collection collection = cluster.bucket(bucketName)
-                    .scope(DEFAULT_SCOPE)
-                    .collection(targetCollection);
+            Collection collection = connectionService.getCollection("default", bucketName, DEFAULT_SCOPE, targetCollection);
             
-            // Execute batch KV operations
+            // Execute batch KV operations using async API (much faster than reactive)
             List<CompletableFuture<GetResult>> futures = new ArrayList<>();
             
             for (String documentKey : documentKeys) {
-                CompletableFuture<GetResult> future = collection.reactive().get(documentKey,
-                    GetOptions.getOptions().timeout(Duration.ofSeconds(10))).toFuture();
+                CompletableFuture<GetResult> future = collection.async().get(documentKey,
+                    GetOptions.getOptions().timeout(Duration.ofSeconds(10)));
                 futures.add(future);
             }
             
@@ -212,15 +190,9 @@ public class BatchKvService {
         String bucketName = TenantContextHolder.getTenantId();
         
         try {
-            Cluster cluster = connectionService.getConnection("default");
-            if (cluster == null) {
-                throw new RuntimeException("No active connection found");
-            }
-            
+            // Get cached collection (avoids lookup overhead)
             String targetCollection = collectionRoutingService.getTargetCollection(resourceType);
-            Collection collection = cluster.bucket(bucketName)
-                    .scope(DEFAULT_SCOPE)
-                    .collection(targetCollection);
+            Collection collection = connectionService.getCollection("default", bucketName, DEFAULT_SCOPE, targetCollection);
             
             List<Boolean> existsResults = new ArrayList<>();
             

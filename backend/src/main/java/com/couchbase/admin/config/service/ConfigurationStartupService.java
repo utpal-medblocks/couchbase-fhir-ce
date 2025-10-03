@@ -21,7 +21,6 @@ import java.util.LinkedHashMap;
 
 import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.LoggerContext;
-import org.slf4j.LoggerFactory;
 
 /**
  * Service that automatically loads configuration and establishes connections on application startup
@@ -147,6 +146,7 @@ public class ConfigurationStartupService {
         if (response.isSuccess()) {
             logger.info("✅ Auto-connection successful! FHIR Server is ready for API requests");
             logger.info("🚀 Backend startup complete - FHIR APIs are now available");
+            logger.info("💡 Collections will be warmed up automatically on first access to each FHIR bucket");
         } else {
             String errorMsg = response.getMessage();
             logger.error("❌ Auto-connection failed: {}", errorMsg);

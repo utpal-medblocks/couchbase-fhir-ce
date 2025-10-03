@@ -20,8 +20,10 @@
     <logger name="com.couchbase.transactions" level="ERROR"/>
     <logger name="com.couchbase.tracing" level="ERROR"/>
 
-    <!-- Package-specific loggers now default to root level; override via config.yaml: logging.levels -->
-    <!-- (Removed explicit DEBUG to allow runtime configuration) -->
+    <!-- Package-specific loggers -->
+    <logger name="com.couchbase.admin" level="ERROR"/>
+    <logger name="com.couchbase.fhir" level="ERROR"/>
+    <logger name="com.couchbase.common" level="ERROR"/>
 
     <!-- Suppress noisy HAPI FHIR parser warnings -->
     <logger name="ca.uhn.fhir.parser.LenientErrorHandler" level="ERROR"/>

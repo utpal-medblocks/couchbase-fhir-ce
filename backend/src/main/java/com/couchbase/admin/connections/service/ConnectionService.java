@@ -12,6 +12,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -58,6 +59,13 @@ public class ConnectionService {
     
     // Store connection details including SSL status
     private final Map<String, ConnectionDetails> connectionDetails = new ConcurrentHashMap<>();
+    
+    // Cache Collection objects for reuse (avoid lookup overhead)
+    // Key format: "connectionName:bucketName:scopeName:collectionName"
+    private final Map<String, com.couchbase.client.java.Collection> collectionCache = new ConcurrentHashMap<>();
+    
+    // Track which buckets have been warmed up (to do it only once per bucket)
+    private final Map<String, Boolean> bucketWarmupStatus = new ConcurrentHashMap<>();
     
     // Store last connection error for frontend
     private volatile String lastConnectionError = null;
@@ -262,6 +270,121 @@ public class ConnectionService {
     }
     
     /**
+     * Get a cached Collection object (for performance - avoids lookup overhead)
+     * Also triggers lazy warmup for the bucket on first access
+     * 
+     * @param connectionName Connection name (e.g., "default")
+     * @param bucketName Bucket name
+     * @param scopeName Scope name
+     * @param collectionName Collection name
+     * @return Cached Collection object
+     */
+    public com.couchbase.client.java.Collection getCollection(String connectionName, String bucketName, 
+                                                              String scopeName, String collectionName) {
+        // Trigger lazy warmup for this bucket if not already done
+        String bucketKey = connectionName + ":" + bucketName + ":" + scopeName;
+        if (!bucketWarmupStatus.containsKey(bucketKey)) {
+            // Warmup in background to not block this request
+            bucketWarmupStatus.put(bucketKey, false); // Mark as in-progress
+            new Thread(() -> lazyWarmupBucket(connectionName, bucketName, scopeName)).start();
+        }
+        
+        String cacheKey = String.format("%s:%s:%s:%s", connectionName, bucketName, scopeName, collectionName);
+        
+        return collectionCache.computeIfAbsent(cacheKey, key -> {
+            Cluster cluster = getConnection(connectionName);
+            if (cluster == null) {
+                throw new RuntimeException("No active connection found: " + connectionName);
+            }
+            logger.debug("🔧 Caching collection reference: {}", cacheKey);
+            return cluster.bucket(bucketName).scope(scopeName).collection(collectionName);
+        });
+    }
+    
+    /**
+     * Lazy warmup: Warm up a bucket's collections in background on first access
+     */
+    private void lazyWarmupBucket(String connectionName, String bucketName, String scopeName) {
+        try {
+            logger.info("🔥 Lazy warmup triggered for bucket: {}.{}", bucketName, scopeName);
+            
+            // Standard FHIR collections
+            List<String> collections = Arrays.asList(
+                "Patient", "Practitioner", "Observation", "Encounter", "Condition", 
+                "Procedure", "MedicationRequest", "DiagnosticReport", "DocumentReference", 
+                "Immunization", "ServiceRequest", "General", "Versions", "Tombstones"
+            );
+            
+            long startTime = System.currentTimeMillis();
+            warmupCollections(connectionName, bucketName, scopeName, collections);
+            long duration = System.currentTimeMillis() - startTime;
+            
+            String bucketKey = connectionName + ":" + bucketName + ":" + scopeName;
+            bucketWarmupStatus.put(bucketKey, true); // Mark as complete
+            
+            logger.info("✅ Lazy warmup complete for {} in {} ms", bucketKey, duration);
+            
+        } catch (Exception e) {
+            logger.warn("⚠️ Lazy warmup failed for {}.{}: {}", bucketName, scopeName, e.getMessage());
+        }
+    }
+    
+    /**
+     * Warm up collections by performing a simple operation on each
+     * This avoids the "first request penalty" on cold collections
+     * Sequential with small delays to avoid overwhelming Couchbase
+     * 
+     * @param connectionName Connection name
+     * @param bucketName Bucket name
+     * @param scopeName Scope name
+     * @param collectionNames List of collection names to warm up
+     */
+    public void warmupCollections(String connectionName, String bucketName, String scopeName, List<String> collectionNames) {
+        logger.info("🔥 Warming up {} collections in {}.{} (sequential)", collectionNames.size(), bucketName, scopeName);
+        
+        int successCount = 0;
+        int failCount = 0;
+        
+        for (String collectionName : collectionNames) {
+            try {
+                // Get and cache the collection (without triggering recursive warmup)
+                String cacheKey = String.format("%s:%s:%s:%s", connectionName, bucketName, scopeName, collectionName);
+                com.couchbase.client.java.Collection collection = collectionCache.computeIfAbsent(cacheKey, key -> {
+                    Cluster cluster = getConnection(connectionName);
+                    if (cluster == null) {
+                        throw new RuntimeException("No active connection found: " + connectionName);
+                    }
+                    return cluster.bucket(bucketName).scope(scopeName).collection(collectionName);
+                });
+                
+                // Perform a lightweight operation to warm up the connection
+                // Use exists() which is faster than get()
+                collection.exists("__warmup_dummy_key__");
+                
+                successCount++;
+                logger.debug("✅ Warmed up collection: {}.{}.{}", bucketName, scopeName, collectionName);
+                
+                // Small delay between collections to avoid overwhelming Couchbase
+                // This prevents "COLLECTION_MAP_REFRESH_IN_PROGRESS" contention
+                if (successCount < collectionNames.size()) {
+                    Thread.sleep(50); // 50ms delay between collections
+                }
+                
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                logger.warn("⚠️ Warmup interrupted");
+                break;
+            } catch (Exception e) {
+                failCount++;
+                logger.warn("⚠️ Failed to warm up collection {}: {}", collectionName, e.getMessage());
+            }
+        }
+        
+        logger.info("✅ Collection warmup complete: {}/{} successful, {} failed", 
+                   successCount, collectionNames.size(), failCount);
+    }
+    
+    /**
      * Get SSL status for a connection
      */
     public boolean isSSLEnabled(String connectionName) {
@@ -330,6 +453,10 @@ public class ConnectionService {
         Cluster cluster = activeConnections.remove(connectionName);
         connectionDetails.remove(connectionName); // Clean up connection details
         
+        // Clear cached collections and warmup status for this connection
+        collectionCache.entrySet().removeIf(entry -> entry.getKey().startsWith(connectionName + ":"));
+        bucketWarmupStatus.entrySet().removeIf(entry -> entry.getKey().startsWith(connectionName + ":"));
+        
         if (cluster != null) {
             try {
                 cluster.disconnect();
@@ -373,6 +500,8 @@ public class ConnectionService {
         });
         activeConnections.clear();
         connectionDetails.clear(); // Clean up all connection details
+        collectionCache.clear(); // Clear all cached collections
+        bucketWarmupStatus.clear(); // Clear all warmup status
     }
     
     /**
