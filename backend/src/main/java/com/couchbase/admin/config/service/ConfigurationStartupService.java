@@ -247,8 +247,8 @@ public class ConfigurationStartupService {
             "connect-timeout-seconds", "10",
             "disconnect-timeout-seconds", "10",
             "enable-mutation-tokens", "true",
-            "max-http-connections", "64",
-            "num-kv-connections", "16"
+            "max-http-connections", "128",
+            "num-kv-connections", "8"
         );
         
         // Apply configuration (from YAML or defaults) and show what's being used
