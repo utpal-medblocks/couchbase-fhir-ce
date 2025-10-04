@@ -20,6 +20,7 @@ import {
   YAxis,
   CartesianGrid,
   Tooltip,
+  Legend,
   ResponsiveContainer,
 } from "recharts";
 import {
@@ -368,6 +369,15 @@ const FtsMetricsCharts: React.FC<FtsMetricsChartsProps> = ({
               labelFormatter={(label) => `${label}`}
               labelStyle={{ color: tooltipTextColor, fontSize: "12px" }}
             />
+            {relevantMetrics.length > 1 && (
+              <Legend
+                wrapperStyle={{ fontSize: "10px" }}
+                formatter={(value) => {
+                  const metric = relevantMetrics.find((m) => m.name === value);
+                  return metric?.label || value;
+                }}
+              />
+            )}
             {relevantMetrics
               .filter((metric) => metric && metric.name && metric.label)
               .map((metric, index) => {
