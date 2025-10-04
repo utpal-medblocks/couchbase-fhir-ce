@@ -715,15 +715,6 @@ public class FhirBundleProcessingService {
         return outcome;
     }
 
-    // Removed unused getCurrentFhirTimestamp method
-
-
-
-    /**
-     * Create validation failure response
-     */
-
-
     private String getDefaultConnection() {
         List<String> connections = connectionService.getActiveConnections();
         return connections.isEmpty() ? DEFAULT_CONNECTION : connections.get(0);

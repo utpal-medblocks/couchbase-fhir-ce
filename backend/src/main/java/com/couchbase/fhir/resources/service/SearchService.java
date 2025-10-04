@@ -9,7 +9,6 @@ import ca.uhn.fhir.rest.server.exceptions.InvalidRequestException;
 import com.couchbase.client.java.search.SearchQuery;
 import com.couchbase.client.java.search.sort.SearchSort;
 import com.couchbase.fhir.resources.config.TenantContextHolder;
-import com.couchbase.fhir.resources.repository.FhirResourceDaoImpl;
 import com.couchbase.fhir.resources.search.validation.FhirSearchParameterPreprocessor;
 import com.couchbase.fhir.resources.search.validation.FhirSearchValidationException;
 import com.couchbase.fhir.resources.util.*;
@@ -58,11 +57,7 @@ public class SearchService {
     private com.couchbase.admin.connections.service.ConnectionService connectionService;
     
     @Autowired
-    private FHIRResourceService serviceFactory;
-    
-    @Autowired
     private SearchStateManager searchStateManager;
-    
     
     @Autowired
     private FhirConfig fhirConfig;
@@ -163,20 +158,6 @@ public class SearchService {
                         Map.Entry::getKey,
                         e -> Arrays.asList(e.getValue())
                 ));
-
-        // Debug: Log what HAPI knows about this resource type's search parameters
-        // Commented out after confirming CareTeam search parameters - no longer needed
-        /*
-        try {
-            RuntimeResourceDefinition resourceDef = fhirContext.getResourceDefinition(resourceType);
-            logger.info("🔍 {} search parameters known by HAPI:", resourceType);
-            for (RuntimeSearchParam param : resourceDef.getSearchParams()) {
-                logger.info("  - {} (type: {}, path: {})", param.getName(), param.getParamType(), param.getPath());
-            }
-        } catch (Exception e) {
-            logger.warn("🔍 Failed to get HAPI search parameters for {}: {}", resourceType, e.getMessage());
-        }
-        */
         
         // Validate search parameters
         try {
@@ -1009,137 +990,7 @@ public class SearchService {
         return bundle;
     }
     
-    /**
-     * Handle _include search with two-query strategy (DEPRECATED - use handleMultipleIncludeSearch)
-     */
-    private Bundle handleIncludeSearch(String primaryResourceType, List<SearchQuery> ftsQueries,
-                                     Include include, int count,
-                                     SummaryEnum summaryMode, Set<String> elements,
-                                     String totalMode, String bucketName, RequestDetails requestDetails) {
-        
-        logger.info("🔍 ===== ENTERING handleIncludeSearch =====");
-        logger.info("🔍 Handling _include search: {} -> {}", primaryResourceType, include.getValue());
-        logger.info("🔍 HAPI Include details - ParamType: '{}', ParamName: '{}', ParamTargetType: '{}'", 
-                   include.getParamType(), include.getParamName(), include.getParamTargetType());
-        
-        // Let's see what HAPI knows about this search parameter
-        logger.info("🔍 Looking up search parameter definition from HAPI...");
-        RuntimeSearchParam searchParam = null;
-        try {
-            searchParam = fhirContext
-                    .getResourceDefinition(include.getParamType())
-                    .getSearchParam(include.getParamName());
-            logger.info("🔍 Search parameter lookup completed, result: {}", searchParam != null ? "found" : "not found");
-        } catch (Exception e) {
-            logger.error("🔍 ❌ Error looking up search parameter: {} - {}", e.getClass().getName(), e.getMessage(), e);
-            throw e;
-        }
-        if (searchParam != null) {
-            logger.debug("🔍 HAPI SearchParam details - Path: '{}', Type: '{}'", 
-                       searchParam.getPath(), searchParam.getParamType());
-        }
-        
-        // HAPI's Include already provides the target resource type
-        String targetResourceType = include.getParamTargetType();
-        if (targetResourceType == null) {
-            // Fallback: use HAPI's search parameter definitions
-            targetResourceType = determineTargetResourceType(include.getParamType(), include.getParamName());
-        }
-        logger.debug("🔍 Target resource type for inclusion: '{}'", targetResourceType);
 
-        // Step 1: Execute primary resource search using new pagination strategy
-        FtsSearchService.FtsSearchResult ftsResult = ftsKvSearchService.searchForAllKeys(ftsQueries, primaryResourceType, null);
-        List<String> firstPageKeys = ftsResult.getDocumentKeys().size() <= count ? 
-            ftsResult.getDocumentKeys() : ftsResult.getDocumentKeys().subList(0, count);
-        List<Resource> primaryResources = ftsKvSearchService.getDocumentsFromKeys(firstPageKeys, primaryResourceType);
-        
-        if (primaryResources.isEmpty()) {
-            logger.info("🔍 No primary resources found, returning empty bundle");
-            return createEmptyBundle();
-        }
-        
-        // Step 2: Extract full reference strings from primary resources
-        logger.info("🔍 Found {} primary resources, extracting references for parameter '{}'", 
-                   primaryResources.size(), include.getParamName());
-        List<String> includeReferences = extractReferencesFromResources(primaryResources, include.getParamName());
-        
-        if (includeReferences.isEmpty()) {
-            logger.warn("🔍 No references found in {} primary resources for parameter '{}', returning primary resources only", 
-                       primaryResources.size(), include.getParamName());
-            return buildBundleWithPrimaryResourcesOnly(primaryResources, primaryResourceType, summaryMode, elements);
-        }
-        
-        logger.debug("🔍 Extracted {} references: {}", includeReferences.size(), includeReferences);
-        
-        // Step 3: Group references by resource type and get included resources
-        // References can be heterogeneous (e.g., "Observation/123", "VisionPrescription/456")
-        List<Resource> includedResources = getResourcesByReferences(includeReferences, bucketName);
-        logger.info("🔍 Retrieved {} included resources from {} references", includedResources.size(), includeReferences.size());
-        
-        // Step 4: Create search state for pagination (reuse revInclude fields for include)
-        String baseUrl = extractBaseUrl(requestDetails, bucketName);
-        SearchState searchState = SearchState.builder()
-            .searchType("include")
-            .primaryResourceType(primaryResourceType)
-            .originalSearchCriteria(new HashMap<>()) // We'll need the original search criteria
-            .cachedFtsQueries(new ArrayList<>(ftsQueries))
-            .revIncludeResourceType(targetResourceType) // Reuse for include target type
-            .revIncludeSearchParam(include.getParamName()) // Reuse for include param name
-            .totalPrimaryResources(primaryResources.size()) // Use current primary resources count
-            .currentPrimaryOffset(primaryResources.size()) // Current primary resources processed
-            .pageSize(count)
-            .bucketName(bucketName)
-            .baseUrl(baseUrl)
-            .build();
-        
-        // Get total count of included resources (all Patient IDs that could be included)
-        int totalIncludedCount = includedResources.size(); // For now, just what we found on this page
-        searchState.setTotalRevIncludeResources(totalIncludedCount); // Reuse field
-        searchState.setCurrentRevIncludeOffset(0); // No include resource pagination yet
-        
-        String continuationToken = searchStateManager.storeSearchState(searchState);
-        
-        // Step 5: Build response bundle
-        Bundle bundle = new Bundle();
-        bundle.setType(Bundle.BundleType.SEARCHSET);
-        bundle.setTotal(primaryResources.size()); // Only count primary resources, not included ones
-        
-        // Add primary resources (search mode = "match")
-        for (Resource resource : primaryResources) {
-            Resource filteredResource = applyResourceFiltering(resource, summaryMode, elements);
-            bundle.addEntry()
-                    .setResource(filteredResource)
-                    .setFullUrl(primaryResourceType + "/" + filteredResource.getIdElement().getIdPart())
-                    .getSearch()
-                    .setMode(Bundle.SearchEntryMode.MATCH);
-        }
-        
-        // Add included resources (search mode = "include")
-        // Note: included resources can be of different types (heterogeneous)
-        for (Resource resource : includedResources) {
-            Resource filteredResource = applyResourceFiltering(resource, summaryMode, elements);
-            String resourceType = filteredResource.fhirType(); // Use actual resource type
-            bundle.addEntry()
-                    .setResource(filteredResource)
-                    .setFullUrl(resourceType + "/" + filteredResource.getIdElement().getIdPart())
-                    .getSearch()
-                    .setMode(Bundle.SearchEntryMode.INCLUDE);
-        }
-        
-        // Add next link if there are more primary resources to paginate through
-        // For _include, we paginate through primary resources and include their references on each page
-        if (primaryResources.size() == count) {
-            // Assume there might be more primary resources (we'd need total count for accuracy)
-            bundle.addLink()
-                    .setRelation("next")
-                    .setUrl(buildNextPageUrl(continuationToken, searchState.getCurrentPrimaryOffset(), primaryResourceType, bucketName, count, searchState.getBaseUrl()));
-        }
-        
-        logger.debug("🔍 Returning _include bundle: {} primary + {} included resources", 
-                   primaryResources.size(), includedResources.size());
-        
-        return bundle;
-    }
     
     /**
      * Handle chained search with two-query strategy
@@ -1535,90 +1386,6 @@ public class SearchService {
                "&_offset=" + offset + "&_count=" + count;
     }
     
-    // ========== Regular Search Pagination Methods ==========
-    
-    /**
-     * Determine if a search should use pagination-ready flow
-     * This determines if we should use the flow that CAN create SearchState if needed,
-     * but SearchState will only be created if results.size() == count
-     */
-    private boolean shouldPaginate(Map<String, String> searchParams, int count) {
-        // Use pagination-ready flow if _count is explicitly set and reasonable
-        // This allows us to create SearchState ONLY if we get exactly 'count' results
-        if (count > 0 && count <= 1000) {
-            return true;
-        }
-        
-        // Use pagination-ready flow for potentially large result sets
-        // But SearchState will only be created if results indicate more data exists
-        if (hasLargeResultPotential(searchParams)) {
-            return true;
-        }
-        
-        // Default to non-paginated for simple, specific searches
-        return false;
-    }
-    
-    /**
-     * Check if search parameters indicate potentially large result sets
-     */
-    private boolean hasLargeResultPotential(Map<String, String> searchParams) {
-        // Broad searches that could return many results
-        if (searchParams.containsKey("name") || 
-            searchParams.containsKey("family") || 
-            searchParams.containsKey("given") ||
-            searchParams.containsKey("birthdate")) {
-            return true;
-        }
-        
-        // Few search criteria = potentially large results
-        if (searchParams.size() <= 2) {
-            return true;
-        }
-        
-        return false;
-    }
-    
-    
-    
-    
-    // ========== Include Search Helper Methods ==========
-    
-    /**
-     * Determine target resource type when HAPI's Include doesn't provide it
-     */
-    private String determineTargetResourceType(String paramType, String paramName) {
-        try {
-            RuntimeSearchParam searchParam = fhirContext
-                    .getResourceDefinition(paramType)
-                    .getSearchParam(paramName);
-            
-            if (searchParam != null) {
-                // Extract target types from the path
-                String path = searchParam.getPath();
-                if (path != null) {
-                    if (path.contains("is Patient")) return "Patient";
-                    if (path.contains("is Practitioner")) return "Practitioner";
-                    if (path.contains("is Organization")) return "Organization";
-                }
-            }
-        } catch (Exception e) {
-            logger.debug("Failed to determine target resource type from HAPI: {}", e.getMessage());
-        }
-        
-        // Hardcoded fallback for common cases
-        if ("patient".equals(paramName) || "subject".equals(paramName)) {
-            return "Patient";
-        } else if ("practitioner".equals(paramName)) {
-            return "Practitioner";
-        } else if ("organization".equals(paramName)) {
-            return "Organization";
-        }
-        
-        // Default: capitalize the parameter name
-        return paramName.substring(0, 1).toUpperCase() + paramName.substring(1);
-    }
-    
     /**
      * Extract reference IDs from primary resources based on the search parameter
      */
@@ -1766,12 +1533,10 @@ public class SearchService {
             logger.warn("🔍 Failed to resolve field path for '{}': {}", searchParam, e.getMessage());
         }
         
-        // Fallback to old single-value method for simple cases
+        // Log if fallback would be needed (for monitoring purposes)
         if (references.isEmpty()) {
-            String singleRef = extractReferenceFromResource(resource, searchParam);
-            if (singleRef != null) {
-                references.add(singleRef);
-            }
+            logger.info("🔍 No references found for search param '{}' on resource type '{}' - consider updating field mappings", 
+                       searchParam, resource.getResourceType());
         }
         
         return references;
@@ -1862,99 +1627,6 @@ public class SearchService {
     }
     
     /**
-     * Extract reference value from a resource using the search parameter (OLD METHOD - kept for fallback)
-     */
-    private String extractReferenceFromResource(Resource resource, String searchParam) {
-        logger.debug("🔍 Looking for reference field '{}' in resource {}", searchParam, resource.fhirType());
-        
-        // Get the HAPI search parameter to resolve the correct field path
-        try {
-            RuntimeSearchParam hapiSearchParam = fhirContext
-                    .getResourceDefinition(resource.fhirType())
-                    .getSearchParam(searchParam);
-            
-            if (hapiSearchParam != null && hapiSearchParam.getPath() != null) {
-                String path = hapiSearchParam.getPath();
-                logger.debug("🔍 HAPI path for '{}': {}", searchParam, path);
-                
-                // Use FHIRPathParser to resolve casting expressions
-                FHIRPathParser.ParsedExpression parsed = FHIRPathParser.parse(path);
-                String fieldPath = parsed.getPrimaryFieldPath();
-                
-                if (fieldPath != null) {
-                    logger.debug("🔍 Resolved field path: {}", fieldPath);
-
-                    // Convert field path to getter method name
-                    String methodName = fieldPathToGetterMethod(fieldPath);
-                    logger.debug("🔍 Trying getter method: {}", methodName);
-
-                    return tryGetReference(resource, methodName);
-                }
-            }
-        } catch (Exception e) {
-            logger.warn("🔍 Failed to resolve field path for '{}': {}", searchParam, e.getMessage());
-        }
-        
-        // Fallback to hardcoded mappings for common cases
-        if ("subject".equals(searchParam)) {
-            return tryGetReference(resource, "getSubject");
-        } else if ("patient".equals(searchParam)) {
-            // Try direct patient field first
-            String directPatient = tryGetReference(resource, "getPatient");
-            if (directPatient != null) {
-                return directPatient;
-            }
-            
-            // For resources like Observation, the patient is in the "subject" field
-            String subjectPatient = tryGetReference(resource, "getSubject");
-            if (subjectPatient != null && subjectPatient.contains("Patient/")) {
-                return subjectPatient;
-            }
-        }
-        
-        return null;
-    }
-    
-    /**
-     * Convert field path to getter method name
-     * Examples: "medicationReference" -> "getMedicationReference"
-     *           "subject" -> "getSubject"
-     */
-    private String fieldPathToGetterMethod(String fieldPath) {
-        if (fieldPath == null || fieldPath.isEmpty()) {
-            return null;
-        }
-        
-        // Handle nested paths by taking only the first part
-        String[] parts = fieldPath.split("\\.");
-        String fieldName = parts[0];
-        
-        // Convert to getter method name: capitalize first letter and prepend "get"
-        return "get" + fieldName.substring(0, 1).toUpperCase() + fieldName.substring(1);
-    }
-    
-    /**
-     * Helper method to try getting a reference using reflection
-     */
-    private String tryGetReference(Resource resource, String methodName) {
-        try {
-            java.lang.reflect.Method getMethod = resource.getClass().getMethod(methodName);
-            Object referenceObj = getMethod.invoke(resource);
-            if (referenceObj != null) {
-                java.lang.reflect.Method getReference = referenceObj.getClass().getMethod("getReference");
-                String reference = (String) getReference.invoke(referenceObj);
-                logger.debug("🔍 Found reference via {}: {}", methodName, reference);
-                return reference;
-            } else {
-                logger.warn("🔍 Method {} returned null reference object", methodName);
-            }
-        } catch (Exception e) {
-            logger.error("🔍 No {} method found or error accessing it: {}", methodName, e.getMessage());
-        }
-        return null;
-    }
-    
-    /**
      * Extract ID from a FHIR reference string
      */
     private String extractIdFromReference(String reference) {
@@ -2002,27 +1674,7 @@ public class SearchService {
         }
     }
     
-    /**
-     * Build bundle with only primary resources (no includes)
-     */
-    private Bundle buildBundleWithPrimaryResourcesOnly(List<Resource> primaryResources, String primaryResourceType,
-                                                     SummaryEnum summaryMode, Set<String> elements) {
-        Bundle bundle = new Bundle();
-        bundle.setType(Bundle.BundleType.SEARCHSET);
-        bundle.setTotal(primaryResources.size());
-        
-        // Add primary resources (search mode = "match")
-        for (Resource resource : primaryResources) {
-            Resource filteredResource = applyResourceFiltering(resource, summaryMode, elements);
-            bundle.addEntry()
-                    .setResource(filteredResource)
-                    .setFullUrl(primaryResourceType + "/" + filteredResource.getIdElement().getIdPart())
-                    .getSearch()
-                    .setMode(Bundle.SearchEntryMode.MATCH);
-        }
-        
-        return bundle;
-    }
+
     
     /**
      * Handle pagination for chained searches
