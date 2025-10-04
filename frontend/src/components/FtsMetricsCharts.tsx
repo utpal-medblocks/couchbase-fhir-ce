@@ -301,10 +301,10 @@ const FtsMetricsCharts: React.FC<FtsMetricsChartsProps> = ({
       const colorArray = Array.isArray(colors) ? colors : [colors];
 
       return (
-        <ResponsiveContainer width="100%" height={180}>
+        <ResponsiveContainer width="100%" height={200}>
           <LineChart
             data={chartData}
-            margin={{ top: 5, right: 10, left: 10, bottom: 5 }}
+            margin={{ top: 5, right: 5, left: 5, bottom: 10 }}
           >
             <CartesianGrid strokeDasharray="3 3" stroke="#e0e0e0" />
             <XAxis
@@ -325,13 +325,7 @@ const FtsMetricsCharts: React.FC<FtsMetricsChartsProps> = ({
                   ? "end"
                   : "middle"
               }
-              height={
-                timeRange === "DAY" ||
-                timeRange === "WEEK" ||
-                timeRange === "MONTH"
-                  ? 80
-                  : 60
-              }
+              height={timeRange === "DAY" ? 50 : 30}
               axisLine={{ stroke: "#e0e0e0" }}
               tickLine={{ stroke: "#e0e0e0" }}
             />

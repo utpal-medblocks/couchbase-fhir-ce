@@ -262,9 +262,9 @@ public class ConnectionService {
     public Cluster getConnection(String connectionName) {
         Cluster cluster = activeConnections.get(connectionName);
         if (cluster != null) {
-            logger.debug("Reusing existing connection: {} (total active: {})", connectionName, activeConnections.size());
+            // logger.debug("Reusing existing connection: {} (total active: {})", connectionName, activeConnections.size());
         } else {
-            logger.warn("No active connection found for: {} (available: {})", connectionName, activeConnections.keySet());
+            logger.error("No active connection found for: {} (available: {})", connectionName, activeConnections.keySet());
         }
         return cluster;
     }
