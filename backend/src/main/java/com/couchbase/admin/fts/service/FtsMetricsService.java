@@ -69,12 +69,14 @@ public class FtsMetricsService {
                                                        FtsMetricsRequest.TimeRange timeRange) {
         List<FtsMetricsRequest> requests = new ArrayList<>();
         
-        // Create separate request for each metric
+        // Updated metric names according to new requirements
         String[] metricNames = {
-            "fts_total_grpc_queries",
-            "fts_avg_grpc_queries_latency", 
-            "fts_doc_count",
-            "fts_num_bytes_used_disk"
+            "fts_total_queries",                // Chart 1: Search Query Rate (with irate)
+            "fts_total_queries_error",         // Chart 1: Search Query Error Rate (with irate) 
+            "fts_avg_queries_latency",         // Chart 2: Average Latency (with irate)
+            "fts_doc_count",                   // Chart 3: Document Count (NO irate)
+            "fts_num_mutations_to_index",      // Chart 4: Mutation Remaining (NO irate)
+            "fts_num_recs_to_persist"          // Chart 4: Docs Remaining (NO irate)
         };
         
         for (String metricName : metricNames) {
@@ -93,15 +95,19 @@ public class FtsMetricsService {
             request.setNodesAggregation("sum");
             request.setAlignTimestamps(true);
             
-            // Only set applyFunctions if needed (like BucketMetricsService pattern)
-            if ("fts_total_grpc_queries".equals(metricName) || "fts_avg_grpc_queries_latency".equals(metricName)) {
+            // Apply irate function to specific metrics as specified:
+            // Chart 1 & 2: with irate, Chart 3 & 4: without irate
+            if ("fts_total_queries".equals(metricName) || 
+                "fts_total_queries_error".equals(metricName) ||
+                "fts_avg_queries_latency".equals(metricName)) {
                 request.setApplyFunctions(Arrays.asList("irate"));
             }
+            // fts_doc_count, fts_num_mutations_to_index, fts_num_recs_to_persist do NOT get irate
             
             requests.add(request);
         }
         
-        // Built requests for 5 metrics
+        // Built requests for 6 metrics (updated from 4)
         return requests;
     }
 
@@ -233,10 +239,12 @@ public class FtsMetricsService {
      */
     private String getMetricLabel(String metricName) {
         switch (metricName) {
-            case "fts_total_grpc_queries": return "Total Queries";
-            case "fts_avg_grpc_queries_latency": return "Avg Query Latency";
+            case "fts_total_queries": return "Search Query Rate";
+            case "fts_total_queries_error": return "Search Query Error Rate";
+            case "fts_avg_queries_latency": return "Average Latency";
             case "fts_doc_count": return "Document Count";
-            case "fts_num_bytes_used_disk": return "Disk Usage";
+            case "fts_num_mutations_to_index": return "Mutation Remaining";
+            case "fts_num_recs_to_persist": return "Docs Remaining";
             default: return metricName;
         }
     }
@@ -246,10 +254,12 @@ public class FtsMetricsService {
      */
     private String getMetricUnit(String metricName) {
         switch (metricName) {
-            case "fts_total_grpc_queries": return "queries";
-            case "fts_avg_grpc_queries_latency": return "ms";
+            case "fts_total_queries": return "queries";
+            case "fts_total_queries_error": return "queries";
+            case "fts_avg_queries_latency": return "ms";
             case "fts_doc_count": return "docs";
-            case "fts_num_bytes_used_disk": return "bytes";
+            case "fts_num_mutations_to_index": return "count";
+            case "fts_num_recs_to_persist": return "count";
             default: return "";
         }
     }

@@ -208,20 +208,31 @@ const FtsMetricsCharts: React.FC<FtsMetricsChartsProps> = ({
     if (unit === "ms") {
       return `${value.toFixed(2)} ms`;
     }
-    if (unit === "docs") {
-      return Math.round(value).toLocaleString(); // Always whole numbers for document count
+    if (unit === "docs" || unit === "count") {
+      return Math.round(value).toLocaleString(); // Always whole numbers for document/item count
+    }
+    if (unit === "queries") {
+      return Math.round(value).toLocaleString(); // Always whole numbers for queries
     }
     return value.toLocaleString();
   };
 
   const prepareChartData = (metricData: FtsMetricData[]): ChartDataPoint[] => {
-    if (!metricData.length) return [];
+    if (!metricData || metricData.length === 0) return [];
 
-    // Get all unique timestamps
+    // Get all unique timestamps, with safety checks
     const allTimestamps = new Set<number>();
     metricData.forEach((metric) => {
-      metric.values.forEach((point) => allTimestamps.add(point.timestamp));
+      if (metric && metric.values && Array.isArray(metric.values)) {
+        metric.values.forEach((point) => {
+          if (point && typeof point.timestamp === "number") {
+            allTimestamps.add(point.timestamp);
+          }
+        });
+      }
     });
+
+    if (allTimestamps.size === 0) return [];
 
     // Sort timestamps
     const sortedTimestamps = Array.from(allTimestamps).sort();
@@ -234,8 +245,12 @@ const FtsMetricsCharts: React.FC<FtsMetricsChartsProps> = ({
       };
 
       metricData.forEach((metric) => {
-        const point = metric.values.find((p) => p.timestamp === timestamp);
-        dataPoint[metric.name] = point?.value ?? 0;
+        if (metric && metric.name && metric.values) {
+          const point = metric.values.find(
+            (p) => p && p.timestamp === timestamp
+          );
+          dataPoint[metric.name] = point?.value ?? 0;
+        }
       });
 
       return dataPoint;
@@ -243,7 +258,12 @@ const FtsMetricsCharts: React.FC<FtsMetricsChartsProps> = ({
   };
 
   const renderChart = useCallback(
-    (title: string, metricNames: string[], color: string, unit: string) => {
+    (
+      title: string,
+      metricNames: string[],
+      colors: string | string[],
+      unit: string
+    ) => {
       if (!metrics || !metrics.data.length) {
         return (
           <Box
@@ -261,6 +281,23 @@ const FtsMetricsCharts: React.FC<FtsMetricsChartsProps> = ({
         metricNames.includes(m.name)
       );
       const chartData = prepareChartData(relevantMetrics);
+
+      // Early return if no valid chart data
+      if (!chartData || chartData.length === 0) {
+        return (
+          <Box
+            display="flex"
+            justifyContent="center"
+            alignItems="center"
+            height={180}
+          >
+            <Typography color="text.secondary">No data available</Typography>
+          </Box>
+        );
+      }
+
+      // Handle single color or array of colors
+      const colorArray = Array.isArray(colors) ? colors : [colors];
 
       return (
         <ResponsiveContainer width="100%" height={180}>
@@ -309,9 +346,11 @@ const FtsMetricsCharts: React.FC<FtsMetricsChartsProps> = ({
                   ? [0, "dataMax"]
                   : unit === "ms"
                   ? [0, "dataMax"]
+                  : unit === "count"
+                  ? [0, "dataMax"]
                   : ["auto", "auto"]
               }
-              allowDecimals={unit !== "docs"}
+              allowDecimals={unit !== "docs" && unit !== "count"}
             />
             <Tooltip
               contentStyle={{
@@ -322,23 +361,31 @@ const FtsMetricsCharts: React.FC<FtsMetricsChartsProps> = ({
                 fontSize: "12px",
                 padding: "4px 6px",
               }}
-              formatter={(value: number) => [formatValue(value, unit), title]}
+              formatter={(value: number, name: string) => {
+                const metric = relevantMetrics.find((m) => m.name === name);
+                return [formatValue(value, unit), metric?.label || name];
+              }}
               labelFormatter={(label) => `${label}`}
               labelStyle={{ color: tooltipTextColor, fontSize: "12px" }}
             />
-            {relevantMetrics.map((metric) => (
-              <Line
-                key={metric.name}
-                type="monotone"
-                dataKey={metric.name}
-                stroke={color}
-                strokeWidth={2.5}
-                dot={false}
-                name={metric.label}
-                activeDot={{ r: 4, fill: color }}
-                isAnimationActive={false}
-              />
-            ))}
+            {relevantMetrics
+              .filter((metric) => metric && metric.name && metric.label)
+              .map((metric, index) => {
+                const color = colorArray[index % colorArray.length];
+                return (
+                  <Line
+                    key={metric.name}
+                    type="monotone"
+                    dataKey={metric.name}
+                    stroke={color || "#8884d8"}
+                    strokeWidth={2.5}
+                    dot={false}
+                    name={metric.label}
+                    activeDot={{ r: 4, fill: color || "#8884d8" }}
+                    isAnimationActive={false}
+                  />
+                );
+              })}
           </LineChart>
         </ResponsiveContainer>
       );
@@ -396,23 +443,23 @@ const FtsMetricsCharts: React.FC<FtsMetricsChartsProps> = ({
       >
         <Paper sx={{ p: 1 }}>
           <Typography variant="subtitle2" gutterBottom>
-            Search Rate (per second)
+            Search Query Rate
           </Typography>
           {renderChart(
-            "Total Queries",
-            ["fts_total_grpc_queries"],
-            chartColors.primary,
+            "Query Rate",
+            ["fts_total_queries", "fts_total_queries_error"],
+            [chartColors.primary, chartColors.error],
             "queries"
           )}
         </Paper>
 
         <Paper sx={{ p: 1 }}>
           <Typography variant="subtitle2" gutterBottom>
-            Average Search Latency (ms)
+            Average Latency
           </Typography>
           {renderChart(
             "Avg Latency",
-            ["fts_avg_grpc_queries_latency"],
+            ["fts_avg_queries_latency"],
             chartColors.secondary,
             "ms"
           )}
@@ -432,13 +479,13 @@ const FtsMetricsCharts: React.FC<FtsMetricsChartsProps> = ({
 
         <Paper sx={{ p: 1 }}>
           <Typography variant="subtitle2" gutterBottom>
-            Disk Usage
+            Indexing Queue
           </Typography>
           {renderChart(
-            "Disk Usage",
-            ["fts_num_bytes_used_disk"],
-            chartColors.info,
-            "bytes"
+            "Remaining Work",
+            ["fts_num_mutations_to_index", "fts_num_recs_to_persist"],
+            [chartColors.error, chartColors.success],
+            "count"
           )}
         </Paper>
       </Box>

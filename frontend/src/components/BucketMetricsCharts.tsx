@@ -256,7 +256,7 @@ const BucketMetricsCharts: React.FC<BucketMetricsChartsProps> = ({
     {
       title: "Operations/sec",
       metrics: ["kv_ops", "kv_ops_get", "kv_ops_set"],
-      colors: [chartColors.primary, chartColors.success, chartColors.warning],
+      colors: [chartColors.info, chartColors.success, chartColors.error],
       unit: "ops/sec",
       type: "line" as const,
     },
@@ -267,7 +267,7 @@ const BucketMetricsCharts: React.FC<BucketMetricsChartsProps> = ({
         "fts_total_queries_rejected_by_herder",
         "fts_curr_batches_blocked_by_herder",
       ],
-      colors: [chartColors.teal, chartColors.error, chartColors.info],
+      colors: [chartColors.success, chartColors.secondary, chartColors.error],
       unit: "/sec",
       type: "line" as const,
     },
