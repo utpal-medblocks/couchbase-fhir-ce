@@ -77,7 +77,7 @@ jobs:
           else
             echo "SERVER_TAGS=${{ env.REGISTRY }}/${{ github.repository }}/fhir-server:${SHA}" >> $GITHUB_OUTPUT
             echo "ADMIN_TAGS=${{ env.REGISTRY }}/${{ github.repository }}/fhir-admin:${SHA}"   >> $GITHUB_OUTPUT
-
+          fi
       - name: Build and push fhir-server
         if: ${{ steps.meta.outputs.SERVER_TAGS != '' }}
         uses: docker/build-push-action@v5
