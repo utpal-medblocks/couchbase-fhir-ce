@@ -6,7 +6,6 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
-import java.util.List;
 import java.util.Optional;
 
 /**
@@ -84,99 +83,8 @@ public class CollectionRoutingService {
         return mappingService.isResourceSupported(resourceType);
     }
     
-    /**
-     * Build a N1QL query that targets the correct collection for a resource type
-     * @param resourceType The FHIR resource type
-     * @param baseQuery The base N1QL query (without collection specification)
-     * @return The query with the correct collection path
-     * @throws IllegalArgumentException if the resource type is not supported
-     */
-    public String buildCollectionQuery(String resourceType, String baseQuery) {
-        String collection = getTargetCollection(resourceType);
-        // Replace the old pattern `Resources.resourceType` with `Resources.collection`
-        return baseQuery.replace(
-            DEFAULT_SCOPE + "." + resourceType, 
-            DEFAULT_SCOPE + "." + collection
-        );
-    }
-    
-    /**
-     * Build a N1QL query for reading a specific resource from the correct collection
-     * @param bucketName The bucket name
-     * @param resourceType The FHIR resource type
-     * @param documentKey The document key
-     * @return The N1QL query string
-     */
-    public String buildReadQuery(String bucketName, String resourceType, String documentKey) {
-        String collection = getTargetCollection(resourceType);
-        return String.format(
-            "SELECT c.* " +
-            "FROM `%s`.`%s`.`%s` c " +
-            "USE KEYS '%s'",
-            bucketName, DEFAULT_SCOPE, collection, documentKey
-        );
-    }
-    
-    /**
-     * Build a N1QL query for reading multiple resources from the correct collection
-     * @param bucketName The bucket name
-     * @param resourceType The FHIR resource type
-     * @param documentKeys The list of document keys
-     * @return The N1QL query string
-     */
-    public String buildReadMultipleQuery(String bucketName, String resourceType, List<String> documentKeys) {
-        String collection = getTargetCollection(resourceType);
-        String keysArray = "[" + String.join(", ", documentKeys) + "]";
-        return String.format(
-            "SELECT c.* " +
-            "FROM `%s`.`%s`.`%s` c " +
-            "USE KEYS %s",
-            bucketName, DEFAULT_SCOPE, collection, keysArray
-        );
-    }
-    
-    /**
-     * Build a N1QL query for inserting a resource into the correct collection
-     * @param bucketName The bucket name
-     * @param resourceType The FHIR resource type
-     * @return The N1QL INSERT query string
-     */
-    public String buildInsertQuery(String bucketName, String resourceType) {
-        String collection = getTargetCollection(resourceType);
-        return String.format(
-            "INSERT INTO `%s`.`%s`.`%s` (KEY, VALUE) VALUES ($key, $value)",
-            bucketName, DEFAULT_SCOPE, collection
-        );
-    }
-    
-    /**
-     * Build a N1QL query for updating a resource in the correct collection
-     * @param bucketName The bucket name
-     * @param resourceType The FHIR resource type
-     * @return The N1QL UPSERT query string
-     */
-    public String buildUpsertQuery(String bucketName, String resourceType) {
-        String collection = getTargetCollection(resourceType);
-        return String.format(
-            "UPSERT INTO `%s`.`%s`.`%s` (KEY, VALUE) VALUES ($key, $value)",
-            bucketName, DEFAULT_SCOPE, collection
-        );
-    }
-    
-    /**
-     * Build a N1QL query for deleting a resource from the correct collection
-     * @param bucketName The bucket name
-     * @param resourceType The FHIR resource type
-     * @param documentKey The document key
-     * @return The N1QL DELETE query string
-     */
-    public String buildDeleteQuery(String bucketName, String resourceType, String documentKey) {
-        String collection = getTargetCollection(resourceType);
-        return String.format(
-            "DELETE FROM `%s`.`%s`.`%s` USE KEYS '%s'",
-            bucketName, DEFAULT_SCOPE, collection, documentKey
-        );
-    }
+    // N1QL query builders removed - using direct KV operations for CRUD
+    // Only FTS operations and collection routing remain
     
     /**
      * Get routing statistics for monitoring/debugging

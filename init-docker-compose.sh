@@ -11,4 +11,4 @@ if [ -z "$SOCKET" ]; then
 fi
 
 # Replace all docker.sock mounts in docker-compose.yaml
-sed -i "s|/var/run/docker.sock:/var/run/docker.sock|$SOCKET:/var/run/docker.sock|g" docker-compose.yaml
+sed -i '' "s|/var/run/docker.sock:/var/run/docker.sock|$SOCKET:/var/run/docker.sock|g" docker-compose.yaml

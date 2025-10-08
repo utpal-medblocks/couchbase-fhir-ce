@@ -81,6 +81,14 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
         this.conditionalPutService = conditionalPutService;
     }
 
+    /**
+     * Get the correct FHIR resource type name (e.g., "List", "Patient") 
+     * instead of the Java class name (e.g., "ListResource", "Patient")
+     */
+    private String getFhirResourceType() {
+        return fhirContext.getResourceDefinition(resourceClass).getName();
+    }
+
     @Read
     public T read(@IdParam IdType theId) {
         String bucketName = TenantContextHolder.getTenantId();
@@ -92,7 +100,7 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
             throw new ca.uhn.fhir.rest.server.exceptions.InvalidRequestException(e.getMessage());
         }
         
-        return dao.read(resourceClass.getSimpleName(), theId.getIdPart() , bucketName).orElseThrow(() ->
+        return dao.read(getFhirResourceType(), theId.getIdPart() , bucketName).orElseThrow(() ->
                 new ResourceNotFoundException(theId));
     }
 
@@ -117,9 +125,14 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
         // Apply proper meta with version "1" for CREATE operations
         List<String> profiles = null;
         if (resource instanceof DomainResource && bucketConfig.isEnforceUSCore()) {
-            String profileUrl = "http://hl7.org/fhir/us/core/StructureDefinition/us-core-" + 
-                                resource.getClass().getSimpleName().toLowerCase();
-            profiles = List.of(profileUrl);
+            String resourceType = resource.fhirType();
+            // Only add US Core profiles for resources that actually have them
+            // List resource doesn't have a US Core profile, so skip it
+            if (!"List".equals(resourceType)) {
+                String profileUrl = "http://hl7.org/fhir/us/core/StructureDefinition/us-core-" + 
+                                    resourceType.toLowerCase();
+                profiles = List.of(profileUrl);
+            }
         }
         
         MetaRequest metaRequest = MetaRequest.forCreate(null, "1", profiles);
@@ -129,7 +142,8 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
             logger.debug("🔍 ResourceProvider: Added US Core profile: {}", profiles.get(0));
         }
         
-        logger.debug("🔍 ResourceProvider: Processing {} for bucket: {}", resourceClass.getSimpleName(), bucketName);
+        String resourceType = resource.fhirType();
+        logger.debug("🔍 ResourceProvider: Processing {} for bucket: {}", resourceType, bucketName);
         logger.debug("🔍 ResourceProvider: Bucket config - strict: {}, enforceUSCore: {}, validationDisabled: {}", 
             bucketConfig.isStrictValidation(), bucketConfig.isEnforceUSCore(), bucketConfig.isValidationDisabled());
         
@@ -174,25 +188,25 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
                     throw new UnprocessableEntityException("FHIR Validation failed (strict mode):\n" + issues.toString());
                 } else if (bucketConfig.isLenientValidation()) {
                     // Lenient mode: log warnings but continue
-                    logger.warn("FHIR Validation warnings for {} (lenient mode - continuing):", resourceClass.getSimpleName());
+                    logger.warn("FHIR Validation warnings for {} (lenient mode - continuing):", resourceType);
                     result.getMessages().forEach(msg -> 
                         logger.warn("  {}: {} - {}", msg.getSeverity(), msg.getLocationString(), msg.getMessage())
                     );
                 }
             } else {
-                logger.debug("🔍 ResourceProvider: ✅ FHIR validation PASSED for {} in bucket {}", resourceClass.getSimpleName(), bucketName);
+                logger.debug("🔍 ResourceProvider: ✅ FHIR validation PASSED for {} in bucket {}", resourceType, bucketName);
             }
         } else {
             logger.debug("🔍 ResourceProvider: FHIR Validation DISABLED for bucket: {}", bucketName);
         }
 
 
-        T created =  dao.create( resource.getClass().getSimpleName() , resource , bucketName).orElseThrow(() ->
+        T created =  dao.create( resourceType , resource , bucketName).orElseThrow(() ->
                 new InternalErrorException("Failed to create resource"));
         MethodOutcome outcome = new MethodOutcome();
         outcome.setCreated(true);
         outcome.setResource(created);
-        outcome.setId(new IdType(resourceClass.getSimpleName(), created.getIdElement().getIdPart()));
+        outcome.setId(new IdType(resourceType, created.getIdElement().getIdPart()));
         return outcome;
     }
 
@@ -217,7 +231,7 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
             throw new ca.uhn.fhir.rest.server.exceptions.InvalidRequestException(e.getMessage());
         }
 
-        String resourceType = resourceClass.getSimpleName();
+        String resourceType = getFhirResourceType();
         
         if (theId != null && theId.hasIdPart()) {
             // ID-based PUT: PUT /Patient/123
@@ -261,7 +275,7 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
      * Perform the actual PUT operation for both ID-based and conditional updates
      */
     private MethodOutcome performPut(T resource, String expectedId, String bucketName, boolean isConditionalCreate) throws IOException {
-        String resourceType = resourceClass.getSimpleName();
+        String resourceType = getFhirResourceType();
         String resourceId = resource.getIdElement() != null ? resource.getIdElement().getIdPart() : "new";
         
         logger.debug("🔄 PUT {}: Processing {} for ID {}", resourceType, 
@@ -312,7 +326,7 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
             throw new ca.uhn.fhir.rest.server.exceptions.InvalidRequestException(e.getMessage());
         }
 
-        String resourceType = resourceClass.getSimpleName();
+        String resourceType = getFhirResourceType();
         
         if (theId != null && theId.hasIdPart()) {
             // ID-based DELETE: DELETE /Patient/123
@@ -351,10 +365,7 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
             logger.debug("🔍 DELETE {}: Conditional criteria: {}", resourceType, searchCriteria);
             
             // Use SearchService to resolve the condition
-            com.couchbase.fhir.resources.service.ResolveResult resolveResult = searchService.resolveOne(resourceType, searchCriteria);
-
-            // com.couchbase.fhir.resources.service.ResolveResult resolveResult = 
-            //     searchService.resolveOne(resourceType, searchCriteria);
+            com.couchbase.fhir.resources.service.ResolveResult resolveResult = searchService.resolveConditional(resourceType, searchCriteria);
             
             switch (resolveResult.getStatus()) {
                 case ZERO:
@@ -412,7 +423,7 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
         @ca.uhn.fhir.rest.annotation.Patch
     public MethodOutcome patch(@IdParam IdType theId, PatchTypeEnum patchType, @ResourceParam String patchBody) throws IOException {
         String resourceId = theId.getIdPart();
-        String resourceType = resourceClass.getSimpleName();
+        String resourceType = getFhirResourceType();
         
         logger.debug("🔧 ResourceProvider: Delegating PATCH for {}/{} to PatchService", resourceType, resourceId);
         
@@ -429,7 +440,7 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
 
     @Search(allowUnknownParams = true)
     public Bundle search(RequestDetails requestDetails) {
-        String resourceType = resourceClass.getSimpleName();
+        String resourceType = getFhirResourceType();
         
         // Check if this is a pagination request
         Map<String, String[]> params = requestDetails.getParameters();

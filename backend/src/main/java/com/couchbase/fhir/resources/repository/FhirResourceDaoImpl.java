@@ -15,11 +15,8 @@ import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.TimeUnit;
-
-import static com.couchbase.client.java.query.QueryOptions.queryOptions;
 
 
 public class FhirResourceDaoImpl<T extends IBaseResource> implements  FhirResourceDao<T> {
@@ -35,10 +32,7 @@ public class FhirResourceDaoImpl<T extends IBaseResource> implements  FhirResour
     private final FhirContext fhirContext;
     private final CollectionRoutingService collectionRoutingService;
 
-    private final Class<T> resourceClass;
-
     public FhirResourceDaoImpl(Class<T> resourceClass , ConnectionService connectionService , FhirContext fhirContext, CollectionRoutingService collectionRoutingService) {
-        this.resourceClass = resourceClass;
         this.connectionService = connectionService;
         this.fhirContext = fhirContext;
         this.collectionRoutingService = collectionRoutingService;
@@ -56,17 +50,20 @@ public class FhirResourceDaoImpl<T extends IBaseResource> implements  FhirResour
             if (cluster == null) {
                 throw new RuntimeException("No active connection found: " + connectionName);
             }
-            // Build N1QL query to get specific document using ResourceType::id format
+            // Use direct KV get operation instead of N1QL
             String documentKey = resourceType + "/" + id;
-            String query = collectionRoutingService.buildReadQuery(bucketName, resourceType, documentKey);
-
-            logger.info("READ query: {}", query);
-            QueryResult result = cluster.query(query, queryOptions()
-                    .parameters(JsonObject.create().put("key", documentKey)));
-
-            if (result.rowsAsObject().isEmpty()) return Optional.empty();
-
-            JsonObject json = result.rowsAsObject().get(0);
+            String targetCollection = collectionRoutingService.getTargetCollection(resourceType);
+            
+            logger.info("KV GET: bucket={}, collection={}, key={}", bucketName, targetCollection, documentKey);
+            
+            // Get the collection and perform direct KV get
+            com.couchbase.client.java.Collection collection = cluster.bucket(bucketName)
+                    .scope(DEFAULT_SCOPE)
+                    .collection(targetCollection);
+            
+            com.couchbase.client.java.kv.GetResult result = collection.get(documentKey);
+            JsonObject json = result.contentAsObject();
+            
             @SuppressWarnings("unchecked")
             T resource = (T) fhirContext.newJsonParser().parseResource(json.toString());
             return Optional.of(resource);
@@ -94,28 +91,29 @@ public class FhirResourceDaoImpl<T extends IBaseResource> implements  FhirResour
                 throw new RuntimeException("No active connection found: " + connectionName);
             }
             
-            // Build document keys with ResourceType::id format
-            List<String> documentKeys = new ArrayList<>();
+            // Use direct KV bulk get operations instead of N1QL
+            String targetCollection = collectionRoutingService.getTargetCollection(resourceType);
+            com.couchbase.client.java.Collection collection = cluster.bucket(bucketName)
+                    .scope(DEFAULT_SCOPE)
+                    .collection(targetCollection);
+            
+            logger.info("KV BULK GET: bucket={}, collection={}, {} documents", bucketName, targetCollection, ids.size());
+            
+            // Perform individual KV gets (Couchbase doesn't have bulk get in sync API)
             for (String id : ids) {
-                documentKeys.add("'" + resourceType + "/" + id + "'");
-            }
-            
-            // Build N1QL query with USE KEYS array using routing service
-            String query = collectionRoutingService.buildReadMultipleQuery(bucketName, resourceType, documentKeys);
-
-            logger.info("READ MULTIPLE query: {}", query);
-            QueryResult result = cluster.query(query);
-
-            List<JsonObject> rows = result.rowsAsObject();
-            logger.debug("Found {}/{} {} resources", rows.size(), ids.size(), resourceType);
-            
-            for (JsonObject json : rows) {
                 try {
+                    String documentKey = resourceType + "/" + id;
+                    com.couchbase.client.java.kv.GetResult result = collection.get(documentKey);
+                    JsonObject json = result.contentAsObject();
+                    
                     @SuppressWarnings("unchecked")
                     T resource = (T) fhirContext.newJsonParser().parseResource(json.toString());
                     resources.add(resource);
+                } catch (com.couchbase.client.core.error.DocumentNotFoundException e) {
+                    logger.debug("Document not found: {}/{}", resourceType, id);
+                    // Skip missing documents
                 } catch (Exception e) {
-                    logger.warn("Failed to parse {} resource: {}", resourceType, e.getMessage());
+                    logger.warn("Failed to retrieve/parse {} resource {}: {}", resourceType, id, e.getMessage());
                 }
             }
             
@@ -140,18 +138,19 @@ public class FhirResourceDaoImpl<T extends IBaseResource> implements  FhirResour
                 throw new RuntimeException("No active connection found: " + connectionName);
             }
 
+            // Use direct KV insert operation instead of N1QL
             String documentKey = resourceType + "/" + resource.getIdElement().getIdPart();
-            System.out.println("document key --- ");
-            System.out.println(documentKey);
             String resourceJson = fhirContext.newJsonParser().encodeResourceToString(resource);
-
-            String insertQuery = collectionRoutingService.buildInsertQuery(bucketName, resourceType);
-
-            JsonObject params = JsonObject.create()
-                    .put("key", documentKey)
-                    .put("value", JsonObject.fromJson(resourceJson));
-
-            QueryResult result = cluster.query(insertQuery, queryOptions().parameters(params));
+            String targetCollection = collectionRoutingService.getTargetCollection(resourceType);
+            
+            logger.info("KV INSERT: bucket={}, collection={}, key={}", bucketName, targetCollection, documentKey);
+            
+            // Get the collection and perform direct KV insert
+            com.couchbase.client.java.Collection collection = cluster.bucket(bucketName)
+                    .scope(DEFAULT_SCOPE)
+                    .collection(targetCollection);
+            
+            collection.insert(documentKey, JsonObject.fromJson(resourceJson));
             logger.info("Successfully created {} with ID: {}", resourceType, documentKey);
             return Optional.of(resource);
 
@@ -182,7 +181,11 @@ public class FhirResourceDaoImpl<T extends IBaseResource> implements  FhirResour
             JsonParser parser = (JsonParser) fhirContext.newJsonParser();
             parser.setParserErrorHandler(new LenientErrorHandler().setErrorOnInvalidValue(false));
             rows.stream()  // Use sequential stream to preserve FTS sort order
-                    .map(row -> (T) parser.parseResource(row.toString()))
+                    .map(row -> {
+                        @SuppressWarnings("unchecked")
+                        T resource = (T) parser.parseResource(row.toString());
+                        return resource;
+                    })
                     .forEach(resources::add);
             
             long totalTimeMs = stopwatch.elapsed(TimeUnit.MILLISECONDS);

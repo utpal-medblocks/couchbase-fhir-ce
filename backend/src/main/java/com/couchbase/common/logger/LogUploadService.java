@@ -82,7 +82,6 @@ public class LogUploadService {
                 }
             }
         } catch (Exception e) {
-            System.err.println("Failed to load log upload config from config.yaml: " + e.getMessage());
         }
     }
 
@@ -117,8 +116,6 @@ public class LogUploadService {
                         .build(), file.toPath());
                 Files.delete(file.toPath());
             } catch (Exception e) {
-                System.err.println("Failed to upload log file to S3: " + file.getName() +
-                        ", error: " + e.getMessage());
             }
         }
     }

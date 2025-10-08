@@ -182,16 +182,8 @@ public class ClusterMetricsService {
                         logger.warn("Failed to check FHIR status for bucket {}: {}", bucketName, e.getMessage());
                     }
                     
-                    // Check index status for this bucket
-                    String bucketStatus = "Ready"; // Default
-                    try {
-                        Cluster cluster = connectionService.getConnection(connectionName);
-                        if (cluster != null) {
-                            bucketStatus = getBucketIndexStatus(cluster, bucketName);
-                        }
-                    } catch (Exception e) {
-                        logger.warn("Failed to check index status for bucket {}: {}", bucketName, e.getMessage());
-                    }
+                    // No GSI indexes in FTS-only architecture - always ready
+                    String bucketStatus = "Ready";
                     
                     // Create bucket metrics with placeholder values
                     ClusterMetrics.BucketMetrics bucketMetrics = new ClusterMetrics.BucketMetrics(
@@ -411,16 +403,8 @@ public class ClusterMetricsService {
                 logger.warn("Failed to check FHIR status for bucket {}: {}", name, e.getMessage());
             }
             
-            // Check index status for this bucket
-            String bucketStatus = "Ready"; // Default
-            try {
-                Cluster cluster = connectionService.getConnection(connectionName);
-                if (cluster != null) {
-                    bucketStatus = getBucketIndexStatus(cluster, name);
-                }
-            } catch (Exception e) {
-                logger.warn("Failed to check index status for bucket {}: {}", name, e.getMessage());
-            }
+            // No GSI indexes in FTS-only architecture - always ready
+            String bucketStatus = "Ready";
             
             // logger.info("Enhanced bucket {} stats - RAM: {}/{} MB, Items: {}, Ops/sec: {}, Disk Fetches: {}, Resident Ratio: {}%, Quota Used: {}%", 
             //     name, ramUsed, ramQuota, itemCount, opsPerSec, diskFetches, String.format("%.1f", residentRatio), String.format("%.1f", quotaPercentUsed));
@@ -469,26 +453,5 @@ public class ClusterMetricsService {
         return null;
     }
 
-    /**
-     * Check if a bucket has any indexes that are not online (i.e., still building)
-     */
-    private String getBucketIndexStatus(Cluster cluster, String bucketName) {
-        try {
-            // Query for any indexes that are not online
-            String sql = String.format(
-                "SELECT raw state FROM system:indexes WHERE `indexes`.`bucket_id` = '%s' AND state != 'online' LIMIT 1",
-                bucketName
-            );
-            
-            var result = cluster.query(sql);
-            var rows = result.rowsAs(String.class);
-            
-            // If we get any results, there are indexes still building
-            return rows.isEmpty() ? "Ready" : "Building";
-            
-        } catch (Exception e) {
-            logger.warn("Failed to check index status for bucket {}: {}", bucketName, e.getMessage());
-            return "Ready"; // Default to Ready if we can't check
-        }
-    }
+    // GSI index status checking removed - FTS-only architecture
 }

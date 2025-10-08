@@ -4,11 +4,15 @@ import com.couchbase.admin.connections.model.ConnectionRequest;
 import com.couchbase.admin.connections.model.ConnectionResponse;
 import com.couchbase.client.java.Cluster;
 import com.couchbase.client.java.ClusterOptions;
+import com.couchbase.client.java.env.ClusterEnvironment;
+import com.couchbase.client.core.msg.kv.DurabilityLevel;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -19,11 +23,49 @@ public class ConnectionService {
     
     private static final Logger logger = LoggerFactory.getLogger(ConnectionService.class);
     
+    // SDK Configuration Parameters with sensible defaults for high-concurrency FHIR workloads
+    @Value("${couchbase.sdk.max-http-connections:128}")
+    private int maxHttpConnections;
+    
+    @Value("${couchbase.sdk.num-kv-connections:8}")
+    private int numKvConnections;
+    
+    @Value("${couchbase.sdk.query-timeout-seconds:30}")
+    private int queryTimeoutSeconds;
+    
+    @Value("${couchbase.sdk.search-timeout-seconds:30}")
+    private int searchTimeoutSeconds;
+    
+    @Value("${couchbase.sdk.kv-timeout-seconds:10}")
+    private int kvTimeoutSeconds;
+    
+    @Value("${couchbase.sdk.connect-timeout-seconds:10}")
+    private int connectTimeoutSeconds;
+    
+    @Value("${couchbase.sdk.disconnect-timeout-seconds:10}")
+    private int disconnectTimeoutSeconds;
+    
+    @Value("${couchbase.sdk.enable-mutation-tokens:true}")
+    private boolean enableMutationTokens;
+    
+    // Transaction Configuration
+    // For single-node development, use NONE to avoid durability errors
+    // For production multi-node clusters, use MAJORITY or MAJORITY_AND_PERSIST_TO_ACTIVE
+    @Value("${couchbase.sdk.transaction-durability:NONE}")
+    private String transactionDurability;
+    
     // Store active connections
     private final Map<String, Cluster> activeConnections = new ConcurrentHashMap<>();
     
     // Store connection details including SSL status
     private final Map<String, ConnectionDetails> connectionDetails = new ConcurrentHashMap<>();
+    
+    // Cache Collection objects for reuse (avoid lookup overhead)
+    // Key format: "connectionName:bucketName:scopeName:collectionName"
+    private final Map<String, com.couchbase.client.java.Collection> collectionCache = new ConcurrentHashMap<>();
+    
+    // Track which buckets have been warmed up (to do it only once per bucket)
+    private final Map<String, Boolean> bucketWarmupStatus = new ConcurrentHashMap<>();
     
     // Store last connection error for frontend
     private volatile String lastConnectionError = null;
@@ -58,43 +100,72 @@ public class ConnectionService {
         logger.info("Creating connection: {}", request.getName());
         
         try {
+            // Configure cluster environment with comprehensive SDK tuning for high-concurrency FHIR workloads
+            ClusterEnvironment.Builder envBuilder = ClusterEnvironment.builder()
+                .timeoutConfig(timeoutConfig -> timeoutConfig
+                    .queryTimeout(Duration.ofSeconds(queryTimeoutSeconds))
+                    .searchTimeout(Duration.ofSeconds(searchTimeoutSeconds))
+                    .kvTimeout(Duration.ofSeconds(kvTimeoutSeconds))
+                    .connectTimeout(Duration.ofSeconds(connectTimeoutSeconds))
+                    .disconnectTimeout(Duration.ofSeconds(disconnectTimeoutSeconds)))
+                .ioConfig(io -> io
+                    .maxHttpConnections(maxHttpConnections)
+                    .numKvConnections(numKvConnections)
+                    .enableMutationTokens(enableMutationTokens))
+                .transactionsConfig(transactions -> {
+                    // Configure transaction durability based on cluster setup
+                    // NONE: Single-node development (no replicas needed)
+                    // MAJORITY: Production multi-node (recommended)
+                    // MAJORITY_AND_PERSIST_TO_ACTIVE: Highest durability
+                    DurabilityLevel durabilityLevel;
+                    switch (transactionDurability.toUpperCase()) {
+                        case "MAJORITY":
+                            durabilityLevel = DurabilityLevel.MAJORITY;
+                            logger.info("🔒 Transaction durability: MAJORITY (requires replicas)");
+                            break;
+                        case "MAJORITY_AND_PERSIST_TO_ACTIVE":
+                            durabilityLevel = DurabilityLevel.MAJORITY_AND_PERSIST_TO_ACTIVE;
+                            logger.info("🔒 Transaction durability: MAJORITY_AND_PERSIST_TO_ACTIVE (highest durability)");
+                            break;
+                        case "PERSIST_TO_MAJORITY":
+                            durabilityLevel = DurabilityLevel.PERSIST_TO_MAJORITY;
+                            logger.info("🔒 Transaction durability: PERSIST_TO_MAJORITY");
+                            break;
+                        case "NONE":
+                        default:
+                            durabilityLevel = DurabilityLevel.NONE;
+                            logger.info("⚠️  Transaction durability: NONE (suitable for single-node development only)");
+                            break;
+                    }
+                    transactions.durabilityLevel(durabilityLevel);
+                });
+            
+            // Enable TLS/SSL if required (for Capella or secure connections)
+            if (request.isSslEnabled() || request.getConnectionString().startsWith("couchbases://")) {
+                logger.info("🔒 Enabling TLS/SSL for secure connection");
+                envBuilder.securityConfig(security -> security.enableTls(true));
+            }
+            
+            ClusterEnvironment env = envBuilder.build();
+            
             ClusterOptions options = ClusterOptions.clusterOptions(request.getUsername(), request.getPassword())
-                    .environment(env -> {
-                        // Aggressive timeouts to prevent hanging on auth failures
-                        env.timeoutConfig().connectTimeout(Duration.ofSeconds(10));
-                        env.timeoutConfig().queryTimeout(Duration.ofSeconds(15));     // Shorter timeout for fast failure
-                        env.timeoutConfig().managementTimeout(Duration.ofSeconds(15)); // Shorter timeout for fast failure
-                        env.timeoutConfig().kvTimeout(Duration.ofSeconds(30));        // Longer timeout for FHIR document operations and transactions
-                        
-                        // Transaction-specific timeouts and durability for FHIR bundle processing
-                        env.transactionsConfig(txn -> {
-                            txn.timeout(Duration.ofSeconds(60)); // Increase transaction timeout from 15s to 60s
-                            // For better performance, use majority durability instead of default (which waits for all replicas)
-                            txn.durabilityLevel(com.couchbase.client.core.msg.kv.DurabilityLevel.MAJORITY);
-                        });
-                        
-                        // Optimize for FHIR workload: KV operations (POST/PUT/Transactions) + SQL++ queries + minimal admin HTTP
-                        env.ioConfig().numKvConnections(8);                          // More KV connections for FHIR document operations and transactions
-                        env.ioConfig().maxHttpConnections(4);                        // Minimal HTTP connections - only for admin UI operations
-                        env.ioConfig().idleHttpConnectionTimeout(Duration.ofMinutes(2)); // Reasonable timeout for admin operations
-                        
-                        // TCP keep-alive is handled automatically by the SDK for Capella
-                        
-                        // SQL++ query-focused optimizations (main FHIR workload)
-                        env.ioConfig().enableMutationTokens(false);                  // Not needed for read-heavy SQL++ queries
-                        env.ioConfig().configPollInterval(Duration.ofSeconds(30));   // Less frequent config polling for stable Capella
-                        
-                        // Query service optimizations are set via ClusterOptions, not environment
-                        
-                        // Use best effort retry strategy with default settings
-                        env.retryStrategy(com.couchbase.client.core.retry.BestEffortRetryStrategy.INSTANCE);
-                    });
+                    .environment(env);
+                    
+            logger.info("🔧 SDK Configuration Applied:");
+            logger.info("   - maxHttpConnections: {} (couchbase.sdk.max-http-connections)", maxHttpConnections);
+            logger.info("   - numKvConnections: {} (couchbase.sdk.num-kv-connections)", numKvConnections);
+            logger.info("   - queryTimeout: {}s (couchbase.sdk.query-timeout-seconds)", queryTimeoutSeconds);
+            logger.info("   - searchTimeout: {}s (couchbase.sdk.search-timeout-seconds)", searchTimeoutSeconds);
+            logger.info("   - kvTimeout: {}s (couchbase.sdk.kv-timeout-seconds)", kvTimeoutSeconds);
+            logger.info("   - connectTimeout: {}s (couchbase.sdk.connect-timeout-seconds)", connectTimeoutSeconds);
+            logger.info("   - enableMutationTokens: {} (couchbase.sdk.enable-mutation-tokens)", enableMutationTokens);
+            logger.info("   - transactionDurability: {} (couchbase.sdk.transaction-durability)", transactionDurability);
             
             Cluster cluster = Cluster.connect(request.getConnectionString(), options);
             
-            // IMPORTANT: Test the connection immediately with a strict timeout
+            // IMPORTANT: Test the connection immediately with a reasonable timeout
             try {
-                logger.info("🔍 Validating connection with 15-second timeout...");
+                logger.info("🔍 Validating connection with 10-second timeout...");
                 
                 // Use CompletableFuture with timeout to prevent hanging
                 java.util.concurrent.CompletableFuture<Void> validationFuture = 
@@ -106,8 +177,8 @@ public class ConnectionService {
                         }
                     });
                 
-                // Wait with strict timeout - if this times out, it's likely an auth issue
-                validationFuture.get(15, java.util.concurrent.TimeUnit.SECONDS);
+                // Wait with reasonable timeout - if this times out, it's likely an auth issue
+                validationFuture.get(10, java.util.concurrent.TimeUnit.SECONDS);
                 
                 logger.info("✅ Connection validation successful for: {}", request.getName());
             } catch (java.util.concurrent.TimeoutException timeoutError) {
@@ -189,7 +260,128 @@ public class ConnectionService {
      * Get an active connection by name
      */
     public Cluster getConnection(String connectionName) {
-        return activeConnections.get(connectionName);
+        Cluster cluster = activeConnections.get(connectionName);
+        if (cluster != null) {
+            // logger.debug("Reusing existing connection: {} (total active: {})", connectionName, activeConnections.size());
+        } else {
+            logger.error("No active connection found for: {} (available: {})", connectionName, activeConnections.keySet());
+        }
+        return cluster;
+    }
+    
+    /**
+     * Get a cached Collection object (for performance - avoids lookup overhead)
+     * Also triggers lazy warmup for the bucket on first access
+     * 
+     * @param connectionName Connection name (e.g., "default")
+     * @param bucketName Bucket name
+     * @param scopeName Scope name
+     * @param collectionName Collection name
+     * @return Cached Collection object
+     */
+    public com.couchbase.client.java.Collection getCollection(String connectionName, String bucketName, 
+                                                              String scopeName, String collectionName) {
+        // Trigger lazy warmup for this bucket if not already done
+        String bucketKey = connectionName + ":" + bucketName + ":" + scopeName;
+        if (!bucketWarmupStatus.containsKey(bucketKey)) {
+            // Warmup in background to not block this request
+            bucketWarmupStatus.put(bucketKey, false); // Mark as in-progress
+            new Thread(() -> lazyWarmupBucket(connectionName, bucketName, scopeName)).start();
+        }
+        
+        String cacheKey = String.format("%s:%s:%s:%s", connectionName, bucketName, scopeName, collectionName);
+        
+        return collectionCache.computeIfAbsent(cacheKey, key -> {
+            Cluster cluster = getConnection(connectionName);
+            if (cluster == null) {
+                throw new RuntimeException("No active connection found: " + connectionName);
+            }
+            logger.debug("🔧 Caching collection reference: {}", cacheKey);
+            return cluster.bucket(bucketName).scope(scopeName).collection(collectionName);
+        });
+    }
+    
+    /**
+     * Lazy warmup: Warm up a bucket's collections in background on first access
+     */
+    private void lazyWarmupBucket(String connectionName, String bucketName, String scopeName) {
+        try {
+            logger.info("🔥 Lazy warmup triggered for bucket: {}.{}", bucketName, scopeName);
+            
+            // Standard FHIR collections
+            List<String> collections = Arrays.asList(
+                "Patient", "Practitioner", "Observation", "Encounter", "Condition", 
+                "Procedure", "MedicationRequest", "DiagnosticReport", "DocumentReference", 
+                "Immunization", "ServiceRequest", "General", "Versions", "Tombstones"
+            );
+            
+            long startTime = System.currentTimeMillis();
+            warmupCollections(connectionName, bucketName, scopeName, collections);
+            long duration = System.currentTimeMillis() - startTime;
+            
+            String bucketKey = connectionName + ":" + bucketName + ":" + scopeName;
+            bucketWarmupStatus.put(bucketKey, true); // Mark as complete
+            
+            logger.info("✅ Lazy warmup complete for {} in {} ms", bucketKey, duration);
+            
+        } catch (Exception e) {
+            logger.warn("⚠️ Lazy warmup failed for {}.{}: {}", bucketName, scopeName, e.getMessage());
+        }
+    }
+    
+    /**
+     * Warm up collections by performing a simple operation on each
+     * This avoids the "first request penalty" on cold collections
+     * Sequential with small delays to avoid overwhelming Couchbase
+     * 
+     * @param connectionName Connection name
+     * @param bucketName Bucket name
+     * @param scopeName Scope name
+     * @param collectionNames List of collection names to warm up
+     */
+    public void warmupCollections(String connectionName, String bucketName, String scopeName, List<String> collectionNames) {
+        logger.info("🔥 Warming up {} collections in {}.{} (sequential)", collectionNames.size(), bucketName, scopeName);
+        
+        int successCount = 0;
+        int failCount = 0;
+        
+        for (String collectionName : collectionNames) {
+            try {
+                // Get and cache the collection (without triggering recursive warmup)
+                String cacheKey = String.format("%s:%s:%s:%s", connectionName, bucketName, scopeName, collectionName);
+                com.couchbase.client.java.Collection collection = collectionCache.computeIfAbsent(cacheKey, key -> {
+                    Cluster cluster = getConnection(connectionName);
+                    if (cluster == null) {
+                        throw new RuntimeException("No active connection found: " + connectionName);
+                    }
+                    return cluster.bucket(bucketName).scope(scopeName).collection(collectionName);
+                });
+                
+                // Perform a lightweight operation to warm up the connection
+                // Use exists() which is faster than get()
+                collection.exists("__warmup_dummy_key__");
+                
+                successCount++;
+                logger.debug("✅ Warmed up collection: {}.{}.{}", bucketName, scopeName, collectionName);
+                
+                // Small delay between collections to avoid overwhelming Couchbase
+                // This prevents "COLLECTION_MAP_REFRESH_IN_PROGRESS" contention
+                if (successCount < collectionNames.size()) {
+                    Thread.sleep(50); // 50ms delay between collections
+                }
+                
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                logger.warn("⚠️ Warmup interrupted");
+                break;
+            } catch (Exception e) {
+                failCount++;
+                logger.warn("⚠️ Failed to warm up collection {}: {}", collectionName, e.getMessage());
+            }
+        }
+        
+        logger.info("✅ Collection warmup complete: {}/{} successful, {} failed", 
+                   successCount, collectionNames.size(), failCount);
     }
     
     /**
@@ -261,6 +453,10 @@ public class ConnectionService {
         Cluster cluster = activeConnections.remove(connectionName);
         connectionDetails.remove(connectionName); // Clean up connection details
         
+        // Clear cached collections and warmup status for this connection
+        collectionCache.entrySet().removeIf(entry -> entry.getKey().startsWith(connectionName + ":"));
+        bucketWarmupStatus.entrySet().removeIf(entry -> entry.getKey().startsWith(connectionName + ":"));
+        
         if (cluster != null) {
             try {
                 cluster.disconnect();
@@ -304,6 +500,8 @@ public class ConnectionService {
         });
         activeConnections.clear();
         connectionDetails.clear(); // Clean up all connection details
+        collectionCache.clear(); // Clear all cached collections
+        bucketWarmupStatus.clear(); // Clear all warmup status
     }
     
     /**

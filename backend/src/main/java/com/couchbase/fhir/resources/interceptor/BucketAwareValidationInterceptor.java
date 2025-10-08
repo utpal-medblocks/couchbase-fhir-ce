@@ -165,7 +165,8 @@ public class BucketAwareValidationInterceptor {
     public boolean onException(RequestDetails rd, Throwable e) {
         // Check for null exception to prevent NPE
         if (e == null) {
-            logger.warn("🔍 onException called with null exception");
+            logger.warn("🔍 onException called with null exception - this indicates a bug in the exception handling");
+            logger.warn("🔍 Stack trace at point of null exception:", new Exception("Stack trace for debugging"));
             return true;
         }
         

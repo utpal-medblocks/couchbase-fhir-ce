@@ -237,9 +237,7 @@ public class FhirBucketService {
         List<FhirBucketProperties.BuildCommand> buildCommands = fhirProperties.getBuildCommands();
         
         if (buildCommands != null && !buildCommands.isEmpty()) {
-            for (FhirBucketProperties.BuildCommand buildCommand : buildCommands) {
-                // logger.info("Executing build command: {}", buildCommand.getName());
-                
+            for (FhirBucketProperties.BuildCommand buildCommand : buildCommands) {                
                 // Execute the query to get the BUILD INDEX statements
                 String query = buildCommand.getQuery().replace("{bucket}", bucketName);
                 
@@ -256,12 +254,12 @@ public class FhirBucketService {
                             cluster.query(buildIndexSql);
                             // logger.info("Successfully built index");
                         } catch (Exception e) {
-                            // logger.warn("Failed to build index: {} - {}", buildIndexSql, e.getMessage());
+                            logger.error("Failed to build index: {} - {}", buildIndexSql, e.getMessage());
                             // Continue with other indexes even if one fails
                         }
                     }
                 } catch (Exception e) {
-                    // logger.error("Failed to execute build command query: {}", query, e);
+                    logger.error("Failed to execute build command query: {}", query, e);
                     throw e;
                 }
             }
@@ -272,13 +270,8 @@ public class FhirBucketService {
     
     private void createFtsIndexes(String connectionName, String bucketName) throws Exception {
         try {
-            logger.info("🔍 Starting FTS index creation for bucket: {}", bucketName);
-            
             // Use the FtsIndexCreator to create all FTS indexes via REST API
             ftsIndexCreator.createAllFtsIndexesForBucket(connectionName, bucketName);
-            
-            logger.info("✅ FTS index creation completed for bucket: {}", bucketName);
-            
         } catch (Exception e) {
             logger.error("❌ Failed to create FTS indexes for bucket: {}", bucketName, e);
             // Don't throw the exception - FTS indexes are optional
@@ -368,21 +361,18 @@ public class FhirBucketService {
         );
         
         try {
-            cluster.query(sql);
-            // logger.info("Successfully marked bucket {} as FHIR-enabled with custom configuration", bucketName);
-            
+            cluster.query(sql);            
             // Clear both caches since we just updated the FHIR configuration
             fhirBucketConfigService.clearConfigCache(bucketName, connectionName);
             fhirBucketValidator.clearCache(bucketName, connectionName);
             
         } catch (Exception e) {
             if (e.getMessage() != null && e.getMessage().contains("already exists")) {
-                // logger.warn("FHIR config document already exists in bucket: {}", bucketName);
                 // Even if it already exists, clear both caches in case it was updated
                 fhirBucketConfigService.clearConfigCache(bucketName, connectionName);
                 fhirBucketValidator.clearCache(bucketName, connectionName);
             } else {
-                // logger.error("Failed to mark bucket {} as FHIR-enabled: {}", bucketName, e.getMessage());
+                logger.error("Failed to mark bucket {} as FHIR-enabled: {}", bucketName, e.getMessage());
                 throw e;
             }
         }
@@ -433,7 +423,6 @@ public class FhirBucketService {
             var connectionDetails = connectionService.getConnectionDetails(connectionName);
             
             if (hostname == null || connectionDetails == null) {
-                // logger.warn("Could not get connection details for REST call");
                 return false;
             }
             
@@ -443,7 +432,7 @@ public class FhirBucketService {
                                         connectionDetails.getPassword());
             
         } catch (Exception e) {
-            // logger.warn("Failed to check if bucket {} is FHIR-enabled: {}", bucketName, e.getMessage());
+            logger.error("Failed to check if bucket {} is FHIR-enabled: {}", bucketName, e.getMessage());
             return false;
         }
     }
@@ -457,7 +446,6 @@ public class FhirBucketService {
             // Get the cluster connection to access the HTTP client
             Cluster cluster = connectionService.getConnection(connectionName);
             if (cluster == null) {
-                // logger.warn("No cluster connection available for REST call");
                 return false;
             }
             
@@ -477,23 +465,21 @@ public class FhirBucketService {
             
             // If we get a 200, the document exists (FHIR-enabled)
             if (statusCode == 200) {
-                logger.debug("FHIR config found for bucket {}", bucketName);
                 return true;
             }
             
             // 404 means document doesn't exist (not FHIR-enabled)
             if (statusCode == 404) {
-                logger.debug("No FHIR config found for bucket {}", bucketName);
                 return false;
             }
             
             // Other status codes are unexpected
-            logger.warn("Unexpected status code {} when checking FHIR config for bucket {}", statusCode, bucketName);
+            logger.error("Unexpected status code {} when checking FHIR config for bucket {}", statusCode, bucketName);
             return false;
             
         } catch (Exception e) {
             // Log the error but don't fail the check
-            // logger.debug("REST check for FHIR config failed: {}", e.getMessage());
+            logger.error("REST check for FHIR config failed: {}", e.getMessage());
             return false;
         }
     }

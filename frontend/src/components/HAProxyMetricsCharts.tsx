@@ -483,7 +483,7 @@ const HAProxyMetricsCharts: React.FC<HAProxyMetricsChartsProps> = ({
           unit: "conn",
         },
       ],
-      colors: [chartColors.primary, chartColors.teal],
+      colors: [chartColors.success, chartColors.error],
     },
     {
       title: "Latency",

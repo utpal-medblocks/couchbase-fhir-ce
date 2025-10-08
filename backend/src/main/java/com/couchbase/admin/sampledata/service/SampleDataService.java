@@ -131,7 +131,7 @@ public class SampleDataService {
             // First pass: count total files for progress tracking
             int totalFiles = 0;
             String sampleDataPath = getSampleDataPath(request.getSampleType());
-            try (InputStream zipStream = new ClassPathResource(sampleDataPath).getInputStream();
+            try (InputStream zipStream = SampleDataService.class.getClassLoader().getResourceAsStream(sampleDataPath);
                  ZipInputStream zis = new ZipInputStream(zipStream)) {
                 
                 ZipEntry entry;
@@ -148,7 +148,7 @@ public class SampleDataService {
             
             // Second pass: process files with progress tracking
             int processedFiles = 0;
-            try (InputStream zipStream = new ClassPathResource(sampleDataPath).getInputStream();
+            try (InputStream zipStream = SampleDataService.class.getClassLoader().getResourceAsStream(sampleDataPath);
                  ZipInputStream zis = new ZipInputStream(zipStream)) {
                 
                 ZipEntry entry;
@@ -378,7 +378,7 @@ public class SampleDataService {
             
             // Default to Synthea for stats - could be enhanced to take sampleType parameter
             String sampleDataPath = getSampleDataPath("synthea");
-            try (InputStream zipStream = new ClassPathResource(sampleDataPath).getInputStream();
+            try (InputStream zipStream = SampleDataService.class.getClassLoader().getResourceAsStream(sampleDataPath);
                  ZipInputStream zis = new ZipInputStream(zipStream)) {
                 
                 ZipEntry entry;
@@ -451,7 +451,7 @@ public class SampleDataService {
             // First pass: count total files
             int fileCount = 0;
             String sampleDataPath = getSampleDataPath(request.getSampleType());
-            try (InputStream zipStream = new ClassPathResource(sampleDataPath).getInputStream();
+            try (InputStream zipStream = SampleDataService.class.getClassLoader().getResourceAsStream(sampleDataPath);
                  ZipInputStream zis = new ZipInputStream(zipStream)) {
                 
                 ZipEntry entry;
@@ -473,7 +473,7 @@ public class SampleDataService {
             
             // Second pass: collect all files for concurrent processing
             List<FileData> filesToProcess = new ArrayList<>();
-            try (InputStream zipStream = new ClassPathResource(sampleDataPath).getInputStream();
+            try (InputStream zipStream = SampleDataService.class.getClassLoader().getResourceAsStream(sampleDataPath);
                  ZipInputStream zis = new ZipInputStream(zipStream)) {
                 
                 ZipEntry entry;

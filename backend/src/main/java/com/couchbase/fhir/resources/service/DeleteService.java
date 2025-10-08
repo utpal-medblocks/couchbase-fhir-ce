@@ -1,9 +1,7 @@
 package com.couchbase.fhir.resources.service;
 
-import ca.uhn.fhir.parser.IParser;
 import com.couchbase.client.java.Cluster;
 import com.couchbase.client.java.json.JsonObject;
-import com.couchbase.client.java.query.QueryResult;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -11,8 +9,6 @@ import org.springframework.stereotype.Service;
 
 import java.time.Instant;
 import java.util.List;
-
-import com.couchbase.fhir.resources.service.CollectionRoutingService;
 
 /**
  * Service for handling FHIR DELETE operations with proper tombstone management.
@@ -31,9 +27,6 @@ public class DeleteService {
     private static final String DEFAULT_SCOPE = "Resources";
     private static final String VERSIONS_COLLECTION = "Versions";
     private static final String TOMBSTONES_COLLECTION = "Tombstones";
-    
-    @Autowired
-    private IParser jsonParser;
     
     @Autowired
     private FhirAuditService auditService;
@@ -109,7 +102,7 @@ public class DeleteService {
                                              Cluster cluster, String bucketName) {
         
         // Step 1: Copy current resource to Versions (if it exists) and get version info
-        String lastVersionId = copyCurrentResourceToVersions(cluster, bucketName, resourceType, documentKey);
+        String lastVersionId = copyCurrentResourceToVersions(txContext, cluster, bucketName, resourceType, documentKey);
         
         // Step 2: Only create tombstone if resource actually existed (FHIR best practice)
         if (lastVersionId != null) {
@@ -130,7 +123,8 @@ public class DeleteService {
      * Same approach as PUT service to get version ID directly from the query
      * @return The version ID of the archived resource (null if resource didn't exist)
      */
-    private String copyCurrentResourceToVersions(Cluster cluster, String bucketName, String resourceType, String documentKey) {
+    private String copyCurrentResourceToVersions(com.couchbase.client.java.transactions.TransactionAttemptContext txContext,
+                                                Cluster cluster, String bucketName, String resourceType, String documentKey) {
         try {
             // Get the correct target collection for this resource type
             String targetCollection = collectionRoutingService.getTargetCollection(resourceType);
@@ -151,7 +145,9 @@ public class DeleteService {
             );
             
             logger.debug("🔄 Copying current resource to Versions with RETURNING for delete: {}", sql);
-            QueryResult result = cluster.query(sql);
+            
+            // Execute query within transaction context
+            com.couchbase.client.java.transactions.TransactionQueryResult result = txContext.query(sql);
             
             // Get RETURNING results from SDK - this gives us the version ID that was copied
             List<String> rows = result.rowsAs(String.class);
@@ -246,27 +242,57 @@ public class DeleteService {
     /**
      * Check if a resource ID is tombstoned (deleted)
      * Used by other services to prevent reuse of deleted IDs
+     * This method should NOT be called within a transaction context as it performs a read operation
      */
     public boolean isTombstoned(String resourceType, String resourceId, Cluster cluster, String bucketName) {
         try {
             String tombstoneKey = resourceType + "/" + resourceId;
-            String sql = String.format(
-                "SELECT COUNT(*) AS count FROM `%s`.`%s`.`%s` USE KEYS '%s'",
-                bucketName, DEFAULT_SCOPE, TOMBSTONES_COLLECTION, tombstoneKey
-            );
             
-            QueryResult result = cluster.query(sql);
-            List<JsonObject> rows = result.rowsAsObject();
+            // Use KV get instead of query for better performance and transaction compatibility
+            com.couchbase.client.java.Collection tombstonesCollection = 
+                cluster.bucket(bucketName).scope(DEFAULT_SCOPE).collection(TOMBSTONES_COLLECTION);
             
-            if (!rows.isEmpty()) {
-                int count = rows.get(0).getInt("count");
-                return count > 0;
+            try {
+                tombstonesCollection.get(tombstoneKey);
+                // Document exists, so it's tombstoned
+                return true;
+            } catch (com.couchbase.client.core.error.DocumentNotFoundException e) {
+                // Document doesn't exist, so it's not tombstoned
+                return false;
             }
-            
-            return false;
             
         } catch (Exception e) {
             logger.debug("Failed to check tombstone for {}/{}: {}", resourceType, resourceId, e.getMessage());
+            return false; // Assume not tombstoned if check fails
+        }
+    }
+    
+    /**
+     * Check if a resource ID is tombstoned (deleted) within a transaction context
+     * Used by PUT operations during Bundle transactions
+     */
+    public boolean isTombstonedInTransaction(String resourceType, String resourceId, 
+                                            com.couchbase.client.java.transactions.TransactionAttemptContext txContext,
+                                            Cluster cluster, String bucketName) {
+        try {
+            String tombstoneKey = resourceType + "/" + resourceId;
+            
+            // Get tombstones collection reference
+            com.couchbase.client.java.Collection tombstonesCollection = 
+                cluster.bucket(bucketName).scope(DEFAULT_SCOPE).collection(TOMBSTONES_COLLECTION);
+            
+            try {
+                // Try to get the document within the transaction
+                txContext.get(tombstonesCollection, tombstoneKey);
+                // Document exists, so it's tombstoned
+                return true;
+            } catch (com.couchbase.client.core.error.DocumentNotFoundException e) {
+                // Document doesn't exist, so it's not tombstoned
+                return false;
+            }
+            
+        } catch (Exception e) {
+            logger.debug("Failed to check tombstone for {}/{} in transaction: {}", resourceType, resourceId, e.getMessage());
             return false; // Assume not tombstoned if check fails
         }
     }

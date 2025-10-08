@@ -36,11 +36,12 @@ import java.nio.file.Paths;
 public class FtsIndexCreator {
     
     private static final Logger logger = LoggerFactory.getLogger(FtsIndexCreator.class);
-    private static final String FTS_INDEXES_PATH = "classpath*:fts-indexes/*.json";
+    private static final String FTS_INDEXES_PATH = "classpath*:/fts-indexes/*.json";
     private final ObjectMapper objectMapper = new ObjectMapper();
     
     @Autowired
     private ConnectionService connectionService;
+    
     
 
     
@@ -122,8 +123,16 @@ public class FtsIndexCreator {
             logger.info("🔄 Creating all FTS indexes for bucket: {}", bucketName);
             
             // Find all JSON files in fts-indexes directory
-            PathMatchingResourcePatternResolver resolver = new PathMatchingResourcePatternResolver();
+            PathMatchingResourcePatternResolver resolver = 
+                new PathMatchingResourcePatternResolver(FtsIndexCreator.class.getClassLoader());
             Resource[] resources = resolver.getResources(FTS_INDEXES_PATH);
+            
+            if (resources.length == 0) {
+                logger.warn("⚠️ No FTS index files found at: {}", FTS_INDEXES_PATH);
+                return;
+            }
+            
+            logger.info("📋 Found {} FTS index files", resources.length);
             
             int successCount = 0;
             int skippedCount = 0;
@@ -244,5 +253,6 @@ public class FtsIndexCreator {
             return fullIndexName; // If not qualified, return as-is
         }
     }
+    
     
 }

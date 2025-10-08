@@ -63,7 +63,7 @@ public class FhirBucketController {
     public ResponseEntity<FhirConversionStatusDetail> getConversionStatus(@PathVariable String operationId) {
         
         try {
-            logger.debug("Getting conversion status for operation: {}", operationId);
+            // logger.debug("Getting conversion status for operation: {}", operationId);
             
             FhirConversionStatusDetail status = fhirBucketService.getConversionStatus(operationId);
             
@@ -143,7 +143,7 @@ public class FhirBucketController {
             @PathVariable String bucketName,
             @RequestParam String connectionName) {
         try {
-            logger.debug("Getting FHIR configuration for bucket: {} using connection: {}", bucketName, connectionName);
+            //logger.debug("Getting FHIR configuration for bucket: {} using connection: {}", bucketName, connectionName);
             
             FhirBucketConfigService.FhirBucketConfig config = fhirBucketConfigService.getFhirBucketConfig(bucketName, connectionName);
             

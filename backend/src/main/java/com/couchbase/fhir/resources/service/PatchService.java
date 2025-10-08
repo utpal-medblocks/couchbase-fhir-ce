@@ -152,7 +152,7 @@ public class PatchService {
         logger.info("🔧 PatchService: Processing conditional JSON Patch for {} with criteria: {}", resourceType, criteria);
         
         // Resolve resource using SearchService
-        ResolveResult result = searchService.resolveOne(resourceType, criteria);
+        ResolveResult result = searchService.resolveConditional(resourceType, criteria);
         
         switch (result.getStatus()) {
             case ZERO:

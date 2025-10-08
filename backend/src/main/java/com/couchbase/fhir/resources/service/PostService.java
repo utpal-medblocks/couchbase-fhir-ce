@@ -12,8 +12,6 @@ import org.springframework.stereotype.Service;
 
 import java.util.UUID;
 
-import com.couchbase.fhir.resources.service.CollectionRoutingService;
-
 /**
  * Service for handling FHIR POST operations (create new resources).
  * POST operations always generate server-controlled IDs and ignore any client-supplied IDs.
@@ -46,12 +44,20 @@ public class PostService {
     public Resource createResource(Resource resource, Cluster cluster, String bucketName) {
         String resourceType = resource.getResourceType().name();
         
-        // ✅ FHIR POST Semantics: Server always generates new ID (ignore any client ID)
-        String serverGeneratedId = generateResourceId();
-        resource.setId(serverGeneratedId);
-        
-        logger.info("🆔 POST {}: Generated server ID {} (ignoring any client-supplied ID)", 
-                   resourceType, serverGeneratedId);
+        // ✅ FHIR POST Semantics: Server controls ID generation
+        // If Bundle processing already set an ID (for UUID reference resolution), use it
+        // Otherwise generate a new server ID
+        String serverGeneratedId;
+        if (resource.getId() != null && !resource.getId().isEmpty()) {
+            serverGeneratedId = resource.getId();
+            logger.info("🔗 POST {}: Using pre-assigned ID {} (from Bundle processing)", 
+                       resourceType, serverGeneratedId);
+        } else {
+            serverGeneratedId = generateResourceId();
+            resource.setId(serverGeneratedId);
+            logger.info("🆔 POST {}: Generated new server ID {} (no pre-assigned ID)", 
+                       resourceType, serverGeneratedId);
+        }
         
         // Apply proper meta with version "1" for CREATE operations
         MetaRequest metaRequest = MetaRequest.forCreate(null, "1", null);
@@ -84,12 +90,20 @@ public class PostService {
                                               String bucketName) {
         String resourceType = resource.getResourceType().name();
         
-        // ✅ FHIR POST Semantics: Server always generates new ID (ignore any client ID)
-        String serverGeneratedId = generateResourceId();
-        resource.setId(serverGeneratedId);
-        
-        logger.info("🆔 POST {} (in transaction): Generated server ID {} (ignoring any client-supplied ID)", 
-                   resourceType, serverGeneratedId);
+        // ✅ FHIR POST Semantics: Server controls ID generation
+        // If Bundle processing already set an ID (for UUID reference resolution), use it
+        // Otherwise generate a new server ID
+        String serverGeneratedId;
+        if (resource.getId() != null && !resource.getId().isEmpty()) {
+            serverGeneratedId = resource.getId();
+            logger.info("🔗 POST {} (in transaction): Using pre-assigned ID {} (from Bundle processing)", 
+                       resourceType, serverGeneratedId);
+        } else {
+            serverGeneratedId = generateResourceId();
+            resource.setId(serverGeneratedId);
+            logger.info("🆔 POST {} (in transaction): Generated new server ID {} (no pre-assigned ID)", 
+                       resourceType, serverGeneratedId);
+        }
         
         // Apply proper meta with version "1" for CREATE operations
         MetaRequest metaRequest = MetaRequest.forCreate(null, "1", null);
