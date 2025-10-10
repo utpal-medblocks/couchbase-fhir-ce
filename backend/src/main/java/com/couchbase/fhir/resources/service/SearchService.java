@@ -656,11 +656,12 @@ public class SearchService {
         bundle.setTotal(allDocumentKeys.size()); // Total is exact count from FTS
         
         // Add resources to bundle with filtering
+        String baseUrl = extractBaseUrl(requestDetails, bucketName);
         for (Resource resource : results) {
             Resource filteredResource = applyResourceFiltering(resource, summaryMode, elements);
             bundle.addEntry()
                     .setResource(filteredResource)
-                    .setFullUrl(resourceType + "/" + filteredResource.getIdElement().getIdPart())
+                    .setFullUrl(baseUrl + "/" + resourceType + "/" + filteredResource.getIdElement().getIdPart())
                     .getSearch()
                     .setMode(Bundle.SearchEntryMode.MATCH);
         }
@@ -669,7 +670,7 @@ public class SearchService {
         if (continuationToken != null && allDocumentKeys.size() > pageSize) {
             bundle.addLink()
                     .setRelation("next")
-                    .setUrl(buildNextPageUrl(continuationToken, pageSize, resourceType, bucketName, pageSize, extractBaseUrl(requestDetails, bucketName)));
+                    .setUrl(buildNextPageUrl(continuationToken, pageSize, resourceType, bucketName, pageSize, baseUrl));
         }
         
         logger.info("🚀 New Pagination: Returning {} results, total: {}, pages: {}", 
@@ -704,18 +705,33 @@ public class SearchService {
                    currentPageKeys.size(), paginationState.getCurrentPage(), paginationState.getTotalPages());
         
         // For mixed resource types (like _revinclude), we need to group keys by resource type
+        // But preserve the original order (primary resources first, then secondary)
         List<Resource> results = new ArrayList<>();
         if ("revinclude".equals(paginationState.getSearchType())) {
             // Group keys by resource type and retrieve from appropriate collections
             Map<String, List<String>> keysByResourceType = currentPageKeys.stream()
                 .collect(Collectors.groupingBy(key -> key.substring(0, key.indexOf("/"))));
             
+            // Fetch resources grouped by type for efficiency
+            Map<String, Resource> resourcesByKey = new java.util.HashMap<>();
             for (Map.Entry<String, List<String>> entry : keysByResourceType.entrySet()) {
                 String keyResourceType = entry.getKey();
                 List<String> keysForType = entry.getValue();
                 logger.debug("🔑 Retrieving {} {} documents", keysForType.size(), keyResourceType);
                 List<Resource> resourcesForType = ftsKvSearchService.getDocumentsFromKeys(keysForType, keyResourceType);
-                results.addAll(resourcesForType);
+                // Store in map for ordering
+                for (Resource resource : resourcesForType) {
+                    String resourceKey = resource.getResourceType().name() + "/" + resource.getIdElement().getIdPart();
+                    resourcesByKey.put(resourceKey, resource);
+                }
+            }
+            
+            // Restore original order from currentPageKeys (primary first, then secondary)
+            for (String key : currentPageKeys) {
+                Resource resource = resourcesByKey.get(key);
+                if (resource != null) {
+                    results.add(resource);
+                }
             }
         } else {
             // Regular pagination - all keys are same resource type
@@ -738,21 +754,28 @@ public class SearchService {
         bundle.setTotal(paginationState.getTotalResults()); // Total is known from initial FTS
         
         // Add resources to bundle with filtering
+        String baseUrl = paginationState.getBaseUrl();
+        String primaryResourceType = paginationState.getResourceType();
         for (Resource resource : results) {
             Resource filteredResource = applyResourceFiltering(resource, summaryMode, elements);
+            String actualResourceType = resource.getResourceType().name();
+            
+            // Determine search mode: primary resources are "match", secondary are "include"
+            Bundle.SearchEntryMode searchMode = actualResourceType.equals(primaryResourceType) ? 
+                Bundle.SearchEntryMode.MATCH : Bundle.SearchEntryMode.INCLUDE;
+            
             bundle.addEntry()
                     .setResource(filteredResource)
-                    .setFullUrl(resourceType + "/" + filteredResource.getIdElement().getIdPart())
+                    .setFullUrl(baseUrl + "/" + actualResourceType + "/" + filteredResource.getIdElement().getIdPart())
                     .getSearch()
-                    .setMode(Bundle.SearchEntryMode.MATCH);
+                    .setMode(searchMode);
         }
         
         // Add next link if more results available
         if (paginationState.hasMoreResults()) {
-            String baseUrl = extractBaseUrl(requestDetails, bucketName);
             bundle.addLink()
                     .setRelation("next")
-                    .setUrl(buildNextPageUrl(continuationToken, paginationState.getPageSize(), 
+                    .setUrl(buildNextPageUrl(continuationToken, paginationState.getCurrentOffset(), 
                                            resourceType, bucketName, paginationState.getPageSize(), baseUrl));
         }
         
@@ -834,16 +857,31 @@ public class SearchService {
             allDocumentKeys.subList(0, count);
         
         // Fetch documents for first page only - group by resource type for mixed collections
-        List<Resource> firstPageResources = new ArrayList<>();
+        // But preserve the original order (primary resources first, then secondary)
         Map<String, List<String>> keysByResourceType = firstPageKeys.stream()
             .collect(Collectors.groupingBy(key -> key.substring(0, key.indexOf("/"))));
         
+        // Fetch resources grouped by type for efficiency
+        Map<String, Resource> resourcesByKey = new java.util.HashMap<>();
         for (Map.Entry<String, List<String>> entry : keysByResourceType.entrySet()) {
             String keyResourceType = entry.getKey();
             List<String> keysForType = entry.getValue();
             logger.debug("🔍 Fetching {} {} documents for first page", keysForType.size(), keyResourceType);
             List<Resource> resourcesForType = ftsKvSearchService.getDocumentsFromKeys(keysForType, keyResourceType);
-            firstPageResources.addAll(resourcesForType);
+            // Store in map for ordering
+            for (Resource resource : resourcesForType) {
+                String resourceKey = resource.getResourceType().name() + "/" + resource.getIdElement().getIdPart();
+                resourcesByKey.put(resourceKey, resource);
+            }
+        }
+        
+        // Restore original order from firstPageKeys (primary first, then secondary)
+        List<Resource> firstPageResources = new ArrayList<>();
+        for (String key : firstPageKeys) {
+            Resource resource = resourcesByKey.get(key);
+            if (resource != null) {
+                firstPageResources.add(resource);
+            }
         }
         
         // Step 7: Create pagination state if needed
@@ -872,6 +910,7 @@ public class SearchService {
         bundle.setTotal(allDocumentKeys.size()); // Total is exact count
         
         // Add resources to bundle with appropriate search mode
+        String baseUrl = extractBaseUrl(requestDetails, bucketName);
         for (Resource resource : firstPageResources) {
             Resource filteredResource = applyResourceFiltering(resource, summaryMode, elements);
             String resourceType = resource.getResourceType().name();
@@ -882,7 +921,7 @@ public class SearchService {
             
             bundle.addEntry()
                     .setResource(filteredResource)
-                    .setFullUrl(resourceType + "/" + filteredResource.getIdElement().getIdPart())
+                    .setFullUrl(baseUrl + "/" + resourceType + "/" + filteredResource.getIdElement().getIdPart())
                     .getSearch()
                     .setMode(searchMode);
         }
@@ -964,11 +1003,12 @@ public class SearchService {
         bundle.setTotal(primaryResources.size()); // Only count primary resources per FHIR spec
         
         // Add primary resources (search mode = "match")
+        String baseUrl = extractBaseUrl(requestDetails, bucketName);
         for (Resource resource : primaryResources) {
             Resource filteredResource = applyResourceFiltering(resource, summaryMode, elements);
             bundle.addEntry()
                     .setResource(filteredResource)
-                    .setFullUrl(primaryResourceType + "/" + filteredResource.getIdElement().getIdPart())
+                    .setFullUrl(baseUrl + "/" + primaryResourceType + "/" + filteredResource.getIdElement().getIdPart())
                     .getSearch()
                     .setMode(Bundle.SearchEntryMode.MATCH);
         }
@@ -979,7 +1019,7 @@ public class SearchService {
             String resourceType = filteredResource.fhirType();
             bundle.addEntry()
                     .setResource(filteredResource)
-                    .setFullUrl(resourceType + "/" + filteredResource.getIdElement().getIdPart())
+                    .setFullUrl(baseUrl + "/" + resourceType + "/" + filteredResource.getIdElement().getIdPart())
                     .getSearch()
                     .setMode(Bundle.SearchEntryMode.INCLUDE);
         }
@@ -1071,7 +1111,7 @@ public class SearchService {
             Resource filteredResource = applyResourceFiltering(resource, summaryMode, elements);
             bundle.addEntry()
                     .setResource(filteredResource)
-                    .setFullUrl(primaryResourceType + "/" + filteredResource.getIdElement().getIdPart())
+                    .setFullUrl(baseUrl + "/" + primaryResourceType + "/" + filteredResource.getIdElement().getIdPart())
                     .getSearch()
                     .setMode(Bundle.SearchEntryMode.MATCH);
         }
@@ -1080,7 +1120,7 @@ public class SearchService {
         if (primaryResources.size() == count && searchState.getCurrentPrimaryOffset() < totalPrimaryResourceCount) {
             bundle.addLink()
                     .setRelation("next")
-                    .setUrl(buildNextPageUrl(continuationToken, searchState.getCurrentPrimaryOffset(), primaryResourceType, bucketName, count, searchState.getBaseUrl()));
+                    .setUrl(buildNextPageUrl(continuationToken, searchState.getCurrentPrimaryOffset(), primaryResourceType, bucketName, count, baseUrl));
         }
         
         logger.debug("🔗 Returning chained search bundle: {} results, total: {}", primaryResources.size(), totalPrimaryResourceCount);
@@ -1152,10 +1192,11 @@ public class SearchService {
         bundle.setTotal(searchState.getTotalPrimaryResources() + searchState.getTotalRevIncludeResources());
         
         // Add only revinclude resources (search mode = "include")
+        String baseUrl = searchState.getBaseUrl();
         for (Resource resource : revIncludeResources) {
             bundle.addEntry()
                     .setResource(resource)
-                    .setFullUrl(searchState.getRevIncludeResourceType() + "/" + resource.getIdElement().getIdPart())
+                    .setFullUrl(baseUrl + "/" + searchState.getRevIncludeResourceType() + "/" + resource.getIdElement().getIdPart())
                     .getSearch()
                     .setMode(Bundle.SearchEntryMode.INCLUDE);
         }
@@ -1164,7 +1205,7 @@ public class SearchService {
         if (searchState.hasMoreRevIncludeResources()) {
             bundle.addLink()
                     .setRelation("next")
-                    .setUrl(buildNextPageUrl(continuationToken, searchState.getCurrentRevIncludeOffset(), searchState.getRevIncludeResourceType(), searchState.getBucketName(), searchState.getPageSize(), searchState.getBaseUrl()));
+                    .setUrl(buildNextPageUrl(continuationToken, searchState.getCurrentRevIncludeOffset(), searchState.getRevIncludeResourceType(), searchState.getBucketName(), searchState.getPageSize(), baseUrl));
         }
         
         return bundle;
@@ -1194,10 +1235,11 @@ public class SearchService {
         bundle.setTotal(searchState.getTotalPrimaryResources());
         
         // Add resources to bundle
+        String baseUrl = searchState.getBaseUrl();
         for (Resource resource : results) {
             bundle.addEntry()
                     .setResource(resource)
-                    .setFullUrl(searchState.getPrimaryResourceType() + "/" + resource.getIdElement().getIdPart())
+                    .setFullUrl(baseUrl + "/" + searchState.getPrimaryResourceType() + "/" + resource.getIdElement().getIdPart())
                     .getSearch()
                     .setMode(Bundle.SearchEntryMode.MATCH);
         }
@@ -1206,7 +1248,7 @@ public class SearchService {
         if (searchState.hasMoreRegularResults()) {
             bundle.addLink()
                     .setRelation("next")
-                    .setUrl(buildNextPageUrl(continuationToken, searchState.getCurrentPrimaryOffset(), searchState.getPrimaryResourceType(), searchState.getBucketName(), searchState.getPageSize(), searchState.getBaseUrl()));
+                    .setUrl(buildNextPageUrl(continuationToken, searchState.getCurrentPrimaryOffset(), searchState.getPrimaryResourceType(), searchState.getBucketName(), searchState.getPageSize(), baseUrl));
         }
         
         logger.info("🔍 Returning regular pagination: {} results", results.size());
@@ -1246,19 +1288,21 @@ public class SearchService {
         bundle.setTotal(searchState.getTotalPrimaryResources() + includedResources.size()); // Approximate total
         
         // Add primary resources (search mode = "match")
+        String baseUrl = searchState.getBaseUrl();
         for (Resource resource : primaryResources) {
             bundle.addEntry()
                     .setResource(resource)
-                    .setFullUrl(searchState.getPrimaryResourceType() + "/" + resource.getIdElement().getIdPart())
+                    .setFullUrl(baseUrl + "/" + searchState.getPrimaryResourceType() + "/" + resource.getIdElement().getIdPart())
                     .getSearch()
                     .setMode(Bundle.SearchEntryMode.MATCH);
         }
         
         // Add included resources (search mode = "include")
         for (Resource resource : includedResources) {
+            String resourceType = resource.getResourceType().name();
             bundle.addEntry()
                     .setResource(resource)
-                    .setFullUrl(searchState.getRevIncludeResourceType() + "/" + resource.getIdElement().getIdPart())
+                    .setFullUrl(baseUrl + "/" + resourceType + "/" + resource.getIdElement().getIdPart())
                     .getSearch()
                     .setMode(Bundle.SearchEntryMode.INCLUDE);
         }
@@ -1704,10 +1748,11 @@ public class SearchService {
         bundle.setTotal(searchState.getTotalPrimaryResources());
         
         // Add primary resources (search mode = "match")
+        String baseUrl = searchState.getBaseUrl();
         for (Resource resource : primaryResources) {
             bundle.addEntry()
                     .setResource(resource)
-                    .setFullUrl(searchState.getPrimaryResourceType() + "/" + resource.getIdElement().getIdPart())
+                    .setFullUrl(baseUrl + "/" + searchState.getPrimaryResourceType() + "/" + resource.getIdElement().getIdPart())
                     .getSearch()
                     .setMode(Bundle.SearchEntryMode.MATCH);
         }
