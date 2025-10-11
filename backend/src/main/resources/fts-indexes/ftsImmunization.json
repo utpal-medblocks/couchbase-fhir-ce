@@ -32,6 +32,7 @@
       "type_field": "_type",
       "types": {
         "Resources.Immunization": {
+          "default_analyzer": "keyword",
           "dynamic": false,
           "enabled": true,
           "properties": {
@@ -394,6 +395,23 @@
                       ]
                     }
                   }
+                }
+              }
+            },
+            "subject": {
+              "dynamic": false,
+              "enabled": true,
+              "properties": {
+                "reference": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "index": true,
+                      "name": "reference",
+                      "type": "text"
+                    }
+                  ]
                 }
               }
             },
