@@ -4,6 +4,8 @@ import ca.uhn.fhir.context.*;
 import ca.uhn.fhir.rest.annotation.*;
 import ca.uhn.fhir.rest.api.MethodOutcome;
 import ca.uhn.fhir.rest.api.server.RequestDetails;
+import ca.uhn.fhir.rest.param.DateParam;
+import ca.uhn.fhir.rest.param.StringParam;
 import ca.uhn.fhir.rest.server.IResourceProvider;
 import ca.uhn.fhir.rest.server.exceptions.InternalErrorException;
 import ca.uhn.fhir.rest.server.exceptions.ResourceNotFoundException;
@@ -59,9 +61,11 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
     private final com.couchbase.fhir.resources.service.PatchService patchService;
     private final com.couchbase.fhir.resources.service.ConditionalPutService conditionalPutService;
     private final com.couchbase.fhir.resources.service.HistoryService historyService;
+    private final com.couchbase.fhir.resources.service.EverythingService everythingService;
+    private final com.couchbase.fhir.resources.search.SearchStateManager searchStateManager;
 
 
-    public FhirCouchbaseResourceProvider(Class<T> resourceClass, FhirResourceDaoImpl<T> dao , FhirContext fhirContext, FhirSearchParameterPreprocessor searchPreprocessor, FhirBucketValidator bucketValidator, FhirBucketConfigService configService, FhirValidator strictValidator, FhirValidator lenientValidator, com.couchbase.admin.connections.service.ConnectionService connectionService, com.couchbase.fhir.resources.service.PutService putService, com.couchbase.fhir.resources.service.DeleteService deleteService, FhirMetaHelper metaHelper, com.couchbase.fhir.resources.service.SearchService searchService, com.couchbase.fhir.resources.service.PatchService patchService, com.couchbase.fhir.resources.service.ConditionalPutService conditionalPutService, com.couchbase.fhir.resources.service.HistoryService historyService) {
+    public FhirCouchbaseResourceProvider(Class<T> resourceClass, FhirResourceDaoImpl<T> dao , FhirContext fhirContext, FhirSearchParameterPreprocessor searchPreprocessor, FhirBucketValidator bucketValidator, FhirBucketConfigService configService, FhirValidator strictValidator, FhirValidator lenientValidator, com.couchbase.admin.connections.service.ConnectionService connectionService, com.couchbase.fhir.resources.service.PutService putService, com.couchbase.fhir.resources.service.DeleteService deleteService, FhirMetaHelper metaHelper, com.couchbase.fhir.resources.service.SearchService searchService, com.couchbase.fhir.resources.service.PatchService patchService, com.couchbase.fhir.resources.service.ConditionalPutService conditionalPutService, com.couchbase.fhir.resources.service.HistoryService historyService, com.couchbase.fhir.resources.service.EverythingService everythingService, com.couchbase.fhir.resources.search.SearchStateManager searchStateManager) {
         this.resourceClass = resourceClass;
         this.dao = dao;
         this.fhirContext = fhirContext;
@@ -79,6 +83,8 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
         this.patchService = patchService;
         this.conditionalPutService = conditionalPutService;
         this.historyService = historyService;
+        this.everythingService = everythingService;
+        this.searchStateManager = searchStateManager;
     }
 
     /**
@@ -617,6 +623,254 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
             
             return errorOutcome;
         }
+    }
+
+    /**
+     * FHIR $everything Operation - Get all resources related to a patient
+     * GET /fhir/{bucket}/Patient/{id}/$everything
+     * 
+     * Only available for Patient resources. Returns:
+     * - The patient resource
+     * - All resources that reference the patient (Observation, Condition, etc.)
+     * 
+     * Supports query parameters:
+     * - start: Start date filter (Date)
+     * - end: End date filter (Date)
+     * - _type: Comma-separated list of resource types to include
+     * - _since: Only resources updated after this instant
+     * - _count: Page size (default: 50, max: 200)
+     */
+    @Operation(name = "$everything", idempotent = true, type = Patient.class)
+    public Bundle patientEverything(
+            @IdParam IdType theId,
+            @OperationParam(name = "start") DateParam start,
+            @OperationParam(name = "end") DateParam end,
+            @OperationParam(name = "_type") StringParam types,
+            @OperationParam(name = "_since") DateParam since,
+            @OperationParam(name = "_count") IntegerType count,
+            @OperationParam(name = "_page") StringParam page,
+            RequestDetails requestDetails) {
+        
+        String patientId = theId.getIdPart();
+        String continuationToken = page != null ? page.getValue() : null;
+        
+        // Convert DateParam to Date if provided
+        Date startDate = start != null ? start.getValue() : null;
+        Date endDate = end != null ? end.getValue() : null;
+        Date sinceDate = since != null ? since.getValue() : null;
+        
+        // Convert StringParam to String
+        String typeString = types != null ? types.getValue() : null;
+        
+        // Convert IntegerType to Integer
+        Integer countInt = count != null ? count.getValue() : null;
+        
+        // Handle pagination continuation
+        if (continuationToken != null) {
+            logger.info("🌍 $everything continuation for Patient/{} (token: {})", patientId, continuationToken);
+            return buildEverythingContinuationBundle(continuationToken, requestDetails);
+        }
+        
+        logger.info("🌍 $everything operation for Patient/{}", patientId);
+        
+        // Get base URL
+        String bucketName = TenantContextHolder.getTenantId();
+        String baseUrl = extractBaseUrl(requestDetails, bucketName);
+        
+        // Get all resources related to the patient (with pagination support)
+        com.couchbase.fhir.resources.service.EverythingService.EverythingResult result = 
+            everythingService.getPatientEverything(
+                patientId,
+                startDate,
+                endDate,
+                typeString,
+                sinceDate,
+                countInt,
+                baseUrl
+            );
+        
+        // Store pagination state if needed
+        String paginationToken = null;
+        if (result.needsPagination) {
+            int effectiveCount = (countInt != null && countInt > 0) ? Math.min(countInt, 200) : 50;
+            com.couchbase.fhir.resources.search.PaginationState paginationState = 
+                com.couchbase.fhir.resources.search.PaginationState.builder()
+                    .searchType("everything")
+                    .resourceType("Patient")
+                    .allDocumentKeys(result.allDocumentKeys)
+                    .pageSize(effectiveCount)
+                    .currentOffset(effectiveCount) // Next page starts after first page
+                    .bucketName(bucketName)
+                    .baseUrl(baseUrl)
+                    .build();
+            
+            paginationToken = searchStateManager.storePaginationState(paginationState);
+            logger.info("✅ Created $everything PaginationState: token={}, totalKeys={}, pages={}", 
+                       paginationToken, result.allDocumentKeys.size(), paginationState.getTotalPages());
+        }
+        
+        // Build bundle
+        Bundle bundle = new Bundle();
+        bundle.setType(Bundle.BundleType.SEARCHSET);
+        bundle.setTotal(result.totalResourceCount); // Total includes patient + all related resources
+        
+        // Add patient resource first (always MATCH mode)
+        Bundle.BundleEntryComponent patientEntry = bundle.addEntry();
+        patientEntry.setResource(result.patient);
+        patientEntry.setFullUrl(baseUrl + "/Patient/" + patientId);
+        patientEntry.getSearch().setMode(Bundle.SearchEntryMode.MATCH);
+        
+        // Add all first page related resources (INCLUDE mode)
+        for (Resource resource : result.firstPageResources) {
+            Bundle.BundleEntryComponent entry = bundle.addEntry();
+            entry.setResource(resource);
+            
+            // Set fullUrl
+            String resourceType = resource.getResourceType().name();
+            String resourceId = resource.getIdElement().getIdPart();
+            entry.setFullUrl(baseUrl + "/" + resourceType + "/" + resourceId);
+            entry.getSearch().setMode(Bundle.SearchEntryMode.INCLUDE);
+        }
+        
+        // Add self link
+        String selfUrl = baseUrl + "/Patient/" + patientId + "/$everything";
+        if (typeString != null) selfUrl += "?_type=" + typeString;
+        if (startDate != null) selfUrl += (selfUrl.contains("?") ? "&" : "?") + "start=" + formatDate(startDate);
+        if (endDate != null) selfUrl += (selfUrl.contains("?") ? "&" : "?") + "end=" + formatDate(endDate);
+        if (sinceDate != null) selfUrl += (selfUrl.contains("?") ? "&" : "?") + "_since=" + formatDate(sinceDate);
+        if (countInt != null) selfUrl += (selfUrl.contains("?") ? "&" : "?") + "_count=" + countInt;
+        
+        bundle.addLink()
+            .setRelation("self")
+            .setUrl(selfUrl);
+        
+        // Add next link if pagination is needed
+        if (paginationToken != null) {
+            int effectiveCount = (countInt != null && countInt > 0) ? Math.min(countInt, 200) : 50;
+            String nextUrl = baseUrl + "/Patient/" + patientId + "/$everything?_page=" + paginationToken 
+                           + "&_offset=" + effectiveCount 
+                           + "&_count=" + effectiveCount;
+            
+            bundle.addLink()
+                .setRelation("next")
+                .setUrl(nextUrl);
+        }
+        
+        logger.info("✅ $everything returning bundle with {} resources (total: {})", 
+                   bundle.getEntry().size(), result.totalResourceCount);
+        return bundle;
+    }
+    
+    /**
+     * Build continuation bundle for $everything pagination
+     */
+    private Bundle buildEverythingContinuationBundle(String continuationToken, RequestDetails requestDetails) {
+        String bucketName = TenantContextHolder.getTenantId();
+        String baseUrl = extractBaseUrl(requestDetails, bucketName);
+        
+        // Extract patient ID from the request URL (e.g., /Patient/example/$everything)
+        String patientId = extractPatientIdFromRequest(requestDetails);
+        
+        // Get next page of resources
+        List<Resource> pageResources = everythingService.getPatientEverythingNextPage(continuationToken);
+        
+        // Retrieve pagination state to check if there are more pages
+        com.couchbase.fhir.resources.search.PaginationState paginationState = 
+            searchStateManager.getPaginationState(continuationToken);
+        
+        // Update pagination state offset for next request (advance by the number of resources returned)
+        if (paginationState != null) {
+            paginationState.setCurrentOffset(paginationState.getCurrentOffset() + pageResources.size());
+        }
+        
+        // Build bundle
+        Bundle bundle = new Bundle();
+        bundle.setType(Bundle.BundleType.SEARCHSET);
+        if (paginationState != null) {
+            bundle.setTotal(paginationState.getAllDocumentKeys().size() + 1); // +1 for patient
+        }
+        
+        // Add resources (all INCLUDE mode for continuation pages)
+        for (Resource resource : pageResources) {
+            Bundle.BundleEntryComponent entry = bundle.addEntry();
+            entry.setResource(resource);
+            
+            String resourceType = resource.getResourceType().name();
+            String resourceId = resource.getIdElement().getIdPart();
+            entry.setFullUrl(baseUrl + "/" + resourceType + "/" + resourceId);
+            entry.getSearch().setMode(Bundle.SearchEntryMode.INCLUDE);
+        }
+        
+        // Add self link (use the patient ID extracted from request)
+        bundle.addLink()
+            .setRelation("self")
+            .setUrl(baseUrl + "/Patient/" + patientId + "/$everything?_page=" + continuationToken);
+        
+        // Add next link if there are more pages
+        if (paginationState != null && paginationState.getCurrentOffset() < paginationState.getAllDocumentKeys().size()) {
+            // Next offset is the updated current position (we advanced it above after fetching this page)
+            int nextOffset = paginationState.getCurrentOffset();
+            String nextUrl = baseUrl + "/Patient/" + patientId + "/$everything?_page=" + continuationToken 
+                           + "&_offset=" + nextOffset 
+                           + "&_count=" + paginationState.getPageSize();
+            
+            bundle.addLink()
+                .setRelation("next")
+                .setUrl(nextUrl);
+        }
+        
+        logger.info("✅ $everything continuation returning {} resources (page {}/{})", 
+                   pageResources.size(), 
+                   paginationState != null ? paginationState.getCurrentPage() : "?",
+                   paginationState != null ? paginationState.getTotalPages() : "?");
+        return bundle;
+    }
+    
+    /**
+     * Extract base URL from request details
+     */
+    private String extractBaseUrl(RequestDetails requestDetails, String bucketName) {
+        if (requestDetails != null) {
+            String serverBase = requestDetails.getFhirServerBase();
+            if (serverBase != null) {
+                return serverBase;
+            }
+        }
+        // Fallback to constructed URL
+        return "http://localhost:8080/fhir/" + bucketName;
+    }
+    
+    /**
+     * Extract patient ID from the request URL
+     * For $everything requests, URL is like: /Patient/{id}/$everything
+     */
+    private String extractPatientIdFromRequest(RequestDetails requestDetails) {
+        if (requestDetails != null) {
+            String requestPath = requestDetails.getRequestPath();
+            if (requestPath != null && requestPath.contains("/Patient/")) {
+                // Extract patient ID from path like: /fhir/acme/Patient/example/$everything
+                int patientIndex = requestPath.indexOf("/Patient/");
+                if (patientIndex >= 0) {
+                    String afterPatient = requestPath.substring(patientIndex + "/Patient/".length());
+                    // Patient ID is between /Patient/ and the next /
+                    int nextSlash = afterPatient.indexOf("/");
+                    if (nextSlash > 0) {
+                        return afterPatient.substring(0, nextSlash);
+                    } else {
+                        // No trailing slash, return the rest
+                        return afterPatient;
+                    }
+                }
+            }
+        }
+        return "unknown";
+    }
+
+    /**
+     * Format date for URL parameter (simple ISO format)
+     */
+    private String formatDate(Date date) {
+        return new java.text.SimpleDateFormat("yyyy-MM-dd").format(date);
     }
 
     @Override
