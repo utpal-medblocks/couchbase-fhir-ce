@@ -24,12 +24,9 @@ public class CleanExceptionInterceptor {
     @Hook(Pointcut.SERVER_HANDLE_EXCEPTION)
     public boolean handleException(RequestDetails theRequestDetails, Throwable theException) {
         // Handle null exception case to prevent NPE
+        // This can happen when HAPI properly catches and converts exceptions to OperationOutcome
         if (theException == null) {
-            logger.warn("🔍 handleException called with null exception - this indicates a bug");
-            logger.warn("🔍 Stack trace at point of null exception:", new Exception("Stack trace for debugging"));
-            logger.warn("🔍 Request details: {} {}", 
-                theRequestDetails.getRequestType(), 
-                theRequestDetails.getCompleteUrl());
+            logger.debug("🔍 handleException called with null (exception already handled by HAPI)");
             return true; // Continue with default handling
         }
         
@@ -83,6 +80,7 @@ public class CleanExceptionInterceptor {
             // Client-side disconnection errors (common with improved performance)
             message.contains("ClientAbortException") ||
             message.contains("Broken pipe") ||
+            message.contains("Version not found") ||
             message.contains("Connection reset by peer")
           
         );

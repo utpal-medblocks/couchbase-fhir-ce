@@ -4,8 +4,6 @@ import ca.uhn.fhir.context.*;
 import ca.uhn.fhir.rest.annotation.*;
 import ca.uhn.fhir.rest.api.MethodOutcome;
 import ca.uhn.fhir.rest.api.server.RequestDetails;
-import ca.uhn.fhir.rest.param.NumberParam;
-import ca.uhn.fhir.rest.param.StringParam;
 import ca.uhn.fhir.rest.server.IResourceProvider;
 import ca.uhn.fhir.rest.server.exceptions.InternalErrorException;
 import ca.uhn.fhir.rest.server.exceptions.ResourceNotFoundException;
@@ -60,9 +58,10 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
     private final com.couchbase.fhir.resources.service.SearchService searchService;
     private final com.couchbase.fhir.resources.service.PatchService patchService;
     private final com.couchbase.fhir.resources.service.ConditionalPutService conditionalPutService;
+    private final com.couchbase.fhir.resources.service.HistoryService historyService;
 
 
-    public FhirCouchbaseResourceProvider(Class<T> resourceClass, FhirResourceDaoImpl<T> dao , FhirContext fhirContext, FhirSearchParameterPreprocessor searchPreprocessor, FhirBucketValidator bucketValidator, FhirBucketConfigService configService, FhirValidator strictValidator, FhirValidator lenientValidator, com.couchbase.admin.connections.service.ConnectionService connectionService, com.couchbase.fhir.resources.service.PutService putService, com.couchbase.fhir.resources.service.DeleteService deleteService, FhirMetaHelper metaHelper, com.couchbase.fhir.resources.service.SearchService searchService, com.couchbase.fhir.resources.service.PatchService patchService, com.couchbase.fhir.resources.service.ConditionalPutService conditionalPutService) {
+    public FhirCouchbaseResourceProvider(Class<T> resourceClass, FhirResourceDaoImpl<T> dao , FhirContext fhirContext, FhirSearchParameterPreprocessor searchPreprocessor, FhirBucketValidator bucketValidator, FhirBucketConfigService configService, FhirValidator strictValidator, FhirValidator lenientValidator, com.couchbase.admin.connections.service.ConnectionService connectionService, com.couchbase.fhir.resources.service.PutService putService, com.couchbase.fhir.resources.service.DeleteService deleteService, FhirMetaHelper metaHelper, com.couchbase.fhir.resources.service.SearchService searchService, com.couchbase.fhir.resources.service.PatchService patchService, com.couchbase.fhir.resources.service.ConditionalPutService conditionalPutService, com.couchbase.fhir.resources.service.HistoryService historyService) {
         this.resourceClass = resourceClass;
         this.dao = dao;
         this.fhirContext = fhirContext;
@@ -79,6 +78,7 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
         this.searchService = searchService;
         this.patchService = patchService;
         this.conditionalPutService = conditionalPutService;
+        this.historyService = historyService;
     }
 
     /**
@@ -89,9 +89,15 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
         return fhirContext.getResourceDefinition(resourceClass).getName();
     }
 
+    /**
+     * FHIR read operation: Read current version of a resource
+     * GET {resourceType}/{id}
+     */
     @Read
     public T read(@IdParam IdType theId) {
         String bucketName = TenantContextHolder.getTenantId();
+        String resourceType = getFhirResourceType();
+        String id = theId.getIdPart();
         
         // Validate FHIR bucket before proceeding
         try {
@@ -100,8 +106,77 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
             throw new ca.uhn.fhir.rest.server.exceptions.InvalidRequestException(e.getMessage());
         }
         
-        return dao.read(getFhirResourceType(), theId.getIdPart() , bucketName).orElseThrow(() ->
+        return dao.read(resourceType, id, bucketName).orElseThrow(() ->
                 new ResourceNotFoundException(theId));
+    }
+
+    /**
+     * FHIR vread operation: Read a specific version of a resource
+     * GET {resourceType}/{id}/_history/{vid}
+     */
+    @Read(version = true)
+    public T vread(@IdParam IdType theId) {
+        String bucketName = TenantContextHolder.getTenantId();
+        String resourceType = getFhirResourceType();
+        String id = theId.getIdPart();
+        String versionId = theId.getVersionIdPart();
+        
+        // Validate FHIR bucket before proceeding
+        try {
+            bucketValidator.validateFhirBucketOrThrow(bucketName, "default");
+        } catch (FhirBucketValidationException e) {
+            throw new ca.uhn.fhir.rest.server.exceptions.InvalidRequestException(e.getMessage());
+        }
+        
+        if (versionId == null || versionId.isEmpty()) {
+            throw new ca.uhn.fhir.rest.server.exceptions.InvalidRequestException("Version ID is required for vread operation");
+        }
+        
+        logger.info("📜 vread request: {}/{} version {}", resourceType, id, versionId);
+        
+        Resource resource = historyService.getResourceVersion(resourceType, id, versionId, bucketName);
+        
+        @SuppressWarnings("unchecked")
+        T typedResource = (T) resource;
+        return typedResource;
+    }
+
+    /**
+     * FHIR history operation: Get version history for a resource instance
+     * GET {resourceType}/{id}/_history
+     * 
+     * Returns List<T> and lets HAPI FHIR handle bundle construction - much simpler!
+     */
+    @History
+    public List<T> getResourceInstanceHistory(
+            @IdParam IdType theId,
+            @ca.uhn.fhir.rest.annotation.Since java.util.Date theSince,
+            @ca.uhn.fhir.rest.annotation.Count Integer theCount
+    ) {
+        String bucketName = TenantContextHolder.getTenantId();
+        String resourceType = getFhirResourceType();
+        String id = theId.getIdPart();
+        
+        // Validate FHIR bucket before proceeding
+        try {
+            bucketValidator.validateFhirBucketOrThrow(bucketName, "default");
+        } catch (FhirBucketValidationException e) {
+            throw new ca.uhn.fhir.rest.server.exceptions.InvalidRequestException(e.getMessage());
+        }
+        
+        // Convert Since date to Instant
+        java.time.Instant sinceInstant = theSince != null ? theSince.toInstant() : null;
+        
+        logger.info("📜 History request: {}/{} (count={}, since={})", resourceType, id, theCount, sinceInstant);
+        
+        // Get list of versioned resources - HAPI will wrap them in a history bundle
+        List<Resource> versions = historyService.getResourceHistoryResources(resourceType, id, theCount, sinceInstant, bucketName);
+        
+        // Cast to List<T> for HAPI
+        @SuppressWarnings("unchecked")
+        List<T> typedVersions = (List<T>) (List<?>) versions;
+        
+        return typedVersions;
     }
 
     @Create

@@ -249,6 +249,74 @@ public class FtsSearchService {
     }
     
     /**
+     * Search for keys in a specific FTS index (for custom collections like Versions)
+     * This bypasses the CollectionRoutingService and uses the provided index name directly
+     * 
+     * @param ftsQueries List of FTS search queries
+     * @param ftsIndexName Explicit FTS index name (e.g., "ftsVersions")
+     * @param sortFields Sort fields for ordering results
+     * @param bucketName Bucket name for index lookup
+     * @return FtsSearchResult containing document keys
+     */
+    public FtsSearchResult searchForAllKeysInCollection(List<SearchQuery> ftsQueries, String ftsIndexName,
+                                                        List<SearchSort> sortFields, String bucketName) {
+        try {
+            Cluster cluster = connectionService.getConnection("default");
+            if (cluster == null) {
+                throw new RuntimeException("No active connection found");
+            }
+            
+            // Build the full index name: {bucket}.{scope}.{indexName}
+            String fullIndexName = bucketName + ".Resources." + ftsIndexName;
+            
+            // Build combined query (no automatic resourceType filter since this is a custom search)
+            SearchQuery combinedQuery;
+            if (ftsQueries.size() == 1) {
+                combinedQuery = ftsQueries.get(0);
+            } else if (ftsQueries.size() > 1) {
+                combinedQuery = SearchQuery.conjuncts(ftsQueries.toArray(new SearchQuery[0]));
+            } else {
+                combinedQuery = SearchQuery.matchAll();
+            }
+            
+            // Build search options
+            SearchOptions searchOptions = buildOptions(0, 1000, sortFields);
+            
+            logger.info("🔍 FTS search on custom index: {} with {} queries", fullIndexName, ftsQueries.size());
+            
+            long ftsStartTime = System.currentTimeMillis();
+            SearchResult searchResult = cluster.searchQuery(fullIndexName, combinedQuery, searchOptions);
+            
+            // Check for errors
+            if (searchResult.metaData().errors() != null && !searchResult.metaData().errors().isEmpty()) {
+                String errorMsg = searchResult.metaData().errors().toString();
+                logger.error("❌ FTS search on {} returned errors: {}", fullIndexName, errorMsg);
+                throw new RuntimeException("FTS search failed: " + errorMsg);
+            }
+            
+            // Extract document keys
+            List<String> documentKeys = new ArrayList<>();
+            for (SearchRow row : searchResult.rows()) {
+                documentKeys.add(row.id());
+            }
+            
+            long ftsElapsedTime = System.currentTimeMillis() - ftsStartTime;
+            logger.info("🔍 FTS search on {} returned {} document keys in {} ms", 
+                       fullIndexName, documentKeys.size(), ftsElapsedTime);
+            
+            return new FtsSearchResult(
+                documentKeys,
+                searchResult.metaData().metrics().totalRows(),
+                searchResult.metaData().metrics().took().toMillis()
+            );
+            
+        } catch (Exception e) {
+            logger.error("❌ FTS search on {} failed: {}", ftsIndexName, e.getMessage());
+            throw new RuntimeException("FTS search failed: " + e.getMessage(), e);
+        }
+    }
+    
+    /**
      * Result container for FTS search operations
      */
     public static class FtsSearchResult {

@@ -310,7 +310,7 @@ public class ConnectionService {
             
             // Standard FHIR collections
             List<String> collections = Arrays.asList(
-                "Patient", "Practitioner", "Observation", "Encounter", "Condition", 
+                "Patient", "Observation", "Encounter", "Condition", 
                 "Procedure", "MedicationRequest", "DiagnosticReport", "DocumentReference", 
                 "Immunization", "ServiceRequest", "General", "Versions", "Tombstones"
             );
