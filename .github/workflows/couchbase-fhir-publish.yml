@@ -2,9 +2,9 @@ name: Build and Push Couchbase FHIR Docker Images
 
 on:
   push:
-    branches: [ master ]
-    tags: [ 'v*' ]          # always build on release tags
-  workflow_dispatch:         # allow manual "Run workflow"
+    branches: [master]
+    tags: ["v*"] # always build on release tags
+  workflow_dispatch: # allow manual "Run workflow"
 
 env:
   REGISTRY: ghcr.io
@@ -75,8 +75,9 @@ jobs:
             echo "SERVER_TAGS=${{ env.REGISTRY }}/${{ github.repository }}/fhir-server:${V},${{ env.REGISTRY }}/${{ github.repository }}/fhir-server:${SHA},${{ env.REGISTRY }}/${{ github.repository }}/fhir-server:latest" >> $GITHUB_OUTPUT
             echo "ADMIN_TAGS=${{ env.REGISTRY }}/${{ github.repository }}/fhir-admin:${V},${{ env.REGISTRY }}/${{ github.repository }}/fhir-admin:${SHA},${{ env.REGISTRY }}/${{ github.repository }}/fhir-admin:latest"   >> $GITHUB_OUTPUT
           else
-            echo "SERVER_TAGS=${{ env.REGISTRY }}/${{ github.repository }}/fhir-server:${SHA}" >> $GITHUB_OUTPUT
-            echo "ADMIN_TAGS=${{ env.REGISTRY }}/${{ github.repository }}/fhir-admin:${SHA}"   >> $GITHUB_OUTPUT
+            # Manual workflow dispatch without version change - still tag as :latest
+            echo "SERVER_TAGS=${{ env.REGISTRY }}/${{ github.repository }}/fhir-server:${SHA},${{ env.REGISTRY }}/${{ github.repository }}/fhir-server:latest" >> $GITHUB_OUTPUT
+            echo "ADMIN_TAGS=${{ env.REGISTRY }}/${{ github.repository }}/fhir-admin:${SHA},${{ env.REGISTRY }}/${{ github.repository }}/fhir-admin:latest"   >> $GITHUB_OUTPUT
           fi
       - name: Build and push fhir-server
         if: ${{ steps.meta.outputs.SERVER_TAGS != '' }}
