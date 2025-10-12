@@ -6,8 +6,11 @@ import ca.uhn.fhir.rest.server.provider.ServerCapabilityStatementProvider;
 import com.couchbase.fhir.resources.constants.USCoreProfiles;
 import jakarta.servlet.http.HttpServletRequest;
 import org.hl7.fhir.r4.model.CapabilityStatement;
+import org.hl7.fhir.r4.model.Enumerations;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.info.BuildProperties;
 
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
@@ -31,6 +34,7 @@ import static com.couchbase.fhir.resources.constants.USCoreProfiles.US_CORE_BASE
 public class USCoreCapabilityProvider extends ServerCapabilityStatementProvider {
 
     private static final Logger logger = LoggerFactory.getLogger(USCoreCapabilityProvider.class);
+    private final String appVersion;
     
     // Simple cache: tenant -> capability statement
     // Cache for 1 hour (3600000 ms)
@@ -51,9 +55,23 @@ public class USCoreCapabilityProvider extends ServerCapabilityStatementProvider 
         }
     }
 
-    public USCoreCapabilityProvider(RestfulServer restfulServer) {
+    public USCoreCapabilityProvider(RestfulServer restfulServer, 
+                                    @Autowired(required = false) BuildProperties buildProperties) {
         super(restfulServer);
-        logger.info("✅ USCoreCapabilityProvider initialized with explicit caching (1 hour TTL)");
+        
+        // Determine version: prefer build-info, then JAR manifest, else dev
+        String v = null;
+        if (buildProperties != null) {
+            try {
+                v = buildProperties.getVersion();
+            } catch (Exception ignored) { }
+        }
+        if (v == null) {
+            v = getClass().getPackage().getImplementationVersion();
+        }
+        this.appVersion = v != null ? v : "dev";
+        
+        logger.info("✅ USCoreCapabilityProvider initialized with explicit caching (1 hour TTL), version: {}", appVersion);
     }
 
     @Override
@@ -78,6 +96,44 @@ public class USCoreCapabilityProvider extends ServerCapabilityStatementProvider 
         
         CapabilityStatement statement = (CapabilityStatement) super.getServerConformance(request, requestDetails);
 
+        // ============================================
+        // BRANDING
+        // ============================================
+        statement.setName("Couchbase FHIR CE");
+        statement.setPublisher("Couchbase Labs");
+        statement.setStatus(Enumerations.PublicationStatus.ACTIVE);
+        
+        // Update text/narrative
+        statement.getText()
+            .setStatus(org.hl7.fhir.r4.model.Narrative.NarrativeStatus.GENERATED)
+            .setDivAsString("<div xmlns=\"http://www.w3.org/1999/xhtml\">Couchbase FHIR CE - US Core Compatible FHIR Server</div>");
+        
+        // Software block
+        if (statement.hasSoftware()) {
+            statement.getSoftware()
+                .setName("Couchbase FHIR CE")
+                .setVersion(appVersion);
+        } else {
+            statement.setSoftware(new CapabilityStatement.CapabilityStatementSoftwareComponent()
+                .setName("Couchbase FHIR CE")
+                .setVersion(appVersion));
+        }
+        
+        // Implementation block (per tenant/bucket)
+        String fhirBase = requestDetails != null ? requestDetails.getFhirServerBase() : "http://localhost:8080/fhir";
+        if (statement.hasImplementation()) {
+            statement.getImplementation()
+                .setDescription("Couchbase FHIR CE (" + tenant + ")")
+                .setUrl(fhirBase);
+        } else {
+            statement.setImplementation(new CapabilityStatement.CapabilityStatementImplementationComponent()
+                .setDescription("Couchbase FHIR CE (" + tenant + ")")
+                .setUrl(fhirBase));
+        }
+
+        // ============================================
+        // US CORE PROFILES
+        // ============================================
         // Add US Core server conformance URL
         statement.addInstantiates(USCoreProfiles.US_CORE_SERVER);
 
