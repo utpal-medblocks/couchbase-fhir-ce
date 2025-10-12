@@ -119,6 +119,8 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
     /**
      * FHIR vread operation: Read a specific version of a resource
      * GET {resourceType}/{id}/_history/{vid}
+     * 
+     * Note: HAPI sometimes routes regular reads here, so we delegate to read() if no version is specified
      */
     @Read(version = true)
     public T vread(@IdParam IdType theId) {
@@ -134,8 +136,10 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
             throw new ca.uhn.fhir.rest.server.exceptions.InvalidRequestException(e.getMessage());
         }
         
+        // If no version is specified, this is a regular read request - delegate to read()
         if (versionId == null || versionId.isEmpty()) {
-            throw new ca.uhn.fhir.rest.server.exceptions.InvalidRequestException("Version ID is required for vread operation");
+            logger.debug("📖 vread called without version, delegating to read()");
+            return read(theId);
         }
         
         logger.info("📜 vread request: {}/{} version {}", resourceType, id, versionId);
