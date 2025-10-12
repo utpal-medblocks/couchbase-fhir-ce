@@ -3,6 +3,7 @@ package com.couchbase.fhir.resources.provider;
 import ca.uhn.fhir.context.FhirContext;
 import ca.uhn.fhir.context.RuntimeResourceDefinition;
 import ca.uhn.fhir.context.RuntimeSearchParam;
+import ca.uhn.fhir.rest.api.Constants;
 import ca.uhn.fhir.rest.api.server.RequestDetails;
 import ca.uhn.fhir.rest.server.RestfulServer;
 import ca.uhn.fhir.rest.server.provider.ServerCapabilityStatementProvider;
@@ -49,10 +50,16 @@ public class USCoreCapabilityProvider extends ServerCapabilityStatementProvider 
         statement.setSoftware(new CapabilityStatement.CapabilityStatementSoftwareComponent()
                 .setName("couchbase-fhir-ce")
                 .setVersion("1.0.0"));
+        statement.setPublisher("Couchbase, Inc");
         statement.setFhirVersion(Enumerations.FHIRVersion._4_0_1);
         statement.setKind(CapabilityStatement.CapabilityStatementKind.INSTANCE);
         statement.setStatus(Enumerations.PublicationStatus.ACTIVE);
         statement.addInstantiates(USCoreProfiles.US_CORE_SERVER);
+        statement.addFormat(Constants.CT_FHIR_JSON_NEW);
+        statement.addFormat(Constants.CT_FHIR_XML_NEW);
+        statement.addFormat(Constants.CT_JSON);
+        statement.addFormat(Constants.CT_XML);
+
         CapabilityStatement.CapabilityStatementRestComponent rest = new CapabilityStatement.CapabilityStatementRestComponent();
         rest.setMode(CapabilityStatement.RestfulCapabilityMode.SERVER);
         Set<String> resourceTypes = fhirContext.getResourceTypes();
@@ -71,8 +78,16 @@ public class USCoreCapabilityProvider extends ServerCapabilityStatementProvider 
             resource.addInteraction()
                     .setCode(CapabilityStatement.TypeRestfulInteraction.READ);
             resource.addInteraction()
+                    .setCode(CapabilityStatement.TypeRestfulInteraction.UPDATE);
+            resource.addInteraction()
+                    .setCode(CapabilityStatement.TypeRestfulInteraction.CREATE);
+            resource.addInteraction()
+                    .setCode(CapabilityStatement.TypeRestfulInteraction.DELETE);
+            resource.addInteraction()
                     .setCode(CapabilityStatement.TypeRestfulInteraction.SEARCHTYPE);
 
+            resource.setConditionalUpdate(true);
+            resource.addSearchInclude("*");
             // Add search parameters
             for (RuntimeSearchParam param : resourceDef.getSearchParams()) {
                 CapabilityStatement.CapabilityStatementRestResourceSearchParamComponent searchParam =
