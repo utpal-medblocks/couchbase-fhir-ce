@@ -3,7 +3,6 @@ package com.couchbase.fhir.resources.service;
 import ca.uhn.fhir.parser.IParser;
 import com.couchbase.client.java.Cluster;
 import com.couchbase.client.java.json.JsonObject;
-import com.couchbase.client.java.query.QueryResult;
 import com.couchbase.common.fhir.FhirMetaHelper;
 import org.hl7.fhir.r4.model.Resource;
 import org.slf4j.Logger;
@@ -12,8 +11,6 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
-
-import com.couchbase.fhir.resources.service.CollectionRoutingService;
 
 /**
  * Service for handling FHIR PUT operations (create or update resources with client-controlled IDs).
@@ -60,12 +57,7 @@ public class PutService {
         
         // ✅ FHIR Compliance: Check if ID was previously deleted (tombstoned)
         // Per FHIR spec, cannot reuse deleted resource IDs
-        if (deleteService.isTombstoned(resourceType, clientId, context.getCluster(), context.getBucketName())) {
-            logger.warn("🚫 PUT {}: ID was previously deleted and cannot be reused", documentKey);
-            throw new ca.uhn.fhir.rest.server.exceptions.ResourceVersionConflictException(
-                "Resource ID " + clientId + " was previously deleted and cannot be reused. Please choose a new ID."
-            );
-        }
+        // NOTE: Tombstone check is done inside handleVersioningAndUpdate to ensure it's within transaction context
         
         if (context.isInTransaction()) {
             // Operate within existing Bundle transaction
@@ -128,10 +120,18 @@ public class PutService {
                                          com.couchbase.client.java.transactions.TransactionAttemptContext txContext,
                                          Cluster cluster, String bucketName) {
         String resourceType = resource.getResourceType().name();
-        String resourceId = resource.getIdElement().getIdPart();
+        String clientId = resource.getIdElement().getIdPart();
+        
+        // Check if ID was previously deleted (tombstoned) within transaction context
+        if (deleteService.isTombstonedInTransaction(resourceType, clientId, txContext, cluster, bucketName)) {
+            logger.warn("🚫 PUT {}: ID was previously deleted and cannot be reused", documentKey);
+            throw new ca.uhn.fhir.rest.server.exceptions.ResourceVersionConflictException(
+                "Resource ID " + clientId + " was previously deleted and cannot be reused. Please choose a new ID."
+            );
+        }
         
         // Step 1: Copy existing resource to Versions collection (if it exists) and get next version
-        int nextVersion = copyExistingResourceToVersions(cluster, bucketName, resourceType, documentKey);
+        int nextVersion = copyExistingResourceToVersions(txContext, cluster, bucketName, resourceType, documentKey);
         
         if (nextVersion > 1) {
             logger.info("📋 PUT {}: Resource exists, copied to Versions, updating to version {}", 
@@ -152,7 +152,8 @@ public class PutService {
      * 
      * @return Next version number (1 if resource doesn't exist, current+1 if it does)
      */
-    private int copyExistingResourceToVersions(Cluster cluster, String bucketName, String resourceType, String documentKey) {
+    private int copyExistingResourceToVersions(com.couchbase.client.java.transactions.TransactionAttemptContext txContext,
+                                              Cluster cluster, String bucketName, String resourceType, String documentKey) {
         try {
             // Get the correct target collection for this resource type
             String targetCollection = collectionRoutingService.getTargetCollection(resourceType);
@@ -173,7 +174,9 @@ public class PutService {
             );
             
             logger.warn("🔄 Copying to Versions with USE KEYS: {}", sql);
-            QueryResult result = cluster.query(sql);
+            
+            // Execute query within transaction context
+            com.couchbase.client.java.transactions.TransactionQueryResult result = txContext.query(sql);
             
             // Get RETURNING results from SDK - this gives us the CURRENT version that was copied
             List<String> rows = result.rowsAs(String.class);

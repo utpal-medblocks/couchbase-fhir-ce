@@ -3,39 +3,59 @@
 # DO NOT commit config.yaml to git - it contains sensitive credentials
 
 connection:
-##  connectionString: "ec2-xxx-xxx-xxx-xxx.compute-1.amazonaws.com"
+  ## connectionString: "ec2-xxx-xxx-xxx-xxx.compute-1.amazonaws.com"
+  ## connectionString: "localhost"
+  ## connectionString: "couchbases://cb.gaxsvcngnxyz.cloud.couchbase.com"
+  ## connectionString: "host.docker.internal" # Works on Docker Desktop for Mac
+
   connectionString: "localhost"
   username: "Administrator"
   password: "password"
   serverType: "Server" # "Server" or "Capella"
-  sslEnabled: false
-  # sslCertificate: |
+  sslEnabled: false # true for Capella
+
+app:
+  autoConnect: true # has to be set to true
+  showConnectionDialog: false # Set to false to prevent dialog if YAML config is valid
+
+# Couchbase SDK Performance Tuning (Optional - defaults optimized for high-concurrency FHIR workloads)
+couchbase:
+  sdk:
+    # Connection Pool Configuration
+    max-http-connections: 128      # HTTP connections for N1QL/Analytics/Search (default: 128)
+    num-kv-connections: 8          # KV connections per node (default: 8)
+    
+    # Timeout Configuration (in seconds)
+    query-timeout-seconds: 30      # N1QL query timeout (default: 30)
+    search-timeout-seconds: 30     # FTS search timeout (default: 30)
+    kv-timeout-seconds: 10         # Key-Value operation timeout (default: 10)
+    connect-timeout-seconds: 10    # Initial connection timeout (default: 10)
+    disconnect-timeout-seconds: 10 # Graceful disconnect timeout (default: 10)
+    
+    # Transaction Configuration
+    # NONE: Single-node development (no replicas needed) - DEFAULT
+    # MAJORITY: Production multi-node (requires replicas)
+    # MAJORITY_AND_PERSIST_TO_ACTIVE: Highest durability (requires replicas + persistence)
+    # PERSIST_TO_MAJORITY: Persist to majority (requires replicas + persistence)
+    transaction-durability: NONE   # Transaction durability level (default: NONE for dev/test)
+    
+    # Advanced Options
+    enable-mutation-tokens: true   # Enable mutation tokens for consistency (default: true)
+
+
+logging:
+  levels: # levels are INFO, WARN, DEBUG, ERROR
+    com.couchbase.admin: ERROR
+    com.couchbase.fhir: ERROR
+    com.couchbase.common: ERROR
+    com.couchbase.admin.config.service.ConfigurationStartupService: INFO # To Show SDK configuration
+
+  # sslCertificate: | # (DISABLED FOR BETA RELEASE)
   # "-----BEGIN CERTIFICATE----
-  #   MIIDDDCCAfSgAwIBAgIIGFbWQXbe3TEwDQYJKoZIhvcNAQELBQAwJDEiMCAGA1UE
-  #   AxMZQ291Y2hiYXNlIFNlcnZlciBmNTk2ZTZiYjAeFw0xMzAxMDEwMDAwMDBaFw00
-  #   OTEyMzEyMzU5NTlaMCQxIjAgBgNVBAMTGUNvdWNoYmFzZSBTZXJ2ZXIgZjU5NmU2
-  #   YmIwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQDEGUyscHFHGl5vQR64
-  #   fsUw0sLBg8r9jh8RhIFiM38zlRyEI2AKQojxOoklnSCG6WE9kOsAto8meIwkwCw+
-  #   w6VG6bHY8HNYpjTThsIsx5mz0OCfE1wgCOS3GiOh/GGhIH0gksFuxVb3pSOHWTnj
-  #   /5wbfpvCwDWEdW4Oa1jsxtgtRnVr7aM5uEfGEcjHNWDYGog8eMfe0/VcrWTWsJhQ
-  #   ej0fgmF5EA9bNxZfYhtYCsd3viPpz7NZqdTMyxmSPI/qDuHmKqjk1nwRQuAgsHDc
-  #   h/psLZrRhm5bMJkMXD8SrwNML7ps5zJZMxtQOE/+kkplgm6dogrjho1Pa2eyW/i7
-  #   XDMbAgMBAAGjQjBAMA4GA1UdDwEB/wQEAwIBhjAPBgNVHRMBAf8EBTADAQH/MB0G
-  #   A1UdDgQWBBRM+tswsHpPWNgEWKdePpsL8ABhUzANBgkqhkiG9w0BAQsFAAOCAQEA
-  #   VKXoaHxQeiv17GfWhjVS4JHAaVds5mX7/ervQjhmrlWPcK8HJyedmpjBh8JgnCpe
-  #   vLCx9xTt9qEyjsyxnr7eGFQh0pP34CN/MUf6Jo60RAeuONSdR7eCFwJEBE/LXW15
-  #   c70vdqikvEQaGDlmiABpqR3ggDuFrjRvVVNJtXdATbZo3Y6RU8WM/KizpT4L5cMa
-  #   7jQHnZXiE4l1UdHepX3xfq0DO1AZOVUkUvbbkf8PhimHd5r7D9ZM6NN6Y/AsoYkI
-  #   VflTb2jAbH/zod+3UI+ddQwYLu9XZgv4oStAm4nEfPI3ptNJorqXSkMEdGbw1lnA
+  #   MIIDDDCCA....
+  #   ....dQwYLu9XZgv4oStAm4nEfPI3ptNJorqXSkMEdGbw1lnA
   #   EItoo4jU18oLHbU12SWU2A==
   #   -----END CERTIFICATE-----"
-# Capella Connection (COMMENTED OUT)
-# connection:
-#   connectionString: "couchbases://cb.your-endpoint.cloud.couchbase.com"
-#   username: "your-capella-user"
-#   password: "your-capella-password"
-#   serverType: "Capella"
-#   sslEnabled: true
 
 # Log Rotation and S3 Uploads (DISABLED FOR BETA RELEASE)
 # logger:
@@ -48,15 +68,6 @@ connection:
 #   access-key-id: ""
 #   secret-access-key: ""
 #   region: ""
-
-fhir:
-  profile: "US Core"
-  endpoint: "/fhir"
-  version: "V4"
-
-app:
-  autoConnect: true
-  showConnectionDialog: false # Set to false to prevent dialog if YAML config is valid
 
 # HAProxy Metrics Configuration
 haproxy:

@@ -16,12 +16,11 @@ import type { SelectChangeEvent } from "@mui/material";
 import {
   LineChart,
   Line,
-  BarChart,
-  Bar,
   XAxis,
   YAxis,
   CartesianGrid,
   Tooltip,
+  Legend,
   ResponsiveContainer,
 } from "recharts";
 import {
@@ -210,20 +209,31 @@ const FtsMetricsCharts: React.FC<FtsMetricsChartsProps> = ({
     if (unit === "ms") {
       return `${value.toFixed(2)} ms`;
     }
-    if (unit === "docs") {
-      return Math.round(value).toLocaleString(); // Always whole numbers for document count
+    if (unit === "docs" || unit === "count") {
+      return Math.round(value).toLocaleString(); // Always whole numbers for document/item count
+    }
+    if (unit === "queries") {
+      return Math.round(value).toLocaleString(); // Always whole numbers for queries
     }
     return value.toLocaleString();
   };
 
   const prepareChartData = (metricData: FtsMetricData[]): ChartDataPoint[] => {
-    if (!metricData.length) return [];
+    if (!metricData || metricData.length === 0) return [];
 
-    // Get all unique timestamps
+    // Get all unique timestamps, with safety checks
     const allTimestamps = new Set<number>();
     metricData.forEach((metric) => {
-      metric.values.forEach((point) => allTimestamps.add(point.timestamp));
+      if (metric && metric.values && Array.isArray(metric.values)) {
+        metric.values.forEach((point) => {
+          if (point && typeof point.timestamp === "number") {
+            allTimestamps.add(point.timestamp);
+          }
+        });
+      }
     });
+
+    if (allTimestamps.size === 0) return [];
 
     // Sort timestamps
     const sortedTimestamps = Array.from(allTimestamps).sort();
@@ -236,8 +246,12 @@ const FtsMetricsCharts: React.FC<FtsMetricsChartsProps> = ({
       };
 
       metricData.forEach((metric) => {
-        const point = metric.values.find((p) => p.timestamp === timestamp);
-        dataPoint[metric.name] = point?.value ?? 0;
+        if (metric && metric.name && metric.values) {
+          const point = metric.values.find(
+            (p) => p && p.timestamp === timestamp
+          );
+          dataPoint[metric.name] = point?.value ?? 0;
+        }
       });
 
       return dataPoint;
@@ -248,9 +262,8 @@ const FtsMetricsCharts: React.FC<FtsMetricsChartsProps> = ({
     (
       title: string,
       metricNames: string[],
-      color: string,
-      unit: string,
-      chartType: "line" | "bar" = "line"
+      colors: string | string[],
+      unit: string
     ) => {
       if (!metrics || !metrics.data.length) {
         return (
@@ -270,159 +283,114 @@ const FtsMetricsCharts: React.FC<FtsMetricsChartsProps> = ({
       );
       const chartData = prepareChartData(relevantMetrics);
 
+      // Early return if no valid chart data
+      if (!chartData || chartData.length === 0) {
+        return (
+          <Box
+            display="flex"
+            justifyContent="center"
+            alignItems="center"
+            height={180}
+          >
+            <Typography color="text.secondary">No data available</Typography>
+          </Box>
+        );
+      }
+
+      // Handle single color or array of colors
+      const colorArray = Array.isArray(colors) ? colors : [colors];
+
       return (
-        <ResponsiveContainer width="100%" height={180}>
-          {chartType === "bar" ? (
-            <BarChart
-              data={chartData}
-              margin={{ top: 5, right: 10, left: 10, bottom: 5 }}
-            >
-              <CartesianGrid strokeDasharray="3 3" stroke="#e0e0e0" />
-              <XAxis
-                dataKey="time"
-                tick={{ fontSize: 12, fill: "currentColor" }}
-                interval={getTickInterval(timeRange, chartData.length)}
-                angle={
-                  timeRange === "DAY" ||
-                  timeRange === "WEEK" ||
-                  timeRange === "MONTH"
-                    ? -45
-                    : 0
-                }
-                textAnchor={
-                  timeRange === "DAY" ||
-                  timeRange === "WEEK" ||
-                  timeRange === "MONTH"
-                    ? "end"
-                    : "middle"
-                }
-                height={
-                  timeRange === "DAY" ||
-                  timeRange === "WEEK" ||
-                  timeRange === "MONTH"
-                    ? 80
-                    : 60
-                }
-                axisLine={{ stroke: "#e0e0e0" }}
-                tickLine={{ stroke: "#e0e0e0" }}
-              />
-              <YAxis
-                tick={{ fontSize: 12, fill: "currentColor" }}
-                tickFormatter={(value) => formatValue(value, unit)}
-                axisLine={{ stroke: "#e0e0e0" }}
-                tickLine={{ stroke: "#e0e0e0" }}
-                tickCount={8}
-                width={60}
-                domain={
-                  unit === "docs"
-                    ? [0, "dataMax"]
-                    : unit === "ms"
-                    ? [0, "dataMax"]
-                    : ["auto", "auto"]
-                }
-                allowDecimals={unit !== "docs"}
-              />
-              <Tooltip
-                contentStyle={{
-                  backgroundColor: tooltipBackground,
-                  border: "1px solid #e0e0e0",
-                  borderRadius: "4px",
-                  color: tooltipTextColor,
-                  fontSize: "12px",
-                  padding: "4px 6px",
+        <ResponsiveContainer width="100%" height={200}>
+          <LineChart
+            data={chartData}
+            margin={{ top: 5, right: 5, left: 5, bottom: 10 }}
+          >
+            <CartesianGrid strokeDasharray="3 3" stroke="#e0e0e0" />
+            <XAxis
+              dataKey="time"
+              tick={{ fontSize: 12, fill: "currentColor" }}
+              interval={getTickInterval(timeRange, chartData.length)}
+              angle={
+                timeRange === "DAY" ||
+                timeRange === "WEEK" ||
+                timeRange === "MONTH"
+                  ? -45
+                  : 0
+              }
+              textAnchor={
+                timeRange === "DAY" ||
+                timeRange === "WEEK" ||
+                timeRange === "MONTH"
+                  ? "end"
+                  : "middle"
+              }
+              height={timeRange === "DAY" ? 50 : 30}
+              axisLine={{ stroke: "#e0e0e0" }}
+              tickLine={{ stroke: "#e0e0e0" }}
+            />
+            <YAxis
+              tick={{ fontSize: 12, fill: "currentColor" }}
+              tickFormatter={(value) => formatValue(value, unit)}
+              axisLine={{ stroke: "#e0e0e0" }}
+              tickLine={{ stroke: "#e0e0e0" }}
+              tickCount={8}
+              width={60}
+              domain={
+                unit === "docs"
+                  ? [0, "dataMax"]
+                  : unit === "ms"
+                  ? [0, "dataMax"]
+                  : unit === "count"
+                  ? [0, "dataMax"]
+                  : ["auto", "auto"]
+              }
+              allowDecimals={unit !== "docs" && unit !== "count"}
+            />
+            <Tooltip
+              contentStyle={{
+                backgroundColor: tooltipBackground,
+                border: "1px solid #e0e0e0",
+                borderRadius: "4px",
+                color: tooltipTextColor,
+                fontSize: "12px",
+                padding: "4px 6px",
+              }}
+              formatter={(value: number, name: string) => {
+                const metric = relevantMetrics.find((m) => m.name === name);
+                return [formatValue(value, unit), metric?.label || name];
+              }}
+              labelFormatter={(label) => `${label}`}
+              labelStyle={{ color: tooltipTextColor, fontSize: "12px" }}
+            />
+            {relevantMetrics.length > 1 && (
+              <Legend
+                wrapperStyle={{ fontSize: "10px" }}
+                formatter={(value) => {
+                  const metric = relevantMetrics.find((m) => m.name === value);
+                  return metric?.label || value;
                 }}
-                formatter={(value: number) => [formatValue(value, unit), title]}
-                labelFormatter={(label) => `${label}`}
-                labelStyle={{ color: tooltipTextColor, fontSize: "12px" }}
               />
-              {relevantMetrics.map((metric) => (
-                <Bar
-                  key={metric.name}
-                  dataKey={metric.name}
-                  fill={color}
-                  name={metric.label}
-                  isAnimationActive={false}
-                />
-              ))}
-            </BarChart>
-          ) : (
-            <LineChart
-              data={chartData}
-              margin={{ top: 5, right: 10, left: 10, bottom: 5 }}
-            >
-              <CartesianGrid strokeDasharray="3 3" stroke="#e0e0e0" />
-              <XAxis
-                dataKey="time"
-                tick={{ fontSize: 12, fill: "currentColor" }}
-                interval={getTickInterval(timeRange, chartData.length)}
-                angle={
-                  timeRange === "DAY" ||
-                  timeRange === "WEEK" ||
-                  timeRange === "MONTH"
-                    ? -45
-                    : 0
-                }
-                textAnchor={
-                  timeRange === "DAY" ||
-                  timeRange === "WEEK" ||
-                  timeRange === "MONTH"
-                    ? "end"
-                    : "middle"
-                }
-                height={
-                  timeRange === "DAY" ||
-                  timeRange === "WEEK" ||
-                  timeRange === "MONTH"
-                    ? 80
-                    : 60
-                }
-                axisLine={{ stroke: "#e0e0e0" }}
-                tickLine={{ stroke: "#e0e0e0" }}
-              />
-              <YAxis
-                tick={{ fontSize: 12, fill: "currentColor" }}
-                tickFormatter={(value) => formatValue(value, unit)}
-                axisLine={{ stroke: "#e0e0e0" }}
-                tickLine={{ stroke: "#e0e0e0" }}
-                tickCount={8}
-                width={60}
-                domain={
-                  unit === "docs"
-                    ? [0, "dataMax"]
-                    : unit === "ms"
-                    ? [0, "dataMax"]
-                    : ["auto", "auto"]
-                }
-                allowDecimals={unit !== "docs"}
-              />
-              <Tooltip
-                contentStyle={{
-                  backgroundColor: tooltipBackground,
-                  border: "1px solid #e0e0e0",
-                  borderRadius: "4px",
-                  color: tooltipTextColor,
-                  fontSize: "12px",
-                  padding: "4px 6px",
-                }}
-                formatter={(value: number) => [formatValue(value, unit), title]}
-                labelFormatter={(label) => `${label}`}
-                labelStyle={{ color: tooltipTextColor, fontSize: "12px" }}
-              />
-              {relevantMetrics.map((metric) => (
-                <Line
-                  key={metric.name}
-                  type="monotone"
-                  dataKey={metric.name}
-                  stroke={color}
-                  strokeWidth={2.5}
-                  dot={false}
-                  name={metric.label}
-                  activeDot={{ r: 4, fill: color }}
-                  isAnimationActive={false}
-                />
-              ))}
-            </LineChart>
-          )}
+            )}
+            {relevantMetrics
+              .filter((metric) => metric && metric.name && metric.label)
+              .map((metric, index) => {
+                const color = colorArray[index % colorArray.length];
+                return (
+                  <Line
+                    key={metric.name}
+                    type="monotone"
+                    dataKey={metric.name}
+                    stroke={color || "#8884d8"}
+                    strokeWidth={2.5}
+                    dot={false}
+                    name={metric.label}
+                    activeDot={{ r: 4, fill: color || "#8884d8" }}
+                    isAnimationActive={false}
+                  />
+                );
+              })}
+          </LineChart>
         </ResponsiveContainer>
       );
     },
@@ -479,27 +447,25 @@ const FtsMetricsCharts: React.FC<FtsMetricsChartsProps> = ({
       >
         <Paper sx={{ p: 1 }}>
           <Typography variant="subtitle2" gutterBottom>
-            Search Rate (per second)
+            Search Query Rate
           </Typography>
           {renderChart(
-            "Total Queries",
-            ["fts_total_grpc_queries"],
-            chartColors.primary,
-            "queries",
-            "bar"
+            "Query Rate",
+            ["fts_total_queries", "fts_total_queries_error"],
+            [chartColors.primary, chartColors.error],
+            "queries"
           )}
         </Paper>
 
         <Paper sx={{ p: 1 }}>
           <Typography variant="subtitle2" gutterBottom>
-            Average Search Latency (ms)
+            Average Latency
           </Typography>
           {renderChart(
             "Avg Latency",
-            ["fts_avg_grpc_queries_latency"],
+            ["fts_avg_queries_latency"],
             chartColors.secondary,
-            "ms",
-            "bar"
+            "ms"
           )}
         </Paper>
 
@@ -511,21 +477,19 @@ const FtsMetricsCharts: React.FC<FtsMetricsChartsProps> = ({
             "Document Count",
             ["fts_doc_count"],
             chartColors.success,
-            "docs",
-            "line"
+            "docs"
           )}
         </Paper>
 
         <Paper sx={{ p: 1 }}>
           <Typography variant="subtitle2" gutterBottom>
-            Disk Usage
+            Indexing Queue
           </Typography>
           {renderChart(
-            "Disk Usage",
-            ["fts_num_bytes_used_disk"],
-            chartColors.info,
-            "bytes",
-            "line"
+            "Remaining Work",
+            ["fts_num_mutations_to_index", "fts_num_recs_to_persist"],
+            [chartColors.error, chartColors.success],
+            "count"
           )}
         </Paper>
       </Box>

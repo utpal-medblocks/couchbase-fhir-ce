@@ -129,7 +129,7 @@ public class FhirBucketConfigService {
         // Check cache first
         FhirBucketConfig cachedConfig = configCache.get(cacheKey);
         if (cachedConfig != null) {
-            logger.debug("🚀 Using cached FHIR config for bucket: {} (connection: {})", bucketName, connectionName);
+            // logger.debug("🚀 Using cached FHIR config for bucket: {} (connection: {})", bucketName, connectionName);
             return cachedConfig;
         }
         

@@ -65,6 +65,9 @@ public class FhirRestfulServer extends RestfulServer {
     
     @Autowired
     private com.couchbase.fhir.resources.interceptor.CleanExceptionInterceptor cleanExceptionInterceptor;
+    
+    @Autowired(required = false)
+    private org.springframework.boot.info.BuildProperties buildProperties;
 
     @Override
     protected void initialize() {
@@ -97,10 +100,12 @@ public class FhirRestfulServer extends RestfulServer {
             
             setFhirContext(fhirContext); // Use the injected context
             setTenantIdentificationStrategy(new UrlBaseTenantIdentificationStrategy());
+            
+            
             registerInterceptor(new MultiTenantInterceptor());
             registerInterceptor(bucketValidationInterceptor);
             registerInterceptor(cleanExceptionInterceptor);
-            USCoreCapabilityProvider capabilityProvider = new USCoreCapabilityProvider(this);
+            USCoreCapabilityProvider capabilityProvider = new USCoreCapabilityProvider(this, buildProperties);
             setServerConformanceProvider(capabilityProvider);
             registerProviders(allProviders); // Register all providers
             
@@ -109,10 +114,12 @@ public class FhirRestfulServer extends RestfulServer {
             // Fallback to original behavior
             setFhirContext(fhirContext);
             setTenantIdentificationStrategy(new UrlBaseTenantIdentificationStrategy());
+            
+            
             registerInterceptor(new MultiTenantInterceptor());
             registerInterceptor(bucketValidationInterceptor);
             registerInterceptor(cleanExceptionInterceptor);
-            USCoreCapabilityProvider capabilityProvider = new USCoreCapabilityProvider(this);
+            USCoreCapabilityProvider capabilityProvider = new USCoreCapabilityProvider(this, buildProperties);
             setServerConformanceProvider(capabilityProvider);
             registerProviders(providers);
         }

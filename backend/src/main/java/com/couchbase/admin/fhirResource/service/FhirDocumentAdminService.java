@@ -8,6 +8,11 @@ import com.couchbase.admin.connections.service.ConnectionService;
 import com.couchbase.client.java.Cluster;
 import com.couchbase.client.java.json.JsonObject;
 import com.couchbase.client.java.query.QueryOptions;
+import com.couchbase.client.java.search.SearchQuery;
+import com.couchbase.client.java.search.SearchOptions;
+import com.couchbase.client.java.search.result.SearchResult;
+import com.couchbase.client.java.search.result.SearchRow;
+import com.couchbase.client.java.search.sort.SearchSort;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -155,38 +160,90 @@ public class FhirDocumentAdminService {
     }
     
     /**
-     * Get document metadata using FTS search for a specific FHIR collection with pagination
+     * Get document keys using FTS SDK for a specific FHIR collection with pagination
+     * Returns only document keys (no full document fetches)
+     * Uses direct FTS search with sorting, patient filtering, and optimized counts
      */
     public DocumentMetadataResponse getDocumentMetadata(DocumentKeyRequest request, String connectionName) {
+        logger.info("📥 getDocumentMetadata called: bucket={}, collection={}, page={}, pageSize={}, patientId={}, resourceType={}", 
+                   request.getBucketName(), request.getCollectionName(), request.getPage(), 
+                   request.getPageSize(), request.getPatientId(), request.getResourceType());
+        
         try {
             Cluster cluster = connectionService.getConnection(connectionName);
             if (cluster == null) {
+                logger.error("❌ No active Couchbase connection found for: {}", connectionName);
                 throw new IllegalStateException("No active Couchbase connection found for: " + connectionName);
             }
+            
+            logger.debug("✅ Got cluster connection: {}", connectionName);
             
             // Calculate offset for pagination
             int offset = request.getPage() * request.getPageSize();
             
-            // Build the FTS query
-            String ftsQuery = buildFtsMetadataQuery(request, offset);
+            // Build FTS index name
+            String ftsIndex = buildFtsIndexName(request.getBucketName(), request.getCollectionName());
+            logger.info("🔍 FTS Index: {}", ftsIndex);
             
-            logger.debug("Executing FTS query: {}", ftsQuery);
+            // Build FTS search query with patient filter
+            SearchQuery searchQuery = buildFtsSearchQuery(request);
+            logger.info("🔍 FTS Query built: {}", searchQuery.export().toString());
             
-            // Execute query with timeout
-            var result = cluster.query(ftsQuery, QueryOptions.queryOptions()
-                .timeout(Duration.ofSeconds(30)));
+            // Build search options with sorting by meta.lastUpdated descending
+            SearchOptions searchOptions = SearchOptions.searchOptions()
+                .timeout(Duration.ofSeconds(30))
+                .limit(request.getPageSize())
+                .skip(offset)
+                .sort(SearchSort.byField("meta.lastUpdated").desc(true))
+                .includeLocations(false)
+                .disableScoring(true);
             
-            // Extract document metadata from result
-            List<DocumentMetadata> documents = new ArrayList<>();
-            for (var row : result.rowsAsObject()) {
-                DocumentMetadata metadata = parseDocumentMetadata(row);
-                if (metadata != null) {
-                    documents.add(metadata);
-                }
+            logger.info("🔍 Executing FTS SDK search: index={}, limit={}, skip={}", ftsIndex, request.getPageSize(), offset);
+            
+            long startTime = System.currentTimeMillis();
+            
+            // Execute FTS search to get document keys
+            SearchResult searchResult = cluster.searchQuery(ftsIndex, searchQuery, searchOptions);
+            
+            // Check for FTS errors
+            if (searchResult.metaData().errors() != null && !searchResult.metaData().errors().isEmpty()) {
+                String errorMsg = searchResult.metaData().errors().toString();
+                logger.error("❌ FTS search returned errors: {}", errorMsg);
+                throw new RuntimeException("FTS search failed: " + errorMsg);
             }
             
-            // Get total count (separate query for accurate pagination)
-            int totalCount = getTotalFtsDocumentCount(cluster, request);
+            long ftsTime = System.currentTimeMillis() - startTime;
+            
+            // Extract document keys only (no KV fetches!)
+            List<DocumentMetadata> documents = new ArrayList<>();
+            for (SearchRow row : searchResult.rows()) {
+                String documentKey = row.id();
+                
+                // Extract just the ID part from the document key (e.g., "Patient/123" -> "123")
+                String id = documentKey;
+                int slashIndex = documentKey.indexOf('/');
+                if (slashIndex > 0 && slashIndex < documentKey.length() - 1) {
+                    id = documentKey.substring(slashIndex + 1);
+                }
+                
+                // Create minimal metadata with just the ID
+                // Other fields can be null/empty since we only display keys in the table
+                DocumentMetadata metadata = new DocumentMetadata(
+                    id,           // id = just the ID part (without resourceType prefix)
+                    null,         // versionId - not needed for key-only display
+                    null,         // lastUpdated - not needed for key-only display
+                    null,         // code - not needed for key-only display
+                    null,         // display - not needed for key-only display
+                    true          // isCurrentVersion
+                );
+                documents.add(metadata);
+            }
+            
+            // Get total count using optimized FTS count query
+            int totalCount = getFtsCount(cluster, ftsIndex, searchQuery);
+            
+            logger.info("✅ FTS key fetch COMPLETE: {} keys in {} ms, total count: {}", 
+                       documents.size(), ftsTime, totalCount);
             
             // Calculate if there are more pages
             boolean hasMore = (offset + request.getPageSize()) < totalCount;
@@ -202,94 +259,92 @@ public class FhirDocumentAdminService {
             );
             
         } catch (Exception e) {
-            logger.error("Failed to get document metadata for bucket: {}, collection: {}", 
+            logger.error("Failed to get document keys for bucket: {}, collection: {}", 
                         request.getBucketName(), request.getCollectionName(), e);
-            throw new RuntimeException("Failed to fetch document metadata: " + e.getMessage(), e);
+            throw new RuntimeException("Failed to fetch document keys: " + e.getMessage(), e);
         }
     }
     
     /**
-     * Build the FTS query for fetching document metadata
+     * Build FTS index name based on bucket and collection
      */
-    private String buildFtsMetadataQuery(DocumentKeyRequest request, int offset) {
-        StringBuilder query = new StringBuilder();
+    private String buildFtsIndexName(String bucketName, String collectionName) {
+        return bucketName + ".Resources.fts" + collectionName;
+    }
+    
+    /**
+     * Build FTS search query with resourceType and patient filtering
+     */
+    private SearchQuery buildFtsSearchQuery(DocumentKeyRequest request) {
+        List<SearchQuery> queries = new ArrayList<>();
         
-        // Base SELECT with FTS search
-        // For General collection, include resourceType to build correct document keys
-        if ("General".equals(request.getCollectionName())) {
-            query.append("SELECT ")
-                 .append("resource.resourceType, ")
-                 .append("resource.id, ")
-                 .append("resource.meta.versionId, ")
-                 .append("resource.meta.lastUpdated, ")
-                 .append("resource.meta.tag[0].code, ")
-                 .append("resource.meta.tag[0].display ");
-        } else {
-            // For named collections, resourceType = collection name
-            query.append("SELECT ")
-                 .append("resource.id, ")
-                 .append("resource.meta.versionId, ")
-                 .append("resource.meta.lastUpdated, ")
-                 .append("resource.meta.tag[0].code, ")
-                 .append("resource.meta.tag[0].display ");
-        }
-        
-        query.append("FROM `")
-             .append(request.getBucketName())
-             .append("`.`Resources`.`")
-             .append(request.getCollectionName())
-             .append("` resource ");
-        
-        // Add FTS search condition (without pagination in FTS - we'll use LIMIT/OFFSET)
+        // Add resourceType filter for General collection
         if ("General".equals(request.getCollectionName()) && 
             request.getResourceType() != null && !request.getResourceType().trim().isEmpty()) {
-            // For General collection with resourceType filter, use conjuncts
-            query.append("WHERE SEARCH(resource, { \"query\": { \"conjuncts\": [ ")
-                 .append("{ \"field\": \"resourceType\", \"match\": \"")
-                 .append(request.getResourceType())
-                 .append("\" }, ")
-                 .append("{ \"match_all\": {} } ")
-                 .append("] } }, ")
-                 .append("{ \"index\": \"")
-                 .append(request.getBucketName())
-                 .append(".Resources.fts")
-                 .append(request.getCollectionName())
-                 .append("\" })");
-        } else {
-            // For named collections or General without resourceType filter, use match_all
-            query.append("WHERE SEARCH(resource, { \"match_all\": {} }, ")
-                 .append("{ \"index\": \"")
-                 .append(request.getBucketName())
-                 .append(".Resources.fts")
-                 .append(request.getCollectionName())
-                 .append("\" })");
+            logger.debug("🔍 Adding resourceType filter: {}", request.getResourceType());
+            queries.add(SearchQuery.match(request.getResourceType()).field("resourceType"));
         }
         
         // Add patient filtering if specified
         if (request.getPatientId() != null && !request.getPatientId().trim().isEmpty()) {
             if ("Patient".equals(request.getCollectionName())) {
-                // For Patient collection, filter by the id field
-                query.append(" AND resource.id LIKE '")
-                     .append(request.getPatientId())
-                     .append("%'");
+                // For Patient collection, use exact keyword match on the id field
+                String patientId = request.getPatientId().trim();
+                logger.info("🔍 Adding Patient filter on id field: {}", patientId);
+                queries.add(SearchQuery.match(patientId).field("id"));
             } else {
-                // For other collections, filter by patient reference
-                query.append(" AND ANY ref IN OBJECT_PAIRS(resource) SATISFIES ")
-                     .append("ref.`val`.reference LIKE 'Patient/")
-                     .append(request.getPatientId())
-                     .append("' END");
+                // For other collections, use disjuncts to search both patient.reference and subject.reference
+                // Use exact keyword match for "Patient/abc" patterns
+                String patientReference = "Patient/" + request.getPatientId().trim();
+                logger.info("🔍 Adding Patient filter on patient/subject.reference: {}", patientReference);
+                queries.add(SearchQuery.disjuncts(
+                    SearchQuery.match(patientReference).field("patient.reference"),
+                    SearchQuery.match(patientReference).field("subject.reference")
+                ));
             }
+        } else {
+            logger.debug("🔍 No patient filter specified");
         }
         
-        // Add LIMIT and OFFSET for N1QL pagination (no sorting needed for UUIDs)
-        query.append(" LIMIT ").append(request.getPageSize())
-             .append(" OFFSET ").append(offset);
-        
-        return query.toString();
+        // Combine queries or use match_all
+        if (queries.isEmpty()) {
+            return SearchQuery.matchAll();
+        } else if (queries.size() == 1) {
+            return queries.get(0);
+        } else {
+            return SearchQuery.conjuncts(queries.toArray(new SearchQuery[0]));
+        }
     }
     
     /**
-     * Parse document metadata from query result row
+     * Get count using optimized FTS query with limit(0)
+     */
+    private int getFtsCount(Cluster cluster, String ftsIndex, SearchQuery searchQuery) {
+        try {
+            SearchOptions countOptions = SearchOptions.searchOptions()
+                .timeout(Duration.ofSeconds(30))
+                .limit(0)  // Don't fetch any documents, just get the count
+                .includeLocations(false)
+                .disableScoring(true);
+            
+            SearchResult searchResult = cluster.searchQuery(ftsIndex, searchQuery, countOptions);
+            
+            // Check for errors
+            if (searchResult.metaData().errors() != null && !searchResult.metaData().errors().isEmpty()) {
+                logger.warn("FTS count query returned errors: {}", searchResult.metaData().errors());
+                return 0;
+            }
+            
+            return (int) searchResult.metaData().metrics().totalRows();
+            
+        } catch (Exception e) {
+            logger.warn("Failed to get FTS count, returning 0: {}", e.getMessage());
+            return 0;
+        }
+    }
+    
+    /**
+     * Parse document metadata from query result row (used by version history)
      */
     private DocumentMetadata parseDocumentMetadata(JsonObject row) {
         return parseDocumentMetadata(row, true); // Default to current version
@@ -311,73 +366,6 @@ public class FhirDocumentAdminService {
         } catch (Exception e) {
             logger.warn("Failed to parse document metadata from row: {}, error: {}", row, e.getMessage());
             return null;
-        }
-    }
-    
-    /**
-     * Get total count of documents using FTS for pagination
-     */
-    private int getTotalFtsDocumentCount(Cluster cluster, DocumentKeyRequest request) {
-        try {
-            StringBuilder countQuery = new StringBuilder();
-            
-            countQuery.append("SELECT COUNT(*) as count FROM `")
-                     .append(request.getBucketName())
-                     .append("`.`Resources`.`")
-                     .append(request.getCollectionName())
-                     .append("` resource ");
-            
-            // Add FTS search condition for count
-            if ("General".equals(request.getCollectionName()) && 
-                request.getResourceType() != null && !request.getResourceType().trim().isEmpty()) {
-                // For General collection with resourceType filter, use conjuncts
-                countQuery.append("WHERE SEARCH(resource, { \"query\": { \"conjuncts\": [ ")
-                         .append("{ \"field\": \"resourceType\", \"match\": \"")
-                         .append(request.getResourceType())
-                         .append("\" }, ")
-                         .append("{ \"match_all\": {} } ")
-                         .append("] } }, ")
-                         .append("{ \"index\": \"")
-                         .append(request.getBucketName())
-                         .append(".Resources.fts")
-                         .append(request.getCollectionName())
-                         .append("\" })");
-            } else {
-                // For named collections or General without resourceType filter, use match_all
-                countQuery.append("WHERE SEARCH(resource, { \"match_all\": {} }, ")
-                         .append("{ \"index\": \"")
-                         .append(request.getBucketName())
-                         .append(".Resources.fts")
-                         .append(request.getCollectionName())
-                         .append("\" })");
-            }
-            
-            // Add same patient filtering as main query
-            if (request.getPatientId() != null && !request.getPatientId().trim().isEmpty()) {
-                if ("Patient".equals(request.getCollectionName())) {
-                    countQuery.append(" AND resource.id LIKE '")
-                              .append(request.getPatientId())
-                              .append("%'");
-                } else {
-                    countQuery.append(" AND ANY ref IN OBJECT_PAIRS(resource) SATISFIES ")
-                              .append("ref.`val`.reference LIKE 'Patient/")
-                              .append(request.getPatientId())
-                              .append("' END");
-                }
-            }
-            
-            var result = cluster.query(countQuery.toString(), QueryOptions.queryOptions()
-                .timeout(Duration.ofSeconds(30)));
-            
-            if (result.rowsAsObject().size() > 0) {
-                return result.rowsAsObject().get(0).getInt("count");
-            }
-            
-            return 0;
-            
-        } catch (Exception e) {
-            logger.warn("Failed to get FTS total count, returning 0: {}", e.getMessage());
-            return 0;
         }
     }
     
@@ -425,17 +413,21 @@ public class FhirDocumentAdminService {
     
     /**
      * Build the FTS query for fetching version history from Versions collection
+     * Uses ARRAY comprehension to filter tags by system to find the Couchbase FHIR custom tag
      */
     private String buildVersionsQuery(String bucketName, String documentId) {
         StringBuilder query = new StringBuilder();
         
         // Base SELECT with FTS search on Versions collection
+        // Use ARRAY comprehension to filter tags by system (escape 'system' as it's a reserved word)
         query.append("SELECT ")
              .append("resource.id, ")
              .append("resource.meta.versionId, ")
              .append("resource.meta.lastUpdated, ")
-             .append("resource.meta.tag[0].code, ")
-             .append("resource.meta.tag[0].display ");
+             // Filter tags array to find the one with our custom system
+             // Note: `system` must be escaped as it's a reserved word in N1QL
+             .append("(ARRAY tag.code FOR tag IN resource.meta.tag WHEN tag.`system` = 'http://couchbase.fhir.com/fhir/custom-tags' END)[0] AS code, ")
+             .append("(ARRAY tag.display FOR tag IN resource.meta.tag WHEN tag.`system` = 'http://couchbase.fhir.com/fhir/custom-tags' END)[0] AS display ");
         
         query.append("FROM `")
              .append(bucketName)

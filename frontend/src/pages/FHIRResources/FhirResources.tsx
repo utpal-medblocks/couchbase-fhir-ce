@@ -212,6 +212,58 @@ export default function FhirResources() {
     }
   };
 
+  // Handle patient filter fetch button click
+  const handlePatientFilterFetch = () => {
+    // Refresh the currently selected collection with patient filter
+    const effectiveCollection =
+      selectedCollection || (selectedGeneralResourceType ? "General" : "");
+
+    if (effectiveCollection) {
+      // Clear document details
+      setSelectedDocumentKey("");
+      setSelectedDocumentMetadata(null);
+      setDocumentContent(null);
+      setSelectedVersions([]);
+
+      // Reset to first page and fetch with patient filter
+      setPage(0);
+      fetchDocumentMetadata(
+        effectiveCollection,
+        0,
+        rowsPerPage,
+        selectedGeneralResourceType || undefined
+      );
+    }
+  };
+
+  // Handle clear patient filter
+  const handleClearPatientFilter = () => {
+    // Clear the patient ID
+    setPatientId("");
+
+    // Clear document details
+    setSelectedDocumentKey("");
+    setSelectedDocumentMetadata(null);
+    setDocumentContent(null);
+    setSelectedVersions([]);
+
+    // Refresh the currently selected collection without patient filter
+    const effectiveCollection =
+      selectedCollection || (selectedGeneralResourceType ? "General" : "");
+
+    if (effectiveCollection) {
+      setPage(0);
+      // Explicitly pass empty string to override the state patientId (which hasn't updated yet)
+      fetchDocumentMetadata(
+        effectiveCollection,
+        0,
+        rowsPerPage,
+        selectedGeneralResourceType || undefined,
+        "" // Override patientId with empty string
+      );
+    }
+  };
+
   const fetchDocumentContent = async (documentKey: string) => {
     const effectiveCollection =
       selectedCollection || (selectedGeneralResourceType ? "General" : "");
@@ -238,15 +290,29 @@ export default function FhirResources() {
         documentKey: documentKey,
       });
 
-      // console.log("📦 Frontend: Received document type:", typeof document);
-      // console.log("📦 Frontend: Document is array:", Array.isArray(document));
-      // console.log("📦 Frontend: Document content:", document);
-      // console.log(
-      //   "📦 Frontend: Document JSON:",
-      //   JSON.stringify(document, null, 2)
-      // );
-
       setDocumentContent(document);
+
+      // Extract metadata from the fetched document for version history
+      if (document && document.meta) {
+        // Find the Couchbase FHIR custom tag
+        const customTag = document.meta.tag?.find(
+          (tag: any) =>
+            tag.system === "http://couchbase.fhir.com/fhir/custom-tags"
+        );
+
+        const updatedMetadata: DocumentMetadata = {
+          id: document.id,
+          versionId: document.meta.versionId,
+          lastUpdated: document.meta.lastUpdated,
+          code: customTag?.code || null,
+          display: customTag?.display || null,
+          deleted: false,
+          isCurrentVersion: true,
+        };
+
+        setSelectedDocumentMetadata(updatedMetadata);
+      }
+
       // Auto-switch to JSON tab when document is loaded
       setSelectedTab(0);
     } catch (error) {
@@ -274,19 +340,24 @@ export default function FhirResources() {
     collectionName: string,
     pageNum: number,
     pageSize: number,
-    resourceType?: string
+    resourceType?: string,
+    overridePatientId?: string | null
   ) => {
     if (!selectedBucket || !connectionId) return;
 
     setDocumentMetadataLoading(true);
     try {
+      // Use overridePatientId if explicitly provided (including empty string), otherwise use state
+      const effectivePatientId =
+        overridePatientId !== undefined ? overridePatientId : patientId;
+
       const request: any = {
         connectionName: connectionId,
         bucketName: selectedBucket,
         collectionName: collectionName,
         page: pageNum,
         pageSize: pageSize,
-        patientId: patientId || undefined,
+        patientId: effectivePatientId || undefined,
       };
 
       // Add resourceType for General collection
@@ -375,13 +446,29 @@ export default function FhirResources() {
           placeholder="Enter Patient ID to filter documents"
           value={patientId}
           onChange={(e) => setPatientId(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              handlePatientFilterFetch();
+            }
+          }}
         />
         <Button
           variant="contained"
           size="small"
           sx={{ textTransform: "none", padding: "4px 16px" }}
+          onClick={handlePatientFilterFetch}
+          disabled={!selectedCollection && !selectedGeneralResourceType}
         >
           Fetch
+        </Button>
+        <Button
+          variant="outlined"
+          size="small"
+          sx={{ textTransform: "none", padding: "4px 16px" }}
+          onClick={handleClearPatientFilter}
+          disabled={!patientId}
+        >
+          Clear
         </Button>
       </Box>
 
@@ -544,7 +631,6 @@ export default function FhirResources() {
                     const resourceType =
                       selectedGeneralResourceType || selectedCollection;
                     const documentKey = `${resourceType}/${metadata.id}`;
-                    const isVersioned = parseInt(metadata.versionId) > 1;
 
                     return (
                       <TableRow
@@ -563,17 +649,7 @@ export default function FhirResources() {
                         }}
                       >
                         <TableCell sx={tableCellStyle}>
-                          <Typography
-                            variant="body2"
-                            sx={{
-                              color: isVersioned
-                                ? "success.main"
-                                : "text.primary",
-                              fontWeight: isVersioned ? "medium" : "normal",
-                            }}
-                          >
-                            {metadata.id}
-                          </Typography>
+                          <Typography variant="body2">{metadata.id}</Typography>
                         </TableCell>
                       </TableRow>
                     );

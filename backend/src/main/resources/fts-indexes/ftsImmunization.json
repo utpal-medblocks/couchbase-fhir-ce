@@ -6,8 +6,8 @@
   "sourceName": "",
   "sourceUUID": "",
   "planParams": {
-    "maxPartitionsPerPIndex": 171,
-    "indexPartitions": 6
+    "maxPartitionsPerPIndex": 1024,
+    "indexPartitions": 1
   },
   "params": {
     "doc_config": {
@@ -32,6 +32,7 @@
       "type_field": "_type",
       "types": {
         "Resources.Immunization": {
+          "default_analyzer": "keyword",
           "dynamic": false,
           "enabled": true,
           "properties": {
@@ -151,6 +152,34 @@
                       "type": "datetime"
                     }
                   ]
+                },
+                "tag": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "properties": {
+                    "code": {
+                      "dynamic": false,
+                      "enabled": true,
+                      "fields": [
+                        {
+                          "index": true,
+                          "name": "code",
+                          "type": "text"
+                        }
+                      ]
+                    },
+                    "system": {
+                      "dynamic": false,
+                      "enabled": true,
+                      "fields": [
+                        {
+                          "index": true,
+                          "name": "system",
+                          "type": "text"
+                        }
+                      ]
+                    }
+                  }
                 }
               }
             },
@@ -366,6 +395,23 @@
                       ]
                     }
                   }
+                }
+              }
+            },
+            "subject": {
+              "dynamic": false,
+              "enabled": true,
+              "properties": {
+                "reference": {
+                  "dynamic": false,
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "index": true,
+                      "name": "reference",
+                      "type": "text"
+                    }
+                  ]
                 }
               }
             },

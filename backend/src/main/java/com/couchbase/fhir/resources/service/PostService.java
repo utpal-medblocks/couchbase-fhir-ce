@@ -12,8 +12,6 @@ import org.springframework.stereotype.Service;
 
 import java.util.UUID;
 
-import com.couchbase.fhir.resources.service.CollectionRoutingService;
-
 /**
  * Service for handling FHIR POST operations (create new resources).
  * POST operations always generate server-controlled IDs and ignore any client-supplied IDs.

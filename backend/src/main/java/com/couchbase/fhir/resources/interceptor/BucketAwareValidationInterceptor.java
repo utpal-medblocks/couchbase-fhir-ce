@@ -164,8 +164,9 @@ public class BucketAwareValidationInterceptor {
     @Hook(Pointcut.SERVER_HANDLE_EXCEPTION)
     public boolean onException(RequestDetails rd, Throwable e) {
         // Check for null exception to prevent NPE
+        // This can happen when HAPI properly catches and converts exceptions to OperationOutcome
         if (e == null) {
-            logger.warn("🔍 onException called with null exception");
+            logger.debug("🔍 onException called with null (exception already handled by HAPI)");
             return true;
         }
         

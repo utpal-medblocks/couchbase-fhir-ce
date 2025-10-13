@@ -28,20 +28,29 @@ public class ConfigController {
     private static final Logger logger = LoggerFactory.getLogger(ConfigController.class);
     private static final String DEFAULT_CONFIG_FILE = "../config.yaml"; // Backend runs from backend/ subdirectory
     private final String version;
+    private final String buildTime;
+    private final BuildProperties buildProperties;
 
     public ConfigController(@Autowired(required = false) BuildProperties buildProperties) {
+        this.buildProperties = buildProperties;
+        
         // Determine version: prefer build-info, then JAR manifest, else dev
         String v = null;
+        String bt = null;
         if (buildProperties != null) {
             try {
                 v = buildProperties.getVersion();
+                bt = buildProperties.getTime() != null 
+                    ? buildProperties.getTime().toString() 
+                    : null;
             } catch (Exception ignored) { }
         }
         if (v == null) {
             v = getClass().getPackage().getImplementationVersion();
         }
         this.version = v != null ? v : "dev";
-        logger.info("Application version resolved to: {}", this.version);
+        this.buildTime = bt;
+        logger.info("Application version resolved to: {}, build time: {}", this.version, this.buildTime);
     }
 
     /**
@@ -112,12 +121,30 @@ public class ConfigController {
     }
 
     /**
-     * Version endpoint returning the backend application version.
+     * Version endpoint returning the backend application version and build info.
      */
     @GetMapping("/version")
     public ResponseEntity<Map<String, Object>> version() {
         Map<String, Object> body = new HashMap<>();
         body.put("version", this.version);
+        
+        if (buildProperties != null) {
+            if (buildTime != null) {
+                body.put("buildTime", buildTime);
+            }
+            try {
+                if (buildProperties.getName() != null) {
+                    body.put("name", buildProperties.getName());
+                }
+                if (buildProperties.getGroup() != null) {
+                    body.put("group", buildProperties.getGroup());
+                }
+                if (buildProperties.getArtifact() != null) {
+                    body.put("artifact", buildProperties.getArtifact());
+                }
+            } catch (Exception ignored) { }
+        }
+        
         return ResponseEntity.ok(body);
     }
 }
