@@ -4,10 +4,10 @@ COPY . .
 RUN ./mvnw clean package -DskipTests
 RUN ls target/*
 
-FROM eclipse-temurin:17-jre-alpine
+FROM eclipse-temurin:17-jre
 WORKDIR /app
 # Create non-root user
-RUN addgroup -S appgroup && adduser -S appuser -G appgroup
+RUN groupadd -r appgroup && useradd -r -g appgroup appuser
 COPY --from=builder /app/target/*.jar app.jar
 USER appuser
 EXPOSE 8080
