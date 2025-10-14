@@ -14,11 +14,10 @@ services:
       - SPRING_PROFILES_ACTIVE=prod
       - JAVA_OPTS=-Xms256m -Xmx1024m
       - DEPLOYED_ENV=container
-      - FHIR_CONFIG=/config/config.yaml
     expose:
       - "8080" # internal only; not published to host
     volumes:
-      - ./config.yaml:/config/config.yaml:ro
+      - ./config.yaml:/config.yaml:ro
     restart: unless-stopped
   fhir-admin:
     build:
