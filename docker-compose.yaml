@@ -1,5 +1,3 @@
-version: "3.8"
-
 #################################################################
 # Minimal beta stack: backend (fhir-server), frontend (fhir-admin), haproxy
 # - No Couchbase in this compose (assumes backend can start without DB or uses in‑memory / external)
@@ -16,10 +14,11 @@ services:
       - SPRING_PROFILES_ACTIVE=prod
       - JAVA_OPTS=-Xms256m -Xmx1024m
       - DEPLOYED_ENV=container
+      - FHIR_CONFIG=/config/config.yaml
     expose:
       - "8080" # internal only; not published to host
     volumes:
-      - ./config.yaml:/config.yaml:ro
+      - ./config.yaml:/config/config.yaml:ro
     restart: unless-stopped
   fhir-admin:
     build:

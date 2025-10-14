@@ -19,8 +19,6 @@
 #       which has build contexts instead of static image references.
 ###################################################################################################
 
-version: "3.8"
-
 services:
   fhir-server:
     image: ghcr.io/couchbaselabs/couchbase-fhir-ce/fhir-server:${FHIR_BACKEND_TAG:-latest}
@@ -28,8 +26,9 @@ services:
       - SPRING_PROFILES_ACTIVE=prod
       - JAVA_OPTS=-Xms256m -Xmx1024m
       - DEPLOYED_ENV=container
+      - FHIR_CONFIG=/config/config.yaml
     volumes:
-      - ./config.yaml:/config.yaml:ro
+      - ./config.yaml:/config/config.yaml:ro
     expose:
       - "8080" # internal only; not published directly
     restart: unless-stopped
