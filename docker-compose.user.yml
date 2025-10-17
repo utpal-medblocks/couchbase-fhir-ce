@@ -22,12 +22,32 @@
 services:
   fhir-server:
     image: ghcr.io/couchbaselabs/couchbase-fhir-ce/fhir-server:${FHIR_BACKEND_TAG:-latest}
+    mem_limit: 3g
+    mem_reservation: 2g
     environment:
-      - SPRING_PROFILES_ACTIVE=prod
-      - JAVA_OPTS=-Xms256m -Xmx1024m
-      - DEPLOYED_ENV=container
+      SPRING_PROFILES_ACTIVE: prod
+      DEPLOYED_ENV: container
+      JAVA_TOOL_OPTIONS: >-
+        -Xms1g
+        -Xmx2g
+        -XX:MaxDirectMemorySize=512m
+        -XX:+UseG1GC
+        -XX:MaxGCPauseMillis=200
+        -XX:+HeapDumpOnOutOfMemoryError
+        -XX:HeapDumpPath=/app/logs/heap.hprof
+        -XX:+ExitOnOutOfMemoryError
+        -Xlog:gc*:file=/app/logs/gc.log:time,uptime,level,tags:filecount=5,filesize=10M
+        -XX:NativeMemoryTracking=summary
     volumes:
       - ./config.yaml:/config.yaml:ro
+      - ./backend/logs:/app/logs
+    healthcheck:
+      test:
+        ["CMD-SHELL", "curl -f http://localhost:8080/actuator/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
     expose:
       - "8080" # internal only; not published directly
     restart: unless-stopped

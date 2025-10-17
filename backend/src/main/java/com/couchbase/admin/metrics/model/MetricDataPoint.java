@@ -55,6 +55,50 @@ public class MetricDataPoint {
     @JsonProperty("error_percent")
     private double errorPercent;  // Calculated error percentage
     
+    // JVM Details - Heap, Metaspace, Buffers, GC, Threads
+    @JsonProperty("heap_used_bytes")
+    private long heapUsedBytes;
+
+    @JsonProperty("heap_max_bytes")
+    private long heapMaxBytes;
+
+    @JsonProperty("metaspace_used_bytes")
+    private long metaspaceUsedBytes;
+
+    @JsonProperty("metaspace_max_bytes")
+    private long metaspaceMaxBytes;
+
+    @JsonProperty("direct_buffer_used_bytes")
+    private long directBufferUsedBytes;
+
+    @JsonProperty("direct_buffer_count")
+    private long directBufferCount;
+
+    @JsonProperty("mapped_buffer_used_bytes")
+    private long mappedBufferUsedBytes;
+
+    @JsonProperty("mapped_buffer_count")
+    private long mappedBufferCount;
+
+    @JsonProperty("gc_pause_count_delta")
+    private long gcPauseCountDelta;
+
+    @JsonProperty("gc_pause_time_ms_delta")
+    private long gcPauseTimeMsDelta;
+
+    @JsonProperty("threads_live")
+    private int threadsLive;
+
+    // Heap generations (bytes)
+    @JsonProperty("heap_young_used_bytes")
+    private long heapYoungUsedBytes;
+
+    @JsonProperty("heap_old_used_bytes")
+    private long heapOldUsedBytes;
+
+    @JsonProperty("heap_total_used_bytes")
+    private long heapTotalUsedBytes;
+
     public MetricDataPoint() {}
     
     public MetricDataPoint(long timestamp, double ops, long scur, long rateMax, long smax, 
@@ -124,4 +168,46 @@ public class MetricDataPoint {
     
     public double getErrorPercent() { return errorPercent; }
     public void setErrorPercent(double errorPercent) { this.errorPercent = roundToTwoDecimals(errorPercent); }
+
+    public long getHeapUsedBytes() { return heapUsedBytes; }
+    public void setHeapUsedBytes(long heapUsedBytes) { this.heapUsedBytes = heapUsedBytes; }
+
+    public long getHeapMaxBytes() { return heapMaxBytes; }
+    public void setHeapMaxBytes(long heapMaxBytes) { this.heapMaxBytes = heapMaxBytes; }
+
+    public long getMetaspaceUsedBytes() { return metaspaceUsedBytes; }
+    public void setMetaspaceUsedBytes(long metaspaceUsedBytes) { this.metaspaceUsedBytes = metaspaceUsedBytes; }
+
+    public long getMetaspaceMaxBytes() { return metaspaceMaxBytes; }
+    public void setMetaspaceMaxBytes(long metaspaceMaxBytes) { this.metaspaceMaxBytes = metaspaceMaxBytes; }
+
+    public long getDirectBufferUsedBytes() { return directBufferUsedBytes; }
+    public void setDirectBufferUsedBytes(long directBufferUsedBytes) { this.directBufferUsedBytes = directBufferUsedBytes; }
+
+    public long getDirectBufferCount() { return directBufferCount; }
+    public void setDirectBufferCount(long directBufferCount) { this.directBufferCount = directBufferCount; }
+
+    public long getMappedBufferUsedBytes() { return mappedBufferUsedBytes; }
+    public void setMappedBufferUsedBytes(long mappedBufferUsedBytes) { this.mappedBufferUsedBytes = mappedBufferUsedBytes; }
+
+    public long getMappedBufferCount() { return mappedBufferCount; }
+    public void setMappedBufferCount(long mappedBufferCount) { this.mappedBufferCount = mappedBufferCount; }
+
+    public long getGcPauseCountDelta() { return gcPauseCountDelta; }
+    public void setGcPauseCountDelta(long gcPauseCountDelta) { this.gcPauseCountDelta = gcPauseCountDelta; }
+
+    public long getGcPauseTimeMsDelta() { return gcPauseTimeMsDelta; }
+    public void setGcPauseTimeMsDelta(long gcPauseTimeMsDelta) { this.gcPauseTimeMsDelta = gcPauseTimeMsDelta; }
+
+    public int getThreadsLive() { return threadsLive; }
+    public void setThreadsLive(int threadsLive) { this.threadsLive = threadsLive; }
+
+    public long getHeapYoungUsedBytes() { return heapYoungUsedBytes; }
+    public void setHeapYoungUsedBytes(long heapYoungUsedBytes) { this.heapYoungUsedBytes = heapYoungUsedBytes; }
+
+    public long getHeapOldUsedBytes() { return heapOldUsedBytes; }
+    public void setHeapOldUsedBytes(long heapOldUsedBytes) { this.heapOldUsedBytes = heapOldUsedBytes; }
+
+    public long getHeapTotalUsedBytes() { return heapTotalUsedBytes; }
+    public void setHeapTotalUsedBytes(long heapTotalUsedBytes) { this.heapTotalUsedBytes = heapTotalUsedBytes; }
 }
