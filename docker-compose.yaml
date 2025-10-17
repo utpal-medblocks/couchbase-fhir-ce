@@ -37,7 +37,6 @@ services:
       - "8080" # internal only; not published to host
     volumes:
       - ./config.yaml:/config.yaml:ro
-      - ./backend/logs:/app/logs
     restart: unless-stopped
   fhir-admin:
     build:

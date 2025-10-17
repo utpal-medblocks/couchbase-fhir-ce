@@ -40,7 +40,7 @@ services:
         -XX:NativeMemoryTracking=summary
     volumes:
       - ./config.yaml:/config.yaml:ro
-      - ./backend/logs:/app/logs
+      # no bind mount for /app/logs in beta; use docker cp to retrieve dumps
     healthcheck:
       test:
         ["CMD-SHELL", "curl -f http://localhost:8080/actuator/health || exit 1"]
