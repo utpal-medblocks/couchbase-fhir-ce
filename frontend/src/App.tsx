@@ -5,6 +5,7 @@ import {
 } from "@mui/material/styles";
 import CssBaseline from "@mui/material/CssBaseline";
 import { ConnectionProvider } from "./pages/Layout/ConnectionProvider";
+import ErrorBoundary from "./pages/Layout/ErrorBoundary";
 import MainLayout from "./pages/Layout/MainLayout";
 import AppRoutes from "./routes/AppRoutes";
 import { ThemeProvider, useThemeContext } from "./contexts/ThemeContext";
@@ -149,11 +150,13 @@ function AppContent() {
     <MuiThemeProvider theme={theme}>
       <CssBaseline />
       <ConnectionProvider>
-        <Router>
-          <MainLayout>
-            <AppRoutes />
-          </MainLayout>
-        </Router>
+        <ErrorBoundary>
+          <Router>
+            <MainLayout>
+              <AppRoutes />
+            </MainLayout>
+          </Router>
+        </ErrorBoundary>
       </ConnectionProvider>
     </MuiThemeProvider>
   );

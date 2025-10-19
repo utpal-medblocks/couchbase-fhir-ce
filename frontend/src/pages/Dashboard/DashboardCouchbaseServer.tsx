@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef, useCallback } from "react";
 import {
   Box,
   Table,
@@ -21,11 +21,70 @@ import { blueGrey } from "@mui/material/colors";
 import LinearProgressWithLabel from "../../components/LinearProgressWithLabel";
 import ChipsArray from "../../components/ChipsArray";
 import AddFhirBucketDialog from "./AddFhirBucketDialog";
+import {
+  fetchConfigSummary,
+  type ConfigSummary,
+  retryAutoConnect,
+} from "../../services/configService";
 
 const DashboardCouchbaseServer: React.FC = () => {
-  const { connection, metrics, metricsError, fetchMetrics } =
-    useConnectionStore();
+  const {
+    connection,
+    metrics,
+    metricsError,
+    fetchMetrics,
+    error,
+    backendReady,
+  } = useConnectionStore();
   const { fetchFhirConfig, getFhirConfig } = useBucketStore();
+
+  // Local helper component for retry button with immediate polling
+  const RetryAutoConnectButton: React.FC = () => {
+    const { fetchConnection, backendReady } = useConnectionStore();
+    const [busy, setBusy] = useState(false);
+    const triesRef = useRef(0);
+
+    const handleClick = useCallback(async () => {
+      if (busy) return;
+      if (!backendReady) return;
+      setBusy(true);
+      triesRef.current = 0;
+      try {
+        await retryAutoConnect();
+        // Immediately poll a few times (every 1s up to 10s) to reflect status
+        const poll = async () => {
+          triesRef.current += 1;
+          try {
+            await fetchConnection();
+          } catch {}
+          if (
+            triesRef.current < 10 &&
+            !useConnectionStore.getState().connection.isConnected
+          ) {
+            setTimeout(poll, 1000);
+          } else {
+            setBusy(false);
+          }
+        };
+        poll();
+      } catch {
+        setBusy(false);
+      }
+    }, [busy, backendReady, fetchConnection]);
+
+    return (
+      <Box sx={{ mt: 1 }}>
+        <Button
+          size="small"
+          variant="outlined"
+          disabled={busy || !backendReady}
+          onClick={handleClick}
+        >
+          {busy ? "Connecting..." : "Retry Auto-Connect Now"}
+        </Button>
+      </Box>
+    );
+  };
 
   // Dialog state
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -34,6 +93,12 @@ const DashboardCouchbaseServer: React.FC = () => {
   // Track loading configs & local cache (bucketName -> config or null when fetched but absent)
   const [loadingConfigs, setLoadingConfigs] = useState<boolean>(false);
   const [bucketConfigs, setBucketConfigs] = useState<Record<string, any>>({});
+
+  // Config summary for detailed connection banner
+  const [configSummary, setConfigSummary] = useState<ConfigSummary | null>(
+    null
+  );
+  const [loadingSummary, setLoadingSummary] = useState<boolean>(false);
 
   // Define borderStyle for use in Table sx prop
   const theme = useTheme();
@@ -61,6 +126,28 @@ const DashboardCouchbaseServer: React.FC = () => {
     };
   }, [connection.isConnected]);
 
+  // Fetch config summary when backend is ready but not connected
+  useEffect(() => {
+    const shouldFetch = backendReady && !connection.isConnected;
+    if (!shouldFetch) return;
+    let cancelled = false;
+    const run = async () => {
+      try {
+        setLoadingSummary(true);
+        const summary = await fetchConfigSummary();
+        if (!cancelled) setConfigSummary(summary);
+      } catch {
+        if (!cancelled) setConfigSummary(null);
+      } finally {
+        if (!cancelled) setLoadingSummary(false);
+      }
+    };
+    run();
+    return () => {
+      cancelled = true;
+    };
+  }, [backendReady, connection.isConnected]);
+
   // Get data with fallbacks for no connection
   const nodes = metrics?.nodes || [];
   const buckets = metrics?.buckets || [];
@@ -68,26 +155,6 @@ const DashboardCouchbaseServer: React.FC = () => {
   const clusterVersion = nodes.length > 0 ? nodes[0].version : "No Connection";
   const serviceQuotas = metrics?.serviceQuotas;
   const services = nodes.length > 0 ? nodes[0].services : [];
-
-  // Handle FHIR bucket conversion
-  const handleToggleFhir = (bucketName: string) => {
-    setSelectedBucketName(bucketName);
-    setDialogOpen(true);
-  };
-
-  // Handle successful conversion
-  const handleConversionSuccess = () => {
-    // Refresh metrics to show updated bucket status
-    fetchMetrics();
-    // Refresh FHIR buckets to show updated status
-    setDialogOpen(false);
-  };
-
-  // Handle dialog close
-  const handleDialogClose = () => {
-    setDialogOpen(false);
-    setSelectedBucketName("");
-  };
 
   // Fetch all FHIR configs proactively (for buckets flagged isFhirBucket)
   useEffect(() => {
@@ -123,6 +190,175 @@ const DashboardCouchbaseServer: React.FC = () => {
     buckets.map((b: any) => `${b.name}:${b.isFhirBucket}`).join("|"),
     connection.connectionName,
   ]);
+
+  // If disconnected, render only the connection banner and guidance
+  if (!connection.isConnected) {
+    return (
+      <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
+        <Box sx={{ mb: 1 }}>
+          <Alert severity="error" sx={{ py: 0.5 }}>
+            {/* Main error message - separate from caption */}
+            <Typography variant="body2" sx={{ fontWeight: "medium", mb: 0.5 }}>
+              Connection Error
+            </Typography>
+
+            {/* Caption on its own line */}
+            <Typography
+              variant="caption"
+              color="text.secondary"
+              display="block"
+            >
+              Check your config.yaml file: {error || "Unable to connect"}. Also,
+              check that the Couchbase server is up and reachable.
+            </Typography>
+
+            <Box sx={{ mt: 0.5 }}>
+              <Typography
+                variant="caption"
+                color="text.secondary"
+                display="block"
+              >
+                config.yaml file:{" "}
+                {loadingSummary
+                  ? "loading..."
+                  : configSummary?.success === false
+                  ? configSummary?.message || "invalid"
+                  : configSummary?.configExists
+                  ? "successfully read"
+                  : "not found"}
+              </Typography>
+              {configSummary?.connection && (
+                <Box sx={{ mt: 0.5, pl: 1 }}>
+                  <Typography
+                    variant="caption"
+                    color="text.secondary"
+                    display="block"
+                  >
+                    connecting to:
+                  </Typography>
+                  <Typography
+                    variant="caption"
+                    color="text.secondary"
+                    display="block"
+                  >
+                    - Server: {String(configSummary.connection.server ?? "")}
+                  </Typography>
+                  <Typography
+                    variant="caption"
+                    color="text.secondary"
+                    display="block"
+                  >
+                    - Username:{" "}
+                    {String(configSummary.connection.username ?? "")}
+                  </Typography>
+                  <Typography
+                    variant="caption"
+                    color="text.secondary"
+                    display="block"
+                  >
+                    - Password:{" "}
+                    {String(configSummary.connection.passwordMasked ?? "")}
+                  </Typography>
+                  <Typography
+                    variant="caption"
+                    color="text.secondary"
+                    display="block"
+                  >
+                    - Server Type:{" "}
+                    {String(configSummary.connection.serverType ?? "")}
+                  </Typography>
+                  <Typography
+                    variant="caption"
+                    color="text.secondary"
+                    display="block"
+                  >
+                    - SSL Enabled:{" "}
+                    {String(configSummary.connection.sslEnabled ?? "")}
+                  </Typography>
+                </Box>
+              )}
+              <Typography
+                variant="caption"
+                color="text.secondary"
+                display="block"
+                sx={{ mt: 0.5 }}
+              >
+                Backend is starting up and establishing connection...
+              </Typography>
+              <Typography
+                variant="caption"
+                color="text.secondary"
+                display="block"
+              >
+                <em>Checking every 20 seconds</em>
+              </Typography>
+              <Typography
+                variant="caption"
+                color="text.secondary"
+                display="block"
+                sx={{ mt: 2, fontWeight: "medium" }}
+              >
+                If config.yaml needs correction:
+              </Typography>
+              <Typography
+                variant="caption"
+                color="text.secondary"
+                display="block"
+                sx={{ mt: 0.5, pl: 1 }}
+              >
+                • Fix your original config.yaml (check indents!)
+              </Typography>
+              <Typography
+                variant="caption"
+                color="text.secondary"
+                display="block"
+                sx={{ pl: 1 }}
+              >
+                • cd couchbase-fhir-ce
+              </Typography>
+              <Typography
+                variant="caption"
+                color="text.secondary"
+                display="block"
+                sx={{ pl: 2 }}
+              >
+                • Fix the copied config.yaml in this folder (check indents!)
+              </Typography>
+              <Typography
+                variant="caption"
+                color="text.secondary"
+                display="block"
+                sx={{ pl: 2 }}
+              >
+                • Click the Retry Auto-Connect Now button below
+              </Typography>
+              <RetryAutoConnectButton />
+            </Box>
+          </Alert>
+        </Box>
+      </Box>
+    );
+  }
+
+  // Handle FHIR bucket conversion
+  const handleToggleFhir = (bucketName: string) => {
+    setSelectedBucketName(bucketName);
+    setDialogOpen(true);
+  };
+
+  // Handle successful conversion
+  const handleConversionSuccess = () => {
+    // Refresh metrics to show updated bucket status
+    fetchMetrics();
+    // Refresh FHIR buckets to show updated status
+    setDialogOpen(false);
+  };
+
+  // Handle dialog close
+  const handleDialogClose = () => {
+    setDialogOpen(false);
+    setSelectedBucketName("");
+  };
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
