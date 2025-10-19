@@ -45,6 +45,9 @@ public class ConnectionService {
     @Value("${couchbase.sdk.disconnect-timeout-seconds:10}")
     private int disconnectTimeoutSeconds;
     
+    @Value("${couchbase.sdk.transaction-timeout-seconds:30}")
+    private int transactionTimeoutSeconds;
+    
     @Value("${couchbase.sdk.enable-mutation-tokens:true}")
     private boolean enableMutationTokens;
     
@@ -138,6 +141,8 @@ public class ConnectionService {
                             break;
                     }
                     transactions.durabilityLevel(durabilityLevel);
+                    // Configure transaction timeout
+                    transactions.timeout(Duration.ofSeconds(transactionTimeoutSeconds));
                 });
             
             // Enable TLS/SSL if required (for Capella or secure connections)
@@ -160,6 +165,7 @@ public class ConnectionService {
             logger.info("   - connectTimeout: {}s (couchbase.sdk.connect-timeout-seconds)", connectTimeoutSeconds);
             logger.info("   - enableMutationTokens: {} (couchbase.sdk.enable-mutation-tokens)", enableMutationTokens);
             logger.info("   - transactionDurability: {} (couchbase.sdk.transaction-durability)", transactionDurability);
+            logger.info("   - transactionTimeout: {}s (couchbase.sdk.transaction-timeout-seconds)", transactionTimeoutSeconds);
             
             Cluster cluster = Cluster.connect(request.getConnectionString(), options);
             

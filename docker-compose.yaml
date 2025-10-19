@@ -41,8 +41,15 @@ services:
   fhir-admin:
     build:
       context: ./frontend
+    environment:
+      NGINX_ENTRYPOINT_QUIET_LOGS: 1
     expose:
       - "80" # internal only; served through haproxy
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "1"
     depends_on:
       - fhir-server
     restart: unless-stopped

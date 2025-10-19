@@ -54,6 +54,86 @@ public class ConfigController {
     }
 
     /**
+     * Return a sanitized summary of the config useful for the UI when startup fails
+     * Does not expose secrets (password is masked).
+     */
+    @GetMapping("/summary")
+    public ResponseEntity<Map<String, Object>> getConfigSummary(@RequestParam(required = false) String path) {
+        Map<String, Object> response = new HashMap<>();
+
+        try {
+            String configPath = path != null ? path : DEFAULT_CONFIG_FILE;
+            Path configFile = Paths.get(configPath);
+            if (!configFile.isAbsolute()) {
+                configFile = Paths.get(System.getProperty("user.dir")).resolve(configPath);
+            }
+
+            boolean exists = Files.exists(configFile);
+            response.put("configPath", configFile.toAbsolutePath().toString());
+            response.put("configExists", exists);
+
+            if (!exists) {
+                response.put("success", true);
+                response.put("message", "Config file not found");
+                return ResponseEntity.ok(response);
+            }
+
+            Yaml yaml = new Yaml();
+            try (InputStream inputStream = new FileInputStream(configFile.toFile())) {
+                Map<String, Object> yamlData = yaml.load(inputStream);
+                if (yamlData == null) {
+                    response.put("success", true);
+                    response.put("message", "Empty or invalid YAML file");
+                    return ResponseEntity.ok(response);
+                }
+
+                @SuppressWarnings("unchecked")
+                Map<String, Object> connection = (Map<String, Object>) yamlData.get("connection");
+                @SuppressWarnings("unchecked")
+                Map<String, Object> app = (Map<String, Object>) yamlData.get("app");
+
+                Map<String, Object> connectionSummary = new HashMap<>();
+                if (connection != null) {
+                    Object connectionString = connection.get("connectionString");
+                    Object username = connection.get("username");
+                    Object password = connection.get("password");
+                    Object serverType = connection.get("serverType");
+                    Object sslEnabled = connection.get("sslEnabled");
+
+                    // Mask password fully, reveal length only
+                    String maskedPassword = null;
+                    if (password instanceof String) {
+                        int len = ((String) password).length();
+                        maskedPassword = len > 0 ? "*".repeat(Math.min(len, 12)) : ""; // cap mask to 12
+                    }
+
+                    connectionSummary.put("server", connectionString);
+                    connectionSummary.put("username", username);
+                    connectionSummary.put("passwordMasked", maskedPassword);
+                    connectionSummary.put("serverType", serverType);
+                    connectionSummary.put("sslEnabled", sslEnabled);
+                }
+
+                Map<String, Object> appSummary = new HashMap<>();
+                if (app != null) {
+                    appSummary.put("autoConnect", app.get("autoConnect"));
+                    appSummary.put("showConnectionDialog", app.get("showConnectionDialog"));
+                }
+
+                response.put("success", true);
+                response.put("connection", connectionSummary);
+                response.put("app", appSummary);
+                return ResponseEntity.ok(response);
+            }
+        } catch (Exception e) {
+            logger.error("Failed to prepare config summary: {}", e.getMessage(), e);
+            response.put("success", false);
+            response.put("error", e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(response);
+        }
+    }
+
+    /**
      * Load and return YAML configuration file
      */
     @GetMapping("/yaml")

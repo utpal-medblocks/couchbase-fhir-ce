@@ -20,10 +20,15 @@
     <logger name="com.couchbase.transactions" level="ERROR"/>
     <logger name="com.couchbase.tracing" level="ERROR"/>
 
-    <!-- Package-specific loggers -->
+    <!-- Package-specific loggers - start conservatively -->
     <logger name="com.couchbase.admin" level="ERROR"/>
     <logger name="com.couchbase.fhir" level="ERROR"/>
     <logger name="com.couchbase.common" level="ERROR"/>
+    
+    <!-- Only target the specific noisy classes you mentioned -->
+    <logger name="com.couchbase.fhir.repository.service.FhirBundleProcessingService" level="WARN"/>
+    <logger name="com.couchbase.fhir.repository.provider.BundleTransactionProvider" level="WARN"/>
+    <logger name="com.couchbase.admin.controller.service.ConnectionService" level="WARN"/>
 
     <!-- Suppress noisy HAPI FHIR parser warnings -->
     <logger name="ca.uhn.fhir.parser.LenientErrorHandler" level="ERROR"/>
@@ -31,13 +36,12 @@
     <!-- Suppress verbose HAPI FHIR profile loading messages -->
     <logger name="ca.uhn.fhir.context.support.DefaultProfileValidationSupport" level="ERROR"/>
 
-    <!-- Suppress HAPI FHIR's exception interceptor stack traces - we handle our own clean error logging -->
+    <!-- Target the specific RestfulServer stack traces you're seeing -->
+    <logger name="ca.uhn.fhir.rest.server.RestfulServer" level="OFF"/>
+    <!-- Disable HAPI's default exception handler stack traces -->
     <logger name="ca.uhn.fhir.rest.server.interceptor.ExceptionHandlingInterceptor" level="OFF"/>
     
-    <!-- Suppress RestfulServer stack traces for expected FHIR errors -->
-    <logger name="ca.uhn.fhir.rest.server.RestfulServer" level="ERROR"/>
-    
-    <!-- Suppress all Tomcat client disconnection errors (common with improved performance) -->
-    <logger name="org.apache.catalina.core.ContainerBase.[Catalina].[localhost].[/].[fhirServlet]" level="OFF"/>
-    <logger name="org.apache.catalina.connector.ClientAbortException" level="OFF"/>
+    <!-- Suppress known client disconnection errors -->
+    <logger name="org.apache.catalina.connector" level="OFF"/>
+    <logger name="org.apache.catalina" level="WARN"/>
 </configuration>

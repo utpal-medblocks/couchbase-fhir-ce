@@ -34,4 +34,8 @@ COPY --from=builder /app/dist .
 
 USER appuser
 EXPOSE 80
+
+# Set environment variable to reduce nginx startup verbosity
+ENV NGINX_ENTRYPOINT_QUIET_LOGS=1
+
 CMD ["nginx", "-g", "daemon off;"]
