@@ -65,8 +65,8 @@ curl -sSL https://raw.githubusercontent.com/couchbaselabs/couchbase-fhir-ce/mast
 echo "🔐 Verifying file integrity..."
 if command -v sha256sum &> /dev/null; then
     # Create temporary checksums for downloaded files only
-    echo "e8348bdfe5b9c317e417e84708490642849ded52d4fc3216f451e39c545f0bbd  docker-compose.yml" > temp_checksums.txt
-    echo "707181e53db555589ea67814c57677d8f15dc3edefc06ceec8b7526fc4e2f405  haproxy.cfg" >> temp_checksums.txt
+    echo "dde53fa21df164c27ccec589edf4f7cd208c9dd77c49be81213fb4ceb17cca76  docker-compose.yml" > temp_checksums.txt
+    echo "349ec256100f06a51b193efb4a68321a6823518f748f27a1ae24696d6ef1628f  haproxy.cfg" >> temp_checksums.txt
     
     if ! sha256sum -c temp_checksums.txt --quiet 2>/dev/null; then
         echo "❌ Warning: File integrity verification failed. Files may have been tampered with."
@@ -77,8 +77,8 @@ if command -v sha256sum &> /dev/null; then
     rm -f temp_checksums.txt
 elif command -v shasum &> /dev/null; then
     # macOS fallback
-    echo "e8348bdfe5b9c317e417e84708490642849ded52d4fc3216f451e39c545f0bbd  docker-compose.yml" > temp_checksums.txt
-    echo "707181e53db555589ea67814c57677d8f15dc3edefc06ceec8b7526fc4e2f405  haproxy.cfg" >> temp_checksums.txt
+    echo "dde53fa21df164c27ccec589edf4f7cd208c9dd77c49be81213fb4ceb17cca76  docker-compose.yml" > temp_checksums.txt
+    echo "349ec256100f06a51b193efb4a68321a6823518f748f27a1ae24696d6ef1628f  haproxy.cfg" >> temp_checksums.txt
     
     if ! shasum -a 256 -c temp_checksums.txt --quiet 2>/dev/null; then
         echo "❌ Warning: File integrity verification failed. Files may have been tampered with."
