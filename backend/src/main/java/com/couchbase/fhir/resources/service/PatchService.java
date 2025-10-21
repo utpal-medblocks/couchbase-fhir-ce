@@ -45,7 +45,7 @@ public class PatchService {
     private PutService putService;
     
     @Autowired
-    private com.couchbase.admin.connections.service.ConnectionService connectionService;
+    private com.couchbase.fhir.resources.gateway.CouchbaseGateway couchbaseGateway;
     
     @Autowired
     private FHIRResourceService serviceFactory;
@@ -111,7 +111,7 @@ public class PatchService {
         
         // 3. Delegate to PUT service (handles versioning, validation, conflicts, meta, audit, storage)
         try {
-            com.couchbase.client.java.Cluster cluster = connectionService.getConnection("default");
+            com.couchbase.client.java.Cluster cluster = couchbaseGateway.getClusterForTransaction("default");
             TransactionContextImpl context = new TransactionContextImpl(cluster, bucketName);
             
             @SuppressWarnings("unchecked")

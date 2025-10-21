@@ -274,6 +274,14 @@ public class ConnectionService {
         }
         return cluster;
     }
+
+    /**
+     * Fast preflight check used by request handlers to decide whether to proceed.
+     * Does not attempt to create a connection; simply verifies presence of an active one.
+     */
+    public boolean hasActiveConnection(String connectionName) {
+        return activeConnections.containsKey(connectionName);
+    }
     
     /**
      * Get a cached Collection object (for performance - avoids lookup overhead)

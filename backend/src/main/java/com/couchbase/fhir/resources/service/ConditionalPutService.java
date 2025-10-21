@@ -36,7 +36,7 @@ public class ConditionalPutService {
     private FhirBucketValidator bucketValidator;
     
     @Autowired
-    private ConnectionService connectionService;
+    private com.couchbase.fhir.resources.gateway.CouchbaseGateway couchbaseGateway;
     
     @Autowired
     private SearchService searchService;
@@ -112,7 +112,7 @@ public class ConditionalPutService {
         logger.info("🆕 ConditionalPutService: Delegating to PostService for creation");
         
         try {
-            Cluster cluster = connectionService.getConnection("default");
+            Cluster cluster = couchbaseGateway.getClusterForTransaction("default");
             
             @SuppressWarnings("unchecked")
             T createdResource = (T) postService.createResource(resource, cluster, bucketName);
@@ -138,7 +138,7 @@ public class ConditionalPutService {
         logger.info("🔄 ConditionalPutService: Delegating to PutService for update of ID {}", resourceId);
         
         try {
-            Cluster cluster = connectionService.getConnection("default");
+            Cluster cluster = couchbaseGateway.getClusterForTransaction("default");
             TransactionContextImpl context = new TransactionContextImpl(cluster, bucketName);
             
             @SuppressWarnings("unchecked")

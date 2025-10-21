@@ -1,11 +1,11 @@
 package com.couchbase.fhir.resources.service;
 
-import com.couchbase.client.java.Cluster;
 import com.couchbase.client.java.search.SearchQuery;
 import com.couchbase.client.java.search.result.SearchResult;
 import com.couchbase.client.java.search.result.SearchRow;
 import com.couchbase.client.java.search.SearchOptions;
 import com.couchbase.client.java.search.sort.SearchSort;
+import com.couchbase.fhir.resources.gateway.CouchbaseGateway;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -18,6 +18,7 @@ import java.util.List;
 /**
  * Direct FTS search service that returns document keys only.
  * This replaces N1QL SEARCH queries with direct FTS calls for better performance.
+ * Uses CouchbaseGateway for centralized connection management and circuit breaker.
  */
 @Service
 public class FtsSearchService {
@@ -25,7 +26,7 @@ public class FtsSearchService {
     private static final Logger logger = LoggerFactory.getLogger(FtsSearchService.class);
     
     @Autowired
-    private com.couchbase.admin.connections.service.ConnectionService connectionService;
+    private CouchbaseGateway couchbaseGateway;
     
     @Autowired
     private CollectionRoutingService collectionRoutingService;
@@ -58,12 +59,6 @@ public class FtsSearchService {
                                        int from, int size, List<SearchSort> sortFields) {
         
         try {
-            // Get connection and FTS index
-            Cluster cluster = connectionService.getConnection("default");
-            if (cluster == null) {
-                throw new RuntimeException("No active connection found");
-            }
-            
             String ftsIndex = collectionRoutingService.getFtsIndex(resourceType);
             if (ftsIndex == null) {
                 throw new IllegalArgumentException("No FTS index found for resource type: " + resourceType);
@@ -86,7 +81,7 @@ public class FtsSearchService {
             }
 
             long ftsStartTime = System.currentTimeMillis();
-            SearchResult searchResult = cluster.searchQuery(ftsIndex, combinedQuery, searchOptions);
+            SearchResult searchResult = couchbaseGateway.searchQuery("default", ftsIndex, combinedQuery, searchOptions);
             
             // Check for FTS errors in the result metadata
             if (searchResult.metaData().errors() != null && !searchResult.metaData().errors().isEmpty()) {
@@ -128,11 +123,6 @@ public class FtsSearchService {
     public long getCount(List<SearchQuery> ftsQueries, String resourceType) {
         
         try {
-            Cluster cluster = connectionService.getConnection("default");
-            if (cluster == null) {
-                throw new RuntimeException("No active connection found");
-            }
-            
             String ftsIndex = collectionRoutingService.getFtsIndex(resourceType);
             if (ftsIndex == null) {
                 throw new IllegalArgumentException("No FTS index found for resource type: " + resourceType);
@@ -155,7 +145,7 @@ public class FtsSearchService {
                 logger.debug("🔍 FTS Count Options: {}", exportOptions(countOptions, 0, 0, null));
             }
 
-            SearchResult searchResult = cluster.searchQuery(ftsIndex, combinedQuery, countOptions);
+            SearchResult searchResult = couchbaseGateway.searchQuery("default", ftsIndex, combinedQuery, countOptions);
             
             // Check for FTS errors in the result metadata
             if (searchResult.metaData().errors() != null && !searchResult.metaData().errors().isEmpty()) {
@@ -261,11 +251,6 @@ public class FtsSearchService {
     public FtsSearchResult searchForAllKeysInCollection(List<SearchQuery> ftsQueries, String ftsIndexName,
                                                         List<SearchSort> sortFields, String bucketName) {
         try {
-            Cluster cluster = connectionService.getConnection("default");
-            if (cluster == null) {
-                throw new RuntimeException("No active connection found");
-            }
-            
             // Build the full index name: {bucket}.{scope}.{indexName}
             String fullIndexName = bucketName + ".Resources." + ftsIndexName;
             
@@ -285,7 +270,7 @@ public class FtsSearchService {
             logger.info("🔍 FTS search on custom index: {} with {} queries", fullIndexName, ftsQueries.size());
             
             long ftsStartTime = System.currentTimeMillis();
-            SearchResult searchResult = cluster.searchQuery(fullIndexName, combinedQuery, searchOptions);
+            SearchResult searchResult = couchbaseGateway.searchQuery("default", fullIndexName, combinedQuery, searchOptions);
             
             // Check for errors
             if (searchResult.metaData().errors() != null && !searchResult.metaData().errors().isEmpty()) {

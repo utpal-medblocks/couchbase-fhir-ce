@@ -32,7 +32,7 @@ public class BatchKvService {
     private static final String DEFAULT_SCOPE = "Resources";
     
     @Autowired
-    private com.couchbase.admin.connections.service.ConnectionService connectionService;
+    private com.couchbase.fhir.resources.gateway.CouchbaseGateway couchbaseGateway;
     
     @Autowired
     private CollectionRoutingService collectionRoutingService;
@@ -61,7 +61,7 @@ public class BatchKvService {
         try {
             // Get cached collection (avoids lookup overhead + triggers lazy warmup)
             String targetCollection = collectionRoutingService.getTargetCollection(resourceType);
-            Collection collection = connectionService.getCollection("default", bucketName, DEFAULT_SCOPE, targetCollection);
+            Collection collection = couchbaseGateway.getCollection("default", bucketName, DEFAULT_SCOPE, targetCollection);
             
             // Execute async KV operations in parallel for maximum performance
             List<CompletableFuture<GetResult>> futures = new ArrayList<>();
@@ -139,7 +139,7 @@ public class BatchKvService {
         try {
             // Get cached collection (avoids lookup overhead)
             String targetCollection = collectionRoutingService.getTargetCollection(resourceType);
-            Collection collection = connectionService.getCollection("default", bucketName, DEFAULT_SCOPE, targetCollection);
+            Collection collection = couchbaseGateway.getCollection("default", bucketName, DEFAULT_SCOPE, targetCollection);
             
             // Execute batch KV operations using async API (much faster than reactive)
             List<CompletableFuture<GetResult>> futures = new ArrayList<>();
@@ -192,7 +192,7 @@ public class BatchKvService {
         try {
             // Get cached collection (avoids lookup overhead)
             String targetCollection = collectionRoutingService.getTargetCollection(resourceType);
-            Collection collection = connectionService.getCollection("default", bucketName, DEFAULT_SCOPE, targetCollection);
+            Collection collection = couchbaseGateway.getCollection("default", bucketName, DEFAULT_SCOPE, targetCollection);
             
             List<Boolean> existsResults = new ArrayList<>();
             

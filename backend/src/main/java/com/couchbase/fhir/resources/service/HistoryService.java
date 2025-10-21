@@ -50,7 +50,7 @@ public class HistoryService {
     private static final int MAX_HISTORY_SIZE = 1000;
     
     @Autowired
-    private com.couchbase.admin.connections.service.ConnectionService connectionService;
+    private com.couchbase.fhir.resources.gateway.CouchbaseGateway couchbaseGateway;
     
     @Autowired
     private CollectionRoutingService collectionRoutingService;
@@ -72,10 +72,7 @@ public class HistoryService {
         
         try {
             String connectionName = "default";
-            Cluster cluster = connectionService.getConnection(connectionName);
-            if (cluster == null) {
-                throw new RuntimeException("No active connection found: " + connectionName);
-            }
+            Cluster cluster = couchbaseGateway.getClusterForTransaction(connectionName);
             
             // Key format in Versions collection: {resourceType}/{id}/{versionId}
             String versionKey = resourceType + "/" + id + "/" + versionId;
@@ -168,10 +165,7 @@ public class HistoryService {
     private Resource getCurrentResource(String resourceType, String id, String bucketName) {
         try {
             String connectionName = "default";
-            Cluster cluster = connectionService.getConnection(connectionName);
-            if (cluster == null) {
-                throw new RuntimeException("No active connection found: " + connectionName);
-            }
+            Cluster cluster = couchbaseGateway.getClusterForTransaction(connectionName);
             
             String documentKey = resourceType + "/" + id;
             String targetCollection = collectionRoutingService.getTargetCollection(resourceType);
@@ -240,10 +234,7 @@ public class HistoryService {
         
         try {
             String connectionName = "default";
-            Cluster cluster = connectionService.getConnection(connectionName);
-            if (cluster == null) {
-                throw new RuntimeException("No active connection found");
-            }
+            Cluster cluster = couchbaseGateway.getClusterForTransaction(connectionName);
             
             // Fetch historical versions from Versions collection
             Collection versionsCollection = cluster.bucket(bucketName)

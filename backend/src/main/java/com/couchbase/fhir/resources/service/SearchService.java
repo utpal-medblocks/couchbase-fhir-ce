@@ -54,9 +54,6 @@ public class SearchService {
     private FhirSearchParameterPreprocessor searchPreprocessor;
     
     @Autowired
-    private com.couchbase.admin.connections.service.ConnectionService connectionService;
-    
-    @Autowired
     private SearchStateManager searchStateManager;
     
     @Autowired
@@ -262,7 +259,11 @@ public class SearchService {
                 RequestPerfBagUtils.addCount(requestDetails, "search_results", result.getTotal());
                 return result;
             } catch (Exception e) {
-                logger.error("🔍 ❌ Exception in handleMultipleIncludeSearch: {} - {}", e.getClass().getName(), e.getMessage(), e);
+                if (isNoActiveConnectionError(e)) {
+                    logger.error("🔍 ❌ Include search failed: No active Couchbase connection");
+                } else {
+                    logger.error("🔍 ❌ Exception in handleMultipleIncludeSearch: {} - {}", e.getClass().getName(), e.getMessage(), e);
+                }
                 throw e; // Re-throw to let HAPI handle it
             }
         }
@@ -1379,6 +1380,22 @@ public class SearchService {
         bundle.setTotal(0);
         return bundle;
     }
+
+    /**
+     * Detect a missing Couchbase connection by walking the exception cause chain.
+     * We use this to suppress noisy stack traces when the cluster has disconnected under load.
+     */
+    private boolean isNoActiveConnectionError(Throwable throwable) {
+        Throwable current = throwable;
+        while (current != null) {
+            String message = current.getMessage();
+            if (message != null && message.contains("No active connection found")) {
+                return true;
+            }
+            current = current.getCause();
+        }
+        return false;
+    }
     
     /**
      * Extract base URL from RequestDetails for pagination links
@@ -1535,7 +1552,11 @@ public class SearchService {
                 allResources.addAll(typeResources);
                 logger.info("🔍 Retrieved {}/{} {} resources", typeResources.size(), ids.size(), resourceType);
             } catch (Exception e) {
-                logger.error("🔍 Failed to retrieve {} resources: {}", resourceType, e.getMessage(), e);
+                if (isNoActiveConnectionError(e)) {
+                    logger.error("🔍 Failed to retrieve {} resources: No active Couchbase connection", resourceType);
+                } else {
+                    logger.error("🔍 Failed to retrieve {} resources: {}", resourceType, e.getMessage(), e);
+                }
                 // Continue with other types even if one fails
             }
         }
