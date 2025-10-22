@@ -144,11 +144,11 @@ public class PutService {
         int nextVersion = copyExistingResourceToVersions(txContext, cluster, bucketName, resourceType, documentKey);
         
         if (nextVersion > 1) {
-            logger.info("📋 PUT {}: Resource exists, copied to Versions, updating to version {}", 
+            logger.debug("📋 PUT {}: Resource exists, copied to Versions, updating to version {}", 
                        documentKey, nextVersion);
             updateResourceMetadata(resource, String.valueOf(nextVersion), "UPDATE");
         } else {
-            logger.info("🆕 PUT {}: Creating new resource (version 1)", documentKey);
+            logger.debug("🆕 PUT {}: Creating new resource (version 1)", documentKey);
             updateResourceMetadata(resource, "1", "CREATE");
         }
         
@@ -158,7 +158,7 @@ public class PutService {
     
     /**
      * Copy existing resource to Versions collection using efficient N1QL and return next version number
-     * Uses your SQL pattern: INSERT INTO Versions SELECT CONCAT(META(p).id, '/', p.meta.versionId), p FROM Patient p WHERE META(p).id = 'Patient/1001'
+     * Uses UPSERT to handle race conditions when multiple concurrent requests update the same resource
      * 
      * @return Next version number (1 if resource doesn't exist, current+1 if it does)
      */
@@ -168,22 +168,23 @@ public class PutService {
             // Get the correct target collection for this resource type
             String targetCollection = collectionRoutingService.getTargetCollection(resourceType);
             
-            // Use efficient N1QL with USE KEYS - get current version and increment
+            // Use UPSERT instead of INSERT to handle concurrent updates gracefully
+            // This prevents "Duplicate Key" errors when multiple requests update the same resource
             String sql = String.format(
-                "INSERT INTO `%s`.`%s`.`%s` (KEY k, VALUE v) " +
+                "UPSERT INTO `%s`.`%s`.`%s` (KEY k, VALUE v) " +
                 "SELECT " +
                 "    CONCAT(META(r).id, '/', IFNULL(r.meta.versionId, '1')) AS k, " +
                 "    r AS v " +
                 "FROM `%s`.`%s`.`%s` r " +
                 "USE KEYS '%s' " +
                 "RETURNING RAW %s.meta.versionId",
-                bucketName, DEFAULT_SCOPE, VERSIONS_COLLECTION,  // INSERT INTO Versions
+                bucketName, DEFAULT_SCOPE, VERSIONS_COLLECTION,  // UPSERT INTO Versions
                 bucketName, DEFAULT_SCOPE, targetCollection,     // FROM TargetCollection
                 documentKey,                                     // USE KEYS 'Patient/simple-patient-1'
                 VERSIONS_COLLECTION                              // RETURNING RAW Versions.meta.versionId
             );
             
-            logger.warn("🔄 Copying to Versions with USE KEYS: {}", sql);
+            logger.debug("🔄 Copying to Versions with USE KEYS: {}", sql);
             
             // Execute query within transaction context
             com.couchbase.client.java.transactions.TransactionQueryResult result = txContext.query(sql);
@@ -194,15 +195,16 @@ public class PutService {
                 String currentVersionStr = rows.get(0);
                 int currentVersion = Integer.parseInt(currentVersionStr);
                 int nextVersion = currentVersion + 1;
-                logger.warn("📊 Document exists, current version: {}, next version: {}", currentVersion, nextVersion);
+                logger.debug("📊 Document exists, current version: {}, next version: {}", currentVersion, nextVersion);
                 return nextVersion;
             } else {
-                logger.warn("🆕 Document doesn't exist, using version 1");
+                logger.debug("🆕 Document doesn't exist, using version 1");
                 return 1;
             }
             
         } catch (Exception e) {
-            logger.warn("Resource {} doesn't exist or copy failed: {}", documentKey, e.getMessage());
+            // Log at debug level to reduce noise - this is expected for new resources
+            logger.debug("Resource {} doesn't exist or copy failed: {}", documentKey, e.getMessage());
             // If copy fails, assume resource doesn't exist (version 1)
             return 1;
         }
@@ -221,7 +223,7 @@ public class PutService {
         }
         metaHelper.applyMeta(resource, metaRequest);
         
-        logger.warn("🏷️ Updated metadata: version={}, operation={}", versionId, operation);
+        logger.debug("🏷️ Updated metadata: version={}, operation={}", versionId, operation);
     }
     
     /**
@@ -250,7 +252,7 @@ public class PutService {
                 txContext.insert(collection, documentKey, JsonObject.fromJson(resourceJson));
             }
             
-            logger.warn("🔧 Upserted resource in transaction: {}", documentKey);
+            logger.debug("🔧 Upserted resource in transaction: {}", documentKey);
             
         } catch (Exception e) {
             logger.error("❌ Failed to upsert resource {} in transaction: {}", documentKey, e.getMessage());

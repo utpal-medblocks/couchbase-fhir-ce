@@ -34,11 +34,12 @@ server:
     accesslog:
       enabled: false
     threads:
-      max: 50 # Reduce from default 200 to save memory (150MB savings)
-      min-spare: 10 # Minimum idle threads
-    accept-count: 100 # Queue size when all threads busy
-    max-connections: 200 # Max simultaneous connections
-    connection-timeout: 20s
+      max: ${SERVER_TOMCAT_THREADS_MAX:50} # Override with env var (default 50 for low memory)
+      min-spare: ${SERVER_TOMCAT_THREADS_MIN_SPARE:10} # Minimum idle threads
+    accept-count: ${SERVER_TOMCAT_ACCEPT_COUNT:100} # Queue size when all threads busy
+    max-connections: ${SERVER_TOMCAT_MAX_CONNECTIONS:200} # Max simultaneous connections
+    connection-timeout: ${SERVER_TOMCAT_CONNECTION_TIMEOUT:20s}
+    max-keep-alive-requests: ${SERVER_TOMCAT_MAX_KEEP_ALIVE_REQUESTS:1000}
 
 # Logging configuration for containers
 logging:
