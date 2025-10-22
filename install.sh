@@ -61,12 +61,42 @@ curl -sSL https://raw.githubusercontent.com/couchbaselabs/couchbase-fhir-ce/mast
 curl -sSL https://raw.githubusercontent.com/couchbaselabs/couchbase-fhir-ce/master/haproxy.cfg -o haproxy.cfg
 curl -sSL https://raw.githubusercontent.com/couchbaselabs/couchbase-fhir-ce/master/checksums.txt -o checksums.txt
 
+# ---------------------------------------------------------------------------
+# Ensure logs directory exists BEFORE starting containers.
+# If the host path does not exist when Docker creates the bind mount, Docker
+# (running as root) will create it owned by root:root with 755 perms. The
+# fhir-server image runs as an unprivileged user and then cannot write GC/JFR
+# logs -> JVM startup failure (permission denied on /app/logs/gc.log).
+# We proactively create it here with permissive write access so the container
+# user (unknown UID inside image) can write even if ownership differs.
+# ---------------------------------------------------------------------------
+if [ ! -d logs ]; then
+    echo "📁 Creating logs directory (host bind mount target)..."
+    mkdir -p logs
+fi
+
+# Attempt to adjust ownership if created previously by root and we know the
+# invoking user's original UID (sudo sets SUDO_UID / SUDO_GID). Even if this
+# fails, the chmod below will still allow writes.
+OWNER=$(ls -ld logs | awk '{print $3}') || OWNER="unknown"
+if [ "$OWNER" = "root" ]; then
+    if [ -n "$SUDO_UID" ] && [ -n "$SUDO_GID" ]; then
+        chown "$SUDO_UID":"$SUDO_GID" logs 2>/dev/null || true
+    fi
+fi
+
+# Grant broad write permissions. 0775 is preferred; if that fails (e.g. due to
+# restrictive umask or ownership) fall back to 0777. These logs may contain
+# diagnostic information; if you need stricter security, manually adjust perms
+# and rebuild the image with an init entrypoint that fixes ownership.
+chmod 0775 logs 2>/dev/null || chmod 0777 logs 2>/dev/null || true
+
 # Verify file integrity
 echo "🔐 Verifying file integrity..."
 if command -v sha256sum &> /dev/null; then
-    # Create temporary checksums for downloaded files only
-    echo "dde53fa21df164c27ccec589edf4f7cd208c9dd77c49be81213fb4ceb17cca76  docker-compose.yml" > temp_checksums.txt
-    echo "349ec256100f06a51b193efb4a68321a6823518f748f27a1ae24696d6ef1628f  haproxy.cfg" >> temp_checksums.txt
+    # Create temporary checksums for downloaded files only (auto-generated values)
+    echo "11892cdb6af022f81a20ae9f4b96abaae9aa511339e7d25dba125d803dca40f0  docker-compose.yml" > temp_checksums.txt
+    echo "549bf3dc6b04006bf8df94b55be1b6e552f75eb8a9149a07fc974367cef1a21f  haproxy.cfg" >> temp_checksums.txt
     
     if ! sha256sum -c temp_checksums.txt --quiet 2>/dev/null; then
         echo "❌ Warning: File integrity verification failed. Files may have been tampered with."
@@ -76,9 +106,9 @@ if command -v sha256sum &> /dev/null; then
     fi
     rm -f temp_checksums.txt
 elif command -v shasum &> /dev/null; then
-    # macOS fallback
-    echo "dde53fa21df164c27ccec589edf4f7cd208c9dd77c49be81213fb4ceb17cca76  docker-compose.yml" > temp_checksums.txt
-    echo "349ec256100f06a51b193efb4a68321a6823518f748f27a1ae24696d6ef1628f  haproxy.cfg" >> temp_checksums.txt
+    # macOS fallback (same hashes as above)
+    echo "11892cdb6af022f81a20ae9f4b96abaae9aa511339e7d25dba125d803dca40f0  docker-compose.yml" > temp_checksums.txt
+    echo "549bf3dc6b04006bf8df94b55be1b6e552f75eb8a9149a07fc974367cef1a21f  haproxy.cfg" >> temp_checksums.txt
     
     if ! shasum -a 256 -c temp_checksums.txt --quiet 2>/dev/null; then
         echo "❌ Warning: File integrity verification failed. Files may have been tampered with."

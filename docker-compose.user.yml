@@ -22,6 +22,10 @@
 services:
   fhir-server:
     image: ghcr.io/couchbaselabs/couchbase-fhir-ce/fhir-server:${FHIR_BACKEND_TAG:-latest}
+    # Map container process to host UID/GID to improve bind-mount write compatibility.
+    # Override by exporting FHIR_RUN_UID / FHIR_RUN_GID prior to running install.sh.
+    # If unset, defaults (1000:1000) are used which match common non-root IDs.
+    user: "${FHIR_RUN_UID:-1000}:${FHIR_RUN_GID:-1000}"
     mem_limit: 3g
     mem_reservation: 2g
     environment:
