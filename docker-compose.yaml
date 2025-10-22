@@ -18,6 +18,7 @@ services:
       JAVA_TOOL_OPTIONS: >-
         -Xms1g
         -Xmx2g
+        -Xss512k
         -XX:MaxDirectMemorySize=512m
         -XX:+UseG1GC
         -XX:MaxGCPauseMillis=200
@@ -26,6 +27,8 @@ services:
         -XX:+ExitOnOutOfMemoryError
         -Xlog:gc*:file=/app/logs/gc.log:time,uptime,level,tags:filecount=5,filesize=10M
         -XX:NativeMemoryTracking=summary
+        -XX:StartFlightRecording=name=background,filename=/app/logs/continuous.jfr,maxsize=500m,maxage=4h,disk=true
+        -XX:FlightRecorderOptions=stackdepth=128
     healthcheck:
       test:
         ["CMD-SHELL", "curl -f http://localhost:8080/actuator/health || exit 1"]
@@ -37,6 +40,12 @@ services:
       - "8080" # internal only; not published to host
     volumes:
       - ./config.yaml:/config.yaml:ro
+      - ./logs:/app/logs # Added volume mount to access JFR and other log files
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
     restart: unless-stopped
   fhir-admin:
     build:

@@ -387,7 +387,7 @@ public class FhirBundleProcessingService {
                             validateResource(resource, bucketConfig);
                         }
                         
-                        processedResource = postService.createResource(resource, cluster, bucketName);
+                        processedResource = postService.createResource(resource, bucketName);
                         responseStatus = "201 Created";
                         logger.info("✅ POST {}: Created with server-generated ID {}", resourceType, processedResource.getId());
                         break;

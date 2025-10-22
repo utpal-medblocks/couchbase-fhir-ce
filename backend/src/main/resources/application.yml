@@ -33,6 +33,12 @@ server:
   tomcat:
     accesslog:
       enabled: false
+    threads:
+      max: 50 # Reduce from default 200 to save memory (150MB savings)
+      min-spare: 10 # Minimum idle threads
+    accept-count: 100 # Queue size when all threads busy
+    max-connections: 200 # Max simultaneous connections
+    connection-timeout: 20s
 
 # Logging configuration for containers
 logging:

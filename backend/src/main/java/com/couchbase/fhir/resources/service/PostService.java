@@ -39,13 +39,15 @@ public class PostService {
     /**
      * Create a new FHIR resource via POST operation.
      * Always generates a server-controlled ID, ignoring any client-supplied ID.
+     * Gets cluster through CouchbaseGateway for circuit breaker protection.
      * 
      * @param resource The FHIR resource to create
-     * @param cluster The Couchbase cluster connection
      * @param bucketName The target bucket name
      * @return The created resource with server-generated ID and metadata
      */
-    public Resource createResource(Resource resource, Cluster cluster, String bucketName) {
+    public Resource createResource(Resource resource, String bucketName) {
+        // ✅ Get cluster through gateway for circuit breaker protection
+        Cluster cluster = couchbaseGateway.getClusterForTransaction("default");
         String resourceType = resource.getResourceType().name();
         
         // ✅ FHIR POST Semantics: Server controls ID generation
@@ -81,10 +83,11 @@ public class PostService {
     /**
      * Create a new FHIR resource within a transaction context.
      * Used by Bundle processing when the Bundle type is "transaction".
+     * Note: Cluster is already validated by Bundle processor through gateway.
      * 
      * @param resource The FHIR resource to create
      * @param txContext The transaction context from Bundle processing
-     * @param cluster The Couchbase cluster connection
+     * @param cluster The Couchbase cluster connection (already gateway-validated)
      * @param bucketName The target bucket name
      * @return The created resource with server-generated ID and metadata
      */

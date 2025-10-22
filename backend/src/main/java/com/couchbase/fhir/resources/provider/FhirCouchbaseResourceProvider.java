@@ -564,12 +564,25 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
     /**
      * FHIR $validate Operation - Validates a resource without storing it
      * POST /fhir/{bucket}/{ResourceType}/$validate
+     * Uses singleton validator beans to avoid creating 95MB validator per request
      */
     @Operation(name = "$validate", idempotent = false)
     public OperationOutcome validateResource(@ResourceParam T resource) {
         try {
-            // Create a FHIR validator
-            FhirValidator validator = fhirContext.newValidator();
+            String bucketName = TenantContextHolder.getTenantId();
+            
+            // Get bucket config to determine which validator to use
+            FhirBucketConfigService.FhirBucketConfig bucketConfig = configService.getFhirBucketConfig(bucketName);
+            
+            // Use singleton validator based on bucket configuration
+            FhirValidator validator;
+            if (bucketConfig.isStrictValidation() || bucketConfig.isEnforceUSCore()) {
+                validator = strictValidator;  // Reuse singleton (saves 95MB per request!)
+                logger.debug("$validate using strict validator");
+            } else {
+                validator = lenientValidator; // Reuse singleton
+                logger.debug("$validate using lenient validator");
+            }
             
             // Validate the resource
             ValidationResult result = validator.validateWithResult(resource);

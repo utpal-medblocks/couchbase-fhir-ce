@@ -4,6 +4,7 @@ import ca.uhn.fhir.parser.IParser;
 import com.couchbase.client.java.Cluster;
 import com.couchbase.client.java.json.JsonObject;
 import com.couchbase.common.fhir.FhirMetaHelper;
+import com.couchbase.fhir.resources.gateway.CouchbaseGateway;
 import org.hl7.fhir.r4.model.Resource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -36,9 +37,13 @@ public class PutService {
     @Autowired
     private CollectionRoutingService collectionRoutingService;
     
+    @Autowired
+    private CouchbaseGateway couchbaseGateway;
+    
     /**
      * Create or update a FHIR resource via PUT operation.
      * Always uses the client-supplied ID and handles proper versioning.
+     * Gets cluster through CouchbaseGateway for circuit breaker protection.
      * 
      * @param resource The FHIR resource to create/update (must have client-supplied ID)
      * @param context The transaction context (standalone or nested)
@@ -55,29 +60,34 @@ public class PutService {
         String documentKey = resourceType + "/" + clientId;
         logger.info("🔄 PUT {}: Using client-supplied ID {}", resourceType, clientId);
         
+        // ✅ Get cluster through gateway for circuit breaker protection
+        Cluster cluster = couchbaseGateway.getClusterForTransaction("default");
+        String bucketName = context.getBucketName();
+        
         // ✅ FHIR Compliance: Check if ID was previously deleted (tombstoned)
         // Per FHIR spec, cannot reuse deleted resource IDs
         // NOTE: Tombstone check is done inside handleVersioningAndUpdate to ensure it's within transaction context
         
         if (context.isInTransaction()) {
             // Operate within existing Bundle transaction
-            return updateResourceInTransaction(resource, documentKey, context);
+            return updateResourceInTransaction(resource, documentKey, context, cluster, bucketName);
         } else {
             // Create standalone transaction for this PUT operation
-            return updateResourceWithStandaloneTransaction(resource, documentKey, context);
+            return updateResourceWithStandaloneTransaction(resource, documentKey, context, cluster, bucketName);
         }
     }
     
     /**
      * Handle PUT operation within existing transaction (Bundle context)
      */
-    private Resource updateResourceInTransaction(Resource resource, String documentKey, TransactionContext context) {
+    private Resource updateResourceInTransaction(Resource resource, String documentKey, 
+                                                TransactionContext context, Cluster cluster, String bucketName) {
         String resourceType = resource.getResourceType().name();
         
         try {
             // Handle versioning and update within the existing transaction
             handleVersioningAndUpdate(resource, documentKey, context.getTransactionContext(), 
-                                    context.getCluster(), context.getBucketName());
+                                    cluster, bucketName);
             
             logger.info("✅ PUT {} (in transaction): Updated resource {}", resourceType, documentKey);
             return resource;
@@ -91,16 +101,16 @@ public class PutService {
     /**
      * Handle PUT operation with standalone transaction
      */
-    private Resource updateResourceWithStandaloneTransaction(Resource resource, String documentKey, TransactionContext context) {
+    private Resource updateResourceWithStandaloneTransaction(Resource resource, String documentKey, 
+                                                           TransactionContext context, Cluster cluster, String bucketName) {
         String resourceType = resource.getResourceType().name();
         
         try {
             // Create standalone transaction for this PUT operation
             logger.info("🔄 PUT {}: Starting standalone transaction for {}", resourceType, documentKey);
-            context.getCluster().transactions().run(txContext -> {
+            cluster.transactions().run(txContext -> {
                 logger.debug("🔄 PUT {}: Inside transaction context", resourceType);
-                handleVersioningAndUpdate(resource, documentKey, txContext, 
-                                        context.getCluster(), context.getBucketName());
+                handleVersioningAndUpdate(resource, documentKey, txContext, cluster, bucketName);
                 logger.debug("✅ PUT {}: Transaction operations completed", resourceType);
             });
             
