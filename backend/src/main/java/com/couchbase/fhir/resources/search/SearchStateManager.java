@@ -1,220 +1,112 @@
 package com.couchbase.fhir.resources.search;
 
+import com.couchbase.fhir.resources.service.PaginationCacheService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
-import java.util.Map;
 import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.TimeUnit;
 
 /**
- * Manages search state for pagination operations, particularly for _revinclude searches.
- * Provides caching, expiration, and cleanup of search states.
+ * Manages pagination state for FHIR search operations.
+ * 
+ * All pagination states are stored OFF-HEAP in Couchbase Admin.cache collection
+ * to prevent OOM errors that occurred with in-memory storage.
+ * 
+ * Previous (Legacy): 171MB heap consumed by ConcurrentHashMap with ~1,600 pagination states → OOM
+ * Current (Couchbase): <1MB heap, states stored in Couchbase with automatic TTL expiry → No OOM
+ * 
+ * Pagination Strategy:
+ * - Write-once, read-many: Document created once, never updated
+ * - Offset tracking: URL parameters (_offset, _count), not stored in document
+ * - TTL management: Collection-level maxTTL (180s), honored from creation time
+ * - Immutable state: No document updates = no TTL resets, fewer write operations
+ * 
+ * Supported search types: regular, _revinclude, _include, chain, $everything
+ * All use the same PaginationState structure with Couchbase-backed storage.
  */
 @Service
 public class SearchStateManager {
     
     private static final Logger logger = LoggerFactory.getLogger(SearchStateManager.class);
     
-    // In-memory cache for search states (legacy)
-    private final Map<String, SearchState> searchStateCache = new ConcurrentHashMap<>();
+    @Autowired
+    private PaginationCacheService paginationCacheService;
     
-    // In-memory cache for new pagination states
-    private final Map<String, PaginationState> paginationStateCache = new ConcurrentHashMap<>();
-    
-    @Value("${fhir.search.state.ttl.minutes:15}")
-    private int searchStateTtlMinutes;
-    
-    @Value("${fhir.search.state.cleanup.interval.minutes:5}")
-    private int cleanupIntervalMinutes;
     
     /**
-     * Store a search state and return a unique token
+     * Store pagination state and return token (new off-heap strategy using Couchbase).
      * 
-     * @param state The search state to store
-     * @return Unique token for retrieving the state
-     */
-    public String storeSearchState(SearchState state) {
-        String token = generateUniqueToken();
-        
-        // Set expiration time
-        long expirationTime = System.currentTimeMillis() + 
-            TimeUnit.MINUTES.toMillis(searchStateTtlMinutes);
-        state.setExpiresAt(expirationTime);
-        
-        searchStateCache.put(token, state);
-        
-        logger.debug("Stored search state with token: {} (expires in {} minutes)", 
-                    token, searchStateTtlMinutes);
-        
-        return token;
-    }
-    
-    /**
-     * Store pagination state and return token (new pagination strategy)
+     * REFACTORED: Now stores in Couchbase Admin.cache instead of in-memory ConcurrentHashMap.
+     * This eliminates heap pressure and prevents OOM errors.
+     * 
+     * @param paginationState The pagination state to store
+     * @return Pagination token (UUID) for retrieving the state
      */
     public String storePaginationState(PaginationState paginationState) {
         String token = UUID.randomUUID().toString().replace("-", "");
-        paginationStateCache.put(token, paginationState);
+        String bucketName = paginationState.getBucketName();
         
-        logger.debug("Stored pagination state with token: {} (expires in {} minutes)", 
-                    token, searchStateTtlMinutes);
+        // Store in Couchbase Admin.cache (off-heap) with automatic TTL
+        paginationCacheService.storePaginationState(bucketName, token, paginationState);
+        
+        logger.debug("Stored pagination state with token: {} (off-heap, collection maxTTL handles expiry)", 
+                    token);
         return token;
     }
     
     /**
-     * Retrieve pagination state by token (new pagination strategy)
-     */
-    public PaginationState getPaginationState(String token) {
-        PaginationState state = paginationStateCache.get(token);
-        
-        if (state == null) {
-            logger.debug("Pagination state not found for token: {}", token);
-            return null;
-        }
-        
-        if (state.isExpired()) {
-            logger.debug("Pagination state expired for token: {}, removing", token);
-            paginationStateCache.remove(token);
-            return null;
-        }
-        
-        logger.debug("Retrieved pagination state for token: {}", token);
-        return state;
-    }
-    
-    /**
-     * Remove pagination state from cache (new pagination strategy)
-     */
-    public void removePaginationState(String token) {
-        if (token != null) {
-            paginationStateCache.remove(token);
-            logger.debug("Removed pagination state for token: {}", token);
-        }
-    }
-    
-    /**
-     * Retrieve a search state by token (legacy)
+     * Retrieve pagination state by token (from Couchbase Admin.cache).
      * 
-     * @param token The token to look up
-     * @return SearchState if found and not expired, null otherwise
+     * REFACTORED: Now retrieves from Couchbase Admin.cache instead of in-memory ConcurrentHashMap.
+     * 
+     * @param token The pagination token (UUID)
+     * @param bucketName The FHIR bucket name
+     * @return PaginationState if found and not expired, null otherwise (returns null for 410 Gone)
      */
-    public SearchState retrieveSearchState(String token) {
+    public PaginationState getPaginationState(String token, String bucketName) {
         if (token == null || token.isEmpty()) {
+            logger.debug("Pagination state: null or empty token");
             return null;
         }
         
-        SearchState state = searchStateCache.get(token);
+        // Retrieve from Couchbase Admin.cache (off-heap)
+        PaginationState state = paginationCacheService.getPaginationState(bucketName, token);
+        
         if (state == null) {
-            logger.debug("Search state not found for token: {}", token);
+            logger.debug("Pagination state not found or expired: token={}, bucket={}", token, bucketName);
             return null;
         }
         
+        // Check if expired (defensive check, Couchbase TTL should handle this)
         if (state.isExpired()) {
-            logger.debug("Search state expired for token: {}", token);
-            searchStateCache.remove(token);
+            logger.debug("Pagination state expired: token={}, bucket={}", token, bucketName);
+            paginationCacheService.removePaginationState(bucketName, token);
             return null;
         }
         
-        // Optional: Extend expiration on access (sliding window)
-        extendExpiration(state);
-        
+        logger.debug("Retrieved pagination state: token={}, bucket={}, keys={}", 
+                    token, bucketName, state.getAllDocumentKeys().size());
         return state;
     }
     
     /**
-     * Remove a search state from cache
+     * Remove pagination state from cache (optional cleanup).
      * 
-     * @param token The token to remove
+     * REFACTORED: Now removes from Couchbase Admin.cache instead of in-memory ConcurrentHashMap.
+     * Note: Couchbase TTL handles automatic cleanup, this is for explicit cleanup.
+     * 
+     * @param token The pagination token
+     * @param bucketName The FHIR bucket name
      */
-    public void removeSearchState(String token) {
-        if (token != null) {
-            searchStateCache.remove(token);
-            logger.debug("Removed search state for token: {}", token);
+    public void removePaginationState(String token, String bucketName) {
+        if (token != null && bucketName != null) {
+            paginationCacheService.removePaginationState(bucketName, token);
+            logger.debug("Removed pagination state: token={}, bucket={}", token, bucketName);
         }
     }
     
-    /**
-     * Check if a search state is expired
-     * 
-     * @param state The search state to check
-     * @return true if expired, false otherwise
-     */
-    public boolean isExpired(SearchState state) {
-        return state == null || state.isExpired();
-    }
     
-    /**
-     * Get current cache size (for monitoring)
-     * 
-     * @return Number of cached search states (legacy + new pagination)
-     */
-    public int getCacheSize() {
-        return searchStateCache.size() + paginationStateCache.size();
-    }
     
-    /**
-     * Get pagination cache size (for monitoring)
-     */
-    public int getPaginationCacheSize() {
-        return paginationStateCache.size();
-    }
-    
-    /**
-     * Background cleanup task to remove expired search states (both legacy and new pagination)
-     */
-    @Scheduled(fixedDelayString = "#{${fhir.search.state.cleanup.interval.minutes:5} * 60 * 1000}")
-    public void cleanupExpiredStates() {
-        // Clean up legacy search states
-        int initialLegacySize = searchStateCache.size();
-        searchStateCache.entrySet().removeIf(entry -> entry.getValue().isExpired());
-        int finalLegacySize = searchStateCache.size();
-        int removedLegacyCount = initialLegacySize - finalLegacySize;
-        
-        // Clean up new pagination states
-        int initialPaginationSize = paginationStateCache.size();
-        paginationStateCache.entrySet().removeIf(entry -> entry.getValue().isExpired());
-        int finalPaginationSize = paginationStateCache.size();
-        int removedPaginationCount = initialPaginationSize - finalPaginationSize;
-        
-        int totalRemoved = removedLegacyCount + removedPaginationCount;
-        if (totalRemoved > 0) {
-            logger.info("Cleaned up {} expired states (legacy: {}, pagination: {}). Cache sizes: legacy {} -> {}, pagination {} -> {}", 
-                       totalRemoved, removedLegacyCount, removedPaginationCount,
-                       initialLegacySize, finalLegacySize, initialPaginationSize, finalPaginationSize);
-        }
-    }
-    
-    /**
-     * Generate a unique token for search state identification
-     * 
-     * @return Unique token string
-     */
-    private String generateUniqueToken() {
-        return UUID.randomUUID().toString().replace("-", "");
-    }
-    
-    /**
-     * Extend the expiration time of a search state (sliding window approach)
-     * 
-     * @param state The search state to extend
-     */
-    private void extendExpiration(SearchState state) {
-        long newExpirationTime = System.currentTimeMillis() + 
-            TimeUnit.MINUTES.toMillis(searchStateTtlMinutes);
-        state.setExpiresAt(newExpirationTime);
-    }
-    
-    /**
-     * Clear all cached search states (for testing or maintenance)
-     */
-    public void clearAllStates() {
-        int size = searchStateCache.size();
-        searchStateCache.clear();
-        logger.info("Cleared all {} search states from cache", size);
-    }
 }

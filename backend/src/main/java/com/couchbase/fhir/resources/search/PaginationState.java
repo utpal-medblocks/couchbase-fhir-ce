@@ -1,5 +1,6 @@
 package com.couchbase.fhir.resources.search;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import java.time.LocalDateTime;
 import java.util.List;
 
@@ -8,27 +9,46 @@ import java.util.List;
  * 
  * Strategy:
  * 1. FTS query fetches up to 1000 document keys upfront (offset=0, size=1000)
- * 2. Store all keys in this state object with TTL
+ * 2. Store all keys in Couchbase Admin.cache collection (off-heap) with TTL
  * 3. Subsequent pages use KV-only operations with stored keys
  * 4. Much faster than repeated FTS queries for each page
+ * 
+ * Storage: Previously stored in-memory ConcurrentHashMap (caused OOM with 171MB heap usage).
+ * Now stored in Couchbase Admin.cache collection to eliminate heap pressure.
  */
 public class PaginationState {
     
+    @JsonProperty("searchType")
     private final String searchType;           // "regular", "revinclude", "include", "chain"
+    
+    @JsonProperty("resourceType")
     private final String resourceType;         // Primary resource type being searched
+    
+    @JsonProperty("allDocumentKeys")
     private final List<String> allDocumentKeys; // All doc keys from initial FTS query (max 1000)
+    
+    @JsonProperty("pageSize")
     private final int pageSize;               // User-specified page size (default 50)
+    
+    @JsonProperty("createdAt")
     private final LocalDateTime createdAt;    // For TTL calculation
-    private final LocalDateTime expiresAt;    // 15 minutes from creation
+    
+    @JsonProperty("expiresAt")
+    private final LocalDateTime expiresAt;    // 3 minutes from creation (configurable)
     
     // Current pagination position
+    @JsonProperty("currentOffset")
     private int currentOffset;                // Current position in allDocumentKeys array
     
     // Metadata
+    @JsonProperty("bucketName")
     private final String bucketName;
+    
+    @JsonProperty("baseUrl")
     private final String baseUrl;
     
     // For _revinclude: separate tracking of primary vs secondary resources
+    @JsonProperty("primaryResourceCount")
     private final int primaryResourceCount;   // Number of primary resources in allDocumentKeys
     
     private PaginationState(Builder builder) {
@@ -37,7 +57,7 @@ public class PaginationState {
         this.allDocumentKeys = builder.allDocumentKeys;
         this.pageSize = builder.pageSize;
         this.createdAt = LocalDateTime.now();
-        this.expiresAt = this.createdAt.plusMinutes(15); // 15 minute TTL
+        this.expiresAt = this.createdAt.plusMinutes(3); // 3 minute TTL (configurable via application.properties)
         this.currentOffset = builder.currentOffset;
         this.bucketName = builder.bucketName;
         this.baseUrl = builder.baseUrl;

@@ -16,6 +16,11 @@ fhir:
           description: "User management, authentication"
           indexes:
 
+        - name: "cache"
+          description: "Pagination state cache"
+          maxTtlSeconds: 300 # 5 minutes - automatic document expiry
+          indexes:
+
     resources:
       name: "Resources"
       description: "FHIR clinical and administrative resource collections"

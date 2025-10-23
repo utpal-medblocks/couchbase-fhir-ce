@@ -666,6 +666,7 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
             @OperationParam(name = "_since") DateParam since,
             @OperationParam(name = "_count") IntegerType count,
             @OperationParam(name = "_page") StringParam page,
+            @OperationParam(name = "_offset") IntegerType offset,
             RequestDetails requestDetails) {
         
         String patientId = theId.getIdPart();
@@ -681,11 +682,13 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
         
         // Convert IntegerType to Integer
         Integer countInt = count != null ? count.getValue() : null;
+        Integer offsetInt = offset != null ? offset.getValue() : 0;
         
         // Handle pagination continuation
         if (continuationToken != null) {
-            logger.info("🌍 $everything continuation for Patient/{} (token: {})", patientId, continuationToken);
-            return buildEverythingContinuationBundle(continuationToken, requestDetails);
+            logger.info("🌍 $everything continuation for Patient/{} (token: {}, offset: {}, count: {})", 
+                       patientId, continuationToken, offsetInt, countInt);
+            return buildEverythingContinuationBundle(continuationToken, offsetInt, countInt, requestDetails);
         }
         
         logger.info("🌍 $everything operation for Patient/{}", patientId);
@@ -781,7 +784,7 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
     /**
      * Build continuation bundle for $everything pagination
      */
-    private Bundle buildEverythingContinuationBundle(String continuationToken, RequestDetails requestDetails) {
+    private Bundle buildEverythingContinuationBundle(String continuationToken, int offset, Integer count, RequestDetails requestDetails) {
         String bucketName = TenantContextHolder.getTenantId();
         String baseUrl = extractBaseUrl(requestDetails, bucketName);
         
@@ -789,16 +792,20 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
         String patientId = extractPatientIdFromRequest(requestDetails);
         
         // Get next page of resources
-        List<Resource> pageResources = everythingService.getPatientEverythingNextPage(continuationToken);
+        List<Resource> pageResources = everythingService.getPatientEverythingNextPage(continuationToken, offset, count);
         
         // Retrieve pagination state to check if there are more pages
         com.couchbase.fhir.resources.search.PaginationState paginationState = 
-            searchStateManager.getPaginationState(continuationToken);
+            searchStateManager.getPaginationState(continuationToken, bucketName);
         
-        // Update pagination state offset for next request (advance by the number of resources returned)
-        if (paginationState != null) {
-            paginationState.setCurrentOffset(paginationState.getCurrentOffset() + pageResources.size());
+        if (paginationState == null) {
+            throw new ca.uhn.fhir.rest.server.exceptions.ResourceGoneException(
+                "Pagination state has expired or is invalid. Please repeat your original $everything request.");
         }
+        
+        // Note: We do NOT update currentOffset in Couchbase
+        // The offset is tracked in the URL (_offset parameter), not in the document
+        // This keeps the document immutable (write once, read many) and avoids resetting TTL
         
         // Build bundle
         Bundle bundle = new Bundle();
@@ -824,22 +831,28 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
             .setUrl(baseUrl + "/Patient/" + patientId + "/$everything?_page=" + continuationToken);
         
         // Add next link if there are more pages
-        if (paginationState != null && paginationState.getCurrentOffset() < paginationState.getAllDocumentKeys().size()) {
-            // Next offset is the updated current position (we advanced it above after fetching this page)
-            int nextOffset = paginationState.getCurrentOffset();
+        int pageSize = (count != null && count > 0) ? count : paginationState.getPageSize();
+        int nextOffset = offset + pageResources.size();
+        boolean hasMoreResults = nextOffset < paginationState.getAllDocumentKeys().size();
+        
+        if (hasMoreResults) {
             String nextUrl = baseUrl + "/Patient/" + patientId + "/$everything?_page=" + continuationToken 
                            + "&_offset=" + nextOffset 
-                           + "&_count=" + paginationState.getPageSize();
+                           + "&_count=" + pageSize;
             
             bundle.addLink()
                 .setRelation("next")
                 .setUrl(nextUrl);
         }
         
+        // Note: We rely on TTL for cleanup (no explicit delete to avoid unnecessary DB chatter)
+        
+        // Calculate current page for logging (1-based)
+        int currentPage = (offset / pageSize) + 1;
+        int totalPages = (int) Math.ceil((double) paginationState.getAllDocumentKeys().size() / pageSize);
+        
         logger.info("✅ $everything continuation returning {} resources (page {}/{})", 
-                   pageResources.size(), 
-                   paginationState != null ? paginationState.getCurrentPage() : "?",
-                   paginationState != null ? paginationState.getTotalPages() : "?");
+                   pageResources.size(), currentPage, totalPages);
         return bundle;
     }
     

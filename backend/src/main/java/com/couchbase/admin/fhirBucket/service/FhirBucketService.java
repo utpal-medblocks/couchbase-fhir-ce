@@ -8,8 +8,10 @@ import com.couchbase.client.java.Cluster;
 import com.couchbase.fhir.resources.service.FhirBucketConfigService;
 import com.couchbase.fhir.resources.validation.FhirBucketValidator;
 import com.couchbase.client.java.manager.collection.CollectionManager;
+import com.couchbase.client.java.manager.collection.CollectionSpec;
 
 import com.couchbase.client.java.query.QueryOptions;
+import java.time.Duration;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -154,13 +156,6 @@ public class FhirBucketService {
         }
     }
     
-    /**
-     * Perform the actual conversion process with default configuration
-     */
-    private void performConversion(String operationId, String bucketName, String connectionName) {
-        performConversion(operationId, bucketName, connectionName, null);
-    }
-    
     private void updateStatus(FhirConversionStatusDetail status, String stepName, String description) {
         status.setCurrentStep(stepName);
         status.setCurrentStepDescription(description);
@@ -186,8 +181,20 @@ public class FhirBucketService {
         for (FhirBucketProperties.CollectionConfiguration collection : scopeConfig.getCollections()) {
             try {
                 // logger.info("Creating collection: {}.{}", scopeName, collection.getName());
-                manager.createCollection(scopeName, collection.getName());
-                // logger.info("Successfully created collection: {}.{}", scopeName, collection.getName());
+                
+                // Check if collection has maxTTL configured
+                if (collection.getMaxTtlSeconds() != null && collection.getMaxTtlSeconds() > 0) {
+                    // Create collection with maxTTL using CollectionSpec
+                    Duration maxTtl = Duration.ofSeconds(collection.getMaxTtlSeconds());
+                    CollectionSpec spec = CollectionSpec.create(collection.getName(), scopeName, maxTtl);
+                    manager.createCollection(spec);
+                    logger.info("✅ Created collection {}.{} with maxTTL: {}s", 
+                               scopeName, collection.getName(), collection.getMaxTtlSeconds());
+                } else {
+                    // Create collection without maxTTL (simple API)
+                    manager.createCollection(scopeName, collection.getName());
+                    // logger.info("Successfully created collection: {}.{}", scopeName, collection.getName());
+                }
             } catch (Exception e) {
                 if (e.getMessage() != null && e.getMessage().contains("already exists")) {
                     // logger.warn("Collection {}.{} already exists, skipping", scopeName, collection.getName());
@@ -376,10 +383,6 @@ public class FhirBucketService {
                 throw e;
             }
         }
-    }
-    
-    private void markAsFhirBucket(String bucketName, String connectionName) throws Exception {
-        markAsFhirBucketWithConfig(bucketName, connectionName, null);
     }
     
     /**

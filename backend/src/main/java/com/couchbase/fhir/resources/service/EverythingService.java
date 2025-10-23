@@ -1,6 +1,7 @@
 package com.couchbase.fhir.resources.service;
 
 import ca.uhn.fhir.rest.server.exceptions.ResourceNotFoundException;
+import ca.uhn.fhir.rest.server.exceptions.ResourceGoneException;
 import com.couchbase.client.java.search.SearchQuery;
 import com.couchbase.client.java.search.sort.SearchSort;
 import com.couchbase.common.config.FhirResourceMappingConfig;
@@ -146,28 +147,41 @@ public class EverythingService {
     /**
      * Get next page of results using continuation token
      */
-    public List<Resource> getPatientEverythingNextPage(String continuationToken) {
+    public List<Resource> getPatientEverythingNextPage(String continuationToken, int offset, Integer count) {
+        // Get current bucket from tenant context
+        String bucketName = com.couchbase.fhir.resources.config.TenantContextHolder.getTenantId();
+        
         // Retrieve pagination state
         com.couchbase.fhir.resources.search.PaginationState paginationState = 
-            searchStateManager.getPaginationState(continuationToken);
+            searchStateManager.getPaginationState(continuationToken, bucketName);
         
         if (paginationState == null) {
             logger.warn("❌ Pagination state not found or expired for token: {}", continuationToken);
-            throw new IllegalArgumentException("Invalid or expired continuation token");
+            // Return 410 Gone for expired/invalid pagination token (FHIR standard)
+            throw new ResourceGoneException("Pagination state has expired or is invalid. Please repeat your original $everything request.");
         }
         
-        // Get document keys for next page
-        List<String> nextPageKeys = paginationState.getNextPageKeys();
-        if (nextPageKeys.isEmpty()) {
+        // Get document keys for this page using offset from URL (not from document)
+        List<String> allDocumentKeys = paginationState.getAllDocumentKeys();
+        int pageSize = (count != null && count > 0) ? count : paginationState.getPageSize();
+        int fromIndex = Math.min(offset, allDocumentKeys.size());
+        int toIndex = Math.min(offset + pageSize, allDocumentKeys.size());
+        List<String> pageKeys = fromIndex < toIndex ? allDocumentKeys.subList(fromIndex, toIndex) : List.of();
+        
+        if (pageKeys.isEmpty()) {
             logger.info("🔑 No more results for pagination token: {}", continuationToken);
             return new ArrayList<>();
         }
         
+        // Calculate current page for logging (1-based)
+        int currentPage = (offset / pageSize) + 1;
+        int totalPages = (int) Math.ceil((double) allDocumentKeys.size() / pageSize);
+        
         logger.info("🔑 Fetching {} resources for page {}/{}", 
-                   nextPageKeys.size(), paginationState.getCurrentPage(), paginationState.getTotalPages());
+                   pageKeys.size(), currentPage, totalPages);
         
         // Fetch resources for this page
-        return fetchResourcesByKeys(nextPageKeys, paginationState.getBucketName());
+        return fetchResourcesByKeys(pageKeys, paginationState.getBucketName());
     }
     
     /**

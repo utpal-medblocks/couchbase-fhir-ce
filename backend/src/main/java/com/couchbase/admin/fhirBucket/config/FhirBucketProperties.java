@@ -68,6 +68,7 @@ public class FhirBucketProperties {
         private String name;
         private String description;
         private List<IndexConfiguration> indexes;
+        private Integer maxTtlSeconds; // Optional: max TTL for documents in this collection
         
         public String getName() {
             return name;
@@ -91,6 +92,14 @@ public class FhirBucketProperties {
         
         public void setIndexes(List<IndexConfiguration> indexes) {
             this.indexes = indexes;
+        }
+        
+        public Integer getMaxTtlSeconds() {
+            return maxTtlSeconds;
+        }
+        
+        public void setMaxTtlSeconds(Integer maxTtlSeconds) {
+            this.maxTtlSeconds = maxTtlSeconds;
         }
     }
     
