@@ -2,6 +2,7 @@ FROM node:20-alpine AS builder
 
 # Install dependencies in a separate layer for better caching
 WORKDIR /app
+RUN chmod -R 777 /app
 
 # Copy package files first for better layer caching
 COPY package.json package-lock.json ./
