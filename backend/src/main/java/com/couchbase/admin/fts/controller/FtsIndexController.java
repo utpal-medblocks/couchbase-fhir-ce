@@ -103,7 +103,7 @@ public class FtsIndexController {
             
             return ResponseEntity.ok(response);
         } catch (Exception e) {
-            logger.error("Failed to get FTS progress: {}", e.getMessage(), e);
+            logger.error("Failed to get FTS progress: {}", e.getMessage());
             return ResponseEntity.internalServerError().build();
         }
     }
@@ -131,7 +131,7 @@ public class FtsIndexController {
             logger.error("Invalid time range: {}", timeRange);
             return ResponseEntity.badRequest().build();
         } catch (Exception e) {
-            logger.error("Error getting FTS metrics: {}", e.getMessage(), e);
+            logger.error("Error getting FTS metrics: {}", e.getMessage());
             return ResponseEntity.internalServerError().build();
         }
     }

@@ -246,7 +246,7 @@ public class ConnectionService {
             return ConnectionResponse.successWithClusterName("Connection created successfully", clusterName);
             
         } catch (Exception e) {
-            logger.error("Error creating connection {}: {}", request.getName(), e.getMessage(), e);
+            logger.error("Error creating connection {}: {}", request.getName(), e.getMessage());
             
             // Check if it's an UnknownHostException specifically
             if (e.getCause() instanceof java.net.UnknownHostException || 

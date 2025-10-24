@@ -88,7 +88,7 @@ public class ConfigController {
             response.put("message", started ? "Auto-connect initiated" : "Auto-connect skipped (no config or disabled)" );
             return ResponseEntity.ok(response);
         } catch (Exception e) {
-            logger.error("Failed to retry auto-connect: {}", e.getMessage(), e);
+            logger.error("Failed to retry auto-connect: {}", e.getMessage());
             response.put("success", false);
             response.put("error", e.getMessage());
             return ResponseEntity.ok(response);
@@ -181,7 +181,7 @@ public class ConfigController {
                 }
             }
         } catch (Exception e) {
-            logger.error("Failed to prepare config summary: {}", e.getMessage(), e);
+            logger.error("Failed to prepare config summary: {}", e.getMessage());
             response.put("success", false);
             response.put("error", e.getMessage());
             return ResponseEntity.ok(response);
@@ -239,7 +239,7 @@ public class ConfigController {
             }
             
         } catch (Exception e) {
-            logger.error("❌ Failed to load YAML config: {}", e.getMessage(), e);
+            logger.error("❌ Failed to load YAML config: {}", e.getMessage());
             response.put("success", false);
             response.put("error", "Failed to load config: " + e.getMessage());
             return ResponseEntity.ok(response);

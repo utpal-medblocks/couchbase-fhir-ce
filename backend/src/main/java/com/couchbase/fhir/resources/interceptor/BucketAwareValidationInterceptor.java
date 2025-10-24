@@ -132,7 +132,7 @@ public class BucketAwareValidationInterceptor {
                 throw e;
             }
             // This shouldn't happen now since we validated the bucket earlier
-            logger.error("🔍 Unexpected error in strict validation for bucket {}: {}", bucketName, e.getMessage(), e);
+            logger.error("🔍 Unexpected error in strict validation for bucket {}: {}", bucketName, e.getMessage());
             throw new ca.uhn.fhir.rest.server.exceptions.InternalErrorException(
                 "Unexpected error during validation for bucket '" + bucketName + "': " + e.getMessage()
             );

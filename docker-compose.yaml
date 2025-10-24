@@ -53,7 +53,7 @@ services:
       options:
         max-size: "50m"
         max-file: "3"
-    restart: unless-stopped
+    restart: no # unless-stopped . Changed to no to prevent restart on container restart.
   fhir-admin:
     build:
       context: ./frontend

@@ -112,7 +112,7 @@ public class ConfigurationStartupService {
             logger.info("✅ Successfully loaded config.yaml with {} top-level keys", yamlData.size());
             
         } catch (Exception e) {
-            logger.error("❌ Failed to read config.yaml: {}", e.getMessage(), e);
+            logger.error("❌ Failed to read config.yaml: {}", e.getMessage());
             return false;
         }
 

@@ -57,7 +57,7 @@ public class FtsMetricsService {
             return parseMetricsResponse(response, bucketName, indexName, timeRange.getLabel());
 
         } catch (Exception e) {
-            logger.error("Error retrieving FTS metrics for {}: {}", indexName, e.getMessage(), e);
+            logger.error("Error retrieving FTS metrics for {}: {}", indexName, e.getMessage());
             return getEmptyResponse(bucketName, indexName, timeRange.getLabel());
         }
     }
@@ -146,7 +146,7 @@ public class FtsMetricsService {
             }
             
         } catch (Exception e) {
-            logger.error("Error calling metrics API: {}", e.getMessage(), e);
+            logger.error("Error calling metrics API: {}", e.getMessage());
             return null;
         }
     }
@@ -194,7 +194,7 @@ public class FtsMetricsService {
             return new FtsMetricsResponse(metricDataList, timeRange, bucketName, indexName);
             
         } catch (Exception e) {
-            logger.error("Error parsing metrics response: {}", e.getMessage(), e);
+            logger.error("Error parsing metrics response: {}", e.getMessage());
             return getEmptyResponse(bucketName, indexName, timeRange);
         }
     }

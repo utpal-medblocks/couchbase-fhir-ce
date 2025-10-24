@@ -1,8 +1,27 @@
 <configuration>
+    <!-- ============================================================= -->
+    <!--  GLOBAL NO-STACK-TRACE POLICY                                 -->
+    <!-- ============================================================= -->
+    <!--  We NEVER output stack traces (any level).                    -->
+    <!--  This is enforced by:                                         -->
+    <!--    1. Pattern below excludes all exception converters (%ex,   -->
+    <!--       %xEx, %rEx, %wEx, etc.) so Logback will not render the  -->
+    <!--       stack trace even if a Throwable is passed to the logger.-->
+    <!--    2. If someone re‑introduces %ex later, stack traces will   -->
+    <!--       immediately reappear. Keep this comment as a guard.     -->
+    <!--  If you ever want ONLY the exception class/message (still     -->
+    <!--  single line), you can change the pattern to append:          -->
+    <!--     | ex="%replace(%xEx{1}){'(?s)(?:\\r?\\n).*',''}"      -->
+    <!--  (which trims everything after the first line).               -->
+    <!-- ============================================================= -->
+
+    <!-- Central reusable pattern (NO %ex tokens!) -->
+    <property name="NO_STACK_PATTERN" value="%d{HH:mm:ss.SSS} %-5level %logger{36} - %msg%n"/>
+
     <!-- Container-friendly logging: STDOUT only (12-factor). -->
     <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
         <encoder>
-            <pattern>%d{HH:mm:ss.SSS} %-5level %logger{36} - %msg%n</pattern>
+            <pattern>${NO_STACK_PATTERN}</pattern>
         </encoder>
     </appender>
 

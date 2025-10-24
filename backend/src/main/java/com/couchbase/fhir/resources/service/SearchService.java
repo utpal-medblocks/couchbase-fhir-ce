@@ -262,7 +262,7 @@ public class SearchService {
                 if (isNoActiveConnectionError(e)) {
                     logger.error("🔍 ❌ Include search failed: No active Couchbase connection");
                 } else {
-                    logger.error("🔍 ❌ Exception in handleMultipleIncludeSearch: {} - {}", e.getClass().getName(), e.getMessage(), e);
+                    logger.error("🔍 ❌ Exception in handleMultipleIncludeSearch: {} - {}", e.getClass().getName(), e.getMessage());
                 }
                 throw e; // Re-throw to let HAPI handle it
             }
@@ -666,6 +666,10 @@ public class SearchService {
                     .getSearch()
                     .setMode(Bundle.SearchEntryMode.MATCH);
         }
+        if (logger.isDebugEnabled()) {
+            logger.debug("📦 Bundle page composition: match={}, include={}, totalEntries={}",
+                    results.size(), 0, bundle.getEntry().size());
+        }
         
         // Add next link if pagination is needed
         if (continuationToken != null && allDocumentKeys.size() > pageSize) {
@@ -777,6 +781,14 @@ public class SearchService {
                     .setFullUrl(baseUrl + "/" + actualResourceType + "/" + filteredResource.getIdElement().getIdPart())
                     .getSearch()
                     .setMode(searchMode);
+        }
+        if (logger.isDebugEnabled()) {
+            int includeCount = (int) results.stream()
+                    .filter(r -> !r.getResourceType().name().equals(primaryResourceType))
+                    .count();
+            int matchCount = results.size() - includeCount;
+            logger.debug("📦 Bundle page composition (continuation): match={}, include={}, totalEntries={}",
+                    matchCount, includeCount, bundle.getEntry().size());
         }
         
         // Add next link if more results available
@@ -934,6 +946,12 @@ public class SearchService {
                     .setFullUrl(baseUrl + "/" + resourceType + "/" + filteredResource.getIdElement().getIdPart())
                     .getSearch()
                     .setMode(searchMode);
+        }
+        if (logger.isDebugEnabled()) {
+            int pagePrimaryCount = Math.min(allPrimaryKeys.size(), firstPageKeys.size());
+            int pageIncludeCount = firstPageKeys.size() - pagePrimaryCount;
+            logger.debug("📦 Bundle page composition (_revinclude first page): match={}, include={}, totalEntries={}",
+                    pagePrimaryCount, pageIncludeCount, bundle.getEntry().size());
         }
         
         // Add next link if pagination is needed
@@ -1310,7 +1328,7 @@ public class SearchService {
                 if (isNoActiveConnectionError(e)) {
                     logger.error("🔍 Failed to retrieve {} resources: No active Couchbase connection", resourceType);
                 } else {
-                    logger.error("🔍 Failed to retrieve {} resources: {}", resourceType, e.getMessage(), e);
+                    logger.error("🔍 Failed to retrieve {} resources: {}", resourceType, e.getMessage());
                 }
                 // Continue with other types even if one fails
             }

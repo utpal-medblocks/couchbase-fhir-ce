@@ -85,7 +85,7 @@ public class PaginationCacheService {
             
         } catch (Exception e) {
             logger.error("❌ Failed to store pagination state: bucket={}, token={}, error={}", 
-                        bucketName, token, e.getMessage(), e);
+                        bucketName, token, e.getMessage());
             throw new RuntimeException("Failed to store pagination state: " + e.getMessage(), e);
         }
     }
