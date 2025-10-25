@@ -63,7 +63,7 @@ public class SearchService {
     private FtsKvSearchService ftsKvSearchService;
     
     @Autowired
-    private BatchKvService batchKvService;
+    // Removed BatchKvService (no longer needed after include refactor eliminated getResourcesByIds path)
     
     /**
      * Resolve conditional operations by finding matching resources.
@@ -719,7 +719,8 @@ public class SearchService {
         // For mixed resource types (like _revinclude), we need to group keys by resource type
         // But preserve the original order (primary resources first, then secondary)
         List<Resource> results = new ArrayList<>();
-        if ("revinclude".equals(paginationState.getSearchType())) {
+        String searchType = paginationState.getSearchType();
+        if ("revinclude".equals(searchType) || "include".equals(searchType)) {
             // Group keys by resource type and retrieve from appropriate collections
             Map<String, List<String>> keysByResourceType = currentPageKeys.stream()
                 .collect(Collectors.groupingBy(key -> key.substring(0, key.indexOf("/"))));
@@ -763,7 +764,13 @@ public class SearchService {
         // Build Bundle response
         Bundle bundle = new Bundle();
         bundle.setType(Bundle.BundleType.SEARCHSET);
-        bundle.setTotal(allDocumentKeys.size()); // Total is known from initial FTS
+        // For revinclude/include searches, total should reflect ONLY primary matches, not included resources
+        if ("revinclude".equals(searchType) || "include".equals(searchType)) {
+            int primaryCount = paginationState.getPrimaryResourceCount();
+            bundle.setTotal(primaryCount);
+        } else {
+            bundle.setTotal(allDocumentKeys.size()); // Total is known from initial FTS for pure primary searches
+        }
         
         // Add resources to bundle with filtering
         String baseUrl = paginationState.getBaseUrl();
@@ -802,8 +809,10 @@ public class SearchService {
         int currentPage = (offset / pageSize) + 1;
         int totalPages = (int) Math.ceil((double) allDocumentKeys.size() / pageSize);
         
-        logger.info("🔑 KV-Only Pagination: Returning {} results, page {}/{}, total: {}", 
-                   results.size(), currentPage, totalPages, allDocumentKeys.size());
+        logger.info("🔑 KV-Only Pagination: Returning {} results, page {}/{}, total(primaryOnly)={} (combinedKeys={})", 
+                   results.size(), currentPage, totalPages,
+                   ("revinclude".equals(searchType) || "include".equals(searchType)) ? paginationState.getPrimaryResourceCount() : allDocumentKeys.size(),
+                   allDocumentKeys.size());
         return bundle;
     }
     
@@ -830,9 +839,28 @@ public class SearchService {
         
         logger.info("🔍 Found {} primary resource keys for _revinclude", allPrimaryKeys.size());
         
-        // Step 2: Get primary resources for reference extraction (we need the actual resources to get references)
-        List<Resource> allPrimaryResources = ftsKvSearchService.getDocumentsFromKeys(allPrimaryKeys, primaryResourceType);
-        List<String> primaryResourceReferences = extractResourceReferences(allPrimaryResources);
+        // Step 2 (OPTIMIZED): Derive primary resource references directly from keys instead of
+        // fetching and parsing ALL primary resources. For revinclude we only need the logical
+        // reference strings (e.g. "Patient/123") to build the reverse lookup query against the
+        // secondary resource type (Observation.subject.reference etc.).
+        // Previous implementation fetched up to 1000 full resources here, inflating heap usage
+        // and adding parse cost. This optimization keeps memory bounded to the list of keys.
+        List<String> primaryResourceReferences = new ArrayList<>(allPrimaryKeys.size());
+        for (String key : allPrimaryKeys) {
+            // Keys are already in the format ResourceType/id (e.g. Patient/uuid)
+            // Defensive check: ensure at least one '/'
+            int slashIdx = key.indexOf('/');
+            if (slashIdx > 0 && slashIdx < key.length() - 1) {
+                // We need the full reference (ResourceType/id) for the match queries
+                primaryResourceReferences.add(key);
+            } else {
+                logger.debug("🔍 Skipping unexpected key format for revinclude reference derivation: {}", key);
+            }
+        }
+        if (logger.isDebugEnabled()) {
+            logger.debug("🔍 RevInclude optimization: derived {} primary references from {} keys without resource fetch",
+                    primaryResourceReferences.size(), allPrimaryKeys.size());
+        }
         
         // Step 3: Execute _revinclude search to get ALL secondary resource keys
         // For _revinclude, the target type is the resource type that contains the reference (e.g., "Observation" in "Observation:subject")
@@ -927,9 +955,10 @@ public class SearchService {
         }
         
         // Step 8: Build Bundle response
-        Bundle bundle = new Bundle();
-        bundle.setType(Bundle.BundleType.SEARCHSET);
-        bundle.setTotal(allDocumentKeys.size()); // Total is exact count
+    Bundle bundle = new Bundle();
+    bundle.setType(Bundle.BundleType.SEARCHSET);
+    // Total must reflect only primary matches (not secondary)
+    bundle.setTotal(allPrimaryKeys.size());
         
         // Add resources to bundle with appropriate search mode
         String baseUrl = extractBaseUrl(requestDetails, bucketName);
@@ -974,87 +1003,168 @@ public class SearchService {
                                               List<Include> includes, int count,
                                               SummaryEnum summaryMode, Set<String> elements,
                                               String totalMode, String bucketName, RequestDetails requestDetails) {
-        
-        logger.info("🔍 ===== ENTERING handleMultipleIncludeSearch =====");
-        logger.info("🔍 Handling {} _include parameters for {}", includes.size(), primaryResourceType);
-        
-        // Step 1: Execute primary resource search once (shared across all includes)
+        logger.info("🔍 ===== ENTERING handleMultipleIncludeSearch (Option1: primaries-first, includes after) =====");
+        logger.info("🔍 Handling {} _include parameters for {} (pageSize={})", includes.size(), primaryResourceType, count);
+
+        // Step 1: Execute FTS to get ALL primary keys (up to MAX_FTS_FETCH_SIZE)
         FtsSearchService.FtsSearchResult ftsResult = ftsKvSearchService.searchForAllKeys(ftsQueries, primaryResourceType, null);
-        List<String> firstPageKeys = ftsResult.getDocumentKeys().size() <= count ? 
-            ftsResult.getDocumentKeys() : ftsResult.getDocumentKeys().subList(0, count);
-        List<Resource> primaryResources = ftsKvSearchService.getDocumentsFromKeys(firstPageKeys, primaryResourceType);
-        
-        if (primaryResources.isEmpty()) {
+        List<String> allPrimaryKeys = ftsResult.getDocumentKeys();
+        int primaryKeyCount = allPrimaryKeys.size();
+        logger.info("🔍 Primary key scan returned {} {} keys (cap {})", primaryKeyCount, primaryResourceType, MAX_FTS_FETCH_SIZE);
+
+        if (allPrimaryKeys.isEmpty()) {
             logger.info("🔍 No primary resources found, returning empty bundle");
             return createEmptyBundle();
         }
-        
-        logger.info("🔍 Found {} primary resources", primaryResources.size());
-        
-        // Step 2: Process each _include parameter and collect all included resources
-        List<Resource> allIncludedResources = new ArrayList<>();
-        Set<String> processedResourceIds = new java.util.HashSet<>(); // Track to avoid duplicates
-        
+
+        // Step 2: Fetch ALL primary resources (needed to extract include references across entire result set)
+        // NOTE: This loads up to 1000 resources; acceptable per current design trade-off.
+        long primFetchStart = System.currentTimeMillis();
+        List<Resource> allPrimaryResources = ftsKvSearchService.getDocumentsFromKeys(allPrimaryKeys, primaryResourceType);
+        logger.info("🔍 Fetched {}/{} primary resources in {} ms for include reference extraction", 
+                allPrimaryResources.size(), primaryKeyCount, System.currentTimeMillis() - primFetchStart);
+
+        // Step 3: Collect include keys (references) for ALL primary resources
+        // Maintain insertion order: primaries first, then includes. Use LinkedHashSet for de-dup.
+        java.util.LinkedHashSet<String> combinedKeySet = new java.util.LinkedHashSet<>(allPrimaryKeys);
+    int includeParamIndex = 0;
         for (Include include : includes) {
-            logger.info("🔍 Processing _include: {}", include.getValue());
-            
-            // Extract references for this include parameter
-            List<String> includeReferences = extractReferencesFromResources(primaryResources, include.getParamName());
-            
+            includeParamIndex++;
+            String includeValue = include.getValue();
+            logger.info("🔍 Processing _include[{}]: {}", includeParamIndex, includeValue);
+
+            List<String> includeReferences = extractReferencesFromResources(allPrimaryResources, include.getParamName());
             if (includeReferences.isEmpty()) {
-                logger.warn("🔍 No references found for _include parameter '{}'", include.getValue());
+                logger.warn("🔍 No references found for _include '{}'", includeValue);
                 continue;
             }
-            
-            logger.info("🔍 Found {} references for '{}'", includeReferences.size(), include.getParamName());
-            
-            // Get resources for these references
-            List<Resource> includedResources = getResourcesByReferences(includeReferences, bucketName);
-            
-            // Add only unique resources (avoid duplicates across multiple _include parameters)
-            for (Resource resource : includedResources) {
-                String resourceId = resource.fhirType() + "/" + resource.getIdElement().getIdPart();
-                if (!processedResourceIds.contains(resourceId)) {
-                    allIncludedResources.add(resource);
-                    processedResourceIds.add(resourceId);
+
+            // Group references by resource type for later batched KV fetch when they actually appear in a page
+            // For now we just collect the logical keys (ResourceType/id). Dedup via set.
+            int before = combinedKeySet.size();
+            for (String ref : includeReferences) {
+                if (ref != null && ref.contains("/")) {
+                    combinedKeySet.add(ref);
                 }
             }
-            
-            logger.info("🔍 Added {} unique resources from _include '{}'", includedResources.size(), include.getValue());
+            int added = combinedKeySet.size() - before;
+            logger.info("🔍 _include '{}' produced {} raw refs, {} unique added (cumulative combinedKeys={})", 
+                    includeValue, includeReferences.size(), added, combinedKeySet.size());
         }
-        
-        logger.info("🔍 Total unique included resources: {}", allIncludedResources.size());
-        
-        // Step 3: Build response bundle
+
+        // Step 4: Truncate combined keys to MAX_FTS_FETCH_SIZE if necessary
+        List<String> allDocumentKeys = new ArrayList<>(combinedKeySet);
+        boolean truncated = false;
+        if (allDocumentKeys.size() > MAX_FTS_FETCH_SIZE) {
+            logger.info("🔍 Truncating combined (primary+include) keys from {} to {} (hard cap)", 
+                    allDocumentKeys.size(), MAX_FTS_FETCH_SIZE);
+            allDocumentKeys = allDocumentKeys.subList(0, MAX_FTS_FETCH_SIZE);
+            truncated = true;
+        }
+
+        // Step 5: Determine pagination need (based on combined keys, but includes appear only after all primaries)
+        boolean needsPagination = allDocumentKeys.size() > count;
+
+        // Step 6: Build first page key slice
+        List<String> firstPageKeys = allDocumentKeys.size() <= count ? allDocumentKeys : allDocumentKeys.subList(0, count);
+
+        // Step 7: Fetch only the resources needed for first page
+        // Optimization: First page almost always within primary range; only fetch include resources if page spills over.
+        int primaryResourceCount = primaryKeyCount; // For clarity
+        List<Resource> firstPageResources = new ArrayList<>();
+        Map<String, Resource> primaryResourceByKey = new java.util.HashMap<>();
+        for (Resource r : allPrimaryResources) {
+            String key = r.getResourceType().name() + "/" + r.getIdElement().getIdPart();
+            primaryResourceByKey.put(key, r);
+        }
+
+        int includeKeysNeededStartIndex = Math.min(primaryResourceCount, firstPageKeys.size());
+        // Add primary portion
+        for (int i = 0; i < includeKeysNeededStartIndex; i++) {
+            String key = firstPageKeys.get(i);
+            Resource r = primaryResourceByKey.get(key); // Must exist
+            if (r != null) {
+                firstPageResources.add(r);
+            }
+        }
+        // If first page extends into include region, fetch those include resources now (grouped by type)
+        if (firstPageKeys.size() > primaryResourceCount) {
+            List<String> includePortionKeys = firstPageKeys.subList(primaryResourceCount, firstPageKeys.size());
+            Map<String, List<String>> includeKeysByType = includePortionKeys.stream()
+                    .collect(Collectors.groupingBy(k -> k.substring(0, k.indexOf('/'))));
+            for (Map.Entry<String, List<String>> entry : includeKeysByType.entrySet()) {
+                String includeType = entry.getKey();
+                List<String> keysForType = entry.getValue();
+                List<Resource> fetched = ftsKvSearchService.getDocumentsFromKeys(keysForType, includeType);
+                // Maintain original order
+                Map<String, Resource> byKey = new java.util.HashMap<>();
+                for (Resource r : fetched) {
+                    String k = r.getResourceType().name() + "/" + r.getIdElement().getIdPart();
+                    byKey.put(k, r);
+                }
+                for (String k : keysForType) {
+                    Resource r = byKey.get(k);
+                    if (r != null) firstPageResources.add(r);
+                }
+            }
+        }
+
+        // Step 8: Create pagination state if needed
+        String continuationToken = null;
+        if (needsPagination) {
+            String baseUrl = extractBaseUrl(requestDetails, bucketName);
+            PaginationState paginationState = PaginationState.builder()
+                    .searchType("include")
+                    .resourceType(primaryResourceType)
+                    .allDocumentKeys(allDocumentKeys)
+                    .pageSize(count)
+                    .currentOffset(firstPageKeys.size())
+                    .bucketName(bucketName)
+                    .baseUrl(baseUrl)
+                    .primaryResourceCount(primaryResourceCount)
+                    .build();
+            continuationToken = searchStateManager.storePaginationState(paginationState);
+            logger.info("✅ Created PaginationState for _include: token={}, totalCombinedKeys={}, primaryCount={}, pages={}",
+                    continuationToken, allDocumentKeys.size(), primaryResourceCount, paginationState.getTotalPages());
+        }
+
+        // Step 9: Build Bundle response
         Bundle bundle = new Bundle();
         bundle.setType(Bundle.BundleType.SEARCHSET);
-        bundle.setTotal(primaryResources.size()); // Only count primary resources per FHIR spec
-        
-        // Add primary resources (search mode = "match")
+        // Per current design, total reflects primary resource count (not includes)
+        bundle.setTotal(primaryResourceCount);
+
         String baseUrl = extractBaseUrl(requestDetails, bucketName);
-        for (Resource resource : primaryResources) {
+        for (int i = 0; i < firstPageResources.size(); i++) {
+            Resource resource = firstPageResources.get(i);
             Resource filteredResource = applyResourceFiltering(resource, summaryMode, elements);
+            String resType = resource.getResourceType().name();
+            boolean isPrimary = i < Math.min(firstPageKeys.size(), primaryResourceCount) && resType.equals(primaryResourceType);
+            Bundle.SearchEntryMode mode = isPrimary ? Bundle.SearchEntryMode.MATCH : Bundle.SearchEntryMode.INCLUDE;
             bundle.addEntry()
                     .setResource(filteredResource)
-                    .setFullUrl(baseUrl + "/" + primaryResourceType + "/" + filteredResource.getIdElement().getIdPart())
+                    .setFullUrl(baseUrl + "/" + resType + "/" + filteredResource.getIdElement().getIdPart())
                     .getSearch()
-                    .setMode(Bundle.SearchEntryMode.MATCH);
+                    .setMode(mode);
         }
-        
-        // Add all included resources (search mode = "include")
-        for (Resource resource : allIncludedResources) {
-            Resource filteredResource = applyResourceFiltering(resource, summaryMode, elements);
-            String resourceType = filteredResource.fhirType();
-            bundle.addEntry()
-                    .setResource(filteredResource)
-                    .setFullUrl(baseUrl + "/" + resourceType + "/" + filteredResource.getIdElement().getIdPart())
-                    .getSearch()
-                    .setMode(Bundle.SearchEntryMode.INCLUDE);
+
+        if (continuationToken != null) {
+            bundle.addLink()
+                    .setRelation("next")
+                    .setUrl(buildNextPageUrl(continuationToken, firstPageKeys.size(), primaryResourceType, bucketName, count, baseUrl));
         }
-        
-        logger.info("🔍 Returning bundle: {} primary + {} included resources", 
-                   primaryResources.size(), allIncludedResources.size());
-        
+
+        if (logger.isDebugEnabled()) {
+            int pagePrimaryCount = Math.min(primaryResourceCount, firstPageKeys.size());
+            int pageIncludeCount = firstPageKeys.size() - pagePrimaryCount;
+            logger.debug("📦 Bundle page composition (_include first page): match={}, include={}, totalEntries={}, truncated={}, totalCombinedKeys={}",
+                    pagePrimaryCount, pageIncludeCount, bundle.getEntry().size(), truncated, allDocumentKeys.size());
+        }
+
+        logger.info("🔍 Return (_include): primariesTotal={}, includesPotential={}, combinedKeys={}, truncated={}, firstPageReturned={}, pagination={}",
+                primaryResourceCount, (combinedKeySet.size() - primaryResourceCount), allDocumentKeys.size(), truncated,
+                firstPageResources.size(), needsPagination ? "yes" : "no");
+
         return bundle;
     }
     
@@ -1187,12 +1297,6 @@ public class SearchService {
     /**
      * Extract full resource references from a list of resources
      */
-    private List<String> extractResourceReferences(List<Resource> resources) {
-        return resources.stream()
-                .map(resource -> resource.fhirType() + "/" + resource.getIdElement().getIdPart())
-                .collect(Collectors.toList());
-    }
-    
     private Bundle createEmptyBundle() {
         Bundle bundle = new Bundle();
         bundle.setType(Bundle.BundleType.SEARCHSET);
@@ -1285,58 +1389,8 @@ public class SearchService {
      * Get resources by their full reference strings (e.g., "Patient/123", "Observation/456")
      * Groups by resource type and does batch KV lookups for each type
      */
-    private List<Resource> getResourcesByReferences(List<String> references, String bucketName) {
-        if (references == null || references.isEmpty()) {
-            return new ArrayList<>();
-        }
-        
-        // Group references by resource type and deduplicate IDs
-        Map<String, Set<String>> referencesByType = new java.util.HashMap<>();
-        
-        for (String reference : references) {
-            if (reference == null || !reference.contains("/")) {
-                logger.warn("🔍 Invalid reference format: {}", reference);
-                continue;
-            }
-            
-            String[] parts = reference.split("/", 2);
-            String resourceType = parts[0];
-            String id = parts[1];
-            
-            referencesByType.computeIfAbsent(resourceType, k -> new java.util.HashSet<>()).add(id);
-        }
-        
-        logger.info("🔍 Grouped {} references into {} resource types: {}", 
-                   references.size(), referencesByType.size(), referencesByType.keySet());
-        
-        // Retrieve resources for each type
-        List<Resource> allResources = new ArrayList<>();
-        
-        for (Map.Entry<String, Set<String>> entry : referencesByType.entrySet()) {
-            String resourceType = entry.getKey();
-            Set<String> idSet = entry.getValue();
-            List<String> ids = new ArrayList<>(idSet); // Convert to list for batch retrieval
-            
-            logger.info("🔍 Retrieving {} unique {} resources (from {} total references)", 
-                       ids.size(), resourceType, references.stream().filter(r -> r.startsWith(resourceType + "/")).count());
-            
-            try {
-                List<Resource> typeResources = getResourcesByIds(resourceType, ids, bucketName);
-                allResources.addAll(typeResources);
-                logger.info("🔍 Retrieved {}/{} {} resources", typeResources.size(), ids.size(), resourceType);
-            } catch (Exception e) {
-                if (isNoActiveConnectionError(e)) {
-                    logger.error("🔍 Failed to retrieve {} resources: No active Couchbase connection", resourceType);
-                } else {
-                    logger.error("🔍 Failed to retrieve {} resources: {}", resourceType, e.getMessage());
-                }
-                // Continue with other types even if one fails
-            }
-        }
-        
-        logger.info("🔍 Total resources retrieved: {}/{}", allResources.size(), references.size());
-        return allResources;
-    }
+    // Removed unused helper methods extractResourceReferences / getResourcesByReferences as include logic now
+    // derives references directly and fetches only the subset needed per page.
     
     /**
      * Extract reference values from a resource using the search parameter (handles lists)
@@ -1467,33 +1521,7 @@ public class SearchService {
     /**
      * Get resources by their IDs using optimized async batch KV retrieval
      */
-    private List<Resource> getResourcesByIds(String resourceType, List<String> ids, String bucketName) {
-        if (ids == null || ids.isEmpty()) {
-            return new ArrayList<>();
-        }
-        
-        logger.debug("🔍 Getting {} resources by IDs from bucket '{}': {}", resourceType, bucketName, ids);
-        
-        try {
-            // Convert IDs to document keys (e.g., "123" -> "Patient/123")
-            List<String> documentKeys = ids.stream()
-                .map(id -> resourceType + "/" + id)
-                .collect(java.util.stream.Collectors.toList());
-            
-            // Set tenant context for BatchKvService
-            TenantContextHolder.setTenantId(bucketName);
-            
-            // Use BatchKvService for optimized async parallel retrieval
-            List<Resource> resources = batchKvService.getDocuments(documentKeys, resourceType);
-
-            logger.debug("🔍 Successfully retrieved {}/{} {} resources", resources.size(), ids.size(), resourceType);
-            return resources;
-            
-        } catch (Exception e) {
-            logger.error("Failed to retrieve multiple {} resources: {}", resourceType, e.getMessage());
-            throw new InvalidRequestException("Failed to retrieve included resources: " + e.getMessage());
-        }
-    }
+    // Removed unused helper getResourcesByIds (replaced by direct getDocumentsFromKeys calls)
     
 
     
