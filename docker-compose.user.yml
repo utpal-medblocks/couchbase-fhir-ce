@@ -49,8 +49,6 @@ services:
         -XX:HeapDumpPath=/app/logs/heap.hprof
         -XX:+ExitOnOutOfMemoryError
         -Xlog:gc*:file=/app/logs/gc.log:time,uptime,level,tags:filecount=5,filesize=10M
-        -XX:NativeMemoryTracking=summary
-        -XX:StartFlightRecording=name=background,filename=/app/logs/continuous.jfr,maxsize=500m,maxage=4h,disk=true
     volumes:
       - ./config.yaml:/config.yaml:ro
       - ./logs:/app/logs # Added volume mount to access JFR and other log files

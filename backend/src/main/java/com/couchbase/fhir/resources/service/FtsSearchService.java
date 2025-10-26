@@ -101,14 +101,18 @@ public class FtsSearchService {
             
             long ftsElapsedTime = System.currentTimeMillis() - ftsStartTime;
             long processingTime = ftsElapsedTime - (afterQueryTime - ftsStartTime);
-            logger.info("🔍 FTS search returned {} document keys for {} in {} ms (query: {} ms, processing: {} ms)", 
+            long serverExecutionTime = searchResult.metaData().metrics().took().toMillis();
+            long roundTripTime = afterQueryTime - ftsStartTime;
+            long networkOverhead = roundTripTime - serverExecutionTime;
+            
+            logger.info("🔍 FTS search returned {} document keys for {} in {} ms (roundTrip: {} ms, serverExec: {} ms, networkOverhead: {} ms, processing: {} ms)", 
                        documentKeys.size(), resourceType, ftsElapsedTime, 
-                       afterQueryTime - ftsStartTime, processingTime);
+                       roundTripTime, serverExecutionTime, networkOverhead, processingTime);
             
             return new FtsSearchResult(
                 documentKeys,
                 searchResult.metaData().metrics().totalRows(),
-                searchResult.metaData().metrics().took().toMillis()
+                serverExecutionTime
             );
             
         } catch (Exception e) {
@@ -156,8 +160,10 @@ public class FtsSearchService {
             
             long totalCount = searchResult.metaData().metrics().totalRows();
             long ftsElapsedTime = System.currentTimeMillis() - ftsStartTime;
-            logger.info("🔍 FTS count query returned {} total results for {} in {} ms", 
-                       totalCount, resourceType, ftsElapsedTime);
+            long serverExecutionTime = searchResult.metaData().metrics().took().toMillis();
+            long networkOverhead = ftsElapsedTime - serverExecutionTime;
+            logger.info("🔍 FTS count query returned {} total results for {} in {} ms (serverExec: {} ms, networkOverhead: {} ms)", 
+                       totalCount, resourceType, ftsElapsedTime, serverExecutionTime, networkOverhead);
             
             return totalCount;
             
@@ -286,13 +292,15 @@ public class FtsSearchService {
             }
             
             long ftsElapsedTime = System.currentTimeMillis() - ftsStartTime;
-            logger.info("🔍 FTS search on {} returned {} document keys in {} ms", 
-                       fullIndexName, documentKeys.size(), ftsElapsedTime);
+            long serverExecutionTime = searchResult.metaData().metrics().took().toMillis();
+            long networkOverhead = ftsElapsedTime - serverExecutionTime;
+            logger.info("🔍 FTS search on {} returned {} document keys in {} ms (serverExec: {} ms, networkOverhead: {} ms)", 
+                       fullIndexName, documentKeys.size(), ftsElapsedTime, serverExecutionTime, networkOverhead);
             
             return new FtsSearchResult(
                 documentKeys,
                 searchResult.metaData().metrics().totalRows(),
-                searchResult.metaData().metrics().took().toMillis()
+                serverExecutionTime
             );
             
         } catch (Exception e) {

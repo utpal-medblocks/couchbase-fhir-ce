@@ -33,9 +33,6 @@ services:
         -XX:HeapDumpPath=/app/logs/heap.hprof
         -XX:+ExitOnOutOfMemoryError
         -Xlog:gc*:file=/app/logs/gc.log:time,uptime,level,tags:filecount=5,filesize=10M
-        -XX:NativeMemoryTracking=summary
-        -XX:StartFlightRecording=name=background,filename=/app/logs/continuous.jfr,maxsize=500m,maxage=4h,disk=true
-        -XX:FlightRecorderOptions=stackdepth=128
     healthcheck:
       test:
         ["CMD-SHELL", "curl -f http://localhost:8080/actuator/health || exit 1"]

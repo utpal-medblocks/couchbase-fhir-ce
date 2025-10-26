@@ -80,8 +80,14 @@ public class PaginationCacheService {
             // Simpler, less overhead than per-document expiry
             cacheCollection.upsert(token, jsonObject);
             
-            logger.debug("📦 Stored pagination state: bucket={}, token={}, keys={} (collection maxTTL handles expiry)", 
-                        bucketName, token, state.getAllDocumentKeys().size());
+            // Log appropriate info based on pagination strategy
+            if (state.isUseLegacyKeyList() && state.getAllDocumentKeys() != null) {
+                logger.debug("📦 Stored pagination state (LEGACY): bucket={}, token={}, keys={} (collection maxTTL handles expiry)", 
+                            bucketName, token, state.getAllDocumentKeys().size());
+            } else {
+                logger.debug("📦 Stored pagination state (NEW): bucket={}, token={}, type={}, offset={}, pageSize={} (collection maxTTL handles expiry)", 
+                            bucketName, token, state.getSearchType(), state.getPrimaryOffset(), state.getPrimaryPageSize());
+            }
             
         } catch (Exception e) {
             logger.error("❌ Failed to store pagination state: bucket={}, token={}, error={}", 
@@ -115,8 +121,14 @@ public class PaginationCacheService {
             Map<String, Object> stateMap = objectMapper.readValue(jsonObject.toString(), Map.class);
             PaginationState state = mapToPaginationState(stateMap);
             
-            logger.debug("📦 Retrieved pagination state: bucket={}, token={}, keys={}", 
-                        bucketName, token, state.getAllDocumentKeys().size());
+            // Log appropriate info based on pagination strategy
+            if (state.isUseLegacyKeyList() && state.getAllDocumentKeys() != null) {
+                logger.debug("📦 Retrieved pagination state (LEGACY): bucket={}, token={}, keys={}", 
+                            bucketName, token, state.getAllDocumentKeys().size());
+            } else {
+                logger.debug("📦 Retrieved pagination state (NEW): bucket={}, token={}, type={}, offset={}, pageSize={}", 
+                            bucketName, token, state.getSearchType(), state.getPrimaryOffset(), state.getPrimaryPageSize());
+            }
             
             return state;
             
@@ -180,16 +192,34 @@ public class PaginationCacheService {
      */
     private Map<String, Object> paginationStateToMap(PaginationState state) {
         Map<String, Object> map = new HashMap<>();
+        
+        // Common fields
         map.put("searchType", state.getSearchType());
         map.put("resourceType", state.getResourceType());
+        map.put("bucketName", state.getBucketName());
+        map.put("baseUrl", state.getBaseUrl());
+        map.put("createdAt", state.getCreatedAt().toString());
+        map.put("expiresAt", state.getExpiresAt().toString());
+        
+        // Legacy fields (may be null in new approach)
         map.put("allDocumentKeys", state.getAllDocumentKeys());
         map.put("pageSize", state.getPageSize());
         map.put("currentOffset", state.getCurrentOffset());
-        map.put("bucketName", state.getBucketName());
-        map.put("baseUrl", state.getBaseUrl());
         map.put("primaryResourceCount", state.getPrimaryResourceCount());
-        map.put("createdAt", state.getCreatedAt().toString());
-        map.put("expiresAt", state.getExpiresAt().toString());
+        
+        // New query-based fields (may be null in legacy approach)
+        map.put("primaryFtsQueriesJson", state.getPrimaryFtsQueriesJson());
+        map.put("primaryOffset", state.getPrimaryOffset());
+        map.put("primaryPageSize", state.getPrimaryPageSize());
+        map.put("sortFieldsJson", state.getSortFieldsJson());
+        map.put("maxBundleSize", state.getMaxBundleSize());
+        map.put("revIncludeResourceType", state.getRevIncludeResourceType());
+        map.put("revIncludeSearchParam", state.getRevIncludeSearchParam());
+        map.put("includeResourceType", state.getIncludeResourceType());
+        map.put("includeSearchParam", state.getIncludeSearchParam());
+        map.put("includeParamsList", state.getIncludeParamsList());
+        map.put("useLegacyKeyList", state.isUseLegacyKeyList());
+        
         return map;
     }
     
@@ -199,15 +229,47 @@ public class PaginationCacheService {
     @SuppressWarnings("unchecked")
     private PaginationState mapToPaginationState(Map<String, Object> map) {
         return PaginationState.builder()
+            // Common fields
             .searchType((String) map.get("searchType"))
             .resourceType((String) map.get("resourceType"))
-            .allDocumentKeys((java.util.List<String>) map.get("allDocumentKeys"))
-            .pageSize((Integer) map.get("pageSize"))
-            .currentOffset((Integer) map.get("currentOffset"))
             .bucketName((String) map.get("bucketName"))
             .baseUrl((String) map.get("baseUrl"))
-            .primaryResourceCount((Integer) map.get("primaryResourceCount"))
+            // Legacy fields
+            .allDocumentKeys((java.util.List<String>) map.get("allDocumentKeys"))
+            .pageSize(getIntOrDefault(map, "pageSize", 50))
+            .currentOffset(getIntOrDefault(map, "currentOffset", 0))
+            .primaryResourceCount(getIntOrDefault(map, "primaryResourceCount", 0))
+            // New query-based fields
+            .primaryFtsQueriesJson((java.util.List<String>) map.get("primaryFtsQueriesJson"))
+            .primaryOffset(getIntOrDefault(map, "primaryOffset", 0))
+            .primaryPageSize(getIntOrDefault(map, "primaryPageSize", 50))
+            .sortFieldsJson((java.util.List<String>) map.get("sortFieldsJson"))
+            .maxBundleSize(getIntOrDefault(map, "maxBundleSize", 500))
+            .revIncludeResourceType((String) map.get("revIncludeResourceType"))
+            .revIncludeSearchParam((String) map.get("revIncludeSearchParam"))
+            .includeResourceType((String) map.get("includeResourceType"))
+            .includeSearchParam((String) map.get("includeSearchParam"))
+            .includeParamsList((java.util.List<String>) map.get("includeParamsList"))
+            .useLegacyKeyList(getBoolOrDefault(map, "useLegacyKeyList", false))
             .build();
+    }
+    
+    /**
+     * Helper to safely get Integer values from map with default
+     */
+    private int getIntOrDefault(Map<String, Object> map, String key, int defaultValue) {
+        Object value = map.get(key);
+        if (value == null) return defaultValue;
+        return (value instanceof Number) ? ((Number) value).intValue() : defaultValue;
+    }
+    
+    /**
+     * Helper to safely get Boolean values from map with default
+     */
+    private boolean getBoolOrDefault(Map<String, Object> map, String key, boolean defaultValue) {
+        Object value = map.get(key);
+        if (value == null) return defaultValue;
+        return (value instanceof Boolean) ? (Boolean) value : defaultValue;
     }
     
     /**

@@ -86,8 +86,15 @@ public class SearchStateManager {
             return null;
         }
         
-        logger.debug("Retrieved pagination state: token={}, bucket={}, keys={}", 
-                    token, bucketName, state.getAllDocumentKeys().size());
+        // Log appropriate info based on pagination strategy
+        if (state.isUseLegacyKeyList() && state.getAllDocumentKeys() != null) {
+            logger.debug("Retrieved pagination state (LEGACY): token={}, bucket={}, keys={}", 
+                        token, bucketName, state.getAllDocumentKeys().size());
+        } else {
+            logger.debug("Retrieved pagination state (NEW): token={}, bucket={}, type={}, offset={}, pageSize={}", 
+                        token, bucketName, state.getSearchType(), state.getPrimaryOffset(), state.getPrimaryPageSize());
+        }
+        
         return state;
     }
     

@@ -810,7 +810,7 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
         // Build bundle
         Bundle bundle = new Bundle();
         bundle.setType(Bundle.BundleType.SEARCHSET);
-        if (paginationState != null) {
+        if (paginationState != null && paginationState.getAllDocumentKeys() != null) {
             bundle.setTotal(paginationState.getAllDocumentKeys().size() + 1); // +1 for patient
         }
         
@@ -833,7 +833,8 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
         // Add next link if there are more pages
         int pageSize = (count != null && count > 0) ? count : paginationState.getPageSize();
         int nextOffset = offset + pageResources.size();
-        boolean hasMoreResults = nextOffset < paginationState.getAllDocumentKeys().size();
+        boolean hasMoreResults = paginationState.getAllDocumentKeys() != null 
+            && nextOffset < paginationState.getAllDocumentKeys().size();
         
         if (hasMoreResults) {
             String nextUrl = baseUrl + "/Patient/" + patientId + "/$everything?_page=" + continuationToken 
@@ -849,7 +850,9 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
         
         // Calculate current page for logging (1-based)
         int currentPage = (offset / pageSize) + 1;
-        int totalPages = (int) Math.ceil((double) paginationState.getAllDocumentKeys().size() / pageSize);
+        int totalPages = (paginationState.getAllDocumentKeys() != null) 
+            ? (int) Math.ceil((double) paginationState.getAllDocumentKeys().size() / pageSize)
+            : 0;
         
         logger.info("✅ $everything continuation returning {} resources (page {}/{})", 
                    pageResources.size(), currentPage, totalPages);
