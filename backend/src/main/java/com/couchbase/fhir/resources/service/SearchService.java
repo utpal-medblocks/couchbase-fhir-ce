@@ -43,8 +43,9 @@ public class SearchService {
     
     // New pagination constants
     private static final int DEFAULT_PAGE_SIZE = 50;  // Up from 20
+    private static final int MAX_COUNT_PER_PAGE = 50;  // Max primary resources per page (prevents OOM from heavyweight resources like List)
     private static final int MAX_FTS_FETCH_SIZE = 1000;  // Max doc keys per FTS query
-    private static final int MAX_BUNDLE_SIZE = 500;  // Hard cap on total Bundle resources (Primary + Secondary)
+    private static final int MAX_BUNDLE_SIZE = 100;  // Hard cap on total Bundle resources (50 primaries + 50 secondaries max = ~2MB worst case)
     @Autowired
     private FhirContext fhirContext;
     
@@ -515,7 +516,14 @@ public class SearchService {
             // Trim whitespace (including newlines from URL encoding issues like %0A)
             int count = Integer.parseInt(countValue.trim());
             if (count <= 0) return DEFAULT_PAGE_SIZE;
-            if (count > MAX_FTS_FETCH_SIZE) return MAX_FTS_FETCH_SIZE; // Max 1000
+            
+            // Cap at MAX_COUNT_PER_PAGE to prevent OOM from heavyweight resources (e.g., List @ 20KB each)
+            if (count > MAX_COUNT_PER_PAGE) {
+                logger.warn("⚠️ _count={} exceeds server limit ({}), capping to {} to prevent OOM. Use pagination for more results.", 
+                           count, MAX_COUNT_PER_PAGE, MAX_COUNT_PER_PAGE);
+                return MAX_COUNT_PER_PAGE;
+            }
+            
             return count;
         } catch (NumberFormatException e) {
             logger.warn("🔍 Invalid _count value '{}', using default {}", countValue, DEFAULT_PAGE_SIZE);
@@ -936,14 +944,51 @@ public class SearchService {
             }
             
         } else if ("include".equals(searchType)) {
-            // TODO: Handle _include similar to _revinclude
-            logger.warn("⚠️  _include pagination not yet fully implemented for query-based approach");
+            // Fetch included resources for this page's primaries
+            List<String> includeParamsList = state.getIncludeParamsList();
+            if (includeParamsList != null && !includeParamsList.isEmpty()) {
+                logger.info("🚀 Fetching _include secondaries: {} params", includeParamsList.size());
+                
+                Set<String> includeKeys = new LinkedHashSet<>();
+                for (String includeParam : includeParamsList) {
+                    // Parse include parameter (e.g., "Encounter:subject")
+                    String[] parts = includeParam.split(":");
+                    if (parts.length < 2) continue;
+                    
+                    String paramName = parts[1];  // "subject"
+                    List<String> refs = extractReferencesFromResources(primaryResources, paramName);
+                    includeKeys.addAll(refs);
+                    logger.info("🚀 _include '{}' produced {} refs", includeParam, refs.size());
+                }
+                
+                if (!includeKeys.isEmpty()) {
+                    // Limit to maxBundleSize
+                    int maxIncludes = state.getMaxBundleSize() - primaryKeys.size();
+                    List<String> limitedKeys = includeKeys.stream()
+                        .limit(maxIncludes)
+                        .collect(Collectors.toList());
+                    
+                    // Group by type and fetch
+                    Map<String, List<String>> includeKeysByType = limitedKeys.stream()
+                        .collect(Collectors.groupingBy(key -> key.substring(0, key.indexOf("/"))));
+                    
+                    for (Map.Entry<String, List<String>> entry : includeKeysByType.entrySet()) {
+                        String includeType = entry.getKey();
+                        List<String> keysForType = entry.getValue();
+                        List<Resource> includeResources = ftsKvSearchService.getDocumentsFromKeys(keysForType, includeType);
+                        allResources.addAll(includeResources);
+                    }
+                    
+                    logger.info("🚀 Fetched {} included resources", allResources.size() - primaryResources.size());
+                }
+            }
         }
         
         // Step 5: Build Bundle
         Bundle bundle = new Bundle();
         bundle.setType(Bundle.BundleType.SEARCHSET);
-        bundle.setTotal((int) primaryResult.getTotalCount());  // Total primaries from FTS metadata
+        // Use stored total from first page (accurate), not re-queried total (may be wrong)
+        bundle.setTotal(state.getPrimaryResourceCount());
         
         String baseUrl = state.getBaseUrl();
         for (Resource resource : allResources) {
@@ -1135,6 +1180,7 @@ public class SearchService {
             PaginationState paginationState = PaginationState.builder()
                 .searchType("revinclude")
                 .resourceType(primaryResourceType)
+                .primaryResourceCount((int) totalPrimaryCount)  // Store accurate total for Bundle.total on continuation pages
                 .primaryFtsQueriesJson(serializedQueries)
                 .primaryOffset(count)
                 .primaryPageSize(count)
@@ -1328,6 +1374,7 @@ public class SearchService {
             PaginationState paginationState = PaginationState.builder()
                 .searchType("revinclude")
                 .resourceType(primaryResourceType)
+                .primaryResourceCount((int) totalPrimaryCount)  // Store accurate total for Bundle.total on continuation pages
                 .primaryFtsQueriesJson(serializedQueries)
                 .primaryOffset(count)  // Next page starts at offset=count
                 .primaryPageSize(count)
@@ -1527,6 +1574,7 @@ public class SearchService {
             PaginationState paginationState = PaginationState.builder()
                     .searchType("include")
                     .resourceType(primaryResourceType)
+                    .primaryResourceCount((int) totalPrimaryCount)  // Store accurate total for Bundle.total on continuation pages
                     .primaryFtsQueriesJson(serializedQueries)
                     .primaryOffset(count)  // Next page starts at offset=count
                     .primaryPageSize(count)
