@@ -3,7 +3,6 @@ package com.couchbase.fhir.resources.service;
 import ca.uhn.fhir.rest.api.MethodOutcome;
 import ca.uhn.fhir.rest.server.exceptions.InternalErrorException;
 import ca.uhn.fhir.rest.server.exceptions.PreconditionFailedException;
-import com.couchbase.admin.connections.service.ConnectionService;
 import com.couchbase.client.java.Cluster;
 import com.couchbase.fhir.resources.config.TenantContextHolder;
 import com.couchbase.fhir.resources.validation.FhirBucketValidator;
@@ -36,7 +35,7 @@ public class ConditionalPutService {
     private FhirBucketValidator bucketValidator;
     
     @Autowired
-    private ConnectionService connectionService;
+    private com.couchbase.fhir.resources.gateway.CouchbaseGateway couchbaseGateway;
     
     @Autowired
     private SearchService searchService;
@@ -112,10 +111,8 @@ public class ConditionalPutService {
         logger.info("🆕 ConditionalPutService: Delegating to PostService for creation");
         
         try {
-            Cluster cluster = connectionService.getConnection("default");
-            
             @SuppressWarnings("unchecked")
-            T createdResource = (T) postService.createResource(resource, cluster, bucketName);
+            T createdResource = (T) postService.createResource(resource, bucketName);
             
             MethodOutcome outcome = new MethodOutcome();
             outcome.setCreated(true);
@@ -138,7 +135,7 @@ public class ConditionalPutService {
         logger.info("🔄 ConditionalPutService: Delegating to PutService for update of ID {}", resourceId);
         
         try {
-            Cluster cluster = connectionService.getConnection("default");
+            Cluster cluster = couchbaseGateway.getClusterForTransaction("default");
             TransactionContextImpl context = new TransactionContextImpl(cluster, bucketName);
             
             @SuppressWarnings("unchecked")

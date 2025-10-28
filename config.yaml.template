@@ -31,6 +31,7 @@ couchbase:
     kv-timeout-seconds: 10         # Key-Value operation timeout (default: 10)
     connect-timeout-seconds: 10    # Initial connection timeout (default: 10)
     disconnect-timeout-seconds: 10 # Graceful disconnect timeout (default: 10)
+    transaction-timeout-seconds: 30 # Transaction timeout (default: 30)
     
     # Transaction Configuration
     # NONE: Single-node development (no replicas needed) - DEFAULT

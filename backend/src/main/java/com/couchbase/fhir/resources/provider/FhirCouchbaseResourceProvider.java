@@ -4,7 +4,7 @@ import ca.uhn.fhir.context.*;
 import ca.uhn.fhir.rest.annotation.*;
 import ca.uhn.fhir.rest.api.MethodOutcome;
 import ca.uhn.fhir.rest.api.server.RequestDetails;
-import ca.uhn.fhir.rest.param.NumberParam;
+import ca.uhn.fhir.rest.param.DateParam;
 import ca.uhn.fhir.rest.param.StringParam;
 import ca.uhn.fhir.rest.server.IResourceProvider;
 import ca.uhn.fhir.rest.server.exceptions.InternalErrorException;
@@ -60,9 +60,12 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
     private final com.couchbase.fhir.resources.service.SearchService searchService;
     private final com.couchbase.fhir.resources.service.PatchService patchService;
     private final com.couchbase.fhir.resources.service.ConditionalPutService conditionalPutService;
+    private final com.couchbase.fhir.resources.service.HistoryService historyService;
+    private final com.couchbase.fhir.resources.service.EverythingService everythingService;
+    private final com.couchbase.fhir.resources.search.SearchStateManager searchStateManager;
 
 
-    public FhirCouchbaseResourceProvider(Class<T> resourceClass, FhirResourceDaoImpl<T> dao , FhirContext fhirContext, FhirSearchParameterPreprocessor searchPreprocessor, FhirBucketValidator bucketValidator, FhirBucketConfigService configService, FhirValidator strictValidator, FhirValidator lenientValidator, com.couchbase.admin.connections.service.ConnectionService connectionService, com.couchbase.fhir.resources.service.PutService putService, com.couchbase.fhir.resources.service.DeleteService deleteService, FhirMetaHelper metaHelper, com.couchbase.fhir.resources.service.SearchService searchService, com.couchbase.fhir.resources.service.PatchService patchService, com.couchbase.fhir.resources.service.ConditionalPutService conditionalPutService) {
+    public FhirCouchbaseResourceProvider(Class<T> resourceClass, FhirResourceDaoImpl<T> dao , FhirContext fhirContext, FhirSearchParameterPreprocessor searchPreprocessor, FhirBucketValidator bucketValidator, FhirBucketConfigService configService, FhirValidator strictValidator, FhirValidator lenientValidator, com.couchbase.admin.connections.service.ConnectionService connectionService, com.couchbase.fhir.resources.service.PutService putService, com.couchbase.fhir.resources.service.DeleteService deleteService, FhirMetaHelper metaHelper, com.couchbase.fhir.resources.service.SearchService searchService, com.couchbase.fhir.resources.service.PatchService patchService, com.couchbase.fhir.resources.service.ConditionalPutService conditionalPutService, com.couchbase.fhir.resources.service.HistoryService historyService, com.couchbase.fhir.resources.service.EverythingService everythingService, com.couchbase.fhir.resources.search.SearchStateManager searchStateManager) {
         this.resourceClass = resourceClass;
         this.dao = dao;
         this.fhirContext = fhirContext;
@@ -79,6 +82,9 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
         this.searchService = searchService;
         this.patchService = patchService;
         this.conditionalPutService = conditionalPutService;
+        this.historyService = historyService;
+        this.everythingService = everythingService;
+        this.searchStateManager = searchStateManager;
     }
 
     /**
@@ -89,9 +95,15 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
         return fhirContext.getResourceDefinition(resourceClass).getName();
     }
 
+    /**
+     * FHIR read operation: Read current version of a resource
+     * GET {resourceType}/{id}
+     */
     @Read
     public T read(@IdParam IdType theId) {
         String bucketName = TenantContextHolder.getTenantId();
+        String resourceType = getFhirResourceType();
+        String id = theId.getIdPart();
         
         // Validate FHIR bucket before proceeding
         try {
@@ -100,8 +112,81 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
             throw new ca.uhn.fhir.rest.server.exceptions.InvalidRequestException(e.getMessage());
         }
         
-        return dao.read(getFhirResourceType(), theId.getIdPart() , bucketName).orElseThrow(() ->
+        return dao.read(resourceType, id, bucketName).orElseThrow(() ->
                 new ResourceNotFoundException(theId));
+    }
+
+    /**
+     * FHIR vread operation: Read a specific version of a resource
+     * GET {resourceType}/{id}/_history/{vid}
+     * 
+     * Note: HAPI sometimes routes regular reads here, so we delegate to read() if no version is specified
+     */
+    @Read(version = true)
+    public T vread(@IdParam IdType theId) {
+        String bucketName = TenantContextHolder.getTenantId();
+        String resourceType = getFhirResourceType();
+        String id = theId.getIdPart();
+        String versionId = theId.getVersionIdPart();
+        
+        // Validate FHIR bucket before proceeding
+        try {
+            bucketValidator.validateFhirBucketOrThrow(bucketName, "default");
+        } catch (FhirBucketValidationException e) {
+            throw new ca.uhn.fhir.rest.server.exceptions.InvalidRequestException(e.getMessage());
+        }
+        
+        // If no version is specified, this is a regular read request - delegate to read()
+        if (versionId == null || versionId.isEmpty()) {
+            logger.debug("📖 vread called without version, delegating to read()");
+            return read(theId);
+        }
+        
+        logger.info("📜 vread request: {}/{} version {}", resourceType, id, versionId);
+        
+        Resource resource = historyService.getResourceVersion(resourceType, id, versionId, bucketName);
+        
+        @SuppressWarnings("unchecked")
+        T typedResource = (T) resource;
+        return typedResource;
+    }
+
+    /**
+     * FHIR history operation: Get version history for a resource instance
+     * GET {resourceType}/{id}/_history
+     * 
+     * Returns List<T> and lets HAPI FHIR handle bundle construction - much simpler!
+     */
+    @History
+    public List<T> getResourceInstanceHistory(
+            @IdParam IdType theId,
+            @ca.uhn.fhir.rest.annotation.Since java.util.Date theSince,
+            @ca.uhn.fhir.rest.annotation.Count Integer theCount
+    ) {
+        String bucketName = TenantContextHolder.getTenantId();
+        String resourceType = getFhirResourceType();
+        String id = theId.getIdPart();
+        
+        // Validate FHIR bucket before proceeding
+        try {
+            bucketValidator.validateFhirBucketOrThrow(bucketName, "default");
+        } catch (FhirBucketValidationException e) {
+            throw new ca.uhn.fhir.rest.server.exceptions.InvalidRequestException(e.getMessage());
+        }
+        
+        // Convert Since date to Instant
+        java.time.Instant sinceInstant = theSince != null ? theSince.toInstant() : null;
+        
+        logger.info("📜 History request: {}/{} (count={}, since={})", resourceType, id, theCount, sinceInstant);
+        
+        // Get list of versioned resources - HAPI will wrap them in a history bundle
+        List<Resource> versions = historyService.getResourceHistoryResources(resourceType, id, theCount, sinceInstant, bucketName);
+        
+        // Cast to List<T> for HAPI
+        @SuppressWarnings("unchecked")
+        List<T> typedVersions = (List<T>) (List<?>) versions;
+        
+        return typedVersions;
     }
 
     @Create
@@ -479,12 +564,25 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
     /**
      * FHIR $validate Operation - Validates a resource without storing it
      * POST /fhir/{bucket}/{ResourceType}/$validate
+     * Uses singleton validator beans to avoid creating 95MB validator per request
      */
     @Operation(name = "$validate", idempotent = false)
     public OperationOutcome validateResource(@ResourceParam T resource) {
         try {
-            // Create a FHIR validator
-            FhirValidator validator = fhirContext.newValidator();
+            String bucketName = TenantContextHolder.getTenantId();
+            
+            // Get bucket config to determine which validator to use
+            FhirBucketConfigService.FhirBucketConfig bucketConfig = configService.getFhirBucketConfig(bucketName);
+            
+            // Use singleton validator based on bucket configuration
+            FhirValidator validator;
+            if (bucketConfig.isStrictValidation() || bucketConfig.isEnforceUSCore()) {
+                validator = strictValidator;  // Reuse singleton (saves 95MB per request!)
+                logger.debug("$validate using strict validator");
+            } else {
+                validator = lenientValidator; // Reuse singleton
+                logger.debug("$validate using lenient validator");
+            }
             
             // Validate the resource
             ValidationResult result = validator.validateWithResult(resource);
@@ -542,6 +640,270 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
             
             return errorOutcome;
         }
+    }
+
+    /**
+     * FHIR $everything Operation - Get all resources related to a patient
+     * GET /fhir/{bucket}/Patient/{id}/$everything
+     * 
+     * Only available for Patient resources. Returns:
+     * - The patient resource
+     * - All resources that reference the patient (Observation, Condition, etc.)
+     * 
+     * Supports query parameters:
+     * - start: Start date filter (Date)
+     * - end: End date filter (Date)
+     * - _type: Comma-separated list of resource types to include
+     * - _since: Only resources updated after this instant
+     * - _count: Page size (default: 50, max: 200)
+     */
+    @Operation(name = "$everything", idempotent = true, type = Patient.class)
+    public Bundle patientEverything(
+            @IdParam IdType theId,
+            @OperationParam(name = "start") DateParam start,
+            @OperationParam(name = "end") DateParam end,
+            @OperationParam(name = "_type") StringParam types,
+            @OperationParam(name = "_since") DateParam since,
+            @OperationParam(name = "_count") IntegerType count,
+            @OperationParam(name = "_page") StringParam page,
+            @OperationParam(name = "_offset") IntegerType offset,
+            RequestDetails requestDetails) {
+        
+        String patientId = theId.getIdPart();
+        String continuationToken = page != null ? page.getValue() : null;
+        
+        // Convert DateParam to Date if provided
+        Date startDate = start != null ? start.getValue() : null;
+        Date endDate = end != null ? end.getValue() : null;
+        Date sinceDate = since != null ? since.getValue() : null;
+        
+        // Convert StringParam to String
+        String typeString = types != null ? types.getValue() : null;
+        
+        // Convert IntegerType to Integer
+        Integer countInt = count != null ? count.getValue() : null;
+        Integer offsetInt = offset != null ? offset.getValue() : 0;
+        
+        // Handle pagination continuation
+        if (continuationToken != null) {
+            logger.info("🌍 $everything continuation for Patient/{} (token: {}, offset: {}, count: {})", 
+                       patientId, continuationToken, offsetInt, countInt);
+            return buildEverythingContinuationBundle(continuationToken, offsetInt, countInt, requestDetails);
+        }
+        
+        logger.info("🌍 $everything operation for Patient/{}", patientId);
+        
+        // Get base URL
+        String bucketName = TenantContextHolder.getTenantId();
+        String baseUrl = extractBaseUrl(requestDetails, bucketName);
+        
+        // Get all resources related to the patient (with pagination support)
+        com.couchbase.fhir.resources.service.EverythingService.EverythingResult result = 
+            everythingService.getPatientEverything(
+                patientId,
+                startDate,
+                endDate,
+                typeString,
+                sinceDate,
+                countInt,
+                baseUrl
+            );
+        
+        // Store pagination state if needed
+        String paginationToken = null;
+        if (result.needsPagination) {
+            int effectiveCount = (countInt != null && countInt > 0) ? Math.min(countInt, 200) : 50;
+            com.couchbase.fhir.resources.search.PaginationState paginationState = 
+                com.couchbase.fhir.resources.search.PaginationState.builder()
+                    .searchType("everything")
+                    .resourceType("Patient")
+                    .allDocumentKeys(result.allDocumentKeys)
+                    .pageSize(effectiveCount)
+                    .currentOffset(effectiveCount) // Next page starts after first page
+                    .bucketName(bucketName)
+                    .baseUrl(baseUrl)
+                    .build();
+            
+            paginationToken = searchStateManager.storePaginationState(paginationState);
+            logger.info("✅ Created $everything PaginationState: token={}, totalKeys={}, pages={}", 
+                       paginationToken, result.allDocumentKeys.size(), paginationState.getTotalPages());
+        }
+        
+        // Build bundle
+        Bundle bundle = new Bundle();
+        bundle.setType(Bundle.BundleType.SEARCHSET);
+        bundle.setTotal(result.totalResourceCount); // Total includes patient + all related resources
+        
+        // Add patient resource first (always MATCH mode)
+        Bundle.BundleEntryComponent patientEntry = bundle.addEntry();
+        patientEntry.setResource(result.patient);
+        patientEntry.setFullUrl(baseUrl + "/Patient/" + patientId);
+        patientEntry.getSearch().setMode(Bundle.SearchEntryMode.MATCH);
+        
+        // Add all first page related resources (INCLUDE mode)
+        for (Resource resource : result.firstPageResources) {
+            Bundle.BundleEntryComponent entry = bundle.addEntry();
+            entry.setResource(resource);
+            
+            // Set fullUrl
+            String resourceType = resource.getResourceType().name();
+            String resourceId = resource.getIdElement().getIdPart();
+            entry.setFullUrl(baseUrl + "/" + resourceType + "/" + resourceId);
+            entry.getSearch().setMode(Bundle.SearchEntryMode.INCLUDE);
+        }
+        
+        // Add self link
+        String selfUrl = baseUrl + "/Patient/" + patientId + "/$everything";
+        if (typeString != null) selfUrl += "?_type=" + typeString;
+        if (startDate != null) selfUrl += (selfUrl.contains("?") ? "&" : "?") + "start=" + formatDate(startDate);
+        if (endDate != null) selfUrl += (selfUrl.contains("?") ? "&" : "?") + "end=" + formatDate(endDate);
+        if (sinceDate != null) selfUrl += (selfUrl.contains("?") ? "&" : "?") + "_since=" + formatDate(sinceDate);
+        if (countInt != null) selfUrl += (selfUrl.contains("?") ? "&" : "?") + "_count=" + countInt;
+        
+        bundle.addLink()
+            .setRelation("self")
+            .setUrl(selfUrl);
+        
+        // Add next link if pagination is needed
+        if (paginationToken != null) {
+            int effectiveCount = (countInt != null && countInt > 0) ? Math.min(countInt, 200) : 50;
+            String nextUrl = baseUrl + "/Patient/" + patientId + "/$everything?_page=" + paginationToken 
+                           + "&_offset=" + effectiveCount 
+                           + "&_count=" + effectiveCount;
+            
+            bundle.addLink()
+                .setRelation("next")
+                .setUrl(nextUrl);
+        }
+        
+        logger.info("✅ $everything returning bundle with {} resources (total: {})", 
+                   bundle.getEntry().size(), result.totalResourceCount);
+        return bundle;
+    }
+    
+    /**
+     * Build continuation bundle for $everything pagination
+     */
+    private Bundle buildEverythingContinuationBundle(String continuationToken, int offset, Integer count, RequestDetails requestDetails) {
+        String bucketName = TenantContextHolder.getTenantId();
+        String baseUrl = extractBaseUrl(requestDetails, bucketName);
+        
+        // Extract patient ID from the request URL (e.g., /Patient/example/$everything)
+        String patientId = extractPatientIdFromRequest(requestDetails);
+        
+        // Get next page of resources
+        List<Resource> pageResources = everythingService.getPatientEverythingNextPage(continuationToken, offset, count);
+        
+        // Retrieve pagination state to check if there are more pages
+        com.couchbase.fhir.resources.search.PaginationState paginationState = 
+            searchStateManager.getPaginationState(continuationToken, bucketName);
+        
+        if (paginationState == null) {
+            throw new ca.uhn.fhir.rest.server.exceptions.ResourceGoneException(
+                "Pagination state has expired or is invalid. Please repeat your original $everything request.");
+        }
+        
+        // Note: We do NOT update currentOffset in Couchbase
+        // The offset is tracked in the URL (_offset parameter), not in the document
+        // This keeps the document immutable (write once, read many) and avoids resetting TTL
+        
+        // Build bundle
+        Bundle bundle = new Bundle();
+        bundle.setType(Bundle.BundleType.SEARCHSET);
+        if (paginationState != null && paginationState.getAllDocumentKeys() != null) {
+            bundle.setTotal(paginationState.getAllDocumentKeys().size() + 1); // +1 for patient
+        }
+        
+        // Add resources (all INCLUDE mode for continuation pages)
+        for (Resource resource : pageResources) {
+            Bundle.BundleEntryComponent entry = bundle.addEntry();
+            entry.setResource(resource);
+            
+            String resourceType = resource.getResourceType().name();
+            String resourceId = resource.getIdElement().getIdPart();
+            entry.setFullUrl(baseUrl + "/" + resourceType + "/" + resourceId);
+            entry.getSearch().setMode(Bundle.SearchEntryMode.INCLUDE);
+        }
+        
+        // Add self link (use the patient ID extracted from request)
+        bundle.addLink()
+            .setRelation("self")
+            .setUrl(baseUrl + "/Patient/" + patientId + "/$everything?_page=" + continuationToken);
+        
+        // Add next link if there are more pages
+        int pageSize = (count != null && count > 0) ? count : paginationState.getPageSize();
+        int nextOffset = offset + pageResources.size();
+        boolean hasMoreResults = paginationState.getAllDocumentKeys() != null 
+            && nextOffset < paginationState.getAllDocumentKeys().size();
+        
+        if (hasMoreResults) {
+            String nextUrl = baseUrl + "/Patient/" + patientId + "/$everything?_page=" + continuationToken 
+                           + "&_offset=" + nextOffset 
+                           + "&_count=" + pageSize;
+            
+            bundle.addLink()
+                .setRelation("next")
+                .setUrl(nextUrl);
+        }
+        
+        // Note: We rely on TTL for cleanup (no explicit delete to avoid unnecessary DB chatter)
+        
+        // Calculate current page for logging (1-based)
+        int currentPage = (offset / pageSize) + 1;
+        int totalPages = (paginationState.getAllDocumentKeys() != null) 
+            ? (int) Math.ceil((double) paginationState.getAllDocumentKeys().size() / pageSize)
+            : 0;
+        
+        logger.info("✅ $everything continuation returning {} resources (page {}/{})", 
+                   pageResources.size(), currentPage, totalPages);
+        return bundle;
+    }
+    
+    /**
+     * Extract base URL from request details
+     */
+    private String extractBaseUrl(RequestDetails requestDetails, String bucketName) {
+        if (requestDetails != null) {
+            String serverBase = requestDetails.getFhirServerBase();
+            if (serverBase != null) {
+                return serverBase;
+            }
+        }
+        // Fallback to constructed URL
+        return "http://localhost:8080/fhir/" + bucketName;
+    }
+    
+    /**
+     * Extract patient ID from the request URL
+     * For $everything requests, URL is like: /Patient/{id}/$everything
+     */
+    private String extractPatientIdFromRequest(RequestDetails requestDetails) {
+        if (requestDetails != null) {
+            String requestPath = requestDetails.getRequestPath();
+            if (requestPath != null && requestPath.contains("/Patient/")) {
+                // Extract patient ID from path like: /fhir/acme/Patient/example/$everything
+                int patientIndex = requestPath.indexOf("/Patient/");
+                if (patientIndex >= 0) {
+                    String afterPatient = requestPath.substring(patientIndex + "/Patient/".length());
+                    // Patient ID is between /Patient/ and the next /
+                    int nextSlash = afterPatient.indexOf("/");
+                    if (nextSlash > 0) {
+                        return afterPatient.substring(0, nextSlash);
+                    } else {
+                        // No trailing slash, return the rest
+                        return afterPatient;
+                    }
+                }
+            }
+        }
+        return "unknown";
+    }
+
+    /**
+     * Format date for URL parameter (simple ISO format)
+     */
+    private String formatDate(Date date) {
+        return new java.text.SimpleDateFormat("yyyy-MM-dd").format(date);
     }
 
     @Override

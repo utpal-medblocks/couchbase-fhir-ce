@@ -24,6 +24,7 @@ import {
   red,
   purple,
   teal,
+  yellow,
 } from "@mui/material/colors";
 import { type TimeRange } from "../services/bucketMetricsService";
 import {
@@ -57,7 +58,7 @@ const HAProxyMetricsCharts: React.FC<HAProxyMetricsChartsProps> = ({
       primary: theme.palette.mode === "dark" ? lightBlue.A100 : lightBlue.A700,
       secondary: theme.palette.mode === "dark" ? orange.A100 : orange.A700,
       success: theme.palette.mode === "dark" ? green.A100 : green.A700,
-      warning: theme.palette.mode === "dark" ? orange.A100 : orange.A700,
+      warning: theme.palette.mode === "dark" ? yellow.A100 : yellow.A700,
       error: theme.palette.mode === "dark" ? red.A100 : red.A700,
       info: theme.palette.mode === "dark" ? purple.A100 : purple.A700,
       teal: theme.palette.mode === "dark" ? teal.A100 : teal.A700,
@@ -221,6 +222,16 @@ const HAProxyMetricsCharts: React.FC<HAProxyMetricsChartsProps> = ({
         hrsp_5xx: null,
         hrsp_4xx: null,
         errorPercent: null,
+        // JVM metrics derived
+        heap_used_pct: null as any,
+        heap_young_used_pct: null as any,
+        heap_old_used_pct: null as any,
+        metaspace_used_mb: null as any,
+        direct_used_mb: null as any,
+        mapped_used_mb: null as any,
+        gc_pause_count_delta: null as any,
+        gc_pause_time_ms_delta: null as any,
+        threads_live: null as any,
       };
 
       if (real) {
@@ -235,6 +246,28 @@ const HAProxyMetricsCharts: React.FC<HAProxyMetricsChartsProps> = ({
         base.hrsp_5xx = real.hrsp_5xx;
         base.hrsp_4xx = real.hrsp_4xx;
         base.errorPercent = real.error_percent;
+        // JVM mappings and derivations
+        const heapUsed =
+          real.heap_total_used_bytes ?? real.heap_used_bytes ?? 0;
+        const heapMax = real.heap_max_bytes ?? 0;
+        base.heap_used_pct = heapMax > 0 ? (heapUsed / heapMax) * 100 : null;
+        const youngUsed = real.heap_young_used_bytes ?? 0;
+        const oldUsed = real.heap_old_used_bytes ?? 0;
+        base.heap_young_used_pct =
+          heapMax > 0 ? (youngUsed / heapMax) * 100 : null;
+        base.heap_old_used_pct = heapMax > 0 ? (oldUsed / heapMax) * 100 : null;
+        base.metaspace_used_mb = real.metaspace_used_bytes
+          ? real.metaspace_used_bytes / (1024 * 1024)
+          : null;
+        base.direct_used_mb = real.direct_buffer_used_bytes
+          ? real.direct_buffer_used_bytes / (1024 * 1024)
+          : null;
+        base.mapped_used_mb = real.mapped_buffer_used_bytes
+          ? real.mapped_buffer_used_bytes / (1024 * 1024)
+          : null;
+        base.gc_pause_count_delta = real.gc_pause_count_delta ?? null;
+        base.gc_pause_time_ms_delta = real.gc_pause_time_ms_delta ?? null;
+        base.threads_live = real.threads_live ?? null;
       }
 
       series.push(base);
@@ -462,7 +495,7 @@ const HAProxyMetricsCharts: React.FC<HAProxyMetricsChartsProps> = ({
 
   const displayData = chartData;
 
-  // Define chart configurations - 4 charts in 2x2 grid (all line charts now)
+  // Define chart configurations - expanded to 6 charts
   const chartConfigs = [
     {
       title: "System Resources",
@@ -482,22 +515,40 @@ const HAProxyMetricsCharts: React.FC<HAProxyMetricsChartsProps> = ({
           label: "Current Connections",
           unit: "conn",
         },
+        { key: "threads_live", label: "Threads", unit: "threads" },
       ],
-      colors: [chartColors.success, chartColors.error],
+      colors: [chartColors.primary, chartColors.warning, chartColors.success],
     },
     {
       title: "Latency",
       metrics: [{ key: "currentLatency", label: "Current", unit: "ms" }],
-      colors: [chartColors.warning],
+      colors: [chartColors.primary],
     },
     {
-      title: "Health",
+      title: "GC Heap (%)",
       metrics: [
-        { key: "hrsp_5xx", label: "5xx Errors", unit: "count" },
-        { key: "hrsp_4xx", label: "4xx Errors", unit: "count" },
-        { key: "errorPercent", label: "Error %", unit: "%" },
+        { key: "heap_young_used_pct", label: "Young", unit: "%" },
+        { key: "heap_old_used_pct", label: "Old", unit: "%" },
+        { key: "heap_used_pct", label: "Total", unit: "%" },
       ],
-      colors: [chartColors.error, chartColors.warning, chartColors.secondary],
+      colors: [chartColors.primary, chartColors.warning, chartColors.success],
+    },
+    {
+      title: "GC Pause",
+      metrics: [
+        { key: "gc_pause_count_delta", label: "Pauses", unit: "count" },
+        { key: "gc_pause_time_ms_delta", label: "Pause Time", unit: "ms" },
+      ],
+      colors: [chartColors.primary, chartColors.warning],
+    },
+    {
+      title: "Metaspace/Buffers (MB)",
+      metrics: [
+        { key: "metaspace_used_mb", label: "Metaspace", unit: "MB" },
+        { key: "direct_used_mb", label: "Direct", unit: "MB" },
+        { key: "mapped_used_mb", label: "Mapped", unit: "MB" },
+      ],
+      colors: [chartColors.primary, chartColors.warning, chartColors.success],
     },
   ];
 
@@ -517,6 +568,8 @@ const HAProxyMetricsCharts: React.FC<HAProxyMetricsChartsProps> = ({
         return value.toLocaleString();
       case "count":
         return value.toLocaleString();
+      case "MB":
+        return Math.round(value).toLocaleString() + " MB";
       default:
         return value.toString();
     }

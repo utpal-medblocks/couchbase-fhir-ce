@@ -43,6 +43,22 @@ export interface MetricDataPoint {
   hrsp_4xx: number;
   hrsp_5xx: number;
   error_percent: number;
+  // JVM extended fields
+  heap_used_bytes?: number;
+  heap_max_bytes?: number;
+  metaspace_used_bytes?: number;
+  metaspace_max_bytes?: number;
+  direct_buffer_used_bytes?: number;
+  direct_buffer_count?: number;
+  mapped_buffer_used_bytes?: number;
+  mapped_buffer_count?: number;
+  gc_pause_count_delta?: number;
+  gc_pause_time_ms_delta?: number;
+  threads_live?: number;
+  // Heap generations
+  heap_young_used_bytes?: number;
+  heap_old_used_bytes?: number;
+  heap_total_used_bytes?: number;
 }
 
 export interface HaproxyTimeSeriesResponse {

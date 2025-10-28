@@ -40,7 +40,7 @@ public class ConnectionController {
                 return ResponseEntity.badRequest().body(response);
             }
         } catch (Exception e) {
-            logger.error("Error creating connection: {}", e.getMessage(), e);
+            logger.error("Error creating connection: {}", e.getMessage());
             ConnectionResponse errorResponse = ConnectionResponse.failure(
                 "Internal server error", 
                 e.getMessage()
@@ -84,7 +84,7 @@ public class ConnectionController {
             
             return ResponseEntity.ok(response);
         } catch (Exception e) {
-            logger.error("Error getting active connections: {}", e.getMessage(), e);
+            logger.error("Error getting active connections: {}", e.getMessage());
             Map<String, Object> errorResponse = Map.of(
                 "success", false,
                 "error", e.getMessage()
@@ -111,7 +111,7 @@ public class ConnectionController {
             
             return ResponseEntity.ok(response);
         } catch (Exception e) {
-            logger.error("Error closing connection {}: {}", connectionName, e.getMessage(), e);
+            logger.error("Error closing connection {}: {}", connectionName, e.getMessage());
             Map<String, Object> errorResponse = Map.of(
                 "success", false,
                 "error", e.getMessage()
@@ -137,7 +137,7 @@ public class ConnectionController {
             
             return ResponseEntity.ok(response);
         } catch (Exception e) {
-            logger.error("Error closing all connections: {}", e.getMessage(), e);
+            logger.error("Error closing all connections: {}", e.getMessage());
             Map<String, Object> errorResponse = Map.of(
                 "success", false,
                 "error", e.getMessage()
@@ -162,7 +162,7 @@ public class ConnectionController {
             
             return ResponseEntity.ok(response);
         } catch (Exception e) {
-            logger.error("Error getting connection details for {}: {}", connectionName, e.getMessage(), e);
+            logger.error("Error getting connection details for {}: {}", connectionName, e.getMessage());
             Map<String, Object> errorResponse = Map.of(
                 "success", false,
                 "error", e.getMessage()

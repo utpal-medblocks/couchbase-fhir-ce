@@ -15,6 +15,10 @@ import jakarta.annotation.PostConstruct;
 import java.lang.management.ManagementFactory;
 import java.lang.management.OperatingSystemMXBean;
 import java.lang.management.MemoryMXBean;
+import java.lang.management.MemoryPoolMXBean;
+import java.lang.management.BufferPoolMXBean;
+import java.lang.management.GarbageCollectorMXBean;
+import java.lang.management.ThreadMXBean;
 import java.lang.management.MemoryUsage;
 import java.io.File;
 import java.util.*;
@@ -51,6 +55,8 @@ public class HaproxyMetricsService {
     // State tracking
     private volatile int tick = 0;
     private volatile Map<String, Object> previousSnapshot = null;
+    private volatile long lastGcCollectionsTotal = -1L;
+    private volatile long lastGcTimeTotalMs = -1L;
     
     @Autowired
     private RestTemplate restTemplate;
@@ -179,9 +185,14 @@ public class HaproxyMetricsService {
         long totalRequests = getLongValue(current, "req_tot");
         double errorPercent = calculateErrorPercent(hrsp4xx, hrsp5xx, totalRequests);
         
-        return new MetricDataPoint(timestamp, ops, scur, rateMax, smax, qcur, latency, latencyMax,
+        MetricDataPoint point = new MetricDataPoint(timestamp, ops, scur, rateMax, smax, qcur, latency, latencyMax,
                                    systemMetrics.cpu, systemMetrics.memory, systemMetrics.disk,
                                    hrsp4xx, hrsp5xx, errorPercent);
+
+        // Enrich with detailed JVM metrics (heap, metaspace, buffers, GC, threads)
+        enrichWithJvmDetails(point);
+
+        return point;
     }
     
     private double getDoubleValue(Map<String, Object> data, String key) {
@@ -248,6 +259,102 @@ public class HaproxyMetricsService {
         } catch (Exception e) {
             logger.debug("Error collecting JVM metrics: {}", e.getMessage());
             return new SystemMetrics(0.0, 0.0, 0.0);
+        }
+    }
+
+    private void enrichWithJvmDetails(com.couchbase.admin.metrics.model.MetricDataPoint point) {
+        try {
+            // Heap usage
+            MemoryMXBean memoryBean = ManagementFactory.getMemoryMXBean();
+            MemoryUsage heap = memoryBean.getHeapMemoryUsage();
+            point.setHeapUsedBytes(heap.getUsed());
+            point.setHeapMaxBytes(heap.getMax());
+
+            // Metaspace usage and heap generations
+            long metaspaceUsed = 0L;
+            long metaspaceMax = -1L;
+            long youngUsed = 0L;
+            long oldUsed = 0L;
+            long totalUsed = heap.getUsed();
+            for (MemoryPoolMXBean pool : ManagementFactory.getMemoryPoolMXBeans()) {
+                String name = pool.getName();
+                if (name != null && name.toLowerCase().contains("metaspace")) {
+                    MemoryUsage usage = pool.getUsage();
+                    if (usage != null) {
+                        metaspaceUsed = usage.getUsed();
+                        metaspaceMax = usage.getMax();
+                    }
+                }
+
+                // G1 names typically: "G1 Eden Space", "G1 Survivor Space", "G1 Old Gen"
+                if (name != null) {
+                    String lower = name.toLowerCase();
+                    if (lower.contains("eden") || lower.contains("survivor") || lower.contains("young")) {
+                        MemoryUsage usage = pool.getUsage();
+                        if (usage != null) {
+                            youngUsed += usage.getUsed();
+                        }
+                    } else if (lower.contains("old")) {
+                        MemoryUsage usage = pool.getUsage();
+                        if (usage != null) {
+                            oldUsed += usage.getUsed();
+                        }
+                    }
+                }
+            }
+            point.setMetaspaceUsedBytes(metaspaceUsed);
+            point.setMetaspaceMaxBytes(metaspaceMax);
+            point.setHeapYoungUsedBytes(youngUsed);
+            point.setHeapOldUsedBytes(oldUsed);
+            point.setHeapTotalUsedBytes(totalUsed);
+
+            // Direct / Mapped buffers (off-heap)
+            long directBytes = 0L, mappedBytes = 0L;
+            long directCount = 0L, mappedCount = 0L;
+            for (BufferPoolMXBean buf : ManagementFactory.getPlatformMXBeans(BufferPoolMXBean.class)) {
+                String name = buf.getName();
+                if ("direct".equalsIgnoreCase(name)) {
+                    directBytes = buf.getMemoryUsed();
+                    directCount = buf.getCount();
+                } else if ("mapped".equalsIgnoreCase(name)) {
+                    mappedBytes = buf.getMemoryUsed();
+                    mappedCount = buf.getCount();
+                }
+            }
+            point.setDirectBufferUsedBytes(directBytes);
+            point.setDirectBufferCount(directCount);
+            point.setMappedBufferUsedBytes(mappedBytes);
+            point.setMappedBufferCount(mappedCount);
+
+            // GC pause deltas
+            long totalCollections = 0L;
+            long totalTimeMs = 0L;
+            for (GarbageCollectorMXBean gc : ManagementFactory.getGarbageCollectorMXBeans()) {
+                long c = gc.getCollectionCount();
+                long t = gc.getCollectionTime();
+                if (c > 0) totalCollections += c;
+                if (t > 0) totalTimeMs += t;
+            }
+            long deltaCollections = 0L;
+            long deltaTimeMs = 0L;
+            if (lastGcCollectionsTotal >= 0) {
+                deltaCollections = Math.max(0L, totalCollections - lastGcCollectionsTotal);
+            }
+            if (lastGcTimeTotalMs >= 0) {
+                deltaTimeMs = Math.max(0L, totalTimeMs - lastGcTimeTotalMs);
+            }
+            point.setGcPauseCountDelta(deltaCollections);
+            point.setGcPauseTimeMsDelta(deltaTimeMs);
+            lastGcCollectionsTotal = totalCollections;
+            lastGcTimeTotalMs = totalTimeMs;
+
+            // Threads live
+            ThreadMXBean threadBean = ManagementFactory.getThreadMXBean();
+            point.setThreadsLive(threadBean.getThreadCount());
+
+        } catch (Throwable t) {
+            // Be resilient; do not break sampling on management API issues
+            logger.debug("Error enriching JVM details: {}", t.getMessage());
         }
     }
     

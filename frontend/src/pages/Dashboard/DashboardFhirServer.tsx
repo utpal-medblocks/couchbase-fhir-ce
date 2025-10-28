@@ -32,6 +32,7 @@ const DashboardFhirServer: React.FC = () => {
   const [haproxyMetrics, setHaproxyMetrics] = React.useState<any>(null);
   const [haproxyError, setHaproxyError] = React.useState<string | null>(null);
   const [backendVersion, setBackendVersion] = useState<string>("...");
+  const [buildTime, setBuildTime] = useState<string | undefined>(undefined);
 
   // State for time range with session storage
   const [timeRange, setTimeRange] = useState<TimeRange>(() =>
@@ -65,10 +66,31 @@ const DashboardFhirServer: React.FC = () => {
 
   const fetchVersion = async () => {
     try {
-      const { version } = await fetchBackendVersion();
-      setBackendVersion(version);
+      const versionInfo = await fetchBackendVersion();
+      setBackendVersion(versionInfo.version);
+      setBuildTime(versionInfo.buildTime);
     } catch (e) {
       setBackendVersion("unknown");
+      setBuildTime(undefined);
+    }
+  };
+
+  // Format build time for display
+  const formatBuildTime = (buildTime?: string): string | undefined => {
+    if (!buildTime) return undefined;
+    try {
+      // Parse ISO 8601 timestamp and format as readable date
+      const date = new Date(buildTime);
+      return date.toLocaleString("en-US", {
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+        timeZoneName: "short",
+      });
+    } catch {
+      return buildTime; // Return original if parsing fails
     }
   };
 
@@ -113,7 +135,19 @@ const DashboardFhirServer: React.FC = () => {
           <Typography variant="body2" color="text.secondary">
             Version:
           </Typography>
-          <Typography variant="body1">{backendVersion}</Typography>
+          <Typography variant="body1">
+            {backendVersion}
+            {buildTime && (
+              <Typography
+                component="span"
+                variant="caption"
+                color="text.secondary"
+                sx={{ ml: 1 }}
+              >
+                (built: {formatBuildTime(buildTime)})
+              </Typography>
+            )}
+          </Typography>
         </Box>
         <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
           <Typography variant="body2" color="text.secondary">

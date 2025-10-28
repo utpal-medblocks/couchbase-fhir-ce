@@ -11,6 +11,7 @@ import com.couchbase.admin.connections.service.ConnectionService;
 import com.couchbase.client.java.Cluster;
 import com.couchbase.client.java.json.JsonObject;
 import com.couchbase.client.java.query.QueryResult;
+import com.couchbase.fhir.resources.gateway.CouchbaseGateway;
 import java.util.Map;
 import org.hl7.fhir.r4.model.*;
 import org.slf4j.Logger;
@@ -31,6 +32,9 @@ public class FhirBundleProcessingService {
 
     @Autowired
     private ConnectionService connectionService;
+    
+    @Autowired
+    private CouchbaseGateway couchbaseGateway;
 
     @Autowired
     private FhirContext fhirContext;
@@ -191,10 +195,7 @@ public class FhirBundleProcessingService {
         final String finalConnectionName = connectionName != null ? connectionName : getDefaultConnection();
         final String finalBucketName = bucketName != null ? bucketName : DEFAULT_BUCKET;
 
-        Cluster cluster = connectionService.getConnection(finalConnectionName);
-        if (cluster == null) {
-            throw new RuntimeException("No active connection found: " + finalConnectionName);
-        }
+        Cluster cluster = couchbaseGateway.getClusterForTransaction(finalConnectionName);
 
         List<ProcessedEntry> processedEntries = new ArrayList<>();
         
@@ -252,10 +253,7 @@ public class FhirBundleProcessingService {
         connectionName = connectionName != null ? connectionName : getDefaultConnection();
         bucketName = bucketName != null ? bucketName : DEFAULT_BUCKET;
 
-        Cluster cluster = connectionService.getConnection(connectionName);
-        if (cluster == null) {
-            throw new RuntimeException("No active connection found: " + connectionName);
-        }
+        Cluster cluster = couchbaseGateway.getClusterForTransaction(connectionName);
         
         return processEntriesSequentiallyInternal(bundle, cluster, bucketName, bucketConfig);
     }
@@ -389,7 +387,7 @@ public class FhirBundleProcessingService {
                             validateResource(resource, bucketConfig);
                         }
                         
-                        processedResource = postService.createResource(resource, cluster, bucketName);
+                        processedResource = postService.createResource(resource, bucketName);
                         responseStatus = "201 Created";
                         logger.info("✅ POST {}: Created with server-generated ID {}", resourceType, processedResource.getId());
                         break;

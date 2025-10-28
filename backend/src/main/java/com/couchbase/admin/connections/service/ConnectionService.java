@@ -45,6 +45,9 @@ public class ConnectionService {
     @Value("${couchbase.sdk.disconnect-timeout-seconds:10}")
     private int disconnectTimeoutSeconds;
     
+    @Value("${couchbase.sdk.transaction-timeout-seconds:30}")
+    private int transactionTimeoutSeconds;
+    
     @Value("${couchbase.sdk.enable-mutation-tokens:true}")
     private boolean enableMutationTokens;
     
@@ -138,6 +141,8 @@ public class ConnectionService {
                             break;
                     }
                     transactions.durabilityLevel(durabilityLevel);
+                    // Configure transaction timeout
+                    transactions.timeout(Duration.ofSeconds(transactionTimeoutSeconds));
                 });
             
             // Enable TLS/SSL if required (for Capella or secure connections)
@@ -160,6 +165,7 @@ public class ConnectionService {
             logger.info("   - connectTimeout: {}s (couchbase.sdk.connect-timeout-seconds)", connectTimeoutSeconds);
             logger.info("   - enableMutationTokens: {} (couchbase.sdk.enable-mutation-tokens)", enableMutationTokens);
             logger.info("   - transactionDurability: {} (couchbase.sdk.transaction-durability)", transactionDurability);
+            logger.info("   - transactionTimeout: {}s (couchbase.sdk.transaction-timeout-seconds)", transactionTimeoutSeconds);
             
             Cluster cluster = Cluster.connect(request.getConnectionString(), options);
             
@@ -240,7 +246,7 @@ public class ConnectionService {
             return ConnectionResponse.successWithClusterName("Connection created successfully", clusterName);
             
         } catch (Exception e) {
-            logger.error("Error creating connection {}: {}", request.getName(), e.getMessage(), e);
+            logger.error("Error creating connection {}: {}", request.getName(), e.getMessage());
             
             // Check if it's an UnknownHostException specifically
             if (e.getCause() instanceof java.net.UnknownHostException || 
@@ -267,6 +273,14 @@ public class ConnectionService {
             logger.error("No active connection found for: {} (available: {})", connectionName, activeConnections.keySet());
         }
         return cluster;
+    }
+
+    /**
+     * Fast preflight check used by request handlers to decide whether to proceed.
+     * Does not attempt to create a connection; simply verifies presence of an active one.
+     */
+    public boolean hasActiveConnection(String connectionName) {
+        return activeConnections.containsKey(connectionName);
     }
     
     /**
@@ -310,7 +324,7 @@ public class ConnectionService {
             
             // Standard FHIR collections
             List<String> collections = Arrays.asList(
-                "Patient", "Practitioner", "Observation", "Encounter", "Condition", 
+                "Patient", "Observation", "Encounter", "Condition", 
                 "Procedure", "MedicationRequest", "DiagnosticReport", "DocumentReference", 
                 "Immunization", "ServiceRequest", "General", "Versions", "Tombstones"
             );

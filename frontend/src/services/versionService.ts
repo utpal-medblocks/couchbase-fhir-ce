@@ -1,11 +1,15 @@
 export interface BackendVersionInfo {
   version: string;
   description?: string;
+  buildTime?: string;
+  name?: string;
+  group?: string;
+  artifact?: string;
 }
 
 /**
  * Fetch backend Couchbase FHIR Server version.
- * Currently only returns { version } from /api/config/version.
+ * Returns { version, buildTime } from /api/config/version.
  * Fallback: 'unknown' if request fails.
  */
 export async function fetchBackendVersion(
@@ -20,6 +24,10 @@ export async function fetchBackendVersion(
     return {
       version: data.version ?? "unknown",
       description: data.description,
+      buildTime: data.buildTime,
+      name: data.name,
+      group: data.group,
+      artifact: data.artifact,
     };
   } catch (e) {
     return { version: "unknown" };

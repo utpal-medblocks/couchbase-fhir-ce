@@ -1,6 +1,5 @@
 package com.couchbase.fhir.resources.service;
 
-import com.couchbase.admin.connections.service.ConnectionService;
 import com.couchbase.client.java.Cluster;
 import com.couchbase.client.java.json.JsonObject;
 import com.couchbase.client.java.query.QueryResult;
@@ -23,7 +22,7 @@ public class FhirBucketConfigService {
     private static final Logger logger = LoggerFactory.getLogger(FhirBucketConfigService.class);
     
     @Autowired
-    private ConnectionService connectionService;
+    private com.couchbase.fhir.resources.gateway.CouchbaseGateway couchbaseGateway;
     
     // Cache for FHIR bucket configurations to avoid repeated Couchbase queries
     // Key format: "connectionName:bucketName"
@@ -137,21 +136,13 @@ public class FhirBucketConfigService {
         logger.debug("💾 Loading FHIR config from Couchbase for bucket: {} (connection: {})", bucketName, connectionName);
         
         try {
-            Cluster cluster = connectionService.getConnection(connectionName);
-            if (cluster == null) {
-                logger.warn("No active connection found: {}, using default config", connectionName);
-                FhirBucketConfig defaultConfig = getDefaultConfig();
-                configCache.put(cacheKey, defaultConfig);
-                return defaultConfig;
-            }
-            
             // Query the FHIR config document
             String query = String.format(
                 "SELECT c.* FROM `%s`.`Admin`.`config` c USE KEYS 'fhir-config'",
                 bucketName
             );
             logger.debug("Executing query: {}", query);
-            QueryResult result = cluster.query(query);
+            QueryResult result = couchbaseGateway.query(connectionName, query);
             List<JsonObject> rows = result.rowsAsObject();
             
             if (rows.isEmpty()) {
@@ -252,8 +243,7 @@ public class FhirBucketConfigService {
      * Get default connection name
      */
     private String getDefaultConnection() {
-        List<String> connections = connectionService.getActiveConnections();
-        return connections.isEmpty() ? "default" : connections.get(0);
+        return "default";
     }
     
     /**

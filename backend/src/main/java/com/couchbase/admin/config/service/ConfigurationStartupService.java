@@ -54,9 +54,23 @@ public class ConfigurationStartupService {
     }
 
     /**
-     * Load config.yaml and establish connection
+     * Expose a retry method for external callers (e.g., REST) to trigger auto-connect again.
+     * Returns true if execution attempted (config existed and autoConnect not explicitly false).
      */
-    private void loadConfigurationAndConnect() {
+    public boolean retryLoadConfigurationAndConnect() {
+        try {
+            return loadConfigurationAndConnect();
+        } catch (Exception e) {
+            logger.warn("⚠️ Retry auto-connect failed: {}", e.getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * Load config.yaml and establish connection
+     * @return true if an attempt to connect was made (config exists and not disabled)
+     */
+    public boolean loadConfigurationAndConnect() {
         // Resolve configuration file path with precedence:
         // 1. System property -Dfhir.config
         // 2. Env var FHIR_CONFIG_FILE
@@ -80,7 +94,7 @@ public class ConfigurationStartupService {
 
         if (!Files.exists(configFile)) {
             logger.info("📋 No config.yaml found - FHIR Server will start without auto-connection");
-            return;
+            return false;
         }
 
         // Load and parse YAML
@@ -92,14 +106,14 @@ public class ConfigurationStartupService {
             
             if (yamlData == null) {
                 logger.warn("⚠️ config.yaml is empty or invalid");
-                return;
+                return false;
             }
             
             logger.info("✅ Successfully loaded config.yaml with {} top-level keys", yamlData.size());
             
         } catch (Exception e) {
-            logger.error("❌ Failed to read config.yaml: {}", e.getMessage(), e);
-            return;
+            logger.error("❌ Failed to read config.yaml: {}", e.getMessage());
+            return false;
         }
 
         // Apply logging level overrides if present: logging.levels:
@@ -136,18 +150,17 @@ public class ConfigurationStartupService {
         
         if (connectionConfig == null) {
             logger.warn("⚠️ No 'connection' section found in config.yaml");
-            return;
+            return false;
         }
 
         // Extract app configuration and determine autoConnect behavior.
-        // New logic: if a connection section exists and app.autoConnect is NOT explicitly false, we auto-connect.
         @SuppressWarnings("unchecked")
         Map<String, Object> appConfig = (Map<String, Object>) yamlData.get("app");
         boolean autoConnectExplicitFalse = appConfig != null && Boolean.FALSE.equals(appConfig.get("autoConnect"));
         boolean autoConnect = !autoConnectExplicitFalse; // default true when connection section present
         if (!autoConnect) {
             logger.info("📋 autoConnect explicitly disabled (app.autoConnect=false) - skipping auto-connection");
-            return;
+            return false;
         }
 
         // Create connection request from YAML data
@@ -166,8 +179,6 @@ public class ConfigurationStartupService {
         } else {
             String errorMsg = response.getMessage();
             logger.error("❌ Auto-connection failed: {}", errorMsg);
-            
-            // Check for authentication failures
             if (errorMsg != null && (errorMsg.contains("authentication") || 
                                    errorMsg.contains("Authentication") ||
                                    errorMsg.contains("credentials") ||
@@ -177,11 +188,11 @@ public class ConfigurationStartupService {
                 logger.error("   - Verify username and password are correct");
                 logger.error("   - Ensure Couchbase server credentials match config.yaml");
                 logger.error("   - Fix credentials and restart the application");
-                logger.error("⚠️  Backend will not retry automatically - manual restart required after fixing config.yaml");
             } else {
                 logger.info("📋 FHIR Server started but no connection established - use frontend or REST API to connect");
             }
         }
+        return true;
     }
 
     /**

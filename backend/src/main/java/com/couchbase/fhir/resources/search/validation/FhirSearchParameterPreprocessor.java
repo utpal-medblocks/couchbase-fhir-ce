@@ -68,7 +68,7 @@ public class FhirSearchParameterPreprocessor {
             logger.warn("❌ Parameter validation failed: {}", e.getMessage());
             throw e;
         } catch (Exception e) {
-            logger.error("❌ Unexpected validation error: {}", e.getMessage(), e);
+            logger.error("❌ Unexpected validation error: {}", e.getMessage());
             throw new FhirSearchValidationException("Validation failed: " + e.getMessage(), "", null);
         }
     }

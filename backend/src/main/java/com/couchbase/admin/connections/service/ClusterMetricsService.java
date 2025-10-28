@@ -77,7 +77,7 @@ public class ClusterMetricsService {
             }
             
         } catch (Exception e) {
-            logger.error("Error retrieving cluster metrics for {}: {}", connectionName, e.getMessage(), e);
+            logger.error("Error retrieving cluster metrics for {}: {}", connectionName, e.getMessage());
             return getDefaultMetrics();
         }
     }
@@ -195,7 +195,7 @@ public class ClusterMetricsService {
             }
             
         } catch (Exception e) {
-            logger.error("Error extracting enhanced bucket metrics: {}", e.getMessage(), e);
+            logger.error("Error extracting enhanced bucket metrics: {}", e.getMessage());
         }
         
         return buckets;
@@ -417,7 +417,7 @@ public class ClusterMetricsService {
             return result;
             
         } catch (Exception e) {
-            logger.error("Error parsing enhanced bucket metrics: {}", e.getMessage(), e);
+            logger.error("Error parsing enhanced bucket metrics: {}", e.getMessage());
             logger.error("Enhanced bucket data that failed to parse: {}", bucketData.toString());
             return null;
         }

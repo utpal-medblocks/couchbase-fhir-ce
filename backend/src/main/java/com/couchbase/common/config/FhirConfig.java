@@ -270,7 +270,7 @@ public class FhirConfig {
             return validator;
             
         } catch (Exception e) {
-            logger.error("Failed to configure US Core validator: {}", e.getMessage(), e);
+            logger.error("Failed to configure US Core validator: {}", e.getMessage());
             logger.error("Falling back to basic FHIR validator");         
             // Fallback to basic validator
             return fhirContext.newValidator();

@@ -19,23 +19,64 @@
 #       which has build contexts instead of static image references.
 ###################################################################################################
 
-version: "3.8"
-
 services:
   fhir-server:
     image: ghcr.io/couchbaselabs/couchbase-fhir-ce/fhir-server:${FHIR_BACKEND_TAG:-latest}
+    # Map container process to host UID/GID to improve bind-mount write compatibility.
+    # Override by exporting FHIR_RUN_UID / FHIR_RUN_GID prior to running install.sh.
+    # If unset, defaults (1000:1000) are used which match common non-root IDs.
+    user: "${FHIR_RUN_UID:-1000}:${FHIR_RUN_GID:-1000}"
+    mem_limit: 3g
+    mem_reservation: 2g
     environment:
-      - SPRING_PROFILES_ACTIVE=prod
-      - JAVA_OPTS=-Xms256m -Xmx1024m
-      - DEPLOYED_ENV=container
+      SPRING_PROFILES_ACTIVE: prod
+      DEPLOYED_ENV: container
+      # Tomcat thread pool tuning (tune for your load)
+      SERVER_TOMCAT_THREADS_MAX: 100 # Max threads (was 50, increase for higher concurrency)
+      SERVER_TOMCAT_THREADS_MIN_SPARE: 20 # Minimum idle threads
+      SERVER_TOMCAT_ACCEPT_COUNT: 200 # Queue size when all threads busy
+      SERVER_TOMCAT_MAX_CONNECTIONS: 300 # Max simultaneous connections
+      SERVER_TOMCAT_CONNECTION_TIMEOUT: 20s # Connection timeout
+      SERVER_TOMCAT_MAX_KEEP_ALIVE_REQUESTS: 1000 # Keep-alive requests per connection
+      JAVA_TOOL_OPTIONS: >-
+        -Xms1g
+        -Xmx2g
+        -Xss512k
+        -XX:MaxDirectMemorySize=512m
+        -XX:+UseG1GC
+        -XX:MaxGCPauseMillis=200
+        -XX:+HeapDumpOnOutOfMemoryError
+        -XX:HeapDumpPath=/app/logs/heap.hprof
+        -XX:+ExitOnOutOfMemoryError
+        -Xlog:gc*:file=/app/logs/gc.log:time,uptime,level,tags:filecount=5,filesize=10M
     volumes:
       - ./config.yaml:/config.yaml:ro
+      - ./logs:/app/logs # Added volume mount to access JFR and other log files
+    healthcheck:
+      test:
+        ["CMD-SHELL", "curl -f http://localhost:8080/actuator/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
     expose:
       - "8080" # internal only; not published directly
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
     restart: unless-stopped
 
   fhir-admin:
     image: ghcr.io/couchbaselabs/couchbase-fhir-ce/fhir-admin:${FHIR_FRONTEND_TAG:-latest}
+    environment:
+      NGINX_ENTRYPOINT_QUIET_LOGS: 1
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "1"
     depends_on:
       - fhir-server
     expose:

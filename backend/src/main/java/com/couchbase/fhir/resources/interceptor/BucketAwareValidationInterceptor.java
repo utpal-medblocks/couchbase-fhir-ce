@@ -132,7 +132,7 @@ public class BucketAwareValidationInterceptor {
                 throw e;
             }
             // This shouldn't happen now since we validated the bucket earlier
-            logger.error("🔍 Unexpected error in strict validation for bucket {}: {}", bucketName, e.getMessage(), e);
+            logger.error("🔍 Unexpected error in strict validation for bucket {}: {}", bucketName, e.getMessage());
             throw new ca.uhn.fhir.rest.server.exceptions.InternalErrorException(
                 "Unexpected error during validation for bucket '" + bucketName + "': " + e.getMessage()
             );
@@ -164,9 +164,9 @@ public class BucketAwareValidationInterceptor {
     @Hook(Pointcut.SERVER_HANDLE_EXCEPTION)
     public boolean onException(RequestDetails rd, Throwable e) {
         // Check for null exception to prevent NPE
+        // This can happen when HAPI properly catches and converts exceptions to OperationOutcome
         if (e == null) {
-            logger.warn("🔍 onException called with null exception - this indicates a bug in the exception handling");
-            logger.warn("🔍 Stack trace at point of null exception:", new Exception("Stack trace for debugging"));
+            logger.debug("🔍 onException called with null (exception already handled by HAPI)");
             return true;
         }
         
