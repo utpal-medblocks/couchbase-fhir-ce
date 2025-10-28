@@ -51,7 +51,21 @@ services:
       - fhir-server
     restart: unless-stopped
 
+  auth-server:
+    build:
+      context: ./auth
+    environment:
+      - BETTER_AUTH_URL=http://localhost
+    volumes:
+      - auth_db_data:/app/db
+      - ./config.yaml:/app/config.yaml
+    # expose:
+    #   - 5000
+    # ports:
+    #   - "5000:5000"
+    restart: unless-stopped
+
 volumes:
   couchbase_data: {}
   # haproxy_socket: {}
-  # auth_db_data: {}
+  auth_db_data: {}

@@ -152,18 +152,18 @@ function AppContent() {
       <CssBaseline />
       <ConnectionProvider>
         <Router>
-          {/* <Routes> */}
-            {/* <Route path="/login" element={<Login/>} />
+          <Routes>
+            <Route path="/login" element={<Login/>} />
             <Route path="/authorize" element={<OIDC/>} />
             <Route path="/*" element={
               <MainLayout>
                 <AppRoutes />
               </MainLayout>
-            } /> */}
-            <MainLayout>
+            } />
+            {/* <MainLayout>
               <AppRoutes />
-            </MainLayout>
-          {/* </Routes> */}
+            </MainLayout> */}
+          </Routes>
         </Router>
       </ConnectionProvider>
     </MuiThemeProvider>

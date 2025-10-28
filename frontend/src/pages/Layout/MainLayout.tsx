@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useRef, useState } from "react";
 import { styled, useTheme } from "@mui/material/styles";
 import type { Theme, CSSObject } from "@mui/material/styles";
 import { useNavigate, useLocation } from "react-router-dom";
@@ -40,6 +40,10 @@ import { VscFlame } from "react-icons/vsc";
 import CouchbaseLogo from "../../assets/icons/couchbase.png"; // Uncomment when you add the icon
 import ConnectionStatus from "./ConnectionStatus";
 import { useThemeContext } from "../../contexts/ThemeContext";
+import Popover from "@mui/material/Popover";
+import {Logout} from "@mui/icons-material"
+import { useAuthStore } from '../../store/authStore';
+import { createAuthClient } from "better-auth/react";
 
 const drawerWidth = 200;
 
@@ -131,16 +135,36 @@ interface MainLayoutProps {
   children: React.ReactNode;
 }
 
+const authBaseURL = import.meta.env.VITE_AUTH_SERVER_BASE_URL ? import.meta.env.VITE_AUTH_SERVER_BASE_URL : 'http://localhost'
+
+const authClient = createAuthClient({
+    baseURL: authBaseURL,
+    basePath: "/auth"
+});
+
 export default function MainLayout({ children }: MainLayoutProps) {
   const theme = useTheme();
   const navigate = useNavigate();
   const location = useLocation();
   const { themeMode, toggleTheme } = useThemeContext();
+  const authStore = useAuthStore()
 
   // Local state for UI controls
   const [drawerOpen, setDrawerOpen] = useState(true);
-
   const toggleDrawer = () => setDrawerOpen(!drawerOpen);
+  
+  const [popoverAnchorEl, setPopoverAnchorEl] = useState<HTMLButtonElement | null>(null);
+
+  const handleUserIconClick = (event: React.MouseEvent<HTMLButtonElement>) => {
+    setPopoverAnchorEl(event.currentTarget)
+  }
+
+  const handleClose = () => {
+    setPopoverAnchorEl(null);
+  }
+
+  const popoverOpen = Boolean(popoverAnchorEl)
+  const popoverId = popoverOpen ? 'user-popover' : undefined;
 
   const listItemButtonStyles = {
     minHeight: 48,
@@ -282,9 +306,44 @@ export default function MainLayout({ children }: MainLayoutProps) {
                   outline: "none",
                 },
               }}
+              onClick={handleUserIconClick}
             >
               <BsPersonGear />
             </IconButton>
+            <Popover
+              id={popoverId}
+              open={popoverOpen}
+              anchorEl={popoverAnchorEl}
+              onClose={handleClose}
+              anchorOrigin={{
+                vertical: 'bottom',
+                horizontal: 'right'
+              }}
+            >
+              <List>
+                <ListItem disablePadding>
+                  <ListItemText sx={{ px: 2}} primary={`${authStore.name} (${authStore.email})`}/>
+                </ListItem>
+                <ListItem disablePadding>
+                  <ListItemButton onClick={async (e) => {
+                    authClient.signOut({
+                      fetchOptions: {
+                        onSuccess: () => {
+                          authStore.setAuthInfo(false,'','')
+                          navigate("/login")
+                        }
+                      }
+                    })
+                  }}>
+                    <ListItemIcon>
+                      <Logout/>
+                    </ListItemIcon>
+                    <ListItemText sx={{ ml: -3}} primary="Sign Out"/>
+                  </ListItemButton>
+                </ListItem>
+              </List>
+              {/* <Typography sx={{ p: 2 }}>{authStore.name} ({authStore.email})</Typography> */}
+            </Popover>
           </Box>
         </Toolbar>
       </AppBar>

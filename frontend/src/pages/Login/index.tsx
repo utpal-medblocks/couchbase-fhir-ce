@@ -35,19 +35,20 @@ const Login: React.FC = () => {
 
             if(data) {
 
-                const res = await fetch("http://localhost:5000/auth/token", {
+                const res = await fetch("http://localhost/auth/token", {
                     credentials: 'include'
                 })
 
                 const data_ = await res.json();
 
-                console.log(data_)
+                // console.log(data_)
 
                 authStore.setAuthInfo(true, data_.token, '')
-                console.log("Success Login Response", data);
-                setTimeout(() => {
+                authStore.setNameAndEmail(data.user.name, data.user.email)
+                // console.log("Success Login Response", data);
+                // setTimeout(() => {
                     navigate('/dashboard');
-                }, 1000 * 60)
+                // }, 1000 * 60)
             }
             else {
                 setError(error.message ?? "Login Failed");
