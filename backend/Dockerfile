@@ -1,10 +1,10 @@
-FROM maven:3.9.7-eclipse-temurin-17 AS builder
+FROM maven:3.9.7-eclipse-temurin-21 AS builder
 WORKDIR /app
 COPY . .
 RUN ./mvnw clean package -DskipTests
 RUN ls target/*
 
-FROM eclipse-temurin:17-jre
+FROM eclipse-temurin:21-jre
 WORKDIR /app
 # Install curl for healthchecks
 RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
