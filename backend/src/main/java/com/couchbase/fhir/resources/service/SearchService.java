@@ -46,7 +46,7 @@ public class SearchService {
     private static final int DEFAULT_PAGE_SIZE = 50;  // Up from 20
     private static final int MAX_COUNT_PER_PAGE = 50;  // Max primary resources per page (prevents OOM from heavyweight resources like List)
     private static final int MAX_FTS_FETCH_SIZE = 1000;  // Max doc keys per FTS query
-    private static final int MAX_BUNDLE_SIZE = 100;  // Hard cap on total Bundle resources (50 primaries + 50 secondaries max = ~2MB worst case)
+    private static final int MAX_BUNDLE_SIZE = 1000;  // Hard cap on total Bundle resources (primaries + secondaries combined)
     
     // Fastpath attribute key for storing JSON in request
     public static final String FASTPATH_JSON_ATTRIBUTE = "com.couchbase.fhir.fastpath.json";
@@ -1705,10 +1705,11 @@ public class SearchService {
                    firstPagePrimaryKeys.size());
 
         // Step 3: Fetch ONLY first page primary resources as RAW JSON (no HAPI parsing!)
+        // Use getDocumentsAsJsonWithKeys() to preserve key-to-JSON association for fullUrl
         long primFetchStart = System.currentTimeMillis();
-        List<String> firstPagePrimaryJsonList = batchKvService.getDocumentsAsJson(firstPagePrimaryKeys, primaryResourceType);
-        logger.info("🚀 FASTPATH: Fetched {} primary JSON strings in {} ms", 
-                firstPagePrimaryJsonList.size(), System.currentTimeMillis() - primFetchStart);
+        Map<String, String> primaryKeyToJsonMap = batchKvService.getDocumentsAsJsonWithKeys(firstPagePrimaryKeys, primaryResourceType);
+        logger.info("🚀 FASTPATH: Fetched {} primary JSON strings with keys in {} ms", 
+                primaryKeyToJsonMap.size(), System.currentTimeMillis() - primFetchStart);
 
         // Step 4: Extract _include references (still use HAPI for reference extraction, then discard objects)
         List<Resource> firstPagePrimaryResources = ftsKvSearchService.getDocumentsFromKeys(firstPagePrimaryKeys, primaryResourceType);
@@ -1733,23 +1734,32 @@ public class SearchService {
         logger.info("🚀 FASTPATH: _include extraction complete: {} unique include keys", includeKeys.size());
         
         // Step 5: Fetch include resources as RAW JSON (no HAPI parsing!)
+        // Use getDocumentsAsJsonWithKeys() to preserve key-to-JSON association for fullUrl
         Map<String, List<String>> includeKeysByType = includeKeys.stream()
                 .collect(Collectors.groupingBy(k -> k.substring(0, k.indexOf('/'))));
         
-        List<String> includedJsonList = new ArrayList<>();
+        Map<String, String> includedKeyToJsonMap = new java.util.LinkedHashMap<>();
         for (Map.Entry<String, List<String>> entry : includeKeysByType.entrySet()) {
             String includeType = entry.getKey();
             List<String> keysForType = entry.getValue();
-            logger.debug("🚀 FASTPATH: KV Batch fetching {} {} includes as JSON", keysForType.size(), includeType);
-            List<String> fetchedJson = batchKvService.getDocumentsAsJson(keysForType, includeType);
-            includedJsonList.addAll(fetchedJson);
+            logger.debug("🚀 FASTPATH: KV Batch fetching {} {} includes as JSON with keys", keysForType.size(), includeType);
+            Map<String, String> fetchedMap = batchKvService.getDocumentsAsJsonWithKeys(keysForType, includeType);
+            includedKeyToJsonMap.putAll(fetchedMap);
         }
         
-        logger.info("🚀 FASTPATH: Fetched {} include JSON strings", includedJsonList.size());
+        logger.info("🚀 FASTPATH: Fetched {} include JSON strings with keys", includedKeyToJsonMap.size());
         
         // Step 6: Build Bundle JSON directly (no HAPI parsing!)
         String baseUrl = extractBaseUrl(requestDetails, bucketName);
-        String selfUrl = baseUrl + "/" + primaryResourceType; // TODO: Add query params
+        
+        // Build selfUrl with query parameters
+        StringBuilder selfUrlBuilder = new StringBuilder(baseUrl + "/" + primaryResourceType + "?");
+        selfUrlBuilder.append("_count=").append(count);
+        for (Include include : includes) {
+            selfUrlBuilder.append("&_include=").append(java.net.URLEncoder.encode(include.getValue(), java.nio.charset.StandardCharsets.UTF_8));
+        }
+        String selfUrl = selfUrlBuilder.toString();
+        
         String nextUrl = null;
         if (needsPagination) {
             // Store pagination state (omitted for brevity - would be similar to traditional path)
@@ -1757,19 +1767,19 @@ public class SearchService {
         }
         
         String bundleJson = fastJsonBundleBuilder.buildSearchsetBundle(
-            firstPagePrimaryJsonList,
-            includedJsonList,
+            primaryKeyToJsonMap,
+            includedKeyToJsonMap,
             (int) totalPrimaryCount,
             selfUrl,
             nextUrl,
-            primaryResourceType,
+            baseUrl,
             Instant.now()
         );
 
         logger.info("🚀 FASTPATH: _include COMPLETE: Bundle={} resources ({} primaries + {} includes), total={} primaries", 
-                   firstPagePrimaryJsonList.size() + includedJsonList.size(), 
-                   firstPagePrimaryJsonList.size(), 
-                   includedJsonList.size(),
+                   primaryKeyToJsonMap.size() + includedKeyToJsonMap.size(), 
+                   primaryKeyToJsonMap.size(), 
+                   includedKeyToJsonMap.size(),
                    totalPrimaryCount);
 
         return bundleJson;

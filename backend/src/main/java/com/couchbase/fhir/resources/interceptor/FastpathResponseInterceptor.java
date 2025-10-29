@@ -10,7 +10,6 @@ import org.springframework.stereotype.Component;
 
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
-import java.io.Writer;
 
 @Component
 public class FastpathResponseInterceptor extends InterceptorAdapter {
@@ -33,11 +32,11 @@ public class FastpathResponseInterceptor extends InterceptorAdapter {
                     response.setContentType("application/fhir+json;charset=UTF-8");
                     response.setStatus(HttpServletResponse.SC_OK);
                     
-                    Writer writer = response.getWriter();
-                    writer.write(json);
-                    writer.flush();
+                    // Write plain JSON - let Tomcat handle compression
+                    response.getWriter().write(json);
+                    response.getWriter().flush();
                     
-                    logger.debug("🚀 FASTPATH INTERCEPTOR: Wrote {} bytes directly to response", json.length());
+                    logger.debug("🚀 FASTPATH INTERCEPTOR: Wrote {} bytes to response (Tomcat will compress if enabled)", json.length());
                     
                     return false;
                 }

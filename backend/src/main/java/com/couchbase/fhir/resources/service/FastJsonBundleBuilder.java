@@ -5,7 +5,10 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
-import java.util.List;
+import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
+import java.util.Map;
+import java.util.UUID;
 
 @Service
 public class FastJsonBundleBuilder {
@@ -13,18 +16,18 @@ public class FastJsonBundleBuilder {
     private static final Logger logger = LoggerFactory.getLogger(FastJsonBundleBuilder.class);
     
     public String buildSearchsetBundle(
-            List<String> primaryResourceJsonList,
-            List<String> includedResourceJsonList,
+            Map<String, String> primaryKeyToJsonMap,
+            Map<String, String> includedKeyToJsonMap,
             int totalPrimaries,
             String selfUrl,
             String nextUrl,
-            String primaryResourceType,
+            String baseUrl,
             Instant timestamp) {
         
         long startMs = System.currentTimeMillis();
         
-        int primaryCount = primaryResourceJsonList != null ? primaryResourceJsonList.size() : 0;
-        int includedCount = includedResourceJsonList != null ? includedResourceJsonList.size() : 0;
+        int primaryCount = primaryKeyToJsonMap != null ? primaryKeyToJsonMap.size() : 0;
+        int includedCount = includedKeyToJsonMap != null ? includedKeyToJsonMap.size() : 0;
         int totalEntries = primaryCount + includedCount;
         
         logger.debug("🚀 FASTPATH: Building Bundle with {} primaries + {} includes = {} total entries", 
@@ -33,42 +36,62 @@ public class FastJsonBundleBuilder {
         int estimatedSize = (totalEntries * 2048) + 512;
         StringBuilder json = new StringBuilder(estimatedSize);
         
+        // Generate Bundle ID and format timestamp
+        String bundleId = UUID.randomUUID().toString();
+        String formattedTimestamp = timestamp.atOffset(ZoneOffset.UTC)
+            .format(DateTimeFormatter.ISO_OFFSET_DATE_TIME);
+        
         json.append("{")
             .append("\"resourceType\":\"Bundle\",")
+            .append("\"id\":\"").append(bundleId).append("\",")
+            .append("\"meta\":{\"lastUpdated\":\"").append(formattedTimestamp).append("\"},")
             .append("\"type\":\"searchset\",")
-            .append("\"total\":").append(totalPrimaries).append(",")
-            .append("\"timestamp\":\"").append(timestamp.toString()).append("\",");
+            .append("\"total\":").append(totalPrimaries).append(",");
         
         json.append("\"link\":[");
-        json.append("{\"relation\":\"self\",\"url\":\"").append(escapeJson(selfUrl)).append("\"}");
         if (nextUrl != null) {
-            json.append(",{\"relation\":\"next\",\"url\":\"").append(escapeJson(nextUrl)).append("\"}");
+            json.append("{\"relation\":\"next\",\"url\":\"").append(escapeJson(nextUrl)).append("\"},");
         }
+        json.append("{\"relation\":\"self\",\"url\":\"").append(escapeJson(selfUrl)).append("\"}");
         json.append("],");
         
         json.append("\"entry\":[");
         
+        // Add primary resources (use keys for fullUrl - no parsing needed!)
         if (primaryCount > 0) {
-            for (int i = 0; i < primaryCount; i++) {
-                String resourceJson = primaryResourceJsonList.get(i);
-                json.append("{\"resource\":").append(resourceJson)
+            int i = 0;
+            for (Map.Entry<String, String> entry : primaryKeyToJsonMap.entrySet()) {
+                String key = entry.getKey();  // e.g., "Patient/example-targeted-provenance"
+                String resourceJson = entry.getValue();
+                String fullUrl = baseUrl + "/" + key;
+                
+                json.append("{\"fullUrl\":\"").append(escapeJson(fullUrl)).append("\",")
+                    .append("\"resource\":").append(resourceJson)
                     .append(",\"search\":{\"mode\":\"match\"}}");
                 
                 if (i < primaryCount - 1 || includedCount > 0) {
                     json.append(",");
                 }
+                i++;
             }
         }
         
+        // Add included resources (use keys for fullUrl)
         if (includedCount > 0) {
-            for (int i = 0; i < includedCount; i++) {
-                String resourceJson = includedResourceJsonList.get(i);
-                json.append("{\"resource\":").append(resourceJson)
+            int i = 0;
+            for (Map.Entry<String, String> entry : includedKeyToJsonMap.entrySet()) {
+                String key = entry.getKey();  // e.g., "Practitioner/example"
+                String resourceJson = entry.getValue();
+                String fullUrl = baseUrl + "/" + key;
+                
+                json.append("{\"fullUrl\":\"").append(escapeJson(fullUrl)).append("\",")
+                    .append("\"resource\":").append(resourceJson)
                     .append(",\"search\":{\"mode\":\"include\"}}");
                 
                 if (i < includedCount - 1) {
                     json.append(",");
                 }
+                i++;
             }
         }
         
@@ -82,18 +105,23 @@ public class FastJsonBundleBuilder {
     }
     
     public String buildEmptySearchsetBundle(String selfUrl, Instant timestamp) {
+        String bundleId = UUID.randomUUID().toString();
+        String formattedTimestamp = timestamp.atOffset(ZoneOffset.UTC)
+            .format(DateTimeFormatter.ISO_OFFSET_DATE_TIME);
+        
         return """
             {
               "resourceType": "Bundle",
+              "id": "%s",
+              "meta": {"lastUpdated": "%s"},
               "type": "searchset",
               "total": 0,
-              "timestamp": "%s",
               "link": [
                 {"relation": "self", "url": "%s"}
               ],
               "entry": []
             }
-            """.formatted(timestamp.toString(), escapeJson(selfUrl));
+            """.formatted(bundleId, formattedTimestamp, escapeJson(selfUrl));
     }
     
     private String escapeJson(String input) {

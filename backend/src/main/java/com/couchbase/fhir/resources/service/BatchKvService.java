@@ -17,7 +17,9 @@ import org.springframework.stereotype.Service;
 
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 
@@ -167,6 +169,57 @@ public class BatchKvService {
             
             logger.debug("🔑 Retrieved {}/{} JSON documents", jsonResults.size(), documentKeys.size());
             return jsonResults;
+            
+        } catch (Exception e) {
+            logger.error("❌ Batch KV JSON retrieval failed for {}: {}", resourceType, e.getMessage());
+            throw new RuntimeException("Batch KV JSON retrieval failed: " + e.getMessage(), e);
+        }
+    }
+    
+    /**
+     * Get documents as JSON with their keys preserved (for building fullUrl in bundles)
+     * Returns a Map of key -> JSON to preserve association
+     */
+    public Map<String, String> getDocumentsAsJsonWithKeys(List<String> documentKeys, String resourceType) {
+        if (documentKeys == null || documentKeys.isEmpty()) {
+            return new LinkedHashMap<>();
+        }
+        
+        String bucketName = TenantContextHolder.getTenantId();
+        
+        logger.debug("🔑 Batch KV retrieval with keys (raw JSON): {} documents for {}", documentKeys.size(), resourceType);
+        
+        try {
+            String targetCollection = collectionRoutingService.getTargetCollection(resourceType);
+            Collection collection = couchbaseGateway.getCollection("default", bucketName, DEFAULT_SCOPE, targetCollection);
+            
+            List<CompletableFuture<GetResult>> futures = new ArrayList<>();
+            
+            for (String documentKey : documentKeys) {
+                CompletableFuture<GetResult> future = collection.async().get(documentKey,
+                    GetOptions.getOptions().timeout(Duration.ofSeconds(10)));
+                futures.add(future);
+            }
+            
+            // Preserve key-to-JSON association using LinkedHashMap (maintains insertion order)
+            Map<String, String> keyToJsonMap = new LinkedHashMap<>();
+            
+            for (int i = 0; i < futures.size(); i++) {
+                String key = documentKeys.get(i);
+                try {
+                    GetResult result = futures.get(i).get(10, TimeUnit.SECONDS);
+                    if (result != null) {
+                        String json = result.contentAsObject().toString();
+                        keyToJsonMap.put(key, json);
+                    }
+                } catch (Exception e) {
+                    logger.warn("🔑 Failed to retrieve document {}: {}", key, e.getMessage());
+                    // Don't add to map if retrieval failed
+                }
+            }
+            
+            logger.debug("🔑 Retrieved {}/{} JSON documents with keys", keyToJsonMap.size(), documentKeys.size());
+            return keyToJsonMap;
             
         } catch (Exception e) {
             logger.error("❌ Batch KV JSON retrieval failed for {}: {}", resourceType, e.getMessage());
