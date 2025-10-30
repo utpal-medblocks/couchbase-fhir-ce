@@ -54,7 +54,7 @@ public class FhirResourceDaoImpl<T extends IBaseResource> implements  FhirResour
             String documentKey = resourceType + "/" + id;
             String targetCollection = collectionRoutingService.getTargetCollection(resourceType);
             
-            logger.info("KV GET: bucket={}, collection={}, key={}", bucketName, targetCollection, documentKey);
+            logger.debug("KV GET: bucket={}, collection={}, key={}", bucketName, targetCollection, documentKey);
             
             // Get the collection and perform direct KV get
             com.couchbase.client.java.Collection collection = cluster.bucket(bucketName)
@@ -97,7 +97,7 @@ public class FhirResourceDaoImpl<T extends IBaseResource> implements  FhirResour
                     .scope(DEFAULT_SCOPE)
                     .collection(targetCollection);
             
-            logger.info("KV BULK GET: bucket={}, collection={}, {} documents", bucketName, targetCollection, ids.size());
+            logger.debug("KV BULK GET: bucket={}, collection={}, {} documents", bucketName, targetCollection, ids.size());
             
             // Perform individual KV gets (Couchbase doesn't have bulk get in sync API)
             for (String id : ids) {
@@ -143,7 +143,7 @@ public class FhirResourceDaoImpl<T extends IBaseResource> implements  FhirResour
             String resourceJson = fhirContext.newJsonParser().encodeResourceToString(resource);
             String targetCollection = collectionRoutingService.getTargetCollection(resourceType);
             
-            logger.info("KV INSERT: bucket={}, collection={}, key={}", bucketName, targetCollection, documentKey);
+            logger.debug("KV INSERT: bucket={}, collection={}, key={}", bucketName, targetCollection, documentKey);
             
             // Get the collection and perform direct KV insert
             com.couchbase.client.java.Collection collection = cluster.bucket(bucketName)
