@@ -19,12 +19,17 @@ public class FastJsonBundleBuilder {
     private static final Logger logger = LoggerFactory.getLogger(FastJsonBundleBuilder.class);
     
     /**
-     * Build FHIR Bundle as UTF-8 bytes (not String) for 2x memory savings
-     * Uses ByteArrayOutputStream instead of StringBuilder to avoid UTF-16 overhead
+     * Build FHIR Bundle as UTF-8 bytes with ZERO-COPY optimization
+     * Accepts raw byte[] JSON from Couchbase KV (no String conversion needed!)
+     * 
+     * Memory savings:
+     * - No JsonObject creation (from Couchbase SDK)
+     * - No String creation (UTF-16 → UTF-8)
+     * - Just byte array copying (fastest possible)
      */
     public byte[] buildSearchsetBundle(
-            Map<String, String> primaryKeyToJsonMap,
-            Map<String, String> includedKeyToJsonMap,
+            Map<String, byte[]> primaryKeyToBytesMap,
+            Map<String, byte[]> includedKeyToBytesMap,
             int totalPrimaries,
             String selfUrl,
             String nextUrl,
@@ -34,8 +39,8 @@ public class FastJsonBundleBuilder {
         
         long startMs = System.currentTimeMillis();
         
-        int primaryCount = primaryKeyToJsonMap != null ? primaryKeyToJsonMap.size() : 0;
-        int includedCount = includedKeyToJsonMap != null ? includedKeyToJsonMap.size() : 0;
+        int primaryCount = primaryKeyToBytesMap != null ? primaryKeyToBytesMap.size() : 0;
+        int includedCount = includedKeyToBytesMap != null ? includedKeyToBytesMap.size() : 0;
         int totalEntries = primaryCount + includedCount;
         
         logger.debug("🚀 FASTPATH: Building Bundle with {} primaries + {} includes = {} total entries", 
@@ -74,17 +79,17 @@ public class FastJsonBundleBuilder {
             
             write(baos, "\"entry\":[");
         
-            // Add primary resources (use keys for fullUrl - no parsing needed!)
+            // Add primary resources (ZERO-COPY: write raw bytes directly!)
             if (primaryCount > 0) {
                 int i = 0;
-                for (Map.Entry<String, String> entry : primaryKeyToJsonMap.entrySet()) {
+                for (Map.Entry<String, byte[]> entry : primaryKeyToBytesMap.entrySet()) {
                     String key = entry.getKey();  // e.g., "Patient/example-targeted-provenance"
-                    String resourceJson = entry.getValue();
+                    byte[] resourceBytes = entry.getValue();  // Raw JSON bytes from Couchbase!
                     String fullUrl = baseUrl + "/" + key;
                     
                     write(baos, "{\"fullUrl\":\"" + escapeJson(fullUrl) + "\",");
                     write(baos, "\"resource\":");
-                    write(baos, resourceJson);
+                    baos.write(resourceBytes);  // ZERO-COPY: Write bytes directly!
                     write(baos, ",\"search\":{\"mode\":\"match\"}}");
                     
                     if (i < primaryCount - 1 || includedCount > 0) {
@@ -94,17 +99,17 @@ public class FastJsonBundleBuilder {
                 }
             }
             
-            // Add included resources (use keys for fullUrl)
+            // Add included resources (ZERO-COPY: write raw bytes directly!)
             if (includedCount > 0) {
                 int i = 0;
-                for (Map.Entry<String, String> entry : includedKeyToJsonMap.entrySet()) {
+                for (Map.Entry<String, byte[]> entry : includedKeyToBytesMap.entrySet()) {
                     String key = entry.getKey();  // e.g., "Practitioner/example"
-                    String resourceJson = entry.getValue();
+                    byte[] resourceBytes = entry.getValue();  // Raw JSON bytes from Couchbase!
                     String fullUrl = baseUrl + "/" + key;
                     
                     write(baos, "{\"fullUrl\":\"" + escapeJson(fullUrl) + "\",");
                     write(baos, "\"resource\":");
-                    write(baos, resourceJson);
+                    baos.write(resourceBytes);  // ZERO-COPY: Write bytes directly!
                     write(baos, ",\"search\":{\"mode\":\"include\"}}");
                     
                     if (i < includedCount - 1) {

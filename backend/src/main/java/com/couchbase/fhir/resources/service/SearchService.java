@@ -1860,12 +1860,11 @@ public class SearchService {
                    needsPagination ? "PAGINATION NEEDED" : "NO PAGINATION", 
                    firstPagePrimaryKeys.size());
 
-        // Step 3: Fetch ONLY first page primary resources as RAW JSON (no HAPI parsing!)
-        // Use getDocumentsAsJsonWithKeys() to preserve key-to-JSON association for fullUrl
+        // Step 3: Fetch ONLY first page primary resources as RAW BYTES (ZERO-COPY from Couchbase!)
         long primFetchStart = System.currentTimeMillis();
-        Map<String, String> primaryKeyToJsonMap = batchKvService.getDocumentsAsJsonWithKeys(firstPagePrimaryKeys, primaryResourceType);
-        logger.info("🚀 FASTPATH: Fetched {} primary JSON strings with keys in {} ms", 
-                primaryKeyToJsonMap.size(), System.currentTimeMillis() - primFetchStart);
+        Map<String, byte[]> primaryKeyToBytesMap = batchKvService.getDocumentsAsBytesWithKeys(firstPagePrimaryKeys, primaryResourceType);
+        logger.info("🚀 FASTPATH: Fetched {} primary resources as raw bytes with keys in {} ms", 
+                primaryKeyToBytesMap.size(), System.currentTimeMillis() - primFetchStart);
 
         // Step 4: Extract _include references (still use HAPI for reference extraction, then discard objects)
         List<Resource> firstPagePrimaryResources = ftsKvSearchService.getDocumentsFromKeys(firstPagePrimaryKeys, primaryResourceType);
@@ -1889,21 +1888,20 @@ public class SearchService {
 
         logger.info("🚀 FASTPATH: _include extraction complete: {} unique include keys", includeKeys.size());
         
-        // Step 5: Fetch include resources as RAW JSON (no HAPI parsing!)
-        // Use getDocumentsAsJsonWithKeys() to preserve key-to-JSON association for fullUrl
+        // Step 5: Fetch include resources as RAW BYTES (ZERO-COPY from Couchbase!)
         Map<String, List<String>> includeKeysByType = includeKeys.stream()
                 .collect(Collectors.groupingBy(k -> k.substring(0, k.indexOf('/'))));
         
-        Map<String, String> includedKeyToJsonMap = new java.util.LinkedHashMap<>();
+        Map<String, byte[]> includedKeyToBytesMap = new java.util.LinkedHashMap<>();
         for (Map.Entry<String, List<String>> entry : includeKeysByType.entrySet()) {
             String includeType = entry.getKey();
             List<String> keysForType = entry.getValue();
-            logger.debug("🚀 FASTPATH: KV Batch fetching {} {} includes as JSON with keys", keysForType.size(), includeType);
-            Map<String, String> fetchedMap = batchKvService.getDocumentsAsJsonWithKeys(keysForType, includeType);
-            includedKeyToJsonMap.putAll(fetchedMap);
+            logger.debug("🚀 FASTPATH: KV Batch fetching {} {} includes as raw bytes with keys", keysForType.size(), includeType);
+            Map<String, byte[]> fetchedMap = batchKvService.getDocumentsAsBytesWithKeys(keysForType, includeType);
+            includedKeyToBytesMap.putAll(fetchedMap);
         }
         
-        logger.info("🚀 FASTPATH: Fetched {} include JSON strings with keys", includedKeyToJsonMap.size());
+        logger.info("🚀 FASTPATH: Fetched {} include resources as raw bytes with keys", includedKeyToBytesMap.size());
         
         // Step 6: Build Bundle JSON directly (no HAPI parsing!)
         String baseUrl = extractBaseUrl(requestDetails, bucketName);
@@ -1948,8 +1946,8 @@ public class SearchService {
         }
         
         byte[] bundleBytes = fastJsonBundleBuilder.buildSearchsetBundle(
-            primaryKeyToJsonMap,
-            includedKeyToJsonMap,
+            primaryKeyToBytesMap,
+            includedKeyToBytesMap,
             (int) totalPrimaryCount,
             selfUrl,
             nextUrl,
@@ -1959,9 +1957,9 @@ public class SearchService {
         );
 
         logger.info("🚀 FASTPATH: _include COMPLETE: Bundle={} resources ({} primaries + {} includes), total={} primaries", 
-                   primaryKeyToJsonMap.size() + includedKeyToJsonMap.size(), 
-                   primaryKeyToJsonMap.size(), 
-                   includedKeyToJsonMap.size(),
+                   primaryKeyToBytesMap.size() + includedKeyToBytesMap.size(), 
+                   primaryKeyToBytesMap.size(), 
+                   includedKeyToBytesMap.size(),
                    totalPrimaryCount);
 
         return bundleBytes;
@@ -1998,12 +1996,12 @@ public class SearchService {
         logger.info("🚀 FASTPATH: FTS returned {} keys (pagination: {}), actualTotal={}", 
                    allPrimaryKeys.size(), needsPagination ? "YES" : "NO", actualTotalCount);
         
-        // Step 3: Fetch ONLY first page resources as RAW JSON (no HAPI parsing!)
+        // Step 3: Fetch ONLY first page resources as RAW BYTES (ZERO-COPY from Couchbase!)
         long fetchStart = System.currentTimeMillis();
-        Map<String, String> primaryKeyToJsonMap = batchKvService.getDocumentsAsJsonWithKeys(
+        Map<String, byte[]> primaryKeyToBytesMap = batchKvService.getDocumentsAsBytesWithKeys(
             firstPagePrimaryKeys, primaryResourceType);
-        logger.info("🚀 FASTPATH: Fetched {} JSON strings with keys in {} ms", 
-                   primaryKeyToJsonMap.size(), System.currentTimeMillis() - fetchStart);
+        logger.info("🚀 FASTPATH: Fetched {} resources as raw bytes with keys in {} ms", 
+                   primaryKeyToBytesMap.size(), System.currentTimeMillis() - fetchStart);
         
         // Step 4: Build Bundle JSON directly (no HAPI!)
         String baseUrl = extractBaseUrl(requestDetails, bucketName);
@@ -2042,7 +2040,7 @@ public class SearchService {
         
         // Build bundle with NO includes (empty map) as UTF-8 bytes
         byte[] bundleBytes = fastJsonBundleBuilder.buildSearchsetBundle(
-            primaryKeyToJsonMap,
+            primaryKeyToBytesMap,
             new java.util.LinkedHashMap<>(),  // No includes for regular search
             (int) actualTotalCount,  // Always use accurate total from FTS
             selfUrl,
@@ -2053,7 +2051,7 @@ public class SearchService {
         );
         
         logger.info("🚀 FASTPATH: Regular search COMPLETE: Bundle={} resources, total={}", 
-                   primaryKeyToJsonMap.size(), actualTotalCount);
+                   primaryKeyToBytesMap.size(), actualTotalCount);
         
         return bundleBytes;
     }
@@ -2073,8 +2071,8 @@ public class SearchService {
         // Use stored total count (from first page)
         int totalCount = state.getPrimaryResourceCount();
         
-        // Fetch as raw JSON with keys
-        Map<String, String> primaryKeyToJsonMap = batchKvService.getDocumentsAsJsonWithKeys(
+        // Fetch as raw bytes (ZERO-COPY from Couchbase!)
+        Map<String, byte[]> primaryKeyToBytesMap = batchKvService.getDocumentsAsBytesWithKeys(
             primaryKeys, primaryResourceType);
         
         String baseUrl = state.getBaseUrl();
@@ -2099,7 +2097,7 @@ public class SearchService {
         
         // Build JSON bundle as UTF-8 bytes
         byte[] bundleBytes = fastJsonBundleBuilder.buildSearchsetBundle(
-            primaryKeyToJsonMap,
+            primaryKeyToBytesMap,
             new java.util.LinkedHashMap<>(),  // No includes for regular search
             totalCount,  // Use stored total from first page
             selfUrl,
@@ -2110,7 +2108,7 @@ public class SearchService {
         );
         
         logger.info("🚀 FASTPATH: Continuation COMPLETE - {} resources, total={}, hasMore={}", 
-                   primaryKeyToJsonMap.size(), totalCount, hasMorePages);
+                   primaryKeyToBytesMap.size(), totalCount, hasMorePages);
         
         // Store UTF-8 bytes in request attribute for interceptor (2x memory savings vs String)
         requestDetails.getUserData().put(FASTPATH_BYTES_ATTRIBUTE, bundleBytes);
@@ -2136,12 +2134,12 @@ public class SearchService {
         // Use stored total count (from first page)
         int totalCount = state.getPrimaryResourceCount();
         
-        // Fetch primaries as raw JSON with keys
-        Map<String, String> primaryKeyToJsonMap = batchKvService.getDocumentsAsJsonWithKeys(
+        // Fetch primaries as raw bytes (ZERO-COPY from Couchbase!)
+        Map<String, byte[]> primaryKeyToBytesMap = batchKvService.getDocumentsAsBytesWithKeys(
             primaryKeys, primaryResourceType);
         
         // Check for _include parameters
-        Map<String, String> includedKeyToJsonMap = new java.util.LinkedHashMap<>();
+        Map<String, byte[]> includedKeyToBytesMap = new java.util.LinkedHashMap<>();
         List<String> includeParamsList = state.getIncludeParamsList();
         
         if (includeParamsList != null && !includeParamsList.isEmpty()) {
@@ -2174,12 +2172,12 @@ public class SearchService {
                 for (Map.Entry<String, List<String>> entry : includeKeysByType.entrySet()) {
                     String includeType = entry.getKey();
                     List<String> keysForType = entry.getValue();
-                    Map<String, String> fetchedMap = batchKvService.getDocumentsAsJsonWithKeys(
+                    Map<String, byte[]> fetchedMap = batchKvService.getDocumentsAsBytesWithKeys(
                         keysForType, includeType);
-                    includedKeyToJsonMap.putAll(fetchedMap);
+                    includedKeyToBytesMap.putAll(fetchedMap);
                 }
                 
-                logger.info("🚀 FASTPATH: Fetched {} included JSON strings with keys", includedKeyToJsonMap.size());
+                logger.info("🚀 FASTPATH: Fetched {} included resources as raw bytes with keys", includedKeyToBytesMap.size());
             }
         }
         
@@ -2205,8 +2203,8 @@ public class SearchService {
         
         // Build JSON bundle as UTF-8 bytes
         byte[] bundleBytes = fastJsonBundleBuilder.buildSearchsetBundle(
-            primaryKeyToJsonMap,
-            includedKeyToJsonMap,
+            primaryKeyToBytesMap,
+            includedKeyToBytesMap,
             totalCount,  // Use stored total from first page
             selfUrl,
             nextUrl,
@@ -2216,9 +2214,9 @@ public class SearchService {
         );
         
         logger.info("🚀 FASTPATH: Chain continuation COMPLETE - {} resources ({} primaries + {} includes), total={}, hasMore={}", 
-                   primaryKeyToJsonMap.size() + includedKeyToJsonMap.size(),
-                   primaryKeyToJsonMap.size(),
-                   includedKeyToJsonMap.size(),
+                   primaryKeyToBytesMap.size() + includedKeyToBytesMap.size(),
+                   primaryKeyToBytesMap.size(),
+                   includedKeyToBytesMap.size(),
                    totalCount, hasMorePages);
         
         // Store UTF-8 bytes in request attribute for interceptor (2x memory savings vs String)
@@ -2274,7 +2272,7 @@ public class SearchService {
         List<String> primaryResourceReferences = new ArrayList<>(firstPagePrimaryKeys);
         
         // Step 4: Fetch SECONDARIES for EACH _revinclude parameter (respecting bundle cap)
-        Map<String, String> allSecondaryKeyToJsonMap = new java.util.LinkedHashMap<>();
+        Map<String, byte[]> allSecondaryKeyToBytesMap = new java.util.LinkedHashMap<>();
         int currentBundleSize = firstPagePrimaryKeys.size();
         
         for (Include revInclude : revIncludes) {
@@ -2309,23 +2307,23 @@ public class SearchService {
                 logger.info("🚀 FASTPATH: SECONDARY FTS ({}) returned {} keys", 
                            revIncludeResourceType, secondaryKeys.size());
                 
-                // Fetch secondaries as JSON with keys
-                Map<String, String> secondaryMap = batchKvService.getDocumentsAsJsonWithKeys(
+                // Fetch secondaries as raw bytes (ZERO-COPY from Couchbase!)
+                Map<String, byte[]> secondaryMap = batchKvService.getDocumentsAsBytesWithKeys(
                     secondaryKeys, revIncludeResourceType);
-                allSecondaryKeyToJsonMap.putAll(secondaryMap);
+                allSecondaryKeyToBytesMap.putAll(secondaryMap);
                 currentBundleSize += secondaryMap.size();
             }
         }
         
         logger.info("🚀 FASTPATH: First page composition: {} primaries + {} secondaries = {} total", 
-                   firstPagePrimaryKeys.size(), allSecondaryKeyToJsonMap.size(), currentBundleSize);
+                   firstPagePrimaryKeys.size(), allSecondaryKeyToBytesMap.size(), currentBundleSize);
         
-        // Step 5: Fetch primary resources as JSON with keys
+        // Step 5: Fetch primary resources as raw bytes (ZERO-COPY from Couchbase!)
         long primFetchStart = System.currentTimeMillis();
-        Map<String, String> primaryKeyToJsonMap = batchKvService.getDocumentsAsJsonWithKeys(
+        Map<String, byte[]> primaryKeyToBytesMap = batchKvService.getDocumentsAsBytesWithKeys(
             firstPagePrimaryKeys, primaryResourceType);
-        logger.info("🚀 FASTPATH: Fetched {} primary JSON strings with keys in {} ms", 
-                   primaryKeyToJsonMap.size(), System.currentTimeMillis() - primFetchStart);
+        logger.info("🚀 FASTPATH: Fetched {} primary resources as raw bytes with keys in {} ms", 
+                   primaryKeyToBytesMap.size(), System.currentTimeMillis() - primFetchStart);
         
         // Step 6: Build Bundle JSON directly
         String baseUrl = extractBaseUrl(requestDetails, bucketName);
@@ -2370,8 +2368,8 @@ public class SearchService {
         }
         
         byte[] bundleBytes = fastJsonBundleBuilder.buildSearchsetBundle(
-            primaryKeyToJsonMap,
-            allSecondaryKeyToJsonMap,
+            primaryKeyToBytesMap,
+            allSecondaryKeyToBytesMap,
             (int) totalPrimaryCount,
             selfUrl,
             nextUrl,
@@ -2381,9 +2379,9 @@ public class SearchService {
         );
         
         logger.info("🚀 FASTPATH: _revinclude COMPLETE: Bundle={} resources ({} primaries + {} secondaries), total={} primaries", 
-                   primaryKeyToJsonMap.size() + allSecondaryKeyToJsonMap.size(), 
-                   primaryKeyToJsonMap.size(), 
-                   allSecondaryKeyToJsonMap.size(),
+                   primaryKeyToBytesMap.size() + allSecondaryKeyToBytesMap.size(), 
+                   primaryKeyToBytesMap.size(), 
+                   allSecondaryKeyToBytesMap.size(),
                    totalPrimaryCount);
         
         return bundleBytes;
@@ -2613,15 +2611,15 @@ public class SearchService {
         // Step 2: Get keys for first page
         List<String> firstPageKeys = needsPagination ? allPrimaryKeys.subList(0, count) : allPrimaryKeys;
         
-        // Step 3: Fetch primary resources as RAW JSON with keys
+        // Step 3: Fetch primary resources as RAW BYTES (ZERO-COPY from Couchbase!)
         long primFetchStart = System.currentTimeMillis();
-        Map<String, String> primaryKeyToJsonMap = batchKvService.getDocumentsAsJsonWithKeys(
+        Map<String, byte[]> primaryKeyToBytesMap = batchKvService.getDocumentsAsBytesWithKeys(
             firstPageKeys, primaryResourceType);
-        logger.info("🚀 FASTPATH: Fetched {} primary JSON strings with keys in {} ms", 
-                   primaryKeyToJsonMap.size(), System.currentTimeMillis() - primFetchStart);
+        logger.info("🚀 FASTPATH: Fetched {} primary resources as raw bytes with keys in {} ms", 
+                   primaryKeyToBytesMap.size(), System.currentTimeMillis() - primFetchStart);
         
-        // Step 4: Process _include parameters (if any) - fetch as RAW JSON
-        Map<String, String> includedKeyToJsonMap = new java.util.LinkedHashMap<>();
+        // Step 4: Process _include parameters (if any) - fetch as RAW BYTES
+        Map<String, byte[]> includedKeyToBytesMap = new java.util.LinkedHashMap<>();
         
         if (!includes.isEmpty()) {
             logger.info("🚀 FASTPATH: Processing {} _include parameters", includes.size());
@@ -2651,12 +2649,12 @@ public class SearchService {
                 for (Map.Entry<String, List<String>> entry : includeKeysByType.entrySet()) {
                     String includeResourceType = entry.getKey();
                     List<String> keysForType = entry.getValue();
-                    Map<String, String> fetchedMap = batchKvService.getDocumentsAsJsonWithKeys(
+                    Map<String, byte[]> fetchedMap = batchKvService.getDocumentsAsBytesWithKeys(
                         keysForType, includeResourceType);
-                    includedKeyToJsonMap.putAll(fetchedMap);
+                    includedKeyToBytesMap.putAll(fetchedMap);
                 }
                 
-                logger.info("🚀 FASTPATH: Fetched {} included JSON strings with keys", includedKeyToJsonMap.size());
+                logger.info("🚀 FASTPATH: Fetched {} included resources as raw bytes with keys", includedKeyToBytesMap.size());
             }
         }
         
@@ -2704,8 +2702,8 @@ public class SearchService {
         }
         
         byte[] bundleBytes = fastJsonBundleBuilder.buildSearchsetBundle(
-            primaryKeyToJsonMap,
-            includedKeyToJsonMap,
+            primaryKeyToBytesMap,
+            includedKeyToBytesMap,
             (int) totalCount,
             selfUrl,
             nextUrl,
@@ -2715,9 +2713,9 @@ public class SearchService {
         );
         
         logger.info("🚀 FASTPATH: Chain search COMPLETE: Bundle={} resources ({} primaries + {} includes), total={}, pagination={}", 
-                   primaryKeyToJsonMap.size() + includedKeyToJsonMap.size(), 
-                   primaryKeyToJsonMap.size(), 
-                   includedKeyToJsonMap.size(),
+                   primaryKeyToBytesMap.size() + includedKeyToBytesMap.size(), 
+                   primaryKeyToBytesMap.size(), 
+                   includedKeyToBytesMap.size(),
                    totalCount,
                    needsPagination ? "YES" : "NO");
         

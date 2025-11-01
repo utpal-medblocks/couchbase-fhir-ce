@@ -228,6 +228,60 @@ public class BatchKvService {
     }
     
     /**
+     * Get documents as raw UTF-8 bytes with their keys preserved (for fastpath zero-copy assembly)
+     * Returns a Map of key -> byte[] to preserve association
+     * 
+     * FASTPATH OPTIMIZATION: Skips JsonObject and String creation for 2x memory savings
+     */
+    public Map<String, byte[]> getDocumentsAsBytesWithKeys(List<String> documentKeys, String resourceType) {
+        if (documentKeys == null || documentKeys.isEmpty()) {
+            return new LinkedHashMap<>();
+        }
+        
+        String bucketName = TenantContextHolder.getTenantId();
+        
+        logger.debug("🚀 FASTPATH: Batch KV retrieval with keys (raw bytes): {} documents for {}", documentKeys.size(), resourceType);
+        
+        try {
+            String targetCollection = collectionRoutingService.getTargetCollection(resourceType);
+            Collection collection = couchbaseGateway.getCollection("default", bucketName, DEFAULT_SCOPE, targetCollection);
+            
+            List<CompletableFuture<GetResult>> futures = new ArrayList<>();
+            
+            for (String documentKey : documentKeys) {
+                CompletableFuture<GetResult> future = collection.async().get(documentKey,
+                    GetOptions.getOptions().timeout(Duration.ofSeconds(10)));
+                futures.add(future);
+            }
+            
+            // Preserve key-to-bytes association using LinkedHashMap (maintains insertion order)
+            Map<String, byte[]> keyToBytesMap = new LinkedHashMap<>();
+            
+            for (int i = 0; i < futures.size(); i++) {
+                String key = documentKeys.get(i);
+                try {
+                    GetResult result = futures.get(i).get(10, TimeUnit.SECONDS);
+                    if (result != null) {
+                        // Get raw bytes directly from Couchbase (no JsonObject, no String conversion!)
+                        byte[] jsonBytes = result.contentAs(byte[].class);
+                        keyToBytesMap.put(key, jsonBytes);
+                    }
+                } catch (Exception e) {
+                    logger.warn("🔑 Failed to retrieve document {}: {}", key, e.getMessage());
+                    // Don't add to map if retrieval failed
+                }
+            }
+            
+            logger.debug("🚀 FASTPATH: Retrieved {}/{} documents as raw bytes with keys", keyToBytesMap.size(), documentKeys.size());
+            return keyToBytesMap;
+            
+        } catch (Exception e) {
+            logger.error("❌ Batch KV bytes retrieval failed for {}: {}", resourceType, e.getMessage());
+            throw new RuntimeException("Batch KV bytes retrieval failed: " + e.getMessage(), e);
+        }
+    }
+    
+    /**
      * Check if documents exist (without retrieving content)
      * Useful for validation operations
      * 
