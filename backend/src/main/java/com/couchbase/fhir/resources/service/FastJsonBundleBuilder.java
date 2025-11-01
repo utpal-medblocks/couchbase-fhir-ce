@@ -21,6 +21,7 @@ public class FastJsonBundleBuilder {
             int totalPrimaries,
             String selfUrl,
             String nextUrl,
+            String previousUrl,
             String baseUrl,
             Instant timestamp) {
         
@@ -48,11 +49,18 @@ public class FastJsonBundleBuilder {
             .append("\"type\":\"searchset\",")
             .append("\"total\":").append(totalPrimaries).append(",");
         
+        // Build links in order: self, next, previous (FHIR standard)
         json.append("\"link\":[");
-        if (nextUrl != null) {
-            json.append("{\"relation\":\"next\",\"url\":\"").append(escapeJson(nextUrl)).append("\"},");
-        }
         json.append("{\"relation\":\"self\",\"url\":\"").append(escapeJson(selfUrl)).append("\"}");
+        
+        if (nextUrl != null) {
+            json.append(",{\"relation\":\"next\",\"url\":\"").append(escapeJson(nextUrl)).append("\"}");
+        }
+        
+        if (previousUrl != null) {
+            json.append(",{\"relation\":\"previous\",\"url\":\"").append(escapeJson(previousUrl)).append("\"}");
+        }
+        
         json.append("],");
         
         json.append("\"entry\":[");

@@ -790,12 +790,19 @@ public class SearchService {
                     results.size(), 0, bundle.getEntry().size());
         }
         
+        // Add self link
+        bundle.addLink()
+                .setRelation("self")
+                .setUrl(baseUrl + "/" + resourceType);
+        
         // Add next link if pagination is needed
         if (continuationToken != null && needsPagination) {
             bundle.addLink()
                     .setRelation("next")
                     .setUrl(buildNextPageUrl(continuationToken, pageSize, resourceType, bucketName, pageSize, baseUrl));
         }
+        
+        // Note: No previous link on first page (offset=0)
         
         logger.info("🚀 New Pagination: Returning {} results, total: {}, pagination: {}", 
                    results.size(), totalCount, needsPagination ? "YES" : "NO");
@@ -933,6 +940,19 @@ public class SearchService {
                     matchCount, includeCount, bundle.getEntry().size());
         }
         
+        // Add self link
+        bundle.addLink()
+                .setRelation("self")
+                .setUrl(buildNextPageUrl(continuationToken, offset, resourceType, bucketName, pageSize, baseUrl));
+        
+        // Add previous link if not on first page
+        if (offset > 0) {
+            int prevOffset = Math.max(0, offset - pageSize);
+            bundle.addLink()
+                    .setRelation("previous")
+                    .setUrl(buildPreviousPageUrl(continuationToken, prevOffset, resourceType, bucketName, pageSize, baseUrl));
+        }
+        
         // Add next link if more results available
         if (hasMoreResults) {
             bundle.addLink()
@@ -954,12 +974,17 @@ public class SearchService {
     /**
      * Handle query-based pagination (NEW approach) - Re-execute FTS query for each page.
      * This method supports _revinclude, _include, and regular searches.
+     * Supports both HAPI and fastpath rendering.
      */
     private Bundle handleQueryBasedPagination(String continuationToken, PaginationState state, int offset, int count,
                                              SummaryEnum summaryMode, Set<String> elements,
                                              RequestDetails requestDetails) {
-        logger.info("🔍 DEBUG: handleQueryBasedPagination ENTERED");
-        logger.info("🔍 DEBUG: state={}, offset={}, count={}", state != null ? "EXISTS" : "NULL", offset, count);
+        logger.info("🔍 Continuation page: offset={}, count={}, searchType={}", offset, count, state.getSearchType());
+        
+        // Check if fastpath is enabled (beta: no _summary/_elements support)
+        boolean useFastpath = fastpathProperties.isEnabled() && 
+                              (summaryMode == null || summaryMode == SummaryEnum.FALSE) && 
+                              (elements == null || elements.isEmpty());
         
         String searchType = state.getSearchType();
         String primaryResourceType = state.getResourceType();
@@ -980,22 +1005,27 @@ public class SearchService {
         // For now, use matchAll (works for initial testing)
         // primaryQueries is empty, will use matchAll in buildCombinedSearchQuery
         
-        // Step 2: Re-execute FTS for primaries with updated offset
+        // Step 2: Re-execute FTS for primaries with updated offset (fetch count+1 for pagination detection)
         List<SearchSort> sortFields = deserializeSortFields(state.getSortFieldsJson());
         
         FtsSearchService.FtsSearchResult primaryResult = ftsSearchService.searchForKeys(
-            primaryQueries, primaryResourceType, offset, pageSize, sortFields);
+            primaryQueries, primaryResourceType, offset, pageSize + 1, sortFields);  // +1 for pagination detection
         
         List<String> primaryKeys = primaryResult.getDocumentKeys();
-        logger.info("🚀 FTS re-execution returned {} primary keys", primaryKeys.size());
+        logger.info("🚀 FTS re-execution returned {} primary keys (requested {}+1 for pagination detection)", 
+                   primaryKeys.size(), pageSize);
         
         if (primaryKeys.isEmpty()) {
             logger.info("🚀 No more primaries at offset={}", offset);
             return createEmptyBundle();
         }
         
-        // Step 3: Fetch primary resources
-        List<Resource> primaryResources = ftsKvSearchService.getDocumentsFromKeys(primaryKeys, primaryResourceType);
+        // Step 3: Detect pagination and get keys for this page
+        boolean hasMorePages = primaryKeys.size() > pageSize;
+        List<String> thisPageKeys = hasMorePages ? primaryKeys.subList(0, pageSize) : primaryKeys;
+        
+        // Step 4: Fetch primary resources (only for this page, not the +1)
+        List<Resource> primaryResources = ftsKvSearchService.getDocumentsFromKeys(thisPageKeys, primaryResourceType);
         
         // Step 4: Handle secondaries based on search type
         List<Resource> allResources = new ArrayList<>(primaryResources);
@@ -1003,6 +1033,14 @@ public class SearchService {
         if ("regular".equals(searchType)) {
             // Regular search has no secondaries - just primaries
             logger.info("🚀 Regular search continuation: {} primaries only", primaryResources.size());
+            
+            // For regular search, check if fastpath is enabled
+            if (useFastpath) {
+                logger.info("🚀 FASTPATH: Continuation page using fastpath");
+                return handleRegularContinuationFastpath(continuationToken, state, offset, thisPageKeys, 
+                                                        primaryResourceType, pageSize, bucketName, 
+                                                        hasMorePages, requestDetails);
+            }
             
         } else if ("revinclude".equals(searchType)) {
             // Re-fetch secondaries for these primaries
@@ -1094,20 +1132,31 @@ public class SearchService {
                     .setMode(mode);
         }
         
-        // Step 6: Add next link if more results
-        int nextOffset = offset + primaryKeys.size();
-        boolean hasMore = primaryResult.getTotalCount() > nextOffset;
+        // Step 6: Add pagination links
+        int nextOffset = offset + thisPageKeys.size();
         
-        if (hasMore) {
-            // Build next URL with continuation token
-            String nextUrl = buildNextPageUrl(continuationToken, nextOffset, primaryResourceType, bucketName, pageSize, baseUrl);
+        // Add self link
+        bundle.addLink()
+                .setRelation("self")
+                .setUrl(buildNextPageUrl(continuationToken, offset, primaryResourceType, bucketName, pageSize, baseUrl));
+        
+        // Add previous link if not on first page
+        if (offset > 0) {
+            int prevOffset = Math.max(0, offset - pageSize);
+            bundle.addLink()
+                    .setRelation("previous")
+                    .setUrl(buildPreviousPageUrl(continuationToken, prevOffset, primaryResourceType, bucketName, pageSize, baseUrl));
+        }
+        
+        // Add next link if more results
+        if (hasMorePages) {
             bundle.addLink()
                     .setRelation("next")
-                    .setUrl(nextUrl);
+                    .setUrl(buildNextPageUrl(continuationToken, nextOffset, primaryResourceType, bucketName, pageSize, baseUrl));
         }
         
         logger.info("🚀 QUERY-BASED PAGE COMPLETE: {} resources ({} primaries + {} secondaries), hasMore={}", 
-                   allResources.size(), primaryResources.size(), allResources.size() - primaryResources.size(), hasMore);
+                   allResources.size(), primaryResources.size(), allResources.size() - primaryResources.size(), hasMorePages);
         
         return bundle;
     }
@@ -1856,6 +1905,7 @@ public class SearchService {
             (int) totalPrimaryCount,
             selfUrl,
             nextUrl,
+            null,  // No previous link on first page
             baseUrl,
             Instant.now()
         );
@@ -1889,16 +1939,16 @@ public class SearchService {
         );
         
         List<String> allPrimaryKeys = ftsResult.getDocumentKeys();
+        long actualTotalCount = ftsResult.getTotalCount();  // Accurate total from FTS metadata
         
-        long totalPrimaryCount = allPrimaryKeys.size();
-        boolean needsPagination = totalPrimaryCount > count;
+        boolean needsPagination = allPrimaryKeys.size() > count;
         
         // Step 2: Determine first page keys
         List<String> firstPagePrimaryKeys = needsPagination ? 
             allPrimaryKeys.subList(0, count) : allPrimaryKeys;
         
-        logger.info("🚀 FASTPATH: FTS returned {} keys (pagination: {})", 
-                   totalPrimaryCount, needsPagination ? "YES" : "NO");
+        logger.info("🚀 FASTPATH: FTS returned {} keys (pagination: {}), actualTotal={}", 
+                   allPrimaryKeys.size(), needsPagination ? "YES" : "NO", actualTotalCount);
         
         // Step 3: Fetch ONLY first page resources as RAW JSON (no HAPI parsing!)
         long fetchStart = System.currentTimeMillis();
@@ -1925,7 +1975,7 @@ public class SearchService {
             PaginationState paginationState = PaginationState.builder()
                 .searchType("regular")
                 .resourceType(primaryResourceType)
-                .primaryResourceCount((int) totalPrimaryCount)  // Store accurate total
+                .primaryResourceCount((int) actualTotalCount)  // Store accurate total from FTS
                 .primaryFtsQueriesJson(serializedQueries)
                 .primaryOffset(count)  // Next page starts at offset=count
                 .primaryPageSize(count)
@@ -1946,18 +1996,81 @@ public class SearchService {
         String bundleJson = fastJsonBundleBuilder.buildSearchsetBundle(
             primaryKeyToJsonMap,
             new java.util.LinkedHashMap<>(),  // No includes for regular search
-            (int) totalPrimaryCount,  // Always use accurate total from FTS
+            (int) actualTotalCount,  // Always use accurate total from FTS
             selfUrl,
             nextUrl,
+            null,  // No previous link on first page
             baseUrl,
             Instant.now()
         );
         
         logger.info("🚀 FASTPATH: Regular search COMPLETE: Bundle={} resources, total={}", 
-                   primaryKeyToJsonMap.size(), 
-                   needsPagination ? count : totalPrimaryCount);
+                   primaryKeyToJsonMap.size(), actualTotalCount);
         
         return bundleJson;
+    }
+    
+    /**
+     * FASTPATH: Handle regular search continuation page
+     * Bypasses HAPI parsing/serialization for 10x memory reduction
+     */
+    private Bundle handleRegularContinuationFastpath(String continuationToken, PaginationState state, int offset,
+                                                     List<String> primaryKeys, String primaryResourceType, 
+                                                     int pageSize, String bucketName, boolean hasMorePages,
+                                                     RequestDetails requestDetails) {
+        
+        logger.info("🚀 FASTPATH: Regular continuation - offset={}, keys={}, hasMore={}", 
+                   offset, primaryKeys.size(), hasMorePages);
+        
+        // Use stored total count (from first page)
+        int totalCount = state.getPrimaryResourceCount();
+        
+        // Fetch as raw JSON with keys
+        Map<String, String> primaryKeyToJsonMap = batchKvService.getDocumentsAsJsonWithKeys(
+            primaryKeys, primaryResourceType);
+        
+        String baseUrl = state.getBaseUrl();
+        
+        // Build self URL
+        String selfUrl = baseUrl + "/" + primaryResourceType + "?_page=" + continuationToken 
+                       + "&_offset=" + offset + "&_count=" + pageSize;
+        
+        // Build next URL if more results
+        int nextOffset = offset + primaryKeys.size();
+        String nextUrl = hasMorePages ? 
+            (baseUrl + "/" + primaryResourceType + "?_page=" + continuationToken 
+             + "&_offset=" + nextOffset + "&_count=" + pageSize) : null;
+        
+        // Build previous URL if not on first page
+        String previousUrl = null;
+        if (offset > 0) {
+            int prevOffset = Math.max(0, offset - pageSize);
+            previousUrl = baseUrl + "/" + primaryResourceType + "?_page=" + continuationToken 
+                        + "&_offset=" + prevOffset + "&_count=" + pageSize;
+        }
+        
+        // Build JSON bundle
+        String bundleJson = fastJsonBundleBuilder.buildSearchsetBundle(
+            primaryKeyToJsonMap,
+            new java.util.LinkedHashMap<>(),  // No includes for regular search
+            totalCount,  // Use stored total from first page
+            selfUrl,
+            nextUrl,
+            previousUrl,
+            baseUrl,
+            Instant.now()
+        );
+        
+        logger.info("🚀 FASTPATH: Continuation COMPLETE - {} resources, total={}, hasMore={}", 
+                   primaryKeyToJsonMap.size(), totalCount, hasMorePages);
+        
+        // Store JSON in request attribute for interceptor to handle
+        requestDetails.getUserData().put(FASTPATH_JSON_ATTRIBUTE, bundleJson);
+        
+        // Return empty placeholder Bundle (interceptor will replace with JSON)
+        Bundle placeholder = new Bundle();
+        placeholder.setType(Bundle.BundleType.SEARCHSET);
+        return placeholder;
     }
     
     /**
@@ -2105,6 +2218,7 @@ public class SearchService {
             (int) totalPrimaryCount,
             selfUrl,
             nextUrl,
+            null,  // No previous link on first page
             baseUrl,
             Instant.now()
         );
@@ -2273,23 +2387,20 @@ public class SearchService {
      * Handle pagination requests for both legacy and new pagination strategies
      * Supports both HAPI and fastpath rendering
      */
-    public Bundle handleRevIncludePagination(String continuationToken, int offset, int count) {
+    public Bundle handleRevIncludePagination(String continuationToken, int offset, int count, RequestDetails requestDetails) {
         logger.info("🔍 Pagination request - token={}, offset={}, count={}", continuationToken, offset, count);
         
         // Get current bucket from tenant context
         String bucketName = com.couchbase.fhir.resources.config.TenantContextHolder.getTenantId();
         
         // First, try the new pagination strategy
-        logger.info("🔍 DEBUG: About to call getPaginationState");
         PaginationState paginationState = null;
         try {
             paginationState = searchStateManager.getPaginationState(continuationToken, bucketName);
-            logger.info("🔍 DEBUG: getPaginationState returned successfully");
         } catch (Exception e) {
-            logger.error("🔍 DEBUG: Exception in getPaginationState: {}", e.getMessage(), e);
+            logger.error("Failed to retrieve pagination state: {}", e.getMessage(), e);
             throw e;
         }
-        logger.info("🔍 DEBUG: Retrieved pagination state: {}", paginationState != null ? "FOUND" : "NULL");
         
         if (paginationState != null) {
             logger.info("🔍 DEBUG: paginationState is not null, checking fields...");
@@ -2314,19 +2425,11 @@ public class SearchService {
             }
             
             logger.info("🔑 Using new pagination strategy for token: {}", continuationToken);
-            logger.info("🔍 DEBUG: About to call handleContinuationTokenNewPagination");
             // Pass offset and count from URL to handle pagination (document is immutable)
-            try {
-                Bundle result = handleContinuationTokenNewPagination(continuationToken, paginationState.getResourceType(),
-                                                           offset, count,
-                                                           SummaryEnum.FALSE, null, // TODO: Store these in PaginationState if needed
-                                                           paginationState.getBucketName(), null); // TODO: Store RequestDetails if needed
-                logger.info("🔍 DEBUG: handleContinuationTokenNewPagination returned successfully");
-                return result;
-            } catch (Exception e) {
-                logger.error("🔍 DEBUG: Exception in handleContinuationTokenNewPagination: {}", e.getMessage(), e);
-                throw e;
-            }
+            return handleContinuationTokenNewPagination(continuationToken, paginationState.getResourceType(),
+                                                   offset, count,
+                                                   SummaryEnum.FALSE, null, // TODO: Store these in PaginationState if needed
+                                                   paginationState.getBucketName(), requestDetails);
         }
         
         // No pagination state found - neither new nor legacy
@@ -2409,6 +2512,16 @@ public class SearchService {
         
         // Use different parameter names that HAPI might handle better
         // Use _page instead of _getpages to avoid HAPI validation issues
+        return baseUrl + "/" + resourceType + "?_page=" + continuationToken + 
+               "&_offset=" + offset + "&_count=" + count;
+    }
+    
+    private String buildPreviousPageUrl(String continuationToken, int offset, String resourceType, String bucketName, int count, String baseUrl) {
+        // Use provided base URL or fall back to localhost
+        if (baseUrl == null) {
+            baseUrl = "http://localhost:8080/fhir/" + bucketName;
+        }
+        
         return baseUrl + "/" + resourceType + "?_page=" + continuationToken + 
                "&_offset=" + offset + "&_count=" + count;
     }

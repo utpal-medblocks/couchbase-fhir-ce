@@ -553,7 +553,7 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
             logger.debug("🔍 ResourceProvider: Handling pagination request for {} (token: {}, offset: {}, count: {})", 
                        resourceType, continuationToken, offset, count);
             
-            return searchService.handleRevIncludePagination(continuationToken, offset, count);
+            return searchService.handleRevIncludePagination(continuationToken, offset, count, requestDetails);
         }
 
         logger.debug("🔍 ResourceProvider: Delegating search for {} to SearchService", resourceType);
