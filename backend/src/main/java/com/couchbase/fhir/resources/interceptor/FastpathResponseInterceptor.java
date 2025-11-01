@@ -18,11 +18,12 @@ public class FastpathResponseInterceptor extends InterceptorAdapter {
     
     @Override
     public boolean outgoingResponse(RequestDetails theRequestDetails) {
-        Object fastpathJson = theRequestDetails.getUserData().get(SearchService.FASTPATH_JSON_ATTRIBUTE);
+        // Check for fastpath UTF-8 bytes (2x memory savings vs String)
+        Object fastpathData = theRequestDetails.getUserData().get(SearchService.FASTPATH_BYTES_ATTRIBUTE);
         
-        if (fastpathJson instanceof String) {
-            String json = (String) fastpathJson;
-            logger.info("🚀 FASTPATH INTERCEPTOR: Detected fastpath JSON ({} bytes), bypassing HAPI serialization", json.length());
+        if (fastpathData instanceof byte[]) {
+            byte[] jsonBytes = (byte[]) fastpathData;
+            logger.info("🚀 FASTPATH INTERCEPTOR: Detected fastpath bytes ({} bytes), bypassing HAPI serialization", jsonBytes.length);
             
             try {
                 if (theRequestDetails instanceof ServletRequestDetails) {
@@ -32,16 +33,16 @@ public class FastpathResponseInterceptor extends InterceptorAdapter {
                     response.setContentType("application/fhir+json;charset=UTF-8");
                     response.setStatus(HttpServletResponse.SC_OK);
                     
-                    // Write plain JSON - let Tomcat handle compression
-                    response.getWriter().write(json);
-                    response.getWriter().flush();
+                    // Write UTF-8 bytes directly - let Tomcat handle compression
+                    response.getOutputStream().write(jsonBytes);
+                    response.getOutputStream().flush();
                     
-                    logger.debug("🚀 FASTPATH INTERCEPTOR: Wrote {} bytes to response (Tomcat will compress if enabled)", json.length());
+                    logger.debug("🚀 FASTPATH INTERCEPTOR: Wrote {} bytes to response (Tomcat will compress if enabled)", jsonBytes.length);
                     
                     return false;
                 }
             } catch (IOException e) {
-                logger.error("🚀 FASTPATH INTERCEPTOR: Failed to write fastpath JSON: {}", e.getMessage());
+                logger.error("🚀 FASTPATH INTERCEPTOR: Failed to write fastpath bytes: {}", e.getMessage());
             }
         }
         

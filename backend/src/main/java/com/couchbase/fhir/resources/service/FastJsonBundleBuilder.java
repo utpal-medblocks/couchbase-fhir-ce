@@ -4,6 +4,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
@@ -15,7 +18,11 @@ public class FastJsonBundleBuilder {
     
     private static final Logger logger = LoggerFactory.getLogger(FastJsonBundleBuilder.class);
     
-    public String buildSearchsetBundle(
+    /**
+     * Build FHIR Bundle as UTF-8 bytes (not String) for 2x memory savings
+     * Uses ByteArrayOutputStream instead of StringBuilder to avoid UTF-16 overhead
+     */
+    public byte[] buildSearchsetBundle(
             Map<String, String> primaryKeyToJsonMap,
             Map<String, String> includedKeyToJsonMap,
             int totalPrimaries,
@@ -35,89 +42,101 @@ public class FastJsonBundleBuilder {
                     primaryCount, includedCount, totalEntries);
         
         int estimatedSize = (totalEntries * 2048) + 512;
-        StringBuilder json = new StringBuilder(estimatedSize);
+        ByteArrayOutputStream baos = new ByteArrayOutputStream(estimatedSize);
         
         // Generate Bundle ID and format timestamp
         String bundleId = UUID.randomUUID().toString();
         String formattedTimestamp = timestamp.atOffset(ZoneOffset.UTC)
             .format(DateTimeFormatter.ISO_OFFSET_DATE_TIME);
         
-        json.append("{")
-            .append("\"resourceType\":\"Bundle\",")
-            .append("\"id\":\"").append(bundleId).append("\",")
-            .append("\"meta\":{\"lastUpdated\":\"").append(formattedTimestamp).append("\"},")
-            .append("\"type\":\"searchset\",")
-            .append("\"total\":").append(totalPrimaries).append(",");
-        
-        // Build links in order: self, next, previous (FHIR standard)
-        json.append("\"link\":[");
-        json.append("{\"relation\":\"self\",\"url\":\"").append(escapeJson(selfUrl)).append("\"}");
-        
-        if (nextUrl != null) {
-            json.append(",{\"relation\":\"next\",\"url\":\"").append(escapeJson(nextUrl)).append("\"}");
-        }
-        
-        if (previousUrl != null) {
-            json.append(",{\"relation\":\"previous\",\"url\":\"").append(escapeJson(previousUrl)).append("\"}");
-        }
-        
-        json.append("],");
-        
-        json.append("\"entry\":[");
-        
-        // Add primary resources (use keys for fullUrl - no parsing needed!)
-        if (primaryCount > 0) {
-            int i = 0;
-            for (Map.Entry<String, String> entry : primaryKeyToJsonMap.entrySet()) {
-                String key = entry.getKey();  // e.g., "Patient/example-targeted-provenance"
-                String resourceJson = entry.getValue();
-                String fullUrl = baseUrl + "/" + key;
-                
-                json.append("{\"fullUrl\":\"").append(escapeJson(fullUrl)).append("\",")
-                    .append("\"resource\":").append(resourceJson)
-                    .append(",\"search\":{\"mode\":\"match\"}}");
-                
-                if (i < primaryCount - 1 || includedCount > 0) {
-                    json.append(",");
-                }
-                i++;
+        try {
+            // Build Bundle header
+            write(baos, "{");
+            write(baos, "\"resourceType\":\"Bundle\",");
+            write(baos, "\"id\":\"" + bundleId + "\",");
+            write(baos, "\"meta\":{\"lastUpdated\":\"" + formattedTimestamp + "\"},");
+            write(baos, "\"type\":\"searchset\",");
+            write(baos, "\"total\":" + totalPrimaries + ",");
+            
+            // Build links in order: self, next, previous (FHIR standard)
+            write(baos, "\"link\":[");
+            write(baos, "{\"relation\":\"self\",\"url\":\"" + escapeJson(selfUrl) + "\"}");
+            
+            if (nextUrl != null) {
+                write(baos, ",{\"relation\":\"next\",\"url\":\"" + escapeJson(nextUrl) + "\"}");
             }
-        }
-        
-        // Add included resources (use keys for fullUrl)
-        if (includedCount > 0) {
-            int i = 0;
-            for (Map.Entry<String, String> entry : includedKeyToJsonMap.entrySet()) {
-                String key = entry.getKey();  // e.g., "Practitioner/example"
-                String resourceJson = entry.getValue();
-                String fullUrl = baseUrl + "/" + key;
-                
-                json.append("{\"fullUrl\":\"").append(escapeJson(fullUrl)).append("\",")
-                    .append("\"resource\":").append(resourceJson)
-                    .append(",\"search\":{\"mode\":\"include\"}}");
-                
-                if (i < includedCount - 1) {
-                    json.append(",");
-                }
-                i++;
+            
+            if (previousUrl != null) {
+                write(baos, ",{\"relation\":\"previous\",\"url\":\"" + escapeJson(previousUrl) + "\"}");
             }
+            
+            write(baos, "],");
+            
+            write(baos, "\"entry\":[");
+        
+            // Add primary resources (use keys for fullUrl - no parsing needed!)
+            if (primaryCount > 0) {
+                int i = 0;
+                for (Map.Entry<String, String> entry : primaryKeyToJsonMap.entrySet()) {
+                    String key = entry.getKey();  // e.g., "Patient/example-targeted-provenance"
+                    String resourceJson = entry.getValue();
+                    String fullUrl = baseUrl + "/" + key;
+                    
+                    write(baos, "{\"fullUrl\":\"" + escapeJson(fullUrl) + "\",");
+                    write(baos, "\"resource\":");
+                    write(baos, resourceJson);
+                    write(baos, ",\"search\":{\"mode\":\"match\"}}");
+                    
+                    if (i < primaryCount - 1 || includedCount > 0) {
+                        write(baos, ",");
+                    }
+                    i++;
+                }
+            }
+            
+            // Add included resources (use keys for fullUrl)
+            if (includedCount > 0) {
+                int i = 0;
+                for (Map.Entry<String, String> entry : includedKeyToJsonMap.entrySet()) {
+                    String key = entry.getKey();  // e.g., "Practitioner/example"
+                    String resourceJson = entry.getValue();
+                    String fullUrl = baseUrl + "/" + key;
+                    
+                    write(baos, "{\"fullUrl\":\"" + escapeJson(fullUrl) + "\",");
+                    write(baos, "\"resource\":");
+                    write(baos, resourceJson);
+                    write(baos, ",\"search\":{\"mode\":\"include\"}}");
+                    
+                    if (i < includedCount - 1) {
+                        write(baos, ",");
+                    }
+                    i++;
+                }
+            }
+            
+            write(baos, "]}");
+            
+            byte[] result = baos.toByteArray();
+            
+            long elapsedMs = System.currentTimeMillis() - startMs;
+            logger.info("🚀 FASTPATH: Built Bundle in {} ms ({} bytes, {} entries)", 
+                       elapsedMs, result.length, totalEntries);
+            
+            return result;
+            
+        } catch (IOException e) {
+            // Should never happen with ByteArrayOutputStream
+            logger.error("❌ Failed to build Bundle JSON: {}", e.getMessage());
+            throw new RuntimeException("Failed to build Bundle JSON", e);
         }
-        
-        json.append("]}");
-        
-        long elapsedMs = System.currentTimeMillis() - startMs;
-        logger.info("🚀 FASTPATH: Built Bundle in {} ms ({} bytes, {} entries)", 
-                   elapsedMs, json.length(), totalEntries);
-        
-        return json.toString();
     }
     
-    public String buildEmptySearchsetBundle(String selfUrl, Instant timestamp) {
+    public byte[] buildEmptySearchsetBundle(String selfUrl, Instant timestamp) {
         String bundleId = UUID.randomUUID().toString();
         String formattedTimestamp = timestamp.atOffset(ZoneOffset.UTC)
             .format(DateTimeFormatter.ISO_OFFSET_DATE_TIME);
         
-        return """
+        String json = """
             {
               "resourceType": "Bundle",
               "id": "%s",
@@ -130,6 +149,15 @@ public class FastJsonBundleBuilder {
               "entry": []
             }
             """.formatted(bundleId, formattedTimestamp, escapeJson(selfUrl));
+        
+        return json.getBytes(StandardCharsets.UTF_8);
+    }
+    
+    /**
+     * Write string to ByteArrayOutputStream as UTF-8 bytes
+     */
+    private void write(ByteArrayOutputStream baos, String str) throws IOException {
+        baos.write(str.getBytes(StandardCharsets.UTF_8));
     }
     
     private String escapeJson(String input) {

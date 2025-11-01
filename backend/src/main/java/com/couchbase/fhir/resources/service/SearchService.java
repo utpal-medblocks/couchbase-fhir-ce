@@ -48,8 +48,8 @@ public class SearchService {
     private static final int MAX_FTS_FETCH_SIZE = 1000;  // Max doc keys per FTS query
     private static final int MAX_BUNDLE_SIZE = 1000;  // Hard cap on total Bundle resources (primaries + secondaries combined)
     
-    // Fastpath attribute key for storing JSON in request
-    public static final String FASTPATH_JSON_ATTRIBUTE = "com.couchbase.fhir.fastpath.json";
+    // Fastpath attribute key for storing UTF-8 bytes in request (2x memory savings vs String)
+    public static final String FASTPATH_BYTES_ATTRIBUTE = "com.couchbase.fhir.fastpath.bytes";
     
     @Autowired
     private FhirContext fhirContext;
@@ -290,14 +290,14 @@ public class SearchService {
                                   (summaryMode == null || summaryMode == SummaryEnum.FALSE) && 
                                   (elements == null || elements.isEmpty());
             
-            if (useFastpath) {
-                logger.info("🚀 FASTPATH ENABLED: Using JSON fastpath for _revinclude search");
-                String resultJson = handleMultipleRevIncludeSearchFastpath(resourceType, ftsQueries, revIncludes, count, 
-                                         bucketName, requestDetails);
-                RequestPerfBagUtils.addTiming(requestDetails, "search_service", System.currentTimeMillis() - searchStartMs);
-                
-                // Store JSON in request attribute for interceptor to handle
-                requestDetails.getUserData().put(FASTPATH_JSON_ATTRIBUTE, resultJson);
+        if (useFastpath) {
+            logger.info("🚀 FASTPATH ENABLED: Using JSON fastpath for _revinclude search");
+            byte[] resultBytes = handleMultipleRevIncludeSearchFastpath(resourceType, ftsQueries, revIncludes, count, 
+                                     bucketName, requestDetails);
+            RequestPerfBagUtils.addTiming(requestDetails, "search_service", System.currentTimeMillis() - searchStartMs);
+            
+            // Store UTF-8 bytes in request attribute for interceptor (2x memory savings vs String)
+            requestDetails.getUserData().put(FASTPATH_BYTES_ATTRIBUTE, resultBytes);
                 
                 // Return empty placeholder Bundle (interceptor will replace with JSON)
                 Bundle placeholder = new Bundle();
@@ -320,14 +320,14 @@ public class SearchService {
                                       (summaryMode == null || summaryMode == SummaryEnum.FALSE) && 
                                       (elements == null || elements.isEmpty());
                 
-                if (useFastpath) {
-                    logger.info("🚀 FASTPATH ENABLED: Using JSON fastpath for _include search");
-                    String resultJson = handleMultipleIncludeSearchFastpath(resourceType, ftsQueries, includes, count, 
-                                             bucketName, requestDetails);
-                    RequestPerfBagUtils.addTiming(requestDetails, "search_service", System.currentTimeMillis() - searchStartMs);
-                    
-                    // Store JSON in request attribute for interceptor to handle
-                    requestDetails.getUserData().put(FASTPATH_JSON_ATTRIBUTE, resultJson);
+            if (useFastpath) {
+                logger.info("🚀 FASTPATH ENABLED: Using JSON fastpath for _include search");
+                byte[] resultBytes = handleMultipleIncludeSearchFastpath(resourceType, ftsQueries, includes, count, 
+                                         bucketName, requestDetails);
+                RequestPerfBagUtils.addTiming(requestDetails, "search_service", System.currentTimeMillis() - searchStartMs);
+                
+                // Store UTF-8 bytes in request attribute for interceptor (2x memory savings vs String)
+                requestDetails.getUserData().put(FASTPATH_BYTES_ATTRIBUTE, resultBytes);
                     
                     // Return empty placeholder Bundle (interceptor will replace with JSON)
                     Bundle placeholder = new Bundle();
@@ -359,12 +359,12 @@ public class SearchService {
         
         if (useFastpath) {
             logger.info("🚀 FASTPATH ENABLED: Using JSON fastpath for regular search");
-            String resultJson = handleRegularSearchFastpath(resourceType, ftsQueries, count, sortFields,
+            byte[] resultBytes = handleRegularSearchFastpath(resourceType, ftsQueries, count, sortFields,
                                          bucketName, requestDetails);
             RequestPerfBagUtils.addTiming(requestDetails, "search_service", System.currentTimeMillis() - searchStartMs);
             
-            // Store JSON in request attribute for interceptor to handle
-            requestDetails.getUserData().put(FASTPATH_JSON_ATTRIBUTE, resultJson);
+            // Store UTF-8 bytes in request attribute for interceptor (2x memory savings vs String)
+            requestDetails.getUserData().put(FASTPATH_BYTES_ATTRIBUTE, resultBytes);
             
             // Return empty placeholder Bundle (interceptor will replace with JSON)
             Bundle placeholder = new Bundle();
@@ -1821,11 +1821,11 @@ public class SearchService {
     
     /**
      * Handle multiple _include searches with FASTPATH (10× memory reduction).
-     * Returns raw JSON string instead of HAPI Bundle object.
+     * Returns UTF-8 bytes instead of HAPI Bundle object (2x memory savings vs String).
      * 
      * Same pagination logic as handleMultipleIncludeSearch, but skips HAPI parsing.
      */
-    private String handleMultipleIncludeSearchFastpath(String primaryResourceType, List<SearchQuery> ftsQueries,
+    private byte[] handleMultipleIncludeSearchFastpath(String primaryResourceType, List<SearchQuery> ftsQueries,
                                               List<Include> includes, int count,
                                               String bucketName, RequestDetails requestDetails) {
         logger.info("🚀 FASTPATH: Handling {} _include parameters for {} (count={}, maxBundle={})", 
@@ -1947,7 +1947,7 @@ public class SearchService {
             logger.info("🚀 FASTPATH: Pagination enabled, token={}, nextOffset={}", continuationToken, count);
         }
         
-        String bundleJson = fastJsonBundleBuilder.buildSearchsetBundle(
+        byte[] bundleBytes = fastJsonBundleBuilder.buildSearchsetBundle(
             primaryKeyToJsonMap,
             includedKeyToJsonMap,
             (int) totalPrimaryCount,
@@ -1964,14 +1964,14 @@ public class SearchService {
                    includedKeyToJsonMap.size(),
                    totalPrimaryCount);
 
-        return bundleJson;
+        return bundleBytes;
     }
     
     /**
      * FASTPATH: Handle regular search (no _include, no _revinclude) with pure JSON assembly
-     * Bypasses HAPI parsing/serialization for 10x memory reduction
+     * Bypasses HAPI parsing/serialization for 10x memory reduction, returns UTF-8 bytes (2x savings vs String)
      */
-    private String handleRegularSearchFastpath(String primaryResourceType, List<SearchQuery> ftsQueries,
+    private byte[] handleRegularSearchFastpath(String primaryResourceType, List<SearchQuery> ftsQueries,
                                                int count, List<SearchSort> sortFields, String bucketName,
                                                RequestDetails requestDetails) {
         
@@ -2040,8 +2040,8 @@ public class SearchService {
             logger.info("🚀 FASTPATH: Pagination enabled, token={}, nextOffset={}", continuationToken, count);
         }
         
-        // Build bundle with NO includes (empty map)
-        String bundleJson = fastJsonBundleBuilder.buildSearchsetBundle(
+        // Build bundle with NO includes (empty map) as UTF-8 bytes
+        byte[] bundleBytes = fastJsonBundleBuilder.buildSearchsetBundle(
             primaryKeyToJsonMap,
             new java.util.LinkedHashMap<>(),  // No includes for regular search
             (int) actualTotalCount,  // Always use accurate total from FTS
@@ -2055,7 +2055,7 @@ public class SearchService {
         logger.info("🚀 FASTPATH: Regular search COMPLETE: Bundle={} resources, total={}", 
                    primaryKeyToJsonMap.size(), actualTotalCount);
         
-        return bundleJson;
+        return bundleBytes;
     }
     
     /**
@@ -2097,8 +2097,8 @@ public class SearchService {
                         + "&_offset=" + prevOffset + "&_count=" + pageSize;
         }
         
-        // Build JSON bundle
-        String bundleJson = fastJsonBundleBuilder.buildSearchsetBundle(
+        // Build JSON bundle as UTF-8 bytes
+        byte[] bundleBytes = fastJsonBundleBuilder.buildSearchsetBundle(
             primaryKeyToJsonMap,
             new java.util.LinkedHashMap<>(),  // No includes for regular search
             totalCount,  // Use stored total from first page
@@ -2112,8 +2112,8 @@ public class SearchService {
         logger.info("🚀 FASTPATH: Continuation COMPLETE - {} resources, total={}, hasMore={}", 
                    primaryKeyToJsonMap.size(), totalCount, hasMorePages);
         
-        // Store JSON in request attribute for interceptor to handle
-        requestDetails.getUserData().put(FASTPATH_JSON_ATTRIBUTE, bundleJson);
+        // Store UTF-8 bytes in request attribute for interceptor (2x memory savings vs String)
+        requestDetails.getUserData().put(FASTPATH_BYTES_ATTRIBUTE, bundleBytes);
         
         // Return empty placeholder Bundle (interceptor will replace with JSON)
         Bundle placeholder = new Bundle();
@@ -2203,8 +2203,8 @@ public class SearchService {
                         + "&_offset=" + prevOffset + "&_count=" + pageSize;
         }
         
-        // Build JSON bundle
-        String bundleJson = fastJsonBundleBuilder.buildSearchsetBundle(
+        // Build JSON bundle as UTF-8 bytes
+        byte[] bundleBytes = fastJsonBundleBuilder.buildSearchsetBundle(
             primaryKeyToJsonMap,
             includedKeyToJsonMap,
             totalCount,  // Use stored total from first page
@@ -2221,8 +2221,8 @@ public class SearchService {
                    includedKeyToJsonMap.size(),
                    totalCount, hasMorePages);
         
-        // Store JSON in request attribute for interceptor to handle
-        requestDetails.getUserData().put(FASTPATH_JSON_ATTRIBUTE, bundleJson);
+        // Store UTF-8 bytes in request attribute for interceptor (2x memory savings vs String)
+        requestDetails.getUserData().put(FASTPATH_BYTES_ATTRIBUTE, bundleBytes);
         
         // Return empty placeholder Bundle (interceptor will replace with JSON)
         Bundle placeholder = new Bundle();
@@ -2232,9 +2232,9 @@ public class SearchService {
     
     /**
      * FASTPATH: Handle multiple _revinclude searches with pure JSON assembly
-     * Bypasses HAPI parsing/serialization for 10x memory reduction
+     * Bypasses HAPI parsing/serialization for 10x memory reduction, returns UTF-8 bytes (2x savings vs String)
      */
-    private String handleMultipleRevIncludeSearchFastpath(String primaryResourceType, List<SearchQuery> ftsQueries,
+    private byte[] handleMultipleRevIncludeSearchFastpath(String primaryResourceType, List<SearchQuery> ftsQueries,
                                                           List<Include> revIncludes, int count,
                                                           String bucketName, RequestDetails requestDetails) {
         
@@ -2369,7 +2369,7 @@ public class SearchService {
             logger.info("🚀 FASTPATH: Pagination enabled, token={}, nextOffset={}", continuationToken, count);
         }
         
-        String bundleJson = fastJsonBundleBuilder.buildSearchsetBundle(
+        byte[] bundleBytes = fastJsonBundleBuilder.buildSearchsetBundle(
             primaryKeyToJsonMap,
             allSecondaryKeyToJsonMap,
             (int) totalPrimaryCount,
@@ -2386,7 +2386,7 @@ public class SearchService {
                    allSecondaryKeyToJsonMap.size(),
                    totalPrimaryCount);
         
-        return bundleJson;
+        return bundleBytes;
     }
     
     /**
@@ -2423,11 +2423,11 @@ public class SearchService {
         
         if (useFastpath) {
             logger.info("🚀 FASTPATH ENABLED: Using JSON fastpath for chain search");
-            String resultJson = handleChainSearchFastpath(primaryResourceType, ftsQueries, chainParam, includes,
+            byte[] resultBytes = handleChainSearchFastpath(primaryResourceType, ftsQueries, chainParam, includes,
                                                          count, sortFields, bucketName, referencedResourceIds, requestDetails);
             
-            // Store JSON in request attribute for interceptor to handle
-            requestDetails.getUserData().put(FASTPATH_JSON_ATTRIBUTE, resultJson);
+            // Store UTF-8 bytes in request attribute for interceptor (2x memory savings vs String)
+            requestDetails.getUserData().put(FASTPATH_BYTES_ATTRIBUTE, resultBytes);
             
             // Return empty placeholder Bundle (interceptor will replace with JSON)
             Bundle placeholder = new Bundle();
@@ -2581,9 +2581,9 @@ public class SearchService {
     
     /**
      * FASTPATH: Handle chained search with pure JSON assembly (10x memory savings)
-     * Bypasses HAPI parsing/serialization for both primary and included resources
+     * Bypasses HAPI parsing/serialization for both primary and included resources, returns UTF-8 bytes (2x savings vs String)
      */
-    private String handleChainSearchFastpath(String primaryResourceType, List<SearchQuery> ftsQueries,
+    private byte[] handleChainSearchFastpath(String primaryResourceType, List<SearchQuery> ftsQueries,
                                             ChainParam chainParam, List<Include> includes, int count,
                                             List<SearchSort> sortFields, String bucketName,
                                             List<String> referencedResourceIds, RequestDetails requestDetails) {
@@ -2703,7 +2703,7 @@ public class SearchService {
             logger.info("🚀 FASTPATH: Pagination enabled, token={}, nextOffset={}", continuationToken, count);
         }
         
-        String bundleJson = fastJsonBundleBuilder.buildSearchsetBundle(
+        byte[] bundleBytes = fastJsonBundleBuilder.buildSearchsetBundle(
             primaryKeyToJsonMap,
             includedKeyToJsonMap,
             (int) totalCount,
@@ -2721,7 +2721,7 @@ public class SearchService {
                    totalCount,
                    needsPagination ? "YES" : "NO");
         
-        return bundleJson;
+        return bundleBytes;
     }
     
     /**
