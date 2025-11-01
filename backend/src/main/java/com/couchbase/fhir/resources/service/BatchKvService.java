@@ -249,8 +249,11 @@ public class BatchKvService {
             List<CompletableFuture<GetResult>> futures = new ArrayList<>();
             
             for (String documentKey : documentKeys) {
+                // Use RawBinaryTranscoder to get raw UTF-8 bytes (no JsonObject overhead!)
                 CompletableFuture<GetResult> future = collection.async().get(documentKey,
-                    GetOptions.getOptions().timeout(Duration.ofSeconds(10)));
+                    GetOptions.getOptions()
+                        .timeout(Duration.ofSeconds(10))
+                        .transcoder(com.couchbase.client.java.codec.RawBinaryTranscoder.INSTANCE));
                 futures.add(future);
             }
             
@@ -262,7 +265,7 @@ public class BatchKvService {
                 try {
                     GetResult result = futures.get(i).get(10, TimeUnit.SECONDS);
                     if (result != null) {
-                        // Get raw bytes directly from Couchbase (no JsonObject, no String conversion!)
+                        // Get raw bytes directly from Couchbase (zero-copy!)
                         byte[] jsonBytes = result.contentAs(byte[].class);
                         keyToBytesMap.put(key, jsonBytes);
                     }
