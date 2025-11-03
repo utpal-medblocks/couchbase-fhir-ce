@@ -81,6 +81,9 @@ public class SearchService {
     @Autowired
     private com.couchbase.fhir.resources.config.BundleFastpathProperties fastpathProperties;
     
+    @Autowired
+    private IncludeReferenceExtractor includeReferenceExtractor;
+    
     /**
      * Resolve conditional operations by finding matching resources.
      * Returns result indicating ZERO, ONE(id), or MANY matches for conditional operations.
@@ -1866,25 +1869,13 @@ public class SearchService {
         logger.info("🚀 FASTPATH: Fetched {} primary resources as raw bytes with keys in {} ms", 
                 primaryKeyToBytesMap.size(), System.currentTimeMillis() - primFetchStart);
 
-        // Step 4: Extract _include references (still use HAPI for reference extraction, then discard objects)
-        List<Resource> firstPagePrimaryResources = ftsKvSearchService.getDocumentsFromKeys(firstPagePrimaryKeys, primaryResourceType);
-        
-        java.util.LinkedHashSet<String> includeKeySet = new java.util.LinkedHashSet<>();
-        for (Include include : includes) {
-            List<String> includeReferences = extractReferencesFromResources(firstPagePrimaryResources, include.getParamName());
-            for (String ref : includeReferences) {
-                if (ref != null && ref.contains("/")) {
-                    includeKeySet.add(ref);
-                }
-            }
-        }
-        
+        // Step 4: Extract _include references using N1QL (server-side, no double-fetch!)
+        // N1QL handles de-duplication and limiting on the server side
         int maxIncludes = MAX_BUNDLE_SIZE - firstPagePrimaryKeys.size();
-        List<String> includeKeys = new ArrayList<>(includeKeySet);
-        if (includeKeys.size() > maxIncludes) {
-            logger.warn("🚀 FASTPATH: Truncating includes from {} to {} (bundle cap)", includeKeys.size(), maxIncludes);
-            includeKeys = includeKeys.subList(0, maxIncludes);
-        }
+        List<String> includeReferences = includeReferenceExtractor.extractReferences(
+            firstPagePrimaryKeys, includes, primaryResourceType, bucketName, maxIncludes);
+        
+        List<String> includeKeys = new ArrayList<>(includeReferences);
 
         logger.info("🚀 FASTPATH: _include extraction complete: {} unique include keys", includeKeys.size());
         
@@ -2145,26 +2136,28 @@ public class SearchService {
         if (includeParamsList != null && !includeParamsList.isEmpty()) {
             logger.info("🚀 FASTPATH: Processing {} _include parameters for chain continuation", includeParamsList.size());
             
-            // Need to parse primaries temporarily for reference extraction (then discard)
-            List<Resource> primaryResources = ftsKvSearchService.getDocumentsFromKeys(primaryKeys, primaryResourceType);
-            
-            Set<String> includeKeys = new LinkedHashSet<>();
+            // Convert include param strings to Include objects for N1QL extraction
+            List<Include> includeObjects = new ArrayList<>();
             for (String includeParam : includeParamsList) {
-                String[] parts = includeParam.split(":");
-                if (parts.length < 2) continue;
-                
-                String paramName = parts[1];
-                List<String> refs = extractReferencesFromResources(primaryResources, paramName);
-                includeKeys.addAll(refs);
-                logger.info("🚀 FASTPATH: _include '{}' produced {} refs", includeParam, refs.size());
+                try {
+                    includeObjects.add(new Include(includeParam));
+                } catch (Exception e) {
+                    logger.warn("⚠️  Invalid include parameter: {}", includeParam);
+                }
             }
             
+            // Extract references using N1QL (server-side, no double-fetch!)
+            // N1QL handles de-duplication and limiting on the server side
+            int maxIncludes = state.getMaxBundleSize() - primaryKeys.size();
+            List<String> refs = includeReferenceExtractor.extractReferences(
+                primaryKeys, includeObjects, primaryResourceType, bucketName, maxIncludes);
+            
+            logger.info("🚀 FASTPATH: N1QL extracted {} unique references for {} includes", 
+                       refs.size(), includeParamsList.size());
+            
             // Fetch included resources as JSON with keys
-            if (!includeKeys.isEmpty()) {
-                int maxIncludes = state.getMaxBundleSize() - primaryKeys.size();
-                List<String> limitedKeys = includeKeys.stream()
-                    .limit(maxIncludes)
-                    .collect(Collectors.toList());
+            if (!refs.isEmpty()) {
+                List<String> limitedKeys = refs;
                 
                 Map<String, List<String>> includeKeysByType = limitedKeys.stream()
                     .collect(Collectors.groupingBy(k -> k.substring(0, k.indexOf('/'))));
@@ -2624,24 +2617,18 @@ public class SearchService {
         if (!includes.isEmpty()) {
             logger.info("🚀 FASTPATH: Processing {} _include parameters", includes.size());
             
-            // Need to parse primaries temporarily for reference extraction (then discard)
-            List<Resource> primaryResources = ftsKvSearchService.getDocumentsFromKeys(firstPageKeys, primaryResourceType);
+            // Extract references using N1QL (server-side, no double-fetch!)
+            // N1QL handles de-duplication and limiting on the server side
+            int maxIncludes = MAX_BUNDLE_SIZE - firstPageKeys.size();
+            List<String> refs = includeReferenceExtractor.extractReferences(
+                firstPageKeys, includes, primaryResourceType, bucketName, maxIncludes);
             
-            Set<String> includeKeys = new LinkedHashSet<>();
-            for (Include include : includes) {
-                String includeValue = include.getValue();
-                logger.debug("🚀 FASTPATH: Processing _include: {}", includeValue);
-                
-                List<String> refs = extractReferencesFromResources(primaryResources, include.getParamName());
-                if (!refs.isEmpty()) {
-                    includeKeys.addAll(refs);
-                    logger.info("🚀 FASTPATH: _include '{}' produced {} refs (cumulative={})", 
-                               includeValue, refs.size(), includeKeys.size());
-                }
-            }
+            logger.info("🚀 FASTPATH: N1QL extracted {} unique references for {} includes", 
+                       refs.size(), includes.size());
             
             // Fetch included resources as JSON with keys
-            if (!includeKeys.isEmpty()) {
+            if (!refs.isEmpty()) {
+                List<String> includeKeys = refs;
                 logger.debug("🚀 FASTPATH: KV Batch fetching {} includes as JSON", includeKeys.size());
                 Map<String, List<String>> includeKeysByType = includeKeys.stream()
                     .collect(Collectors.groupingBy(k -> k.substring(0, k.indexOf('/'))));
