@@ -13,13 +13,6 @@ public class QuantitySearchHelper {
     private static final Logger logger = LoggerFactory.getLogger(QuantitySearchHelper.class);
     private static final Map<String, List<String>> EXPANSION_CACHE = new ConcurrentHashMap<>();
 
-    private static final Set<Class<?>> NUMERIC_PRIMITIVES = new HashSet<>(Arrays.asList(
-            org.hl7.fhir.r4.model.IntegerType.class,
-            org.hl7.fhir.r4.model.UnsignedIntType.class,
-            org.hl7.fhir.r4.model.PositiveIntType.class,
-            org.hl7.fhir.r4.model.DecimalType.class
-    ));
-
     public static SearchQuery buildQuantityFTSQuery(
             FhirContext fhirContext,
             String resourceType,
