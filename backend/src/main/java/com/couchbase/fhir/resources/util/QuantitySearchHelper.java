@@ -190,56 +190,6 @@ public class QuantitySearchHelper {
 
 
 
-    /*
-    public static List<String> expandNumericField(FhirContext fhirContext, String resourceType, String fieldPath) {
-        String cacheKey = resourceType + "|" + fieldPath;
-        if (EXPANSION_CACHE.containsKey(cacheKey)) {
-            return EXPANSION_CACHE.get(cacheKey);
-        }
-
-        List<String> expanded = new ArrayList<>();
-        RuntimeResourceDefinition rrd = fhirContext.getResourceDefinition(resourceType);
-        if (rrd == null) return expanded;
-
-        String[] tokens = fieldPath.split("\\.");
-        BaseRuntimeElementDefinition<?> currentDef = rrd;
-        BaseRuntimeElementCompositeDefinition<?> currentComposite = rrd;
-
-        for (String token : tokens) {
-            if (currentComposite == null) break;
-            BaseRuntimeChildDefinition child = currentComposite.getChildByName(token);
-            if (child == null) break;
-
-            BaseRuntimeElementDefinition<?> chosen = chooseElementDef(fhirContext, child);
-            if (chosen == null) break;
-            currentDef = chosen;
-            currentComposite = (chosen instanceof BaseRuntimeElementCompositeDefinition)
-                    ? (BaseRuntimeElementCompositeDefinition<?>) chosen
-                    : null;
-        }
-
-        if (!(currentDef instanceof BaseRuntimeElementCompositeDefinition)) {
-            if (isNumericPrimitive(currentDef)) {
-                expanded.add(fieldPath);
-            }
-        }
-
-        EXPANSION_CACHE.put(cacheKey, expanded);
-        return expanded;
-    }
-
-
-     */
-    private static boolean isNumericPrimitive(BaseRuntimeElementDefinition<?> def) {
-        if (def == null) return false;
-        if (!(def instanceof RuntimePrimitiveDatatypeDefinition)) return false;
-        Class<?> clazz = def.getImplementingClass();
-        for (Class<?> n : NUMERIC_PRIMITIVES) {
-            if (n.isAssignableFrom(clazz)) return true;
-        }
-        return false;
-    }
-
     private static BaseRuntimeElementDefinition<?> chooseElementDef(FhirContext ctx, BaseRuntimeChildDefinition child, String desiredType) {
         BaseRuntimeElementDefinition<?> childDef = child.getChildByName(child.getElementName());
         if (childDef != null) {
