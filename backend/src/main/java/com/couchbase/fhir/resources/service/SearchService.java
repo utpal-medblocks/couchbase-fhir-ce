@@ -430,10 +430,13 @@ public class SearchService {
                 case URI:
                 case COMPOSITE:
                 case QUANTITY:
+                    SearchQuery quantitySearch = QuantitySearchHelper.buildQuantityFTSQuery(fhirContext ,resourceType , paramName , values.get(0), searchParam );
+                    ftsQueries.add(quantitySearch);
+                    logger.debug("🔍 Added Quantity query for {}: {}", paramName, quantitySearch.export());
+                    break;
                 case HAS:
                 case SPECIAL:
                 case NUMBER:
-                    // TODO: Implement support for these parameter types
                     logger.warn("Unsupported search parameter type: {} for parameter: {}", searchParam.getParamType(), paramName);
                     break;
             }
