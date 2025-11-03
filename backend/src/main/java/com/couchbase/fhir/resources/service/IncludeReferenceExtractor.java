@@ -35,6 +35,9 @@ public class IncludeReferenceExtractor {
     @Autowired
     private com.couchbase.admin.connections.service.ConnectionService connectionService;
     
+    @Autowired
+    private CollectionRoutingService collectionRoutingService;
+    
     /**
      * Extract all references from primary resources for given _include parameters using N1QL.
      * Uses CTE-based approach with global de-duplication and limiting.
@@ -104,6 +107,8 @@ public class IncludeReferenceExtractor {
      * This provides global de-duplication across all primary documents.
      * Limiting is done in Java after retrieval.
      * 
+     * Uses CollectionRoutingService to get the actual collection name (e.g., QuestionnaireResponse → General)
+     * 
      * Example output:
      * WITH per AS (
      *   SELECT ARRAY_DISTINCT(ARRAY_FLATTEN([
@@ -163,7 +168,10 @@ public class IncludeReferenceExtractor {
         query.append("    ").append(String.join(",\n    ", fieldExpressions));
         
         query.append("\n  ], 1)) AS refs\n");
-        query.append("  FROM `").append(bucketName).append("`.`Resources`.`").append(primaryResourceType).append("` AS resource\n");
+        
+        // Get actual collection name (e.g., "QuestionnaireResponse" → "General")
+        String targetCollection = collectionRoutingService.getTargetCollection(primaryResourceType);
+        query.append("  FROM `").append(bucketName).append("`.`Resources`.`").append(targetCollection).append("` AS resource\n");
         query.append("  USE KEYS [");
         
         // Add primary keys
@@ -186,13 +194,18 @@ public class IncludeReferenceExtractor {
     
     /**
      * Build N1QL field expression with WHEN IS VALUED filter for arrays.
+     * Handles FHIR choice types (e.g., "medication as Reference" → "medicationReference").
      * 
      * Simple field: [resource.subject.reference]
+     * Choice type:  [resource.medicationReference.reference] (for "medication as Reference")
      * Array field:  ARRAY item.individual.reference FOR item IN resource.participant WHEN item.individual.reference IS VALUED END
      */
     private String buildFieldExpressionWithFilter(String paramName, String path, String resourceType, boolean isArray) {
         // Extract field path from HAPI path (e.g., "Encounter.subject" → "subject")
         String fieldPath = extractFieldPath(path, resourceType);
+        
+        // Handle FHIR choice types: "medication as Reference" → "medicationReference"
+        fieldPath = handleChoiceTypeReference(fieldPath);
         
         if (isArray) {
             // Array field: ARRAY item.{remainingPath}.reference FOR item IN resource.{arrayField} WHEN ... IS VALUED END
@@ -259,23 +272,85 @@ public class IncludeReferenceExtractor {
     }
     
     /**
+     * Handle FHIR choice type references by converting "field as Reference" to "fieldReference".
+     * 
+     * FHIR choice types like medication[x] can be:
+     * - medicationReference (Reference)
+     * - medicationCodeableConcept (CodeableConcept)
+     * 
+     * HAPI returns paths like "(MedicationRequest.medication as Reference)" 
+     * which needs to be converted to "medicationReference" for N1QL queries.
+     * 
+     * Examples:
+     * - "medication as Reference" → "medicationReference"
+     * - "reported as Reference" → "reportedReference"
+     * - "subject" (no "as") → "subject" (unchanged)
+     * 
+     * @param fieldPath The field path extracted from HAPI (may contain "as Reference")
+     * @return The corrected field path for JSON access
+     */
+    private String handleChoiceTypeReference(String fieldPath) {
+        if (fieldPath == null || fieldPath.isEmpty()) {
+            return fieldPath;
+        }
+        
+        // Check for " as Reference" pattern (with space before "as")
+        // Example: "medication as Reference" or "(medication as Reference)"
+        if (fieldPath.contains(" as Reference")) {
+            // Remove parentheses if present
+            String cleaned = fieldPath.replace("(", "").replace(")", "").trim();
+            
+            // Extract the field name before " as Reference"
+            int asIndex = cleaned.indexOf(" as Reference");
+            if (asIndex > 0) {
+                String baseFieldName = cleaned.substring(0, asIndex).trim();
+                
+                // Handle nested paths (e.g., "encounter.diagnosis as Reference")
+                if (baseFieldName.contains(".")) {
+                    String[] parts = baseFieldName.split("\\.");
+                    // Append "Reference" to the last segment only
+                    parts[parts.length - 1] = parts[parts.length - 1] + "Reference";
+                    String result = String.join(".", parts);
+                    logger.debug("🔍 Choice type: '{}' → '{}' (nested)", fieldPath, result);
+                    return result;
+                } else {
+                    // Simple field: append "Reference"
+                    String result = baseFieldName + "Reference";
+                    logger.debug("🔍 Choice type: '{}' → '{}'", fieldPath, result);
+                    return result;
+                }
+            }
+        }
+        
+        // No "as Reference" found - return as-is
+        return fieldPath;
+    }
+    
+    /**
      * Extract field path from HAPI path.
      * 
      * Example: "Encounter.subject" → "subject"
      *          "Encounter.participant.individual" → "participant.individual"
+     *          "(MedicationRequest.medication as Reference)" → "medication as Reference"
      */
     private String extractFieldPath(String hapiPath, String resourceType) {
         if (hapiPath == null) {
             return "";
         }
         
-        // Remove resource type prefix
-        String prefix = resourceType + ".";
-        if (hapiPath.startsWith(prefix)) {
-            return hapiPath.substring(prefix.length());
+        // Handle parenthetical expressions like "(MedicationRequest.medication as Reference)"
+        String cleaned = hapiPath.trim();
+        if (cleaned.startsWith("(") && cleaned.endsWith(")")) {
+            cleaned = cleaned.substring(1, cleaned.length() - 1).trim();
         }
         
-        return hapiPath;
+        // Remove resource type prefix
+        String prefix = resourceType + ".";
+        if (cleaned.startsWith(prefix)) {
+            return cleaned.substring(prefix.length());
+        }
+        
+        return cleaned;
     }
 }
 
