@@ -144,7 +144,7 @@ public class BucketAwareValidationInterceptor {
         RequestPerfBag perfBag = (RequestPerfBag) rd.getUserData().get(UD_PERF_BAG);
         if (perfBag != null) {
             perfBag.setStatus("success");
-            logger.info("✅ op={} | {}", 
+            logger.debug("✅ op={} | {}", 
                 perfBag.getOperation(),
                 perfBag.getSummary());
         } else {

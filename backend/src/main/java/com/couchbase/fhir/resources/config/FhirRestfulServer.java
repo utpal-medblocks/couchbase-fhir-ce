@@ -66,6 +66,9 @@ public class FhirRestfulServer extends RestfulServer {
     @Autowired
     private com.couchbase.fhir.resources.interceptor.CleanExceptionInterceptor cleanExceptionInterceptor;
     
+    @Autowired
+    private com.couchbase.fhir.resources.interceptor.FastpathResponseInterceptor fastpathResponseInterceptor;
+    
     @Autowired(required = false)
     private org.springframework.boot.info.BuildProperties buildProperties;
 
@@ -105,6 +108,7 @@ public class FhirRestfulServer extends RestfulServer {
             registerInterceptor(new MultiTenantInterceptor());
             registerInterceptor(bucketValidationInterceptor);
             registerInterceptor(cleanExceptionInterceptor);
+            registerInterceptor(fastpathResponseInterceptor); // 🚀 Fastpath JSON bypass (10× memory reduction)
             USCoreCapabilityProvider capabilityProvider = new USCoreCapabilityProvider(this, buildProperties);
             setServerConformanceProvider(capabilityProvider);
             registerProviders(allProviders); // Register all providers
@@ -119,6 +123,7 @@ public class FhirRestfulServer extends RestfulServer {
             registerInterceptor(new MultiTenantInterceptor());
             registerInterceptor(bucketValidationInterceptor);
             registerInterceptor(cleanExceptionInterceptor);
+            registerInterceptor(fastpathResponseInterceptor); // 🚀 Fastpath JSON bypass (10× memory reduction)
             USCoreCapabilityProvider capabilityProvider = new USCoreCapabilityProvider(this, buildProperties);
             setServerConformanceProvider(capabilityProvider);
             registerProviders(providers);

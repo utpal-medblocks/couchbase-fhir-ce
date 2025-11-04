@@ -3,6 +3,10 @@
 # Including scopes, collections, and indexes for each collection
 
 fhir:
+  bundle:
+    fastpath:
+      enabled: true # Fastpath ON (Custom Bundle _count up to 500)
+      # enabled: false # Fastpath OFF (HAPI parsing, _count max 50)
   scopes:
     admin:
       name: "Admin"

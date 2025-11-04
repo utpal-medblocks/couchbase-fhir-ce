@@ -4,6 +4,13 @@ spring:
   config:
     import: classpath:fhir.yml
 
+# HTTP Compression (applies to all responses including fastpath JSON)
+server:
+  compression:
+    enabled: true
+    mime-types: application/json,application/fhir+json,text/html,text/xml,text/plain,application/xml
+    min-response-size: 1024 # Compress responses > 1KB
+
 # Basic Actuator Configuration
 management:
   endpoints:
@@ -30,6 +37,10 @@ server:
     include-message: on-param
     include-binding-errors: never
     include-exception: false
+  compression:
+    enabled: true
+    mime-types: application/json,application/fhir+json,text/html,text/xml,text/plain,application/xml
+    min-response-size: 1024 # Compress responses > 1KB
   tomcat:
     accesslog:
       enabled: false

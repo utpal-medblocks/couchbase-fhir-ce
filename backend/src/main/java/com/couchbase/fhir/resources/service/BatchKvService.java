@@ -17,7 +17,9 @@ import org.springframework.stereotype.Service;
 
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 
@@ -120,57 +122,59 @@ public class BatchKvService {
     }
     
     /**
-     * Retrieve multiple documents by their keys without parsing (raw JSON)
-     * Useful for operations that don't need FHIR resource objects
+     * Get documents as raw UTF-8 bytes with their keys preserved (for fastpath zero-copy assembly)
+     * Returns a Map of key -> byte[] to preserve association
      * 
-     * @param documentKeys List of document keys
-     * @param resourceType FHIR resource type (for collection routing)
-     * @return List of raw JSON strings
+     * FASTPATH OPTIMIZATION: Uses RawJsonTranscoder to get raw JSON bytes without parsing overhead
      */
-    public List<String> getDocumentsAsJson(List<String> documentKeys, String resourceType) {
+    public Map<String, byte[]> getDocumentsAsBytesWithKeys(List<String> documentKeys, String resourceType) {
         if (documentKeys == null || documentKeys.isEmpty()) {
-            return new ArrayList<>();
+            return new LinkedHashMap<>();
         }
         
         String bucketName = TenantContextHolder.getTenantId();
         
-        logger.debug("🔑 Batch KV retrieval (raw JSON): {} documents for {}", documentKeys.size(), resourceType);
+        logger.debug("🚀 FASTPATH: Batch KV retrieval with keys (raw bytes): {} documents for {}", documentKeys.size(), resourceType);
         
         try {
-            // Get cached collection (avoids lookup overhead)
             String targetCollection = collectionRoutingService.getTargetCollection(resourceType);
             Collection collection = couchbaseGateway.getCollection("default", bucketName, DEFAULT_SCOPE, targetCollection);
             
-            // Execute batch KV operations using async API (much faster than reactive)
             List<CompletableFuture<GetResult>> futures = new ArrayList<>();
             
             for (String documentKey : documentKeys) {
+                // Use RawJsonTranscoder for JSON documents (better than RawBinaryTranscoder for JSON)
                 CompletableFuture<GetResult> future = collection.async().get(documentKey,
-                    GetOptions.getOptions().timeout(Duration.ofSeconds(10)));
+                    GetOptions.getOptions()
+                        .timeout(Duration.ofSeconds(10))
+                        .transcoder(com.couchbase.client.java.codec.RawJsonTranscoder.INSTANCE));
                 futures.add(future);
             }
             
-            // Wait for all operations and collect JSON strings
-            List<String> jsonResults = new ArrayList<>();
+            // Preserve key-to-bytes association using LinkedHashMap (maintains insertion order)
+            Map<String, byte[]> keyToBytesMap = new LinkedHashMap<>();
             
             for (int i = 0; i < futures.size(); i++) {
+                String key = documentKeys.get(i);
                 try {
                     GetResult result = futures.get(i).get(10, TimeUnit.SECONDS);
                     if (result != null) {
-                        String json = result.contentAsObject().toString();
-                        jsonResults.add(json);
+                        // Get raw JSON bytes directly from Couchbase (zero-copy!)
+                        byte[] jsonBytes = result.contentAs(byte[].class);
+                        keyToBytesMap.put(key, jsonBytes);
                     }
                 } catch (Exception e) {
-                    logger.warn("🔑 Failed to retrieve document {}: {}", documentKeys.get(i), e.getMessage());
+                    logger.warn("🔑 Failed to retrieve document {}: {}", key, e.getMessage());
+                    // Don't add to map if retrieval failed
                 }
             }
             
-            logger.debug("🔑 Retrieved {}/{} JSON documents", jsonResults.size(), documentKeys.size());
-            return jsonResults;
+            logger.debug("🚀 FASTPATH: Retrieved {}/{} documents as raw bytes with keys", keyToBytesMap.size(), documentKeys.size());
+            return keyToBytesMap;
             
         } catch (Exception e) {
-            logger.error("❌ Batch KV JSON retrieval failed for {}: {}", resourceType, e.getMessage());
-            throw new RuntimeException("Batch KV JSON retrieval failed: " + e.getMessage(), e);
+            logger.error("❌ Batch KV bytes retrieval failed for {}: {}", resourceType, e.getMessage());
+            throw new RuntimeException("Batch KV bytes retrieval failed: " + e.getMessage(), e);
         }
     }
     

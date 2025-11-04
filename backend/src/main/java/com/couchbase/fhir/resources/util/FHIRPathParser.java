@@ -224,6 +224,7 @@ public class FHIRPathParser {
     
     /**
      * Parse casting expressions like "Goal.target.due.as(date)" -> "target.dueDate"
+     * or "MedicationRequest.medication as Reference" -> "medicationReference"
      */
     private static String parseCastingExpression(String expression) {
         int asIndex = expression.indexOf(".as(");
@@ -236,6 +237,10 @@ public class FHIRPathParser {
         String pathPart = expression.substring(0, asIndex);
         String typePart = expression.substring(asIndex + 4, closeParenIndex); // +4 for ".as("
         
+        // Capitalize first letter of type (e.g., "date" -> "Date", "Reference" -> "Reference")
+        String capitalizedType = typePart.substring(0, 1).toUpperCase() + 
+                               (typePart.length() > 1 ? typePart.substring(1) : "");
+        
         if (pathPart.contains(".")) {
             String[] pathParts = pathPart.split("\\.");
             if (pathParts.length >= 2) {
@@ -245,7 +250,6 @@ public class FHIRPathParser {
                 
                 // Replace last field with field + capitalizedType
                 String lastField = fieldParts[fieldParts.length - 1];
-                String capitalizedType = typePart.substring(0, 1).toUpperCase() + typePart.substring(1);
                 fieldParts[fieldParts.length - 1] = lastField + capitalizedType;
                 
                 String result = String.join(".", fieldParts);
@@ -254,7 +258,9 @@ public class FHIRPathParser {
             }
         }
         
-        return extractSimpleFieldPath(expression);
+        // If no dots in path (shouldn't happen for FHIR paths, but handle gracefully)
+        logger.debug("🔍 FHIRPathParser: Simple cast expression without dots: {} -> {}{}", expression, pathPart, capitalizedType);
+        return pathPart + capitalizedType;
     }
     
     /**
