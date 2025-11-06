@@ -202,16 +202,15 @@ public class FhirBundleProcessingService {
             logger.debug("🚀 Starting Couchbase transaction for Bundle processing");
             
             try {
-                // Execute all operations within a single transaction
+                // Execute all operations within a single transaction and collect responses
                 cluster.transactions().run((ctx) -> {
                     logger.debug("🔄 Executing Bundle operations within transaction context");
-                    processEntriesInTransactionContext(ctx, bundle, cluster, finalBucketName, bucketConfig);
+                    List<ProcessedEntry> entries = processEntriesInTransactionContext(ctx, bundle, cluster, finalBucketName, bucketConfig);
+                    // Store entries for use after transaction commits
+                    processedEntries.addAll(entries);
                 });
 
-                logger.debug("✅ Transaction committed successfully - Bundle processing complete");
-
-                // Create processed entries for response (without re-processing)
-                processedEntries = createProcessedEntriesFromBundle(bundle);
+                logger.debug("✅ Transaction committed successfully - Bundle processing complete with {} entries", processedEntries.size());
                 
             } catch (Exception txEx) {
                 String cleanMessage = extractCleanErrorMessage(txEx);
@@ -260,10 +259,13 @@ public class FhirBundleProcessingService {
      * Process Bundle entries within a Couchbase transaction context
      * Now orchestrates individual POST, PUT, DELETE services
      */
-    private void processEntriesInTransactionContext(com.couchbase.client.java.transactions.TransactionAttemptContext ctx, 
+    private List<ProcessedEntry> processEntriesInTransactionContext(com.couchbase.client.java.transactions.TransactionAttemptContext ctx, 
                                                    Bundle bundle, Cluster cluster, String bucketName, 
                                                    com.couchbase.fhir.resources.service.FhirBucketConfigService.FhirBucketConfig bucketConfig) {
         logger.info("🔄 Processing {} Bundle entries within transaction using service orchestration", bundle.getEntry().size());
+        
+        // List to collect processed entries (including GET responses)
+        List<ProcessedEntry> processedEntries = new ArrayList<>();
         
         // Step 1: Build UUID mapping for all entries first (for POST operations)
         Map<String, String> uuidToIdMapping = buildUuidMapping(bundle);
@@ -275,9 +277,29 @@ public class FhirBundleProcessingService {
         for (int i = 0; i < bundle.getEntry().size(); i++) {
             Bundle.BundleEntryComponent entry = bundle.getEntry().get(i);
             Resource resource = entry.getResource();
-            String resourceType = resource.getResourceType().name();
             Bundle.HTTPVerb method = entry.getRequest() != null ? entry.getRequest().getMethod() : Bundle.HTTPVerb.POST;
             
+            // Handle GET requests (no resource, only request URL)
+            if (resource == null) {
+                if (method == Bundle.HTTPVerb.GET) {
+                    logger.debug("🔄 Processing entry {}/{}: GET request (read-only)", i+1, bundle.getEntry().size());
+                    // GET requests are read-only - process them but don't write to transaction
+                    try {
+                        Bundle.BundleEntryComponent getResponseEntry = processGetRequest(entry, cluster, bucketName);
+                        processedEntries.add(ProcessedEntry.success("GET", "search", "search", getResponseEntry));
+                    } catch (Exception e) {
+                        logger.error("❌ Failed to process GET request in transaction: {}", e.getMessage());
+                        Bundle.BundleEntryComponent errorEntry = createErrorResponseEntry("500 Internal Server Error", 
+                            "Failed to process GET request: " + e.getMessage());
+                        processedEntries.add(ProcessedEntry.failed("Failed to process GET request: " + e.getMessage()));
+                    }
+                    continue;
+                } else {
+                    throw new RuntimeException("Bundle entry has no resource but method is not GET: " + method);
+                }
+            }
+            
+            String resourceType = resource.getResourceType().name();
             logger.debug("🔄 Processing entry {}/{}: {} {} in transaction", i+1, bundle.getEntry().size(), method, resourceType);
             
             try {
@@ -291,12 +313,21 @@ public class FhirBundleProcessingService {
                     case POST:
                         postService.createResourceInTransaction(resource, ctx, cluster, bucketName);
                         logger.info("✅ POST {}: Created with server-generated ID {}", resourceType, resource.getId());
+                        // Add to processed entries for response
+                        Bundle.BundleEntryComponent responseEntry = createResponseEntry(resource, resourceType);
+                        processedEntries.add(ProcessedEntry.success(resourceType, resource.getId(), 
+                            resourceType + "/" + resource.getId(), responseEntry));
                         break;
                         
                     case PUT:
                         TransactionContext putContext = new TransactionContextImpl(cluster, bucketName, ctx);
                         putService.updateOrCreateResource(resource, putContext);
                         logger.info("✅ PUT {}: Updated/created with ID {}", resourceType, resource.getId());
+                        // Add to processed entries for response
+                        Bundle.BundleEntryComponent putResponseEntry = createResponseEntryForMethod(resource, resourceType, 
+                            Bundle.HTTPVerb.PUT, "200 OK");
+                        processedEntries.add(ProcessedEntry.success(resourceType, resource.getId(), 
+                            resourceType + "/" + resource.getId(), putResponseEntry));
                         break;
                         
                     case DELETE:
@@ -304,10 +335,19 @@ public class FhirBundleProcessingService {
                         if (resourceId != null) {
                             deleteService.deleteResource(resourceType, resourceId, transactionContext);
                             logger.info("✅ DELETE {}: Soft deleted ID {}", resourceType, resourceId);
+                            // Add to processed entries for response
+                            Bundle.BundleEntryComponent deleteResponseEntry = new Bundle.BundleEntryComponent();
+                            deleteResponseEntry.setResponse(new Bundle.BundleEntryResponseComponent().setStatus("204 No Content"));
+                            processedEntries.add(ProcessedEntry.success(resourceType, resourceId, 
+                                resourceType + "/" + resourceId, deleteResponseEntry));
                         } else {
                             throw new RuntimeException("DELETE operation requires resource ID in request URL");
                         }
                         break;
+                        
+                    case GET:
+                        // GET should have been handled above (resource == null case)
+                        throw new RuntimeException("GET requests should not have a resource body");
                         
                     default:
                         throw new RuntimeException("Unsupported HTTP method in Bundle: " + method);
@@ -319,7 +359,8 @@ public class FhirBundleProcessingService {
             }
         }
         
-        logger.info("✅ All Bundle entries processed successfully within transaction");
+        logger.info("✅ All {} Bundle entries processed successfully within transaction", processedEntries.size());
+        return processedEntries;
     }
     
     /**
@@ -886,8 +927,8 @@ public class FhirBundleProcessingService {
             // Parse query string using HAPI utility
             Map<String, String[]> params = ca.uhn.fhir.util.UrlUtil.parseQueryString(queryString);
             
-            // Call SearchService directly (add thin facade method)
-            Bundle searchResults = searchService.searchDirect(resourceType, params);
+            // Call SearchService directly with bucketName for proper base URL
+            Bundle searchResults = searchService.searchDirect(resourceType, params, bucketName);
             
             // Create response entry
             Bundle.BundleEntryComponent responseEntry = new Bundle.BundleEntryComponent();

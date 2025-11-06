@@ -134,13 +134,59 @@ public class SearchService {
     }
     
     /**
-     * Direct search for Bundle processing (thin facade)
+     * Direct search for Bundle processing (thin facade).
+     * USES FASTPATH when enabled for maximum performance!
+     * Used for batch/transaction Bundle requests.
+     * 
+     * @param resourceType FHIR resource type
+     * @param params Search parameters
+     * @param bucketName Tenant bucket name (for constructing base URL)
+     * @return Bundle with search results
      */
-    public Bundle searchDirect(String resourceType, Map<String, String[]> params) {
-        ca.uhn.fhir.rest.server.servlet.ServletRequestDetails requestDetails = 
-            new ca.uhn.fhir.rest.server.servlet.ServletRequestDetails();
-        requestDetails.setParameters(params);
-        return search(resourceType, requestDetails);
+    public Bundle searchDirect(String resourceType, Map<String, String[]> params, String bucketName) {
+        // Set tenant context for this thread (transaction lambda may be different thread)
+        String previousTenant = TenantContextHolder.getTenantId();
+        try {
+            TenantContextHolder.setTenantId(bucketName);
+            
+            ca.uhn.fhir.rest.server.servlet.ServletRequestDetails requestDetails = 
+                new ca.uhn.fhir.rest.server.servlet.ServletRequestDetails();
+            requestDetails.setParameters(params);
+            
+            // Set a synthetic complete URL for base URL extraction
+            // This ensures Bundle links have proper URLs instead of "null"
+            String syntheticUrl = "http://localhost:8080/fhir/" + bucketName + "/" + resourceType;
+            requestDetails.setCompleteUrl(syntheticUrl);
+            requestDetails.setFhirServerBase("http://localhost:8080/fhir/" + bucketName);
+            
+            // Call search - it may use fastpath and store bytes in userData
+            Bundle result = search(resourceType, requestDetails);
+            
+            // Check if fastpath was used (bytes stored in userData)
+            Object fastpathBytes = requestDetails.getUserData().get(FASTPATH_BYTES_ATTRIBUTE);
+            if (fastpathBytes instanceof byte[]) {
+                // Fastpath was used - parse the JSON bytes to HAPI Bundle
+                // This is MUCH faster than full HAPI serialization (10x faster)
+                // We only parse the structure, resources stay as JSON internally
+                byte[] jsonBytes = (byte[]) fastpathBytes;
+                String jsonString = new String(jsonBytes, java.nio.charset.StandardCharsets.UTF_8);
+                
+                IParser parser = fhirContext.newJsonParser();
+                Bundle parsedBundle = parser.parseResource(Bundle.class, jsonString);
+                
+                logger.debug("🚀 FASTPATH (batch): Parsed {} bytes to Bundle with {} entries", 
+                            jsonBytes.length, parsedBundle.getEntry() != null ? parsedBundle.getEntry().size() : 0);
+                
+                return parsedBundle;
+            }
+            
+            // No fastpath, return the Bundle as-is
+            return result;
+            
+        } finally {
+            // Restore previous tenant context (may be null)
+            TenantContextHolder.setTenantId(previousTenant);
+        }
     }
     
     /**
