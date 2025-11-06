@@ -1,4 +1,4 @@
-FROM node:20-alpine AS builder
+FROM node:22-alpine AS builder
 
 # Install dependencies in a separate layer for better caching
 WORKDIR /app

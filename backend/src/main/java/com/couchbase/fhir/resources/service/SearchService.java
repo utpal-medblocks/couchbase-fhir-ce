@@ -29,6 +29,7 @@ import org.springframework.stereotype.Service;
 import ca.uhn.fhir.parser.IParser;
 import com.couchbase.common.config.FhirConfig;
 
+import java.time.Instant;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -43,8 +44,13 @@ public class SearchService {
     
     // New pagination constants
     private static final int DEFAULT_PAGE_SIZE = 50;  // Up from 20
+    private static final int MAX_COUNT_PER_PAGE = 50;  // Max primary resources per page (prevents OOM from heavyweight resources like List)
     private static final int MAX_FTS_FETCH_SIZE = 1000;  // Max doc keys per FTS query
-    private static final int MAX_BUNDLE_SIZE = 500;  // Hard cap on total Bundle resources (Primary + Secondary)
+    private static final int MAX_BUNDLE_SIZE = 1000;  // Hard cap on total Bundle resources (primaries + secondaries combined)
+    
+    // Fastpath attribute key for storing UTF-8 bytes in request (2x memory savings vs String)
+    public static final String FASTPATH_BYTES_ATTRIBUTE = "com.couchbase.fhir.fastpath.bytes";
+    
     @Autowired
     private FhirContext fhirContext;
     
@@ -68,6 +74,15 @@ public class SearchService {
     
     @Autowired
     private BatchKvService batchKvService;
+    
+    @Autowired
+    private FastJsonBundleBuilder fastJsonBundleBuilder;
+    
+    @Autowired
+    private com.couchbase.fhir.resources.config.BundleFastpathProperties fastpathProperties;
+    
+    @Autowired
+    private IncludeReferenceExtractor includeReferenceExtractor;
     
     /**
      * Resolve conditional operations by finding matching resources.
@@ -119,13 +134,59 @@ public class SearchService {
     }
     
     /**
-     * Direct search for Bundle processing (thin facade)
+     * Direct search for Bundle processing (thin facade).
+     * USES FASTPATH when enabled for maximum performance!
+     * Used for batch/transaction Bundle requests.
+     * 
+     * @param resourceType FHIR resource type
+     * @param params Search parameters
+     * @param bucketName Tenant bucket name (for constructing base URL)
+     * @return Bundle with search results
      */
-    public Bundle searchDirect(String resourceType, Map<String, String[]> params) {
-        ca.uhn.fhir.rest.server.servlet.ServletRequestDetails requestDetails = 
-            new ca.uhn.fhir.rest.server.servlet.ServletRequestDetails();
-        requestDetails.setParameters(params);
-        return search(resourceType, requestDetails);
+    public Bundle searchDirect(String resourceType, Map<String, String[]> params, String bucketName) {
+        // Set tenant context for this thread (transaction lambda may be different thread)
+        String previousTenant = TenantContextHolder.getTenantId();
+        try {
+            TenantContextHolder.setTenantId(bucketName);
+            
+            ca.uhn.fhir.rest.server.servlet.ServletRequestDetails requestDetails = 
+                new ca.uhn.fhir.rest.server.servlet.ServletRequestDetails();
+            requestDetails.setParameters(params);
+            
+            // Set a synthetic complete URL for base URL extraction
+            // This ensures Bundle links have proper URLs instead of "null"
+            String syntheticUrl = "http://localhost:8080/fhir/" + bucketName + "/" + resourceType;
+            requestDetails.setCompleteUrl(syntheticUrl);
+            requestDetails.setFhirServerBase("http://localhost:8080/fhir/" + bucketName);
+            
+            // Call search - it may use fastpath and store bytes in userData
+            Bundle result = search(resourceType, requestDetails);
+            
+            // Check if fastpath was used (bytes stored in userData)
+            Object fastpathBytes = requestDetails.getUserData().get(FASTPATH_BYTES_ATTRIBUTE);
+            if (fastpathBytes instanceof byte[]) {
+                // Fastpath was used - parse the JSON bytes to HAPI Bundle
+                // This is MUCH faster than full HAPI serialization (10x faster)
+                // We only parse the structure, resources stay as JSON internally
+                byte[] jsonBytes = (byte[]) fastpathBytes;
+                String jsonString = new String(jsonBytes, java.nio.charset.StandardCharsets.UTF_8);
+                
+                IParser parser = fhirContext.newJsonParser();
+                Bundle parsedBundle = parser.parseResource(Bundle.class, jsonString);
+                
+                logger.debug("🚀 FASTPATH (batch): Parsed {} bytes to Bundle with {} entries", 
+                            jsonBytes.length, parsedBundle.getEntry() != null ? parsedBundle.getEntry().size() : 0);
+                
+                return parsedBundle;
+            }
+            
+            // No fastpath, return the Bundle as-is
+            return result;
+            
+        } finally {
+            // Restore previous tenant context (may be null)
+            TenantContextHolder.setTenantId(previousTenant);
+        }
     }
     
     /**
@@ -273,23 +334,63 @@ public class SearchService {
         
         // Check if this is a _revinclude search (can have multiple _revinclude parameters)
         if (!revIncludes.isEmpty()) {
-            Bundle result = handleMultipleRevIncludeSearch(resourceType, ftsQueries, revIncludes, count, 
-                                        summaryMode, elements, totalMode, bucketName, requestDetails);
+            // Check if fastpath is enabled (beta: no _summary/_elements support)
+            boolean useFastpath = fastpathProperties.isEnabled() && 
+                                  (summaryMode == null || summaryMode == SummaryEnum.FALSE) && 
+                                  (elements == null || elements.isEmpty());
+            
+        if (useFastpath) {
+            logger.info("🚀 FASTPATH ENABLED: Using JSON fastpath for _revinclude search");
+            byte[] resultBytes = handleMultipleRevIncludeSearchFastpath(resourceType, ftsQueries, revIncludes, count, 
+                                     bucketName, requestDetails);
             RequestPerfBagUtils.addTiming(requestDetails, "search_service", System.currentTimeMillis() - searchStartMs);
-            RequestPerfBagUtils.addCount(requestDetails, "search_results", result.getTotal());
-            return result;
+            
+            // Store UTF-8 bytes in request attribute for interceptor (2x memory savings vs String)
+            requestDetails.getUserData().put(FASTPATH_BYTES_ATTRIBUTE, resultBytes);
+                
+                // Return empty placeholder Bundle (interceptor will replace with JSON)
+                Bundle placeholder = new Bundle();
+                placeholder.setType(Bundle.BundleType.SEARCHSET);
+                return placeholder;
+            } else {
+                Bundle result = handleMultipleRevIncludeSearch(resourceType, ftsQueries, revIncludes, count, 
+                                            summaryMode, elements, totalMode, bucketName, requestDetails);
+                RequestPerfBagUtils.addTiming(requestDetails, "search_service", System.currentTimeMillis() - searchStartMs);
+                RequestPerfBagUtils.addCount(requestDetails, "search_results", result.getTotal());
+                return result;
+            }
         }
         
         // Check if this is a _include search (can have multiple _include parameters)
         if (!includes.isEmpty()) {
             try {
-                logger.info("🔍 About to call handleMultipleIncludeSearch for {} with {} includes", resourceType, includes.size());
-                Bundle result = handleMultipleIncludeSearch(resourceType, ftsQueries, includes, count, 
-                                         summaryMode, elements, totalMode, bucketName, requestDetails);
-                logger.info("🔍 handleMultipleIncludeSearch completed successfully");
+                // Check if fastpath is enabled (beta: no _summary/_elements support)
+                boolean useFastpath = fastpathProperties.isEnabled() && 
+                                      (summaryMode == null || summaryMode == SummaryEnum.FALSE) && 
+                                      (elements == null || elements.isEmpty());
+                
+            if (useFastpath) {
+                logger.info("🚀 FASTPATH ENABLED: Using JSON fastpath for _include search");
+                byte[] resultBytes = handleMultipleIncludeSearchFastpath(resourceType, ftsQueries, includes, count, 
+                                         bucketName, requestDetails);
                 RequestPerfBagUtils.addTiming(requestDetails, "search_service", System.currentTimeMillis() - searchStartMs);
-                RequestPerfBagUtils.addCount(requestDetails, "search_results", result.getTotal());
-                return result;
+                
+                // Store UTF-8 bytes in request attribute for interceptor (2x memory savings vs String)
+                requestDetails.getUserData().put(FASTPATH_BYTES_ATTRIBUTE, resultBytes);
+                    
+                    // Return empty placeholder Bundle (interceptor will replace with JSON)
+                    Bundle placeholder = new Bundle();
+                    placeholder.setType(Bundle.BundleType.SEARCHSET);
+                    return placeholder;
+                } else {
+                    logger.info("🔍 About to call handleMultipleIncludeSearch for {} with {} includes", resourceType, includes.size());
+                    Bundle result = handleMultipleIncludeSearch(resourceType, ftsQueries, includes, count, 
+                                             summaryMode, elements, totalMode, bucketName, requestDetails);
+                    logger.info("🔍 handleMultipleIncludeSearch completed successfully");
+                    RequestPerfBagUtils.addTiming(requestDetails, "search_service", System.currentTimeMillis() - searchStartMs);
+                    RequestPerfBagUtils.addCount(requestDetails, "search_results", result.getTotal());
+                    return result;
+                }
             } catch (Exception e) {
                 if (isNoActiveConnectionError(e)) {
                     logger.error("🔍 ❌ Include search failed: No active Couchbase connection");
@@ -300,8 +401,28 @@ public class SearchService {
             }
         }
         
+        // Check if fastpath is enabled for regular search (beta: no _summary/_elements support)
+        boolean useFastpath = fastpathProperties.isEnabled() && 
+                              (summaryMode == null || summaryMode == SummaryEnum.FALSE) && 
+                              (elements == null || elements.isEmpty());
+        
+        if (useFastpath) {
+            logger.info("🚀 FASTPATH ENABLED: Using JSON fastpath for regular search");
+            byte[] resultBytes = handleRegularSearchFastpath(resourceType, ftsQueries, count, sortFields,
+                                         bucketName, requestDetails);
+            RequestPerfBagUtils.addTiming(requestDetails, "search_service", System.currentTimeMillis() - searchStartMs);
+            
+            // Store UTF-8 bytes in request attribute for interceptor (2x memory savings vs String)
+            requestDetails.getUserData().put(FASTPATH_BYTES_ATTRIBUTE, resultBytes);
+            
+            // Return empty placeholder Bundle (interceptor will replace with JSON)
+            Bundle placeholder = new Bundle();
+            placeholder.setType(Bundle.BundleType.SEARCHSET);
+            return placeholder;
+        }
+        
         // Always use the new pagination strategy for regular searches
-        logger.info("🚀 Using new pagination strategy for {} search (userExplicitCount={})", resourceType, userExplicitCount);
+        // logger.info("🚀 Using new pagination strategy for {} search (userExplicitCount={})", resourceType, userExplicitCount);
         Bundle result = executeSearchWithNewPagination(resourceType, ftsQueries, count, sortFields, 
                                                       summaryMode, elements, totalMode, bucketName, requestDetails);
         // Track search timing
@@ -515,7 +636,21 @@ public class SearchService {
             // Trim whitespace (including newlines from URL encoding issues like %0A)
             int count = Integer.parseInt(countValue.trim());
             if (count <= 0) return DEFAULT_PAGE_SIZE;
-            if (count > MAX_FTS_FETCH_SIZE) return MAX_FTS_FETCH_SIZE; // Max 1000
+            
+            // Cap at MAX_COUNT_PER_PAGE ONLY if fastpath is disabled (HAPI parsing = OOM risk)
+            // With fastpath enabled, memory usage is 10x lower, so we can allow larger counts
+            if (!fastpathProperties.isEnabled() && count > MAX_COUNT_PER_PAGE) {
+                logger.warn("⚠️ _count={} exceeds server limit ({}) with HAPI parsing. Enable fastpath or use pagination.", 
+                           count, MAX_COUNT_PER_PAGE);
+                return MAX_COUNT_PER_PAGE;
+            }
+            
+            // Absolute safety cap at 500 even with fastpath (prevents abuse)
+            if (count > 500) {
+                logger.warn("⚠️ _count={} exceeds absolute limit (500), capping for server protection.", count);
+                return 500;
+            }
+            
             return count;
         } catch (NumberFormatException e) {
             logger.warn("🔍 Invalid _count value '{}', using default {}", countValue, DEFAULT_PAGE_SIZE);
@@ -631,21 +766,21 @@ public class SearchService {
     
     
     /**
-     * Execute search using new pagination strategy (FTS gets all keys, KV-only for subsequent pages)
+     * Execute search using new pagination strategy (FTS gets count+1 keys for pagination detection)
      */
     private Bundle executeSearchWithNewPagination(String resourceType, List<SearchQuery> ftsQueries, int pageSize,
                                                  List<SearchSort> sortFields, SummaryEnum summaryMode, 
                                                  Set<String> elements, String totalMode, String bucketName,
                                                  RequestDetails requestDetails) {
         
-        logger.info("🚀 New Pagination Strategy: {} (page size: {}, fetching up to 1000 keys from FTS)", resourceType, pageSize);
+        logger.info("🚀 New Pagination Strategy: {} (page size: {}, fetching count+1 for pagination detection)", resourceType, pageSize);
         
-        // Step 1: Execute FTS to get ALL document keys (up to 1000)
-        FtsSearchService.FtsSearchResult ftsResult = ftsKvSearchService.searchForAllKeys(
-            ftsQueries, resourceType, sortFields);
+        // Step 1: Execute FTS to get count+1 keys (efficient pagination detection, same as fastpath)
+        FtsSearchService.FtsSearchResult ftsResult = ftsSearchService.searchForKeys(
+            ftsQueries, resourceType, 0, pageSize + 1, sortFields);
         
         List<String> allDocumentKeys = ftsResult.getDocumentKeys();
-        logger.info("🚀 FTS returned {} total document keys for {}", allDocumentKeys.size(), resourceType);
+        long totalCount = ftsResult.getTotalCount();
         
         // Step 2: Determine if pagination is needed
         boolean needsPagination = allDocumentKeys.size() > pageSize;
@@ -657,29 +792,37 @@ public class SearchService {
             
         List<Resource> results = ftsKvSearchService.getDocumentsFromKeys(firstPageKeys, resourceType);
         
-        // Step 4: Create pagination state if needed
+        // Step 4: Create pagination state if needed (NEW: Store FTS query, not keys!)
         String continuationToken = null;
         if (needsPagination) {
             String baseUrl = extractBaseUrl(requestDetails, bucketName);
+            
+            // Serialize FTS queries for storage
+            List<String> serializedQueries = serializeFtsQueries(ftsQueries);
+            List<String> serializedSortFields = serializeSortFields(sortFields);
+            
             PaginationState paginationState = PaginationState.builder()
                 .searchType("regular")
                 .resourceType(resourceType)
-                .allDocumentKeys(allDocumentKeys)
-                .pageSize(pageSize)
-                .currentOffset(pageSize) // Next page starts after first page
+                .primaryResourceCount((int) totalCount)  // Use FTS totalCount metadata
+                .primaryFtsQueriesJson(serializedQueries)
+                .primaryOffset(pageSize)  // Next page starts at offset=pageSize
+                .primaryPageSize(pageSize)
+                .sortFieldsJson(serializedSortFields)
                 .bucketName(bucketName)
                 .baseUrl(baseUrl)
+                .useLegacyKeyList(false)  // NEW query-based approach
                 .build();
                 
             continuationToken = searchStateManager.storePaginationState(paginationState);
-            logger.info("✅ Created PaginationState: token={}, totalKeys={}, pages={}", 
-                       continuationToken, allDocumentKeys.size(), paginationState.getTotalPages());
+            logger.info("✅ Created PaginationState: token={}, strategy=query-based, primaryOffset={}, pageSize={}, total={}", 
+                       continuationToken, pageSize, pageSize, totalCount);
         }
         
         // Step 5: Build Bundle response
         Bundle bundle = new Bundle();
         bundle.setType(Bundle.BundleType.SEARCHSET);
-        bundle.setTotal(allDocumentKeys.size()); // Total is exact count from FTS
+        bundle.setTotal((int) totalCount); // Total from FTS metadata (accurate)
         
         // Add resources to bundle with filtering
         String baseUrl = extractBaseUrl(requestDetails, bucketName);
@@ -696,15 +839,22 @@ public class SearchService {
                     results.size(), 0, bundle.getEntry().size());
         }
         
+        // Add self link
+        bundle.addLink()
+                .setRelation("self")
+                .setUrl(baseUrl + "/" + resourceType);
+        
         // Add next link if pagination is needed
-        if (continuationToken != null && allDocumentKeys.size() > pageSize) {
+        if (continuationToken != null && needsPagination) {
             bundle.addLink()
                     .setRelation("next")
                     .setUrl(buildNextPageUrl(continuationToken, pageSize, resourceType, bucketName, pageSize, baseUrl));
         }
         
-        logger.info("🚀 New Pagination: Returning {} results, total: {}, pages: {}", 
-                   results.size(), allDocumentKeys.size(), needsPagination ? "multiple" : "single");
+        // Note: No previous link on first page (offset=0)
+        
+        logger.info("🚀 New Pagination: Returning {} results, total: {}, pagination: {}", 
+                   results.size(), totalCount, needsPagination ? "YES" : "NO");
         return bundle;
     }
     
@@ -839,6 +989,19 @@ public class SearchService {
                     matchCount, includeCount, bundle.getEntry().size());
         }
         
+        // Add self link
+        bundle.addLink()
+                .setRelation("self")
+                .setUrl(buildNextPageUrl(continuationToken, offset, resourceType, bucketName, pageSize, baseUrl));
+        
+        // Add previous link if not on first page
+        if (offset > 0) {
+            int prevOffset = Math.max(0, offset - pageSize);
+            bundle.addLink()
+                    .setRelation("previous")
+                    .setUrl(buildPreviousPageUrl(continuationToken, prevOffset, resourceType, bucketName, pageSize, baseUrl));
+        }
+        
         // Add next link if more results available
         if (hasMoreResults) {
             bundle.addLink()
@@ -860,12 +1023,17 @@ public class SearchService {
     /**
      * Handle query-based pagination (NEW approach) - Re-execute FTS query for each page.
      * This method supports _revinclude, _include, and regular searches.
+     * Supports both HAPI and fastpath rendering.
      */
     private Bundle handleQueryBasedPagination(String continuationToken, PaginationState state, int offset, int count,
                                              SummaryEnum summaryMode, Set<String> elements,
                                              RequestDetails requestDetails) {
-        logger.info("🔍 DEBUG: handleQueryBasedPagination ENTERED");
-        logger.info("🔍 DEBUG: state={}, offset={}, count={}", state != null ? "EXISTS" : "NULL", offset, count);
+        logger.info("🔍 Continuation page: offset={}, count={}, searchType={}", offset, count, state.getSearchType());
+        
+        // Check if fastpath is enabled (beta: no _summary/_elements support)
+        boolean useFastpath = fastpathProperties.isEnabled() && 
+                              (summaryMode == null || summaryMode == SummaryEnum.FALSE) && 
+                              (elements == null || elements.isEmpty());
         
         String searchType = state.getSearchType();
         String primaryResourceType = state.getResourceType();
@@ -886,27 +1054,44 @@ public class SearchService {
         // For now, use matchAll (works for initial testing)
         // primaryQueries is empty, will use matchAll in buildCombinedSearchQuery
         
-        // Step 2: Re-execute FTS for primaries with updated offset
+        // Step 2: Re-execute FTS for primaries with updated offset (fetch count+1 for pagination detection)
         List<SearchSort> sortFields = deserializeSortFields(state.getSortFieldsJson());
         
         FtsSearchService.FtsSearchResult primaryResult = ftsSearchService.searchForKeys(
-            primaryQueries, primaryResourceType, offset, pageSize, sortFields);
+            primaryQueries, primaryResourceType, offset, pageSize + 1, sortFields);  // +1 for pagination detection
         
         List<String> primaryKeys = primaryResult.getDocumentKeys();
-        logger.info("🚀 FTS re-execution returned {} primary keys", primaryKeys.size());
+        logger.info("🚀 FTS re-execution returned {} primary keys (requested {}+1 for pagination detection)", 
+                   primaryKeys.size(), pageSize);
         
         if (primaryKeys.isEmpty()) {
             logger.info("🚀 No more primaries at offset={}", offset);
             return createEmptyBundle();
         }
         
-        // Step 3: Fetch primary resources
-        List<Resource> primaryResources = ftsKvSearchService.getDocumentsFromKeys(primaryKeys, primaryResourceType);
+        // Step 3: Detect pagination and get keys for this page
+        boolean hasMorePages = primaryKeys.size() > pageSize;
+        List<String> thisPageKeys = hasMorePages ? primaryKeys.subList(0, pageSize) : primaryKeys;
+        
+        // Step 4: Fetch primary resources (only for this page, not the +1)
+        List<Resource> primaryResources = ftsKvSearchService.getDocumentsFromKeys(thisPageKeys, primaryResourceType);
         
         // Step 4: Handle secondaries based on search type
         List<Resource> allResources = new ArrayList<>(primaryResources);
         
-        if ("revinclude".equals(searchType)) {
+        if ("regular".equals(searchType)) {
+            // Regular search has no secondaries - just primaries
+            logger.info("🚀 Regular search continuation: {} primaries only", primaryResources.size());
+            
+            // For regular search, check if fastpath is enabled
+            if (useFastpath) {
+                logger.info("🚀 FASTPATH: Continuation page using fastpath");
+                return handleRegularContinuationFastpath(continuationToken, state, offset, thisPageKeys, 
+                                                        primaryResourceType, pageSize, bucketName, 
+                                                        hasMorePages, requestDetails);
+            }
+            
+        } else if ("revinclude".equals(searchType)) {
             // Re-fetch secondaries for these primaries
             String revIncludeType = state.getRevIncludeResourceType();
             String revIncludeParam = state.getRevIncludeSearchParam();
@@ -936,14 +1121,99 @@ public class SearchService {
             }
             
         } else if ("include".equals(searchType)) {
-            // TODO: Handle _include similar to _revinclude
-            logger.warn("⚠️  _include pagination not yet fully implemented for query-based approach");
+            // Fetch included resources for this page's primaries
+            List<String> includeParamsList = state.getIncludeParamsList();
+            if (includeParamsList != null && !includeParamsList.isEmpty()) {
+                logger.info("🚀 Fetching _include secondaries: {} params", includeParamsList.size());
+                
+                Set<String> includeKeys = new LinkedHashSet<>();
+                for (String includeParam : includeParamsList) {
+                    // Parse include parameter (e.g., "Encounter:subject")
+                    String[] parts = includeParam.split(":");
+                    if (parts.length < 2) continue;
+                    
+                    String paramName = parts[1];  // "subject"
+                    List<String> refs = extractReferencesFromResources(primaryResources, paramName);
+                    includeKeys.addAll(refs);
+                    logger.info("🚀 _include '{}' produced {} refs", includeParam, refs.size());
+                }
+                
+                if (!includeKeys.isEmpty()) {
+                    // Limit to maxBundleSize
+                    int maxIncludes = state.getMaxBundleSize() - primaryKeys.size();
+                    List<String> limitedKeys = includeKeys.stream()
+                        .limit(maxIncludes)
+                        .collect(Collectors.toList());
+                    
+                    // Group by type and fetch
+                    Map<String, List<String>> includeKeysByType = limitedKeys.stream()
+                        .collect(Collectors.groupingBy(key -> key.substring(0, key.indexOf("/"))));
+                    
+                    for (Map.Entry<String, List<String>> entry : includeKeysByType.entrySet()) {
+                        String includeType = entry.getKey();
+                        List<String> keysForType = entry.getValue();
+                        List<Resource> includeResources = ftsKvSearchService.getDocumentsFromKeys(keysForType, includeType);
+                        allResources.addAll(includeResources);
+                    }
+                    
+                    logger.info("🚀 Fetched {} included resources", allResources.size() - primaryResources.size());
+                }
+            }
+            
+        } else if ("chain".equals(searchType)) {
+            // Chain search continuation - similar to regular search
+            logger.info("🚀 Chain search continuation: {} primaries", primaryResources.size());
+            
+            // For chain search, check if fastpath is enabled
+            if (useFastpath) {
+                logger.info("🚀 FASTPATH: Chain continuation page using fastpath");
+                return handleChainContinuationFastpath(continuationToken, state, offset, thisPageKeys, 
+                                                      primaryResourceType, pageSize, bucketName, 
+                                                      hasMorePages, requestDetails);
+            }
+            
+            // Chain continuation may have _include parameters (stored in state)
+            List<String> includeParamsList = state.getIncludeParamsList();
+            if (includeParamsList != null && !includeParamsList.isEmpty()) {
+                logger.info("🚀 Fetching _include for chain continuation: {} params", includeParamsList.size());
+                
+                Set<String> includeKeys = new LinkedHashSet<>();
+                for (String includeParam : includeParamsList) {
+                    String[] parts = includeParam.split(":");
+                    if (parts.length < 2) continue;
+                    
+                    String paramName = parts[1];
+                    List<String> refs = extractReferencesFromResources(primaryResources, paramName);
+                    includeKeys.addAll(refs);
+                    logger.info("🚀 _include '{}' produced {} refs", includeParam, refs.size());
+                }
+                
+                if (!includeKeys.isEmpty()) {
+                    int maxIncludes = state.getMaxBundleSize() - primaryKeys.size();
+                    List<String> limitedKeys = includeKeys.stream()
+                        .limit(maxIncludes)
+                        .collect(Collectors.toList());
+                    
+                    Map<String, List<String>> includeKeysByType = limitedKeys.stream()
+                        .collect(Collectors.groupingBy(key -> key.substring(0, key.indexOf("/"))));
+                    
+                    for (Map.Entry<String, List<String>> entry : includeKeysByType.entrySet()) {
+                        String includeType = entry.getKey();
+                        List<String> keysForType = entry.getValue();
+                        List<Resource> includeResources = ftsKvSearchService.getDocumentsFromKeys(keysForType, includeType);
+                        allResources.addAll(includeResources);
+                    }
+                    
+                    logger.info("🚀 Fetched {} included resources for chain continuation", allResources.size() - primaryResources.size());
+                }
+            }
         }
         
         // Step 5: Build Bundle
         Bundle bundle = new Bundle();
         bundle.setType(Bundle.BundleType.SEARCHSET);
-        bundle.setTotal((int) primaryResult.getTotalCount());  // Total primaries from FTS metadata
+        // Use stored total from first page (accurate), not re-queried total (may be wrong)
+        bundle.setTotal(state.getPrimaryResourceCount());
         
         String baseUrl = state.getBaseUrl();
         for (Resource resource : allResources) {
@@ -959,20 +1229,31 @@ public class SearchService {
                     .setMode(mode);
         }
         
-        // Step 6: Add next link if more results
-        int nextOffset = offset + primaryKeys.size();
-        boolean hasMore = primaryResult.getTotalCount() > nextOffset;
+        // Step 6: Add pagination links
+        int nextOffset = offset + thisPageKeys.size();
         
-        if (hasMore) {
-            // Build next URL with continuation token
-            String nextUrl = buildNextPageUrl(continuationToken, nextOffset, primaryResourceType, bucketName, pageSize, baseUrl);
+        // Add self link
+        bundle.addLink()
+                .setRelation("self")
+                .setUrl(buildNextPageUrl(continuationToken, offset, primaryResourceType, bucketName, pageSize, baseUrl));
+        
+        // Add previous link if not on first page
+        if (offset > 0) {
+            int prevOffset = Math.max(0, offset - pageSize);
+            bundle.addLink()
+                    .setRelation("previous")
+                    .setUrl(buildPreviousPageUrl(continuationToken, prevOffset, primaryResourceType, bucketName, pageSize, baseUrl));
+        }
+        
+        // Add next link if more results
+        if (hasMorePages) {
             bundle.addLink()
                     .setRelation("next")
-                    .setUrl(nextUrl);
+                    .setUrl(buildNextPageUrl(continuationToken, nextOffset, primaryResourceType, bucketName, pageSize, baseUrl));
         }
         
         logger.info("🚀 QUERY-BASED PAGE COMPLETE: {} resources ({} primaries + {} secondaries), hasMore={}", 
-                   allResources.size(), primaryResources.size(), allResources.size() - primaryResources.size(), hasMore);
+                   allResources.size(), primaryResources.size(), allResources.size() - primaryResources.size(), hasMorePages);
         
         return bundle;
     }
@@ -1135,6 +1416,7 @@ public class SearchService {
             PaginationState paginationState = PaginationState.builder()
                 .searchType("revinclude")
                 .resourceType(primaryResourceType)
+                .primaryResourceCount((int) totalPrimaryCount)  // Store accurate total for Bundle.total on continuation pages
                 .primaryFtsQueriesJson(serializedQueries)
                 .primaryOffset(count)
                 .primaryPageSize(count)
@@ -1328,6 +1610,7 @@ public class SearchService {
             PaginationState paginationState = PaginationState.builder()
                 .searchType("revinclude")
                 .resourceType(primaryResourceType)
+                .primaryResourceCount((int) totalPrimaryCount)  // Store accurate total for Bundle.total on continuation pages
                 .primaryFtsQueriesJson(serializedQueries)
                 .primaryOffset(count)  // Next page starts at offset=count
                 .primaryPageSize(count)
@@ -1457,7 +1740,7 @@ public class SearchService {
 
             List<String> includeReferences = extractReferencesFromResources(firstPagePrimaryResources, include.getParamName());
             if (includeReferences.isEmpty()) {
-                logger.warn("🔍 No references found for _include '{}'", includeValue);
+                logger.debug("🔍 No references found for _include '{}'", includeValue);
                 continue;
             }
 
@@ -1527,6 +1810,7 @@ public class SearchService {
             PaginationState paginationState = PaginationState.builder()
                     .searchType("include")
                     .resourceType(primaryResourceType)
+                    .primaryResourceCount((int) totalPrimaryCount)  // Store accurate total for Bundle.total on continuation pages
                     .primaryFtsQueriesJson(serializedQueries)
                     .primaryOffset(count)  // Next page starts at offset=count
                     .primaryPageSize(count)
@@ -1584,7 +1868,563 @@ public class SearchService {
         return bundle;
     }
     
+    /**
+     * Handle multiple _include searches with FASTPATH (10× memory reduction).
+     * Returns UTF-8 bytes instead of HAPI Bundle object (2x memory savings vs String).
+     * 
+     * Same pagination logic as handleMultipleIncludeSearch, but skips HAPI parsing.
+     */
+    private byte[] handleMultipleIncludeSearchFastpath(String primaryResourceType, List<SearchQuery> ftsQueries,
+                                              List<Include> includes, int count,
+                                              String bucketName, RequestDetails requestDetails) {
+        logger.info("🚀 FASTPATH: Handling {} _include parameters for {} (count={}, maxBundle={})", 
+                   includes.size(), primaryResourceType, count, MAX_BUNDLE_SIZE);
 
+        // Step 1: FTS query for PRIMARY resources with size=count+1
+        List<SearchSort> sortFields = new ArrayList<>();
+        sortFields.add(SearchSort.byField("meta.lastUpdated").desc(true));
+        
+        FtsSearchService.FtsSearchResult primaryFtsResult = ftsSearchService.searchForKeys(
+            ftsQueries, primaryResourceType, 0, count + 1, sortFields);
+        
+        List<String> allPrimaryKeys = primaryFtsResult.getDocumentKeys();
+        long totalPrimaryCount = primaryFtsResult.getTotalCount();
+        
+        if (allPrimaryKeys.isEmpty()) {
+            logger.info("🚀 FASTPATH: No primary resources found, returning empty bundle");
+            String baseUrl = extractBaseUrl(requestDetails, bucketName);
+            String selfUrl = baseUrl + "/" + primaryResourceType;
+            return fastJsonBundleBuilder.buildEmptySearchsetBundle(selfUrl, Instant.now());
+        }
+        
+        logger.info("🚀 FASTPATH: PRIMARY FTS returned {} keys (requested count+1={}, total={})", 
+                   allPrimaryKeys.size(), count + 1, totalPrimaryCount);
+        
+        // Step 2: Detect pagination
+        boolean needsPagination = allPrimaryKeys.size() > count;
+        List<String> firstPagePrimaryKeys = needsPagination ? 
+            allPrimaryKeys.subList(0, count) : allPrimaryKeys;
+        
+        logger.info("🚀 FASTPATH: {} - {} primaries for first page", 
+                   needsPagination ? "PAGINATION NEEDED" : "NO PAGINATION", 
+                   firstPagePrimaryKeys.size());
+
+        // Step 3: Fetch ONLY first page primary resources as RAW BYTES (ZERO-COPY from Couchbase!)
+        long primFetchStart = System.currentTimeMillis();
+        Map<String, byte[]> primaryKeyToBytesMap = batchKvService.getDocumentsAsBytesWithKeys(firstPagePrimaryKeys, primaryResourceType);
+        logger.info("🚀 FASTPATH: Fetched {} primary resources as raw bytes with keys in {} ms", 
+                primaryKeyToBytesMap.size(), System.currentTimeMillis() - primFetchStart);
+
+        // Step 4: Extract _include references using N1QL (server-side, no double-fetch!)
+        // N1QL handles de-duplication and limiting on the server side
+        int maxIncludes = MAX_BUNDLE_SIZE - firstPagePrimaryKeys.size();
+        List<String> includeReferences = includeReferenceExtractor.extractReferences(
+            firstPagePrimaryKeys, includes, primaryResourceType, bucketName, maxIncludes);
+        
+        List<String> includeKeys = new ArrayList<>(includeReferences);
+
+        logger.info("🚀 FASTPATH: _include extraction complete: {} unique include keys", includeKeys.size());
+        
+        // Step 5: Fetch include resources as RAW BYTES (ZERO-COPY from Couchbase!)
+        Map<String, List<String>> includeKeysByType = includeKeys.stream()
+                .collect(Collectors.groupingBy(k -> k.substring(0, k.indexOf('/'))));
+        
+        Map<String, byte[]> includedKeyToBytesMap = new java.util.LinkedHashMap<>();
+        for (Map.Entry<String, List<String>> entry : includeKeysByType.entrySet()) {
+            String includeType = entry.getKey();
+            List<String> keysForType = entry.getValue();
+            logger.debug("🚀 FASTPATH: KV Batch fetching {} {} includes as raw bytes with keys", keysForType.size(), includeType);
+            Map<String, byte[]> fetchedMap = batchKvService.getDocumentsAsBytesWithKeys(keysForType, includeType);
+            includedKeyToBytesMap.putAll(fetchedMap);
+        }
+        
+        logger.info("🚀 FASTPATH: Fetched {} include resources as raw bytes with keys", includedKeyToBytesMap.size());
+        
+        // Step 6: Build Bundle JSON directly (no HAPI parsing!)
+        String baseUrl = extractBaseUrl(requestDetails, bucketName);
+        
+        // Build selfUrl with query parameters
+        StringBuilder selfUrlBuilder = new StringBuilder(baseUrl + "/" + primaryResourceType + "?");
+        selfUrlBuilder.append("_count=").append(count);
+        for (Include include : includes) {
+            selfUrlBuilder.append("&_include=").append(java.net.URLEncoder.encode(include.getValue(), java.nio.charset.StandardCharsets.UTF_8));
+        }
+        String selfUrl = selfUrlBuilder.toString();
+        
+        String nextUrl = null;
+        if (needsPagination) {
+            // Store pagination state for continuation pages
+            List<String> serializedQueries = serializeFtsQueries(ftsQueries);
+            List<String> serializedSortFields = serializeSortFields(sortFields);
+            List<String> includeParamsList = includes.stream()
+                .map(Include::getValue)
+                .collect(Collectors.toList());
+            
+            PaginationState paginationState = PaginationState.builder()
+                .searchType("include")
+                .resourceType(primaryResourceType)
+                .primaryResourceCount((int) totalPrimaryCount)  // Store accurate total
+                .primaryFtsQueriesJson(serializedQueries)
+                .primaryOffset(count)  // Next page starts at offset=count
+                .primaryPageSize(count)
+                .sortFieldsJson(serializedSortFields)
+                .maxBundleSize(MAX_BUNDLE_SIZE)
+                .includeParamsList(includeParamsList)  // Store _include parameters
+                .bucketName(bucketName)
+                .baseUrl(baseUrl)
+                .useLegacyKeyList(false)  // Query-based approach
+                .build();
+            
+            String continuationToken = searchStateManager.storePaginationState(paginationState);
+            nextUrl = baseUrl + "/" + primaryResourceType + "?_page=" + continuationToken 
+                    + "&_offset=" + count + "&_count=" + count;
+            
+            logger.info("🚀 FASTPATH: Pagination enabled, token={}, nextOffset={}", continuationToken, count);
+        }
+        
+        byte[] bundleBytes = fastJsonBundleBuilder.buildSearchsetBundle(
+            primaryKeyToBytesMap,
+            includedKeyToBytesMap,
+            (int) totalPrimaryCount,
+            selfUrl,
+            nextUrl,
+            null,  // No previous link on first page
+            baseUrl,
+            Instant.now()
+        );
+
+        logger.info("🚀 FASTPATH: _include COMPLETE: Bundle={} resources ({} primaries + {} includes), total={} primaries", 
+                   primaryKeyToBytesMap.size() + includedKeyToBytesMap.size(), 
+                   primaryKeyToBytesMap.size(), 
+                   includedKeyToBytesMap.size(),
+                   totalPrimaryCount);
+
+        return bundleBytes;
+    }
+    
+    /**
+     * FASTPATH: Handle regular search (no _include, no _revinclude) with pure JSON assembly
+     * Bypasses HAPI parsing/serialization for 10x memory reduction, returns UTF-8 bytes (2x savings vs String)
+     */
+    private byte[] handleRegularSearchFastpath(String primaryResourceType, List<SearchQuery> ftsQueries,
+                                               int count, List<SearchSort> sortFields, String bucketName,
+                                               RequestDetails requestDetails) {
+        
+        logger.info("🚀 FASTPATH: Handling regular search: {} (count={})", primaryResourceType, count);
+        
+        // Step 1: Execute FTS to get ALL primary keys (for accurate total count)
+        FtsSearchService.FtsSearchResult ftsResult = ftsSearchService.searchForKeys(
+            ftsQueries,
+            primaryResourceType,
+            0,          // offset=0 for first page
+            count + 1,  // Fetch count+1 to detect pagination
+            sortFields
+        );
+        
+        List<String> allPrimaryKeys = ftsResult.getDocumentKeys();
+        long actualTotalCount = ftsResult.getTotalCount();  // Accurate total from FTS metadata
+        
+        boolean needsPagination = allPrimaryKeys.size() > count;
+        
+        // Step 2: Determine first page keys
+        List<String> firstPagePrimaryKeys = needsPagination ? 
+            allPrimaryKeys.subList(0, count) : allPrimaryKeys;
+        
+        logger.info("🚀 FASTPATH: FTS returned {} keys (pagination: {}), actualTotal={}", 
+                   allPrimaryKeys.size(), needsPagination ? "YES" : "NO", actualTotalCount);
+        
+        // Step 3: Fetch ONLY first page resources as RAW BYTES (ZERO-COPY from Couchbase!)
+        long fetchStart = System.currentTimeMillis();
+        Map<String, byte[]> primaryKeyToBytesMap = batchKvService.getDocumentsAsBytesWithKeys(
+            firstPagePrimaryKeys, primaryResourceType);
+        logger.info("🚀 FASTPATH: Fetched {} resources as raw bytes with keys in {} ms", 
+                   primaryKeyToBytesMap.size(), System.currentTimeMillis() - fetchStart);
+        
+        // Step 4: Build Bundle JSON directly (no HAPI!)
+        String baseUrl = extractBaseUrl(requestDetails, bucketName);
+        
+        // Build selfUrl with query parameters
+        StringBuilder selfUrlBuilder = new StringBuilder(baseUrl + "/" + primaryResourceType + "?");
+        selfUrlBuilder.append("_count=").append(count);
+        // TODO: Add other search params from requestDetails
+        String selfUrl = selfUrlBuilder.toString();
+        
+        String nextUrl = null;
+        if (needsPagination) {
+            // Store pagination state for continuation pages
+            List<String> serializedQueries = serializeFtsQueries(ftsQueries);
+            List<String> serializedSortFields = serializeSortFields(sortFields);
+            
+            PaginationState paginationState = PaginationState.builder()
+                .searchType("regular")
+                .resourceType(primaryResourceType)
+                .primaryResourceCount((int) actualTotalCount)  // Store accurate total from FTS
+                .primaryFtsQueriesJson(serializedQueries)
+                .primaryOffset(count)  // Next page starts at offset=count
+                .primaryPageSize(count)
+                .sortFieldsJson(serializedSortFields)
+                .bucketName(bucketName)
+                .baseUrl(baseUrl)
+                .useLegacyKeyList(false)  // Query-based approach
+                .build();
+            
+            String continuationToken = searchStateManager.storePaginationState(paginationState);
+            nextUrl = baseUrl + "/" + primaryResourceType + "?_page=" + continuationToken 
+                    + "&_offset=" + count + "&_count=" + count;
+            
+            logger.info("🚀 FASTPATH: Pagination enabled, token={}, nextOffset={}", continuationToken, count);
+        }
+        
+        // Build bundle with NO includes (empty map) as UTF-8 bytes
+        byte[] bundleBytes = fastJsonBundleBuilder.buildSearchsetBundle(
+            primaryKeyToBytesMap,
+            new java.util.LinkedHashMap<>(),  // No includes for regular search
+            (int) actualTotalCount,  // Always use accurate total from FTS
+            selfUrl,
+            nextUrl,
+            null,  // No previous link on first page
+            baseUrl,
+            Instant.now()
+        );
+        
+        logger.info("🚀 FASTPATH: Regular search COMPLETE: Bundle={} resources, total={}", 
+                   primaryKeyToBytesMap.size(), actualTotalCount);
+        
+        return bundleBytes;
+    }
+    
+    /**
+     * FASTPATH: Handle regular search continuation page
+     * Bypasses HAPI parsing/serialization for 10x memory reduction
+     */
+    private Bundle handleRegularContinuationFastpath(String continuationToken, PaginationState state, int offset,
+                                                     List<String> primaryKeys, String primaryResourceType, 
+                                                     int pageSize, String bucketName, boolean hasMorePages,
+                                                     RequestDetails requestDetails) {
+        
+        logger.info("🚀 FASTPATH: Regular continuation - offset={}, keys={}, hasMore={}", 
+                   offset, primaryKeys.size(), hasMorePages);
+        
+        // Use stored total count (from first page)
+        int totalCount = state.getPrimaryResourceCount();
+        
+        // Fetch as raw bytes (ZERO-COPY from Couchbase!)
+        Map<String, byte[]> primaryKeyToBytesMap = batchKvService.getDocumentsAsBytesWithKeys(
+            primaryKeys, primaryResourceType);
+        
+        String baseUrl = state.getBaseUrl();
+        
+        // Build self URL
+        String selfUrl = baseUrl + "/" + primaryResourceType + "?_page=" + continuationToken 
+                       + "&_offset=" + offset + "&_count=" + pageSize;
+        
+        // Build next URL if more results
+        int nextOffset = offset + primaryKeys.size();
+        String nextUrl = hasMorePages ? 
+            (baseUrl + "/" + primaryResourceType + "?_page=" + continuationToken 
+             + "&_offset=" + nextOffset + "&_count=" + pageSize) : null;
+        
+        // Build previous URL if not on first page
+        String previousUrl = null;
+        if (offset > 0) {
+            int prevOffset = Math.max(0, offset - pageSize);
+            previousUrl = baseUrl + "/" + primaryResourceType + "?_page=" + continuationToken 
+                        + "&_offset=" + prevOffset + "&_count=" + pageSize;
+        }
+        
+        // Build JSON bundle as UTF-8 bytes
+        byte[] bundleBytes = fastJsonBundleBuilder.buildSearchsetBundle(
+            primaryKeyToBytesMap,
+            new java.util.LinkedHashMap<>(),  // No includes for regular search
+            totalCount,  // Use stored total from first page
+            selfUrl,
+            nextUrl,
+            previousUrl,
+            baseUrl,
+            Instant.now()
+        );
+        
+        logger.info("🚀 FASTPATH: Continuation COMPLETE - {} resources, total={}, hasMore={}", 
+                   primaryKeyToBytesMap.size(), totalCount, hasMorePages);
+        
+        // Store UTF-8 bytes in request attribute for interceptor (2x memory savings vs String)
+        requestDetails.getUserData().put(FASTPATH_BYTES_ATTRIBUTE, bundleBytes);
+        
+        // Return empty placeholder Bundle (interceptor will replace with JSON)
+        Bundle placeholder = new Bundle();
+        placeholder.setType(Bundle.BundleType.SEARCHSET);
+        return placeholder;
+    }
+    
+    /**
+     * FASTPATH: Handle chain search continuation page with pure JSON assembly
+     * Bypasses HAPI parsing/serialization for 10x memory reduction
+     */
+    private Bundle handleChainContinuationFastpath(String continuationToken, PaginationState state, int offset,
+                                                   List<String> primaryKeys, String primaryResourceType, 
+                                                   int pageSize, String bucketName, boolean hasMorePages,
+                                                   RequestDetails requestDetails) {
+        
+        logger.info("🚀 FASTPATH: Chain continuation - offset={}, keys={}, hasMore={}", 
+                   offset, primaryKeys.size(), hasMorePages);
+        
+        // Use stored total count (from first page)
+        int totalCount = state.getPrimaryResourceCount();
+        
+        // Fetch primaries as raw bytes (ZERO-COPY from Couchbase!)
+        Map<String, byte[]> primaryKeyToBytesMap = batchKvService.getDocumentsAsBytesWithKeys(
+            primaryKeys, primaryResourceType);
+        
+        // Check for _include parameters
+        Map<String, byte[]> includedKeyToBytesMap = new java.util.LinkedHashMap<>();
+        List<String> includeParamsList = state.getIncludeParamsList();
+        
+        if (includeParamsList != null && !includeParamsList.isEmpty()) {
+            logger.info("🚀 FASTPATH: Processing {} _include parameters for chain continuation", includeParamsList.size());
+            
+            // Convert include param strings to Include objects for N1QL extraction
+            List<Include> includeObjects = new ArrayList<>();
+            for (String includeParam : includeParamsList) {
+                try {
+                    includeObjects.add(new Include(includeParam));
+                } catch (Exception e) {
+                    logger.warn("⚠️  Invalid include parameter: {}", includeParam);
+                }
+            }
+            
+            // Extract references using N1QL (server-side, no double-fetch!)
+            // N1QL handles de-duplication and limiting on the server side
+            int maxIncludes = state.getMaxBundleSize() - primaryKeys.size();
+            List<String> refs = includeReferenceExtractor.extractReferences(
+                primaryKeys, includeObjects, primaryResourceType, bucketName, maxIncludes);
+            
+            logger.info("🚀 FASTPATH: N1QL extracted {} unique references for {} includes", 
+                       refs.size(), includeParamsList.size());
+            
+            // Fetch included resources as JSON with keys
+            if (!refs.isEmpty()) {
+                List<String> limitedKeys = refs;
+                
+                Map<String, List<String>> includeKeysByType = limitedKeys.stream()
+                    .collect(Collectors.groupingBy(k -> k.substring(0, k.indexOf('/'))));
+                
+                for (Map.Entry<String, List<String>> entry : includeKeysByType.entrySet()) {
+                    String includeType = entry.getKey();
+                    List<String> keysForType = entry.getValue();
+                    Map<String, byte[]> fetchedMap = batchKvService.getDocumentsAsBytesWithKeys(
+                        keysForType, includeType);
+                    includedKeyToBytesMap.putAll(fetchedMap);
+                }
+                
+                logger.info("🚀 FASTPATH: Fetched {} included resources as raw bytes with keys", includedKeyToBytesMap.size());
+            }
+        }
+        
+        String baseUrl = state.getBaseUrl();
+        
+        // Build self URL
+        String selfUrl = baseUrl + "/" + primaryResourceType + "?_page=" + continuationToken 
+                       + "&_offset=" + offset + "&_count=" + pageSize;
+        
+        // Build next URL if more results
+        int nextOffset = offset + primaryKeys.size();
+        String nextUrl = hasMorePages ? 
+            (baseUrl + "/" + primaryResourceType + "?_page=" + continuationToken 
+             + "&_offset=" + nextOffset + "&_count=" + pageSize) : null;
+        
+        // Build previous URL if not on first page
+        String previousUrl = null;
+        if (offset > 0) {
+            int prevOffset = Math.max(0, offset - pageSize);
+            previousUrl = baseUrl + "/" + primaryResourceType + "?_page=" + continuationToken 
+                        + "&_offset=" + prevOffset + "&_count=" + pageSize;
+        }
+        
+        // Build JSON bundle as UTF-8 bytes
+        byte[] bundleBytes = fastJsonBundleBuilder.buildSearchsetBundle(
+            primaryKeyToBytesMap,
+            includedKeyToBytesMap,
+            totalCount,  // Use stored total from first page
+            selfUrl,
+            nextUrl,
+            previousUrl,
+            baseUrl,
+            Instant.now()
+        );
+        
+        logger.info("🚀 FASTPATH: Chain continuation COMPLETE - {} resources ({} primaries + {} includes), total={}, hasMore={}", 
+                   primaryKeyToBytesMap.size() + includedKeyToBytesMap.size(),
+                   primaryKeyToBytesMap.size(),
+                   includedKeyToBytesMap.size(),
+                   totalCount, hasMorePages);
+        
+        // Store UTF-8 bytes in request attribute for interceptor (2x memory savings vs String)
+        requestDetails.getUserData().put(FASTPATH_BYTES_ATTRIBUTE, bundleBytes);
+        
+        // Return empty placeholder Bundle (interceptor will replace with JSON)
+        Bundle placeholder = new Bundle();
+        placeholder.setType(Bundle.BundleType.SEARCHSET);
+        return placeholder;
+    }
+    
+    /**
+     * FASTPATH: Handle multiple _revinclude searches with pure JSON assembly
+     * Bypasses HAPI parsing/serialization for 10x memory reduction, returns UTF-8 bytes (2x savings vs String)
+     */
+    private byte[] handleMultipleRevIncludeSearchFastpath(String primaryResourceType, List<SearchQuery> ftsQueries,
+                                                          List<Include> revIncludes, int count,
+                                                          String bucketName, RequestDetails requestDetails) {
+        
+        logger.info("🚀 FASTPATH: Handling {} _revinclude parameters for {} (count={}, maxBundle={})", 
+                   revIncludes.size(), primaryResourceType, count, MAX_BUNDLE_SIZE);
+        
+        // Step 1: FTS query for PRIMARY resources with size=count+1
+        List<SearchSort> sortFields = new ArrayList<>();
+        sortFields.add(SearchSort.byField("meta.lastUpdated").desc(true));
+        
+        FtsSearchService.FtsSearchResult primaryFtsResult = ftsSearchService.searchForKeys(
+            ftsQueries, primaryResourceType, 0, count + 1, sortFields);
+        
+        List<String> allPrimaryKeys = primaryFtsResult.getDocumentKeys();
+        long totalPrimaryCount = primaryFtsResult.getTotalCount();
+        
+        if (allPrimaryKeys.isEmpty()) {
+            logger.info("🚀 FASTPATH: No primary resources found, returning empty bundle");
+            String baseUrl = extractBaseUrl(requestDetails, bucketName);
+            String selfUrl = baseUrl + "/" + primaryResourceType;
+            return fastJsonBundleBuilder.buildEmptySearchsetBundle(selfUrl, Instant.now());
+        }
+        
+        logger.info("🚀 FASTPATH: PRIMARY FTS returned {} keys (requested count+1={}, total={})", 
+                   allPrimaryKeys.size(), count + 1, totalPrimaryCount);
+        
+        // Step 2: Detect pagination
+        boolean needsPagination = allPrimaryKeys.size() > count;
+        List<String> firstPagePrimaryKeys = needsPagination ? 
+            allPrimaryKeys.subList(0, count) : allPrimaryKeys;
+        
+        logger.info("🚀 FASTPATH: {} - {} primaries for first page", 
+                   needsPagination ? "PAGINATION NEEDED" : "NO PAGINATION", 
+                   firstPagePrimaryKeys.size());
+        
+        // Step 3: Derive primary resource references for secondary lookup
+        List<String> primaryResourceReferences = new ArrayList<>(firstPagePrimaryKeys);
+        
+        // Step 4: Fetch SECONDARIES for EACH _revinclude parameter (respecting bundle cap)
+        Map<String, byte[]> allSecondaryKeyToBytesMap = new java.util.LinkedHashMap<>();
+        int currentBundleSize = firstPagePrimaryKeys.size();
+        
+        for (Include revInclude : revIncludes) {
+            String revIncludeResourceType = revInclude.getParamType();
+            String revIncludeSearchParam = revInclude.getParamName();
+            
+            int maxSecondariesForThisType = MAX_BUNDLE_SIZE - currentBundleSize;
+            if (maxSecondariesForThisType <= 0) {
+                logger.info("🚀 FASTPATH: Bundle size cap reached ({}/{}), skipping remaining _revinclude", 
+                           currentBundleSize, MAX_BUNDLE_SIZE);
+                break;
+            }
+            
+            logger.info("🚀 FASTPATH: Fetching _revinclude: {} -> {} (max={}, currentBundle={})", 
+                       primaryResourceType, revInclude.getValue(), maxSecondariesForThisType, currentBundleSize);
+            
+            // Build FTS query for this secondary type
+            List<SearchQuery> referenceQueries = new ArrayList<>();
+            for (String primaryReference : primaryResourceReferences) {
+                referenceQueries.add(SearchQuery.match(primaryReference).field(revIncludeSearchParam + ".reference"));
+            }
+            
+            if (!referenceQueries.isEmpty()) {
+                List<SearchQuery> revIncludeQueries = List.of(
+                    SearchQuery.disjuncts(referenceQueries.toArray(new SearchQuery[0]))
+                );
+                
+                FtsSearchService.FtsSearchResult secondaryResult = ftsSearchService.searchForKeys(
+                    revIncludeQueries, revIncludeResourceType, 0, maxSecondariesForThisType, sortFields);
+                List<String> secondaryKeys = secondaryResult.getDocumentKeys();
+                
+                logger.info("🚀 FASTPATH: SECONDARY FTS ({}) returned {} keys", 
+                           revIncludeResourceType, secondaryKeys.size());
+                
+                // Fetch secondaries as raw bytes (ZERO-COPY from Couchbase!)
+                Map<String, byte[]> secondaryMap = batchKvService.getDocumentsAsBytesWithKeys(
+                    secondaryKeys, revIncludeResourceType);
+                allSecondaryKeyToBytesMap.putAll(secondaryMap);
+                currentBundleSize += secondaryMap.size();
+            }
+        }
+        
+        logger.info("🚀 FASTPATH: First page composition: {} primaries + {} secondaries = {} total", 
+                   firstPagePrimaryKeys.size(), allSecondaryKeyToBytesMap.size(), currentBundleSize);
+        
+        // Step 5: Fetch primary resources as raw bytes (ZERO-COPY from Couchbase!)
+        long primFetchStart = System.currentTimeMillis();
+        Map<String, byte[]> primaryKeyToBytesMap = batchKvService.getDocumentsAsBytesWithKeys(
+            firstPagePrimaryKeys, primaryResourceType);
+        logger.info("🚀 FASTPATH: Fetched {} primary resources as raw bytes with keys in {} ms", 
+                   primaryKeyToBytesMap.size(), System.currentTimeMillis() - primFetchStart);
+        
+        // Step 6: Build Bundle JSON directly
+        String baseUrl = extractBaseUrl(requestDetails, bucketName);
+        
+        // Build selfUrl with query parameters
+        StringBuilder selfUrlBuilder = new StringBuilder(baseUrl + "/" + primaryResourceType + "?");
+        selfUrlBuilder.append("_count=").append(count);
+        for (Include revInclude : revIncludes) {
+            selfUrlBuilder.append("&_revinclude=").append(java.net.URLEncoder.encode(revInclude.getValue(), java.nio.charset.StandardCharsets.UTF_8));
+        }
+        String selfUrl = selfUrlBuilder.toString();
+        
+        String nextUrl = null;
+        if (needsPagination) {
+            // Store pagination state for continuation pages
+            List<String> serializedQueries = serializeFtsQueries(ftsQueries);
+            List<String> serializedSortFields = serializeSortFields(sortFields);
+            List<String> revIncludeStrings = revIncludes.stream()
+                .map(Include::getValue)
+                .collect(Collectors.toList());
+            
+            PaginationState paginationState = PaginationState.builder()
+                .searchType("revinclude")
+                .resourceType(primaryResourceType)
+                .primaryResourceCount((int) totalPrimaryCount)  // Store accurate total
+                .primaryFtsQueriesJson(serializedQueries)
+                .primaryOffset(count)  // Next page starts at offset=count
+                .primaryPageSize(count)
+                .sortFieldsJson(serializedSortFields)
+                .maxBundleSize(MAX_BUNDLE_SIZE)
+                .includeParamsList(revIncludeStrings)  // Store all _revinclude params
+                .bucketName(bucketName)
+                .baseUrl(baseUrl)
+                .useLegacyKeyList(false)  // Query-based approach
+                .build();
+            
+            String continuationToken = searchStateManager.storePaginationState(paginationState);
+            nextUrl = baseUrl + "/" + primaryResourceType + "?_page=" + continuationToken 
+                    + "&_offset=" + count + "&_count=" + count;
+            
+            logger.info("🚀 FASTPATH: Pagination enabled, token={}, nextOffset={}", continuationToken, count);
+        }
+        
+        byte[] bundleBytes = fastJsonBundleBuilder.buildSearchsetBundle(
+            primaryKeyToBytesMap,
+            allSecondaryKeyToBytesMap,
+            (int) totalPrimaryCount,
+            selfUrl,
+            nextUrl,
+            null,  // No previous link on first page
+            baseUrl,
+            Instant.now()
+        );
+        
+        logger.info("🚀 FASTPATH: _revinclude COMPLETE: Bundle={} resources ({} primaries + {} secondaries), total={} primaries", 
+                   primaryKeyToBytesMap.size() + allSecondaryKeyToBytesMap.size(), 
+                   primaryKeyToBytesMap.size(), 
+                   allSecondaryKeyToBytesMap.size(),
+                   totalPrimaryCount);
+        
+        return bundleBytes;
+    }
     
     /**
      * Handle chained search with two-query strategy, optionally with _include parameters
@@ -1613,24 +2453,49 @@ public class SearchService {
         logger.debug("🔗 Chain query found {} referenced {} resources: {}", 
                    referencedResourceIds.size(), chainParam.getTargetResourceType(), referencedResourceIds);
         
-        // Step 2: Execute primary search to get ALL document keys (new pagination strategy)
-        // Fetch up to 1000 keys upfront for consistent pagination (same as _revinclude)
-        List<String> allDocumentKeys = executePrimaryChainSearchForKeys(
+        // Check if fastpath is enabled (beta: no _summary/_elements support)
+        boolean useFastpath = fastpathProperties.isEnabled() && 
+                              (summaryMode == null || summaryMode == SummaryEnum.FALSE) && 
+                              (elements == null || elements.isEmpty());
+        
+        if (useFastpath) {
+            logger.info("🚀 FASTPATH ENABLED: Using JSON fastpath for chain search");
+            byte[] resultBytes = handleChainSearchFastpath(primaryResourceType, ftsQueries, chainParam, includes,
+                                                         count, sortFields, bucketName, referencedResourceIds, requestDetails);
+            
+            // Store UTF-8 bytes in request attribute for interceptor (2x memory savings vs String)
+            requestDetails.getUserData().put(FASTPATH_BYTES_ATTRIBUTE, resultBytes);
+            
+            // Return empty placeholder Bundle (interceptor will replace with JSON)
+            Bundle placeholder = new Bundle();
+            placeholder.setType(Bundle.BundleType.SEARCHSET);
+            return placeholder;
+        }
+        
+        // Step 2: Execute primary search with count+1 strategy (efficient pagination detection)
+        FtsSearchService.FtsSearchResult chainFtsResult = executePrimaryChainSearchForKeysEfficient(
             primaryResourceType,
             chainParam.getReferenceFieldPath(),
             chainParam.getTargetResourceType(),
             referencedResourceIds,
             ftsQueries, // Additional search criteria
             sortFields,
+            count + 1,  // Fetch count+1 for pagination detection
             bucketName
         );
         
-        logger.debug("🔗 Chain search found {} total document keys", allDocumentKeys.size());
+        List<String> allPrimaryKeys = chainFtsResult.getDocumentKeys();
+        long totalCount = chainFtsResult.getTotalCount();  // Accurate total from FTS metadata
+        boolean needsPagination = allPrimaryKeys.size() > count;
         
-        // Step 3: Fetch first page of resources via KV
+        logger.info("🔗 Chain search found {} keys (requested count+1={}, total={}, pagination: {})", 
+                   allPrimaryKeys.size(), count + 1, totalCount, needsPagination ? "YES" : "NO");
+        
+        // Step 3: Get keys for first page
+        List<String> firstPageKeys = needsPagination ? allPrimaryKeys.subList(0, count) : allPrimaryKeys;
+        
+        // Step 4: Fetch first page of resources via KV
         String baseUrl = extractBaseUrl(requestDetails, bucketName);
-        int effectiveCount = Math.min(count, allDocumentKeys.size());
-        List<String> firstPageKeys = allDocumentKeys.subList(0, effectiveCount);
         List<Resource> primaryResources = ftsKvSearchService.getDocumentsFromKeys(firstPageKeys, primaryResourceType);
         
         // Step 4: Process _include parameters (if any)
@@ -1646,7 +2511,7 @@ public class SearchService {
                 
                 List<String> refs = extractReferencesFromResources(primaryResources, include.getParamName());
                 if (refs.isEmpty()) {
-                    logger.warn("🔗 No references found for _include '{}'", includeValue);
+                    logger.debug("🔗 No references found for _include '{}'", includeValue);
                     continue;
                 }
                 
@@ -1672,31 +2537,45 @@ public class SearchService {
             }
         }
         
-        // Step 5: Create pagination state (new Couchbase-backed strategy)
+        // Step 5: Create pagination state (query-based approach)
         String continuationToken = null;
         
-        if (allDocumentKeys.size() > effectiveCount) {
-            // Need pagination - store state in Couchbase Admin.cache
+        if (needsPagination) {
+            // Serialize queries and chain metadata for re-execution
+            List<String> serializedQueries = serializeFtsQueries(ftsQueries);
+            List<String> serializedSortFields = serializeSortFields(sortFields);
+            
+            // Store _include parameters if present (for continuation pages)
+            List<String> includeParamsList = null;
+            if (!includes.isEmpty()) {
+                includeParamsList = includes.stream()
+                    .map(Include::getValue)
+                    .collect(Collectors.toList());
+            }
+            
             PaginationState paginationState = PaginationState.builder()
                 .searchType("chain")
                 .resourceType(primaryResourceType)
-                .allDocumentKeys(allDocumentKeys)
-                .pageSize(count)
-                .currentOffset(effectiveCount) // Next page starts after first page
+                .primaryResourceCount((int) totalCount)  // Store for Bundle.total
+                .primaryFtsQueriesJson(serializedQueries)
+                .primaryOffset(count)  // Next page starts at offset=count
+                .primaryPageSize(count)
+                .sortFieldsJson(serializedSortFields)
+                .includeParamsList(includeParamsList)  // Store _include params for continuation
                 .bucketName(bucketName)
                 .baseUrl(baseUrl)
-                .primaryResourceCount(0) // Not applicable for chain searches
+                .useLegacyKeyList(false)  // Query-based approach
                 .build();
             
             continuationToken = searchStateManager.storePaginationState(paginationState);
-            logger.info("✅ Created chain PaginationState: token={}, totalKeys={}, pages={}", 
-                       continuationToken, allDocumentKeys.size(), paginationState.getTotalPages());
+            logger.info("✅ Created chain PaginationState: token={}, strategy=query-based, offset={}, total={}", 
+                       continuationToken, count, totalCount);
         }
         
         // Step 6: Build response bundle
         Bundle bundle = new Bundle();
         bundle.setType(Bundle.BundleType.SEARCHSET);
-        bundle.setTotal(allDocumentKeys.size());
+        bundle.setTotal((int) totalCount);
         
         // Add primary resources (search mode = "match")
         for (Resource resource : primaryResources) {
@@ -1725,39 +2604,175 @@ public class SearchService {
             .setUrl(baseUrl + "/" + primaryResourceType + "?" + chainParam.getOriginalParameter() + "=" + chainParam.getValue());
         
         // Add next link if there are more results
-        if (continuationToken != null) {
+        if (continuationToken != null && needsPagination) {
             bundle.addLink()
                     .setRelation("next")
-                    .setUrl(baseUrl + "/" + primaryResourceType + "?_page=" + continuationToken + "&_offset=" + effectiveCount + "&_count=" + count);
+                    .setUrl(baseUrl + "/" + primaryResourceType + "?_page=" + continuationToken + "&_offset=" + count + "&_count=" + count);
         }
         
-        logger.info("🔗 Chained search complete: {} primaries + {} includes = {} total resources in bundle, totalPrimaries={}", 
+        logger.info("🔗 Chained search complete: {} primaries + {} includes = {} total resources in bundle, totalPrimaries={}, pagination={}", 
                    primaryResources.size(), includedResources.size(), 
-                   bundle.getEntry().size(), allDocumentKeys.size());
+                   bundle.getEntry().size(), totalCount, needsPagination ? "YES" : "NO");
         return bundle;
     }
     
     /**
-     * Handle pagination requests for both legacy and new pagination strategies
+     * FASTPATH: Handle chained search with pure JSON assembly (10x memory savings)
+     * Bypasses HAPI parsing/serialization for both primary and included resources, returns UTF-8 bytes (2x savings vs String)
      */
-    public Bundle handleRevIncludePagination(String continuationToken, int offset, int count) {
-        logger.info("🔍 DEBUG: handleRevIncludePagination called - token={}, offset={}, count={}", continuationToken, offset, count);
+    private byte[] handleChainSearchFastpath(String primaryResourceType, List<SearchQuery> ftsQueries,
+                                            ChainParam chainParam, List<Include> includes, int count,
+                                            List<SearchSort> sortFields, String bucketName,
+                                            List<String> referencedResourceIds, RequestDetails requestDetails) {
+        
+        logger.info("🚀 FASTPATH: Handling chain search: {} with chain {} and {} includes (count={})", 
+                   primaryResourceType, chainParam, includes.size(), count);
+        
+        // Step 1: Execute primary search with count+1 strategy
+        FtsSearchService.FtsSearchResult chainFtsResult = executePrimaryChainSearchForKeysEfficient(
+            primaryResourceType,
+            chainParam.getReferenceFieldPath(),
+            chainParam.getTargetResourceType(),
+            referencedResourceIds,
+            ftsQueries,
+            sortFields,
+            count + 1,
+            bucketName
+        );
+        
+        List<String> allPrimaryKeys = chainFtsResult.getDocumentKeys();
+        long totalCount = chainFtsResult.getTotalCount();
+        boolean needsPagination = allPrimaryKeys.size() > count;
+        
+        logger.info("🚀 FASTPATH: Chain search found {} keys (requested count+1={}, total={}, pagination: {})", 
+                   allPrimaryKeys.size(), count + 1, totalCount, needsPagination ? "YES" : "NO");
+        
+        // Step 2: Get keys for first page
+        List<String> firstPageKeys = needsPagination ? allPrimaryKeys.subList(0, count) : allPrimaryKeys;
+        
+        // Step 3: Fetch primary resources as RAW BYTES (ZERO-COPY from Couchbase!)
+        long primFetchStart = System.currentTimeMillis();
+        Map<String, byte[]> primaryKeyToBytesMap = batchKvService.getDocumentsAsBytesWithKeys(
+            firstPageKeys, primaryResourceType);
+        logger.info("🚀 FASTPATH: Fetched {} primary resources as raw bytes with keys in {} ms", 
+                   primaryKeyToBytesMap.size(), System.currentTimeMillis() - primFetchStart);
+        
+        // Step 4: Process _include parameters (if any) - fetch as RAW BYTES
+        Map<String, byte[]> includedKeyToBytesMap = new java.util.LinkedHashMap<>();
+        
+        if (!includes.isEmpty()) {
+            logger.info("🚀 FASTPATH: Processing {} _include parameters", includes.size());
+            
+            // Extract references using N1QL (server-side, no double-fetch!)
+            // N1QL handles de-duplication and limiting on the server side
+            int maxIncludes = MAX_BUNDLE_SIZE - firstPageKeys.size();
+            List<String> refs = includeReferenceExtractor.extractReferences(
+                firstPageKeys, includes, primaryResourceType, bucketName, maxIncludes);
+            
+            logger.info("🚀 FASTPATH: N1QL extracted {} unique references for {} includes", 
+                       refs.size(), includes.size());
+            
+            // Fetch included resources as JSON with keys
+            if (!refs.isEmpty()) {
+                List<String> includeKeys = refs;
+                logger.debug("🚀 FASTPATH: KV Batch fetching {} includes as JSON", includeKeys.size());
+                Map<String, List<String>> includeKeysByType = includeKeys.stream()
+                    .collect(Collectors.groupingBy(k -> k.substring(0, k.indexOf('/'))));
+                
+                for (Map.Entry<String, List<String>> entry : includeKeysByType.entrySet()) {
+                    String includeResourceType = entry.getKey();
+                    List<String> keysForType = entry.getValue();
+                    Map<String, byte[]> fetchedMap = batchKvService.getDocumentsAsBytesWithKeys(
+                        keysForType, includeResourceType);
+                    includedKeyToBytesMap.putAll(fetchedMap);
+                }
+                
+                logger.info("🚀 FASTPATH: Fetched {} included resources as raw bytes with keys", includedKeyToBytesMap.size());
+            }
+        }
+        
+        // Step 5: Build Bundle JSON directly
+        String baseUrl = extractBaseUrl(requestDetails, bucketName);
+        
+        // Build selfUrl with chain parameter
+        String selfUrl = baseUrl + "/" + primaryResourceType + "?" + 
+                        chainParam.getOriginalParameter() + "=" + chainParam.getValue() +
+                        "&_count=" + count;
+        
+        String nextUrl = null;
+        if (needsPagination) {
+            // Store pagination state for continuation pages
+            List<String> serializedQueries = serializeFtsQueries(ftsQueries);
+            List<String> serializedSortFields = serializeSortFields(sortFields);
+            
+            // Store _include parameters if present (for continuation pages)
+            List<String> includeParamsList = null;
+            if (!includes.isEmpty()) {
+                includeParamsList = includes.stream()
+                    .map(Include::getValue)
+                    .collect(Collectors.toList());
+            }
+            
+            PaginationState paginationState = PaginationState.builder()
+                .searchType("chain")
+                .resourceType(primaryResourceType)
+                .primaryResourceCount((int) totalCount)
+                .primaryFtsQueriesJson(serializedQueries)
+                .primaryOffset(count)
+                .primaryPageSize(count)
+                .sortFieldsJson(serializedSortFields)
+                .includeParamsList(includeParamsList)  // Store _include params for continuation
+                .bucketName(bucketName)
+                .baseUrl(baseUrl)
+                .useLegacyKeyList(false)
+                .build();
+            
+            String continuationToken = searchStateManager.storePaginationState(paginationState);
+            nextUrl = baseUrl + "/" + primaryResourceType + "?_page=" + continuationToken 
+                    + "&_offset=" + count + "&_count=" + count;
+            
+            logger.info("🚀 FASTPATH: Pagination enabled, token={}, nextOffset={}", continuationToken, count);
+        }
+        
+        byte[] bundleBytes = fastJsonBundleBuilder.buildSearchsetBundle(
+            primaryKeyToBytesMap,
+            includedKeyToBytesMap,
+            (int) totalCount,
+            selfUrl,
+            nextUrl,
+            null,  // No previous link on first page
+            baseUrl,
+            Instant.now()
+        );
+        
+        logger.info("🚀 FASTPATH: Chain search COMPLETE: Bundle={} resources ({} primaries + {} includes), total={}, pagination={}", 
+                   primaryKeyToBytesMap.size() + includedKeyToBytesMap.size(), 
+                   primaryKeyToBytesMap.size(), 
+                   includedKeyToBytesMap.size(),
+                   totalCount,
+                   needsPagination ? "YES" : "NO");
+        
+        return bundleBytes;
+    }
+    
+    /**
+     * Handle pagination requests for both legacy and new pagination strategies
+     * Supports both HAPI and fastpath rendering
+     */
+    public Bundle handleRevIncludePagination(String continuationToken, int offset, int count, RequestDetails requestDetails) {
+        logger.info("🔍 Pagination request - token={}, offset={}, count={}", continuationToken, offset, count);
         
         // Get current bucket from tenant context
         String bucketName = com.couchbase.fhir.resources.config.TenantContextHolder.getTenantId();
-        logger.info("🔍 DEBUG: Bucket name: {}", bucketName);
         
         // First, try the new pagination strategy
-        logger.info("🔍 DEBUG: About to call getPaginationState");
         PaginationState paginationState = null;
         try {
             paginationState = searchStateManager.getPaginationState(continuationToken, bucketName);
-            logger.info("🔍 DEBUG: getPaginationState returned successfully");
         } catch (Exception e) {
-            logger.error("🔍 DEBUG: Exception in getPaginationState: {}", e.getMessage(), e);
+            logger.error("Failed to retrieve pagination state: {}", e.getMessage(), e);
             throw e;
         }
-        logger.info("🔍 DEBUG: Retrieved pagination state: {}", paginationState != null ? "FOUND" : "NULL");
         
         if (paginationState != null) {
             logger.info("🔍 DEBUG: paginationState is not null, checking fields...");
@@ -1782,19 +2797,11 @@ public class SearchService {
             }
             
             logger.info("🔑 Using new pagination strategy for token: {}", continuationToken);
-            logger.info("🔍 DEBUG: About to call handleContinuationTokenNewPagination");
             // Pass offset and count from URL to handle pagination (document is immutable)
-            try {
-                Bundle result = handleContinuationTokenNewPagination(continuationToken, paginationState.getResourceType(),
-                                                           offset, count,
-                                                           SummaryEnum.FALSE, null, // TODO: Store these in PaginationState if needed
-                                                           paginationState.getBucketName(), null); // TODO: Store RequestDetails if needed
-                logger.info("🔍 DEBUG: handleContinuationTokenNewPagination returned successfully");
-                return result;
-            } catch (Exception e) {
-                logger.error("🔍 DEBUG: Exception in handleContinuationTokenNewPagination: {}", e.getMessage(), e);
-                throw e;
-            }
+            return handleContinuationTokenNewPagination(continuationToken, paginationState.getResourceType(),
+                                                   offset, count,
+                                                   SummaryEnum.FALSE, null, // TODO: Store these in PaginationState if needed
+                                                   paginationState.getBucketName(), requestDetails);
         }
         
         // No pagination state found - neither new nor legacy
@@ -1881,6 +2888,16 @@ public class SearchService {
                "&_offset=" + offset + "&_count=" + count;
     }
     
+    private String buildPreviousPageUrl(String continuationToken, int offset, String resourceType, String bucketName, int count, String baseUrl) {
+        // Use provided base URL or fall back to localhost
+        if (baseUrl == null) {
+            baseUrl = "http://localhost:8080/fhir/" + bucketName;
+        }
+        
+        return baseUrl + "/" + resourceType + "?_page=" + continuationToken + 
+               "&_offset=" + offset + "&_count=" + count;
+    }
+    
     /**
      * Extract full reference strings from resources (for heterogeneous _include)
      */
@@ -1938,7 +2955,7 @@ public class SearchService {
         
         // Log if fallback would be needed (for monitoring purposes)
         if (references.isEmpty()) {
-            logger.info("🔍 No references found for search param '{}' on resource type '{}' - consider updating field mappings", 
+            logger.debug("🔍 No references found for search param '{}' on resource type '{}' - consider updating field mappings", 
                        searchParam, resource.getResourceType());
         }
         
@@ -2058,16 +3075,18 @@ public class SearchService {
     }
     
     /**
-     * Execute primary chain search to get ALL document keys (new pagination strategy)
-     * Returns up to 1000 document keys for Couchbase-backed pagination
+     * Execute primary chain search with count+1 strategy (efficient pagination detection)
+     * Only fetches the keys needed for the current page + 1 extra to detect if more pages exist
+     * Returns FtsSearchResult with accurate total count from metadata
      */
-    private List<String> executePrimaryChainSearchForKeys(String primaryResourceType, String referenceFieldPath,
+    private FtsSearchService.FtsSearchResult executePrimaryChainSearchForKeysEfficient(
+                                                          String primaryResourceType, String referenceFieldPath,
                                                           String targetResourceType, List<String> referencedIds,
                                                           List<SearchQuery> additionalQueries,
-                                                          List<SearchSort> sortFields, String bucketName) {
+                                                          List<SearchSort> sortFields, int limit, String bucketName) {
         
-        logger.debug("🔗 Executing primary chain search for keys: {} where {} references {} IDs", 
-                   primaryResourceType, referenceFieldPath, targetResourceType);
+        logger.debug("🔗 Executing primary chain search for keys: {} where {} references {} IDs (limit={})", 
+                   primaryResourceType, referenceFieldPath, targetResourceType, limit);
         
         // Build FTS query for primary resources that reference the found IDs
         List<SearchQuery> primaryQueries = new ArrayList<>();
@@ -2088,12 +3107,13 @@ public class SearchService {
             primaryQueries.addAll(additionalQueries);
         }
         
-        // Get up to 1000 keys for pagination
-        FtsSearchService.FtsSearchResult ftsResult = ftsKvSearchService.searchForAllKeys(primaryQueries, primaryResourceType, sortFields);
-        List<String> allDocumentKeys = ftsResult.getDocumentKeys();
+        // Use searchForKeys with limit (count+1 for pagination detection)
+        FtsSearchService.FtsSearchResult ftsResult = ftsSearchService.searchForKeys(
+            primaryQueries, primaryResourceType, 0, limit, sortFields);
         
-        logger.info("🔗 Primary chain search found {} document keys", allDocumentKeys.size());
-        return allDocumentKeys;
+        logger.info("🔗 Primary chain search found {} document keys (limit={}), total={}", 
+                   ftsResult.getDocumentKeys().size(), limit, ftsResult.getTotalCount());
+        return ftsResult;
     }
     
     // ========== FTS Query Serialization Helpers ==========
