@@ -38,6 +38,8 @@ services:
       # - LOCAL_ENV=true
     expose:
       - "8080" # internal only; not published to host
+    ports:
+      - "8080:8080"
     volumes:
       - ./config.yaml:/config.yaml:ro
     # depends_on:

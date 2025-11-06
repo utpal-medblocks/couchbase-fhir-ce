@@ -23,7 +23,7 @@ const NAME_CLAIM = `name`;
 const EMAIL_CLIAM = `email`;
 
 
-function decodeJWT(token: string): DecodedJWT | null {
+export function decodeJWT(token: string): DecodedJWT | null {
   const jwtRegex = /([\w\d-_]+)\.([\w\d-_]+)\.([\w\d-_]+)/;
 
   if(!jwtRegex.test(token)) return null;

@@ -1,4 +1,4 @@
-import React, { useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { styled, useTheme } from "@mui/material/styles";
 import type { Theme, CSSObject } from "@mui/material/styles";
 import { useNavigate, useLocation } from "react-router-dom";
@@ -34,6 +34,7 @@ import {
   BsJournalMedical,
   BsBucket,
 } from "react-icons/bs";
+import { FaUserFriends } from "react-icons/fa";
 import { TbApiApp } from "react-icons/tb";
 import { VscFlame } from "react-icons/vsc";
 
@@ -44,6 +45,8 @@ import Popover from "@mui/material/Popover";
 import {Logout} from "@mui/icons-material"
 import { useAuthStore } from '../../store/authStore';
 import { createAuthClient } from "better-auth/react";
+// import { adminClient } from "better-auth/client/plugins";
+import { decodeJWT } from '../../utils/jwt-utils'
 
 const drawerWidth = 200;
 
@@ -114,7 +117,13 @@ const menuItems = [
     icon: VscFlame,
     path: "/fhir-resources",
   },
-];
+  {
+    id: "user-management",
+    label: "User Management",
+    icon: FaUserFriends,
+    path: "/user-management"
+  }
+] as const;
 
 const bottomMenuItems = [
   {
@@ -135,11 +144,14 @@ interface MainLayoutProps {
   children: React.ReactNode;
 }
 
-const authBaseURL = import.meta.env.VITE_AUTH_SERVER_BASE_URL ? import.meta.env.VITE_AUTH_SERVER_BASE_URL : 'http://localhost'
+const authBaseURL = import.meta.env.VITE_AUTH_SERVER_BASE_URL ? import.meta.env.VITE_AUTH_SERVER_BASE_URL : ''
 
 const authClient = createAuthClient({
     baseURL: authBaseURL,
-    basePath: "/auth"
+    basePath: "/auth",
+    // plugins: [
+    //     adminClient()
+    // ]
 });
 
 export default function MainLayout({ children }: MainLayoutProps) {
@@ -148,6 +160,8 @@ export default function MainLayout({ children }: MainLayoutProps) {
   const location = useLocation();
   const { themeMode, toggleTheme } = useThemeContext();
   const authStore = useAuthStore()
+
+  const tokenResult = decodeJWT(authStore.accessToken)
 
   // Local state for UI controls
   const [drawerOpen, setDrawerOpen] = useState(true);
@@ -188,6 +202,13 @@ export default function MainLayout({ children }: MainLayoutProps) {
     if (path !== "/" && location.pathname.startsWith(path)) return true;
     return false;
   };
+
+  // useEffect(() => {
+  //   (async () => {
+  //     const users = await authClient.admin.listUsers({ query: { offset: 0, limit: 100}})
+  //     console.log("users ",users)
+  //   })();
+  // },[])
 
   return (
     <Box sx={{ display: "flex", width: "100vw", minHeight: "100vh" }}>
@@ -353,7 +374,16 @@ export default function MainLayout({ children }: MainLayoutProps) {
         <DrawerHeader />
         <Box display="flex" flexDirection="column" height="100%">
           <List sx={{ paddingTop: 0, paddingBottom: 0 }}>
-            {menuItems.map((item) => {
+            {menuItems.filter(v => {
+              if(v.path !== "/user-management") return true;
+              if(tokenResult) {
+                const {payload} = tokenResult
+                const role = payload.role
+                if(role === "admin") return true
+              }
+
+              return false
+            }).map((item) => {
               const IconComponent = item.icon;
               return (
                 <ListItem

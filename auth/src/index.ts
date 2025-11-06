@@ -13,12 +13,14 @@ const app = express()
 // })
 
 app.use(cors({
-    origin: true,
-    methods: ['GET','POST','PUT','DELETE','PATCH'],
+    origin: "*",
+    methods: ['GET','POST','PUT','DELETE','PATCH','OPTIONS'],
     credentials: true
 }))
 
 app.all("/auth/*splat",toNodeHandler(auth))
+
+
 
 
 app.use(express.json())
@@ -26,5 +28,5 @@ app.use(express.json())
 const listener = app.listen(5000, '0.0.0.0',(err) => {
     if (err) console.error("Couldn't start server: ",err)
     const address = listener.address() as unknown as AddressInfo;
-    console.info("Server is listening at "+address.address+":"+address.port)
+    console.info("Server is listening at rocket "+address.address+":"+address.port)
 })

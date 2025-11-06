@@ -6,14 +6,17 @@ import { formStyles } from '../../styles/styles';
 import { useThemeContext } from '../../contexts/ThemeContext';
 import { useNavigate } from 'react-router-dom';
 import { createAuthClient } from 'better-auth/react';
+import {adminClient } from 'better-auth/client/plugins';
 import CouchbaseLogo from '../../assets/icons/couchbase.png';
 import {useAuthStore} from '../../store/authStore';
 
-const authBaseURL = import.meta.env.VITE_AUTH_SERVER_BASE_URL ? import.meta.env.VITE_AUTH_SERVER_BASE_URL : 'http://localhost'
+
+const authBaseURL = import.meta.env.VITE_AUTH_SERVER_BASE_URL ? import.meta.env.VITE_AUTH_SERVER_BASE_URL : ''
 
 const authClient = createAuthClient({
     baseURL: authBaseURL,
-    basePath: "/auth"
+    basePath: "/auth",
+
 });
 
 const Login: React.FC = () => {
@@ -35,13 +38,13 @@ const Login: React.FC = () => {
 
             if(data) {
 
-                const res = await fetch("http://localhost/auth/token", {
+                const res = await fetch("/auth/token", {
                     credentials: 'include'
                 })
 
                 const data_ = await res.json();
 
-                // console.log(data_)
+                console.log(data_)
 
                 authStore.setAuthInfo(true, data_.token, '')
                 authStore.setNameAndEmail(data.user.name, data.user.email)
@@ -57,6 +60,7 @@ const Login: React.FC = () => {
             setError(err?.message || 'Login failed');
         }
     };
+
 
     return (
         <Box

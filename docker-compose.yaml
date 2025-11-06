@@ -8,6 +8,7 @@
 
 services:
   fhir-server:
+    container_name: fhir-server
     build:
       context: ./backend
     mem_limit: 3g
@@ -32,7 +33,7 @@ services:
         -XX:+HeapDumpOnOutOfMemoryError
         -XX:HeapDumpPath=/app/logs/heap.hprof
         -XX:+ExitOnOutOfMemoryError
-        -Xlog:gc*:file=/app/logs/gc.log:time,uptime,level,tags:filecount=5,filesize=10M
+      # -Xlog:gc*:file=/app/logs/gc.log:time,uptime,level,tags:filecount=5,filesize=10M
     healthcheck:
       test:
         ["CMD-SHELL", "curl -f http://localhost:8080/actuator/health || exit 1"]
@@ -51,7 +52,9 @@ services:
         max-size: "50m"
         max-file: "3"
     restart: no # unless-stopped . Changed to no to prevent restart on container restart.
+
   fhir-admin:
+    container_name: fhir-admin
     build:
       context: ./frontend
     environment:
@@ -78,6 +81,7 @@ services:
   #   restart: unless-stopped
 
   haproxy:
+    container_name: haproxy
     image: haproxy:2.9-alpine
     ports:
       - "80:80" # only public entry
@@ -89,6 +93,7 @@ services:
     restart: unless-stopped
 
   auth-server:
+    container_name: auth-server
     build:
       context: ./auth
     environment:
