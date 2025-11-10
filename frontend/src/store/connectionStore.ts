@@ -333,7 +333,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
   fetchMetrics: async () => {
     const { connection } = get();
 
-    if (!connection.isConnected || !connection.connectionName) {
+    if (!connection.isConnected || !connection.connectionName || connection.connectionName === "No Connection") {
       set({ metrics: null, metricsError: null });
       return;
     }

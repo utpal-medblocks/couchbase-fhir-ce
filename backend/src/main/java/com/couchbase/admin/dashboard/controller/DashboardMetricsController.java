@@ -52,7 +52,7 @@ public class DashboardMetricsController {
         
         try {
             // Get connection name - use provided or get the first active connection
-            if (connectionName == null || connectionName.isEmpty()) {
+            if (connectionName == null || connectionName.isEmpty() || "No Connection".equals(connectionName)) {
                 List<String> activeConnections = connectionService.getActiveConnections();
                 if (activeConnections.isEmpty()) {
                     return ResponseEntity.badRequest().build();

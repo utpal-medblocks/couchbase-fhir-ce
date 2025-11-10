@@ -1,0 +1,66 @@
+version: "3.8"
+services:
+  hapi:
+    image: hapiproject/hapi:v6.8.0
+    container_name: hapi-fhir
+    mem_limit: 3g
+    mem_reservation: 2g
+    ports:
+      - "8080:8080"
+    environment:
+      SPRING_PROFILES_ACTIVE: postgres
+
+      # Database configuration
+      spring.datasource.url: jdbc:postgresql://172.31.32.207:5432/hapi
+      spring.datasource.username: admin
+      spring.datasource.password: admin
+      spring.datasource.driver-class-name: org.postgresql.Driver
+      spring.jpa.database-platform: org.hibernate.dialect.PostgreSQL95Dialect
+      spring.jpa.hibernate.ddl-auto: update
+      spring.jpa.properties.hibernate.dialect: org.hibernate.dialect.PostgreSQL95Dialect
+      spring.jpa.properties.hibernate.jdbc.lob.non_contextual_creation: true
+      spring.jpa.properties.hibernate.temp.use_jdbc_metadata_defaults: false
+      spring.jpa.properties.hibernate.jdbc.lob.non-contextual-creation: true
+
+      # Server/Tomcat configuration for high concurrency
+      SERVER_TOMCAT_THREADS_MAX: 200
+      SERVER_TOMCAT_THREADS_MIN_SPARE: 50
+      SERVER_TOMCAT_ACCEPT_COUNT: 400
+      SERVER_TOMCAT_MAX_CONNECTIONS: 500
+      SERVER_TOMCAT_CONNECTION_TIMEOUT: 20s
+      SERVER_TOMCAT_MAX_KEEP_ALIVE_REQUESTS: 1000
+
+      # Database connection pool tuning
+      SPRING_DATASOURCE_HIKARI_MAXIMUMPOOLSIZE: 100
+      SPRING_DATASOURCE_HIKARI_MINIMUMIDLE: 25
+      SPRING_DATASOURCE_HIKARI_CONNECTIONTIMEOUT: 30000
+      SPRING_DATASOURCE_HIKARI_IDLETIMEOUT: 600000
+      SPRING_DATASOURCE_HIKARI_MAXLIFETIME: 1800000
+
+      # JVM tuning - back to your original working config
+      JAVA_OPTS: "-Dspring.profiles.active=postgres -Xms1g -Xmx2g -Xss512k -XX:MaxDirectMemorySize=512m -XX:+UseG1GC -XX:MaxGCPauseMillis=200 -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/app/logs/heap.hprof -XX:+ExitOnOutOfMemoryError -Xlog:gc*:file=/app/logs/gc.log:time,uptime,level,tags:filecount=5,filesize=10M"
+
+      # HAPI FHIR specific
+      hapi.fhir.subscription.resthook_enabled: true
+      hapi.fhir.subscription.websocket_enabled: true
+      hapi.fhir.client_id_strategy: ANY
+      mdm_enabled: true
+
+    healthcheck:
+      test:
+        ["CMD-SHELL", "curl -f http://localhost:8080/fhir/metadata || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+
+    volumes:
+      - ./logs:/app/logs
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
+
+    restart: unless-stopped
