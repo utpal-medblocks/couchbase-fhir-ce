@@ -95,4 +95,6 @@ coverage.xml
 # Copilot Instructions
 copilot-instructions.md
 k8s-deployment-plan.md
+
+# auth/
 load-tests/requirements.txt
