@@ -12,7 +12,6 @@ export default defineConfig({
     proxy: {
       "/api": "http://localhost:8080",
       "/fhir": "http://localhost:8080",
-      "/auth": "http://localhost:5000"
     },
     hmr: {
       overlay: false,
