@@ -29,17 +29,15 @@ import { getStoredTimeRange, storeTimeRange } from "../../utils/sessionStorage";
 const BucketsMain = () => {
   // Get stores
   const connection = useConnectionStore((state) => state.connection);
-  const bucketStore = useBucketStore();
+  const bucket = useBucketStore((state) => state.bucket);
+  const collections = useBucketStore((state) => state.collections);
+  const fetchBucketData = useBucketStore((state) => state.fetchBucketData);
 
   // State for time range with session storage
   const [timeRange, setTimeRange] = useState<TimeRange>(() =>
     getStoredTimeRange("HOUR")
   );
   const [lastRefreshed, setLastRefreshed] = useState<Date | null>(null);
-
-  // Get bucket data (single-tenant mode)
-  const bucket = bucketStore.bucket;
-  const collections = bucketStore.collections;
 
   const handleTimeRangeChange = useCallback((event: SelectChangeEvent) => {
     const newTimeRange = event.target.value as TimeRange;
@@ -48,19 +46,17 @@ const BucketsMain = () => {
   }, []);
 
   const handleRefresh = useCallback(() => {
-    bucketStore
-      .fetchBucketData()
+    fetchBucketData()
       .then(() => setLastRefreshed(new Date()))
       .catch(() => setLastRefreshed(new Date()));
-  }, [bucketStore]);
+  }, [fetchBucketData]);
 
   // Auto-refresh bucket data every 20 seconds to keep item counts fresh
   useEffect(() => {
     if (!connection.isConnected) return;
 
     const refresh = () =>
-      bucketStore
-        .fetchBucketData()
+      fetchBucketData()
         .then(() => setLastRefreshed(new Date()))
         .catch(() => setLastRefreshed(new Date()));
 
@@ -71,7 +67,7 @@ const BucketsMain = () => {
     const interval = setInterval(refresh, 20000);
 
     return () => clearInterval(interval);
-  }, [connection.isConnected, bucketStore]);
+  }, [connection.isConnected, fetchBucketData]);
 
   // Smart byte formatting function
   const formatBytes = useCallback((bytes: number): string => {

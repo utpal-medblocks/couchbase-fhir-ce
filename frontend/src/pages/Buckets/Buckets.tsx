@@ -17,26 +17,24 @@ const Buckets = () => {
   const connection = useConnectionStore((state) => state.connection);
 
   // Get bucket store data (single-tenant mode)
-  const bucketStore = useBucketStore();
-  const bucket = bucketStore.bucket;
+  const bucket = useBucketStore((state) => state.bucket);
+  const fetchBucketData = useBucketStore((state) => state.fetchBucketData);
 
   // Load initial bucket data only (no refresh interval)
+  // BucketsMain will handle its own refresh logic
   useEffect(() => {
     if (!connection.isConnected) {
       return;
     }
 
-    // Load initial data only once
-    const loadInitialData = async () => {
-      try {
-        await bucketStore.fetchBucketData();
-      } catch (error) {
+    // Only fetch if we don't have bucket data yet
+    if (!bucket) {
+      console.log("📦 Buckets.tsx: Fetching initial bucket data");
+      fetchBucketData().catch((error) => {
         console.error("Failed to load initial bucket data:", error);
-      }
-    };
-
-    loadInitialData();
-  }, [connection.isConnected, bucketStore]);
+      });
+    }
+  }, [connection.isConnected, bucket, fetchBucketData]);
 
   // Check if we have a valid connection
   if (!connection.isConnected) {
@@ -78,18 +76,6 @@ const Buckets = () => {
           <Tab disabled={!bucket} label="Samples" />
           <Tab disabled={!bucket} label="FTS Indexes" />
         </Tabs>
-
-        <Box sx={{ display: "flex", alignItems: "center", gap: 2, pr: 2 }}>
-          <Typography variant="body2" sx={{ color: "text.secondary" }}>
-            FHIR Bucket:
-          </Typography>
-          <Typography
-            variant="body2"
-            sx={{ color: "primary.main", fontWeight: 600 }}
-          >
-            {bucket?.bucketName || "Loading..."}
-          </Typography>
-        </Box>
       </Box>
 
       {/* Tab Content */}

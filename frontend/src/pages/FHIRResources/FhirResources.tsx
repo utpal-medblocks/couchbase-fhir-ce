@@ -39,7 +39,9 @@ import type { VersionHistoryItem } from "../../components/TimelineComponent";
 export default function FhirResources() {
   // Get stores and theme
   const connection = useConnectionStore((state) => state.connection);
-  const bucketStore = useBucketStore();
+  const bucket = useBucketStore((state) => state.bucket);
+  const collections = useBucketStore((state) => state.collections);
+  const fetchBucketData = useBucketStore((state) => state.fetchBucketData);
   const { themeMode } = useThemeContext();
 
   const connectionId = connection.connectionName;
@@ -84,11 +86,7 @@ export default function FhirResources() {
   const [selectedGeneralResourceType, setSelectedGeneralResourceType] =
     useState<string | null>(null);
 
-  // Single-tenant mode: use the single FHIR bucket
-  const bucket = bucketStore.bucket;
-
-  // Get collections for "Resources" scope
-  const collections = bucketStore.collections;
+  // Filter collections for "Resources" scope
   const filteredCollections = collections
     .filter(
       (col) => col.scopeName === "Resources" && col.collectionName !== "General" // Filter out General collection
@@ -115,7 +113,7 @@ export default function FhirResources() {
 
     const refreshCollectionCounts = () => {
       console.log("🔄 Refreshing collection counts...");
-      return bucketStore.fetchBucketData();
+      return fetchBucketData();
     };
 
     // Initial fetch
@@ -128,7 +126,7 @@ export default function FhirResources() {
     const interval = setInterval(refreshCollectionCounts, 20000);
 
     return () => clearInterval(interval);
-  }, [connection.isConnected, bucket, bucketStore]);
+  }, [connection.isConnected, bucket, fetchBucketData]);
 
   // Fetch General resourceTypes on component mount
   useEffect(() => {
@@ -391,26 +389,6 @@ export default function FhirResources() {
         }}
       >
         <Typography variant="h6">FHIR Resources</Typography>
-        <Box sx={{ display: "flex", alignItems: "center", gap: 2, pr: 2 }}>
-          <Typography variant="body2" sx={{ color: "primary.main" }}>
-            FHIR Bucket
-          </Typography>
-          <FormControl
-            variant="standard"
-            sx={{
-              minWidth: 150,
-              color: "GrayText",
-            }}
-            size="small"
-          >
-            <Typography
-              variant="body2"
-              sx={{ color: "primary.main", fontWeight: 600 }}
-            >
-              {bucket?.bucketName || "Loading..."}
-            </Typography>
-          </FormControl>
-        </Box>
       </Box>
 
       {/* Patient ID Search Box */}
