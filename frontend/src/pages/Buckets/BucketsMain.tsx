@@ -37,11 +37,9 @@ const BucketsMain = () => {
   );
   const [lastRefreshed, setLastRefreshed] = useState<Date | null>(null);
 
-  const connectionId = connection.connectionName;
-
-  // Get bucket data
-  const activeBucket = bucketStore.getActiveBucket(connectionId);
-  const collections = bucketStore.collections[connectionId] || [];
+  // Get bucket data (single-tenant mode)
+  const bucket = bucketStore.bucket;
+  const collections = bucketStore.collections;
 
   const handleTimeRangeChange = useCallback((event: SelectChangeEvent) => {
     const newTimeRange = event.target.value as TimeRange;
@@ -50,21 +48,19 @@ const BucketsMain = () => {
   }, []);
 
   const handleRefresh = useCallback(() => {
-    if (connectionId) {
-      bucketStore
-        .fetchBucketData(connectionId)
-        .then(() => setLastRefreshed(new Date()))
-        .catch(() => setLastRefreshed(new Date()));
-    }
-  }, [connectionId]);
+    bucketStore
+      .fetchBucketData()
+      .then(() => setLastRefreshed(new Date()))
+      .catch(() => setLastRefreshed(new Date()));
+  }, [bucketStore]);
 
   // Auto-refresh bucket data every 20 seconds to keep item counts fresh
   useEffect(() => {
-    if (!connectionId) return;
+    if (!connection.isConnected) return;
 
     const refresh = () =>
       bucketStore
-        .fetchBucketData(connectionId)
+        .fetchBucketData()
         .then(() => setLastRefreshed(new Date()))
         .catch(() => setLastRefreshed(new Date()));
 
@@ -75,7 +71,7 @@ const BucketsMain = () => {
     const interval = setInterval(refresh, 20000);
 
     return () => clearInterval(interval);
-  }, [connectionId]);
+  }, [connection.isConnected, bucketStore]);
 
   // Smart byte formatting function
   const formatBytes = useCallback((bytes: number): string => {
@@ -94,11 +90,9 @@ const BucketsMain = () => {
     return `${formatted} ${units[i]}`;
   }, []);
 
-  // Filter collections for active bucket and Resources scope only
+  // Filter collections for Resources scope only (single-tenant mode)
   const filteredCollections = collections.filter(
-    (col) =>
-      col.bucketName === activeBucket?.bucketName &&
-      col.scopeName === "Resources"
+    (col) => col.scopeName === "Resources"
   );
 
   // Sort collections with Patient first, then alphabetically
@@ -158,7 +152,7 @@ const BucketsMain = () => {
             </IconButton>
           </Box>
 
-          {activeBucket && (
+          {bucket && (
             <TableContainer sx={{ height: "100%" }}>
               <Table size="small" stickyHeader>
                 <TableHead>
@@ -268,15 +262,15 @@ const BucketsMain = () => {
           </Box>
 
           <Box sx={{ flex: 1, p: 1 }}>
-            {activeBucket ? (
+            {bucket ? (
               <BucketMetricsCharts
                 connectionName={connection?.connectionName || ""}
-                bucketName={activeBucket.bucketName}
+                bucketName={bucket.bucketName}
                 timeRange={timeRange}
               />
             ) : (
               <Typography variant="body2" color="text.secondary">
-                Select a bucket to view metrics
+                Loading bucket data...
               </Typography>
             )}
           </Box>

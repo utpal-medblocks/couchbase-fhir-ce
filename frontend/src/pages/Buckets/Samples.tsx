@@ -12,12 +12,10 @@ const Samples: React.FC = () => {
     "synthea" | "uscore"
   >("synthea");
 
-  // Get connection and bucket information
+  // Get connection and bucket information (single-tenant mode)
   const connection = useConnectionStore((state) => state.connection);
   const bucketStore = useBucketStore();
-  const connectionId = connection.connectionName;
-  const activeBucket = bucketStore.getActiveBucket(connectionId);
-  // All buckets use Resources scope only
+  const bucket = bucketStore.bucket;
 
   const handleCardClick = (sampleType: "synthea" | "uscore") => {
     setSelectedSampleType(sampleType);
@@ -30,7 +28,7 @@ const Samples: React.FC = () => {
 
   const handleLoadSuccess = () => {
     // Refresh bucket data after successful load
-    bucketStore.fetchBucketData(connectionId);
+    bucketStore.fetchBucketData();
 
     // Close dialog after a short delay
     setTimeout(() => {
@@ -39,7 +37,7 @@ const Samples: React.FC = () => {
   };
 
   // Check if we have required selections
-  const hasRequiredSelections = activeBucket;
+  const hasRequiredSelections = bucket;
   const isConnected = connection.isConnected;
 
   if (!isConnected) {
@@ -81,8 +79,8 @@ const Samples: React.FC = () => {
       <LoadSamplesDialog
         open={dialogOpen}
         onClose={handleDialogClose}
-        bucketName={activeBucket?.bucketName || ""}
-        connectionName={connectionId}
+        bucketName={bucket?.bucketName || ""}
+        connectionName={connection.connectionName}
         sampleType={selectedSampleType}
         onSuccess={handleLoadSuccess}
       />

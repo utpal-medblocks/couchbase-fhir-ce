@@ -77,11 +77,11 @@ const AddFhirBucketDialog: React.FC<AddFhirBucketDialogProps> = ({
 
   const steps = ["Configure FHIR Settings", "Convert Bucket"];
 
-  // Load existing FHIR config when dialog opens
+  // Load existing FHIR config when dialog opens (single-tenant mode)
   useEffect(() => {
     if (open) {
       // Try to load existing FHIR configuration from store
-      const existingConfig = getFhirConfig(connectionName, bucketName);
+      const existingConfig = getFhirConfig();
       if (existingConfig) {
         setFhirConfig({
           fhirRelease: existingConfig.fhirRelease,
@@ -92,7 +92,7 @@ const AddFhirBucketDialog: React.FC<AddFhirBucketDialogProps> = ({
     } else {
       resetState();
     }
-  }, [open, connectionName, bucketName, getFhirConfig]);
+  }, [open, getFhirConfig]);
 
   // Status polling effect
   useEffect(() => {
@@ -119,8 +119,8 @@ const AddFhirBucketDialog: React.FC<AddFhirBucketDialogProps> = ({
               // Update the store to mark this bucket as FHIR-enabled
               setBucketFhirStatus(bucketName, true);
 
-              // Save the FHIR configuration to the bucket store
-              saveFhirConfigToStore(connectionName, bucketName, {
+              // Save the FHIR configuration to the bucket store (single-tenant mode)
+              saveFhirConfigToStore({
                 fhirRelease: fhirConfig.fhirRelease,
                 validation: fhirConfig.validation,
                 logs: fhirConfig.logs,

@@ -36,7 +36,7 @@ const DashboardCouchbaseServer: React.FC = () => {
     error,
     backendReady,
   } = useConnectionStore();
-  const { fetchFhirConfig, getFhirConfig } = useBucketStore();
+  const { fetchFhirConfig, getFhirConfig, bucket } = useBucketStore();
 
   // Local helper component for retry button with immediate polling
   const RetryAutoConnectButton: React.FC = () => {
@@ -162,13 +162,11 @@ const DashboardCouchbaseServer: React.FC = () => {
       if (!connection.connectionName || !buckets.length) return;
       setLoadingConfigs(true);
       try {
-        const fhirBuckets = buckets.filter((b: any) => b.isFhirBucket);
+        // Single-tenant mode: only one bucket named "fhir"
+        const fhirBuckets = buckets.filter((b: any) => b.name === "fhir");
         const results = await Promise.all(
           fhirBuckets.map(async (b: any) => {
-            const cfg = await fetchFhirConfig(
-              connection.connectionName!,
-              b.name
-            );
+            const cfg = await fetchFhirConfig();
             return { name: b.name, cfg };
           })
         );
@@ -570,11 +568,8 @@ const DashboardCouchbaseServer: React.FC = () => {
                         const cfg =
                           bucketConfigs[bucket.name] !== undefined
                             ? bucketConfigs[bucket.name]
-                            : connection.connectionName
-                            ? getFhirConfig(
-                                connection.connectionName,
-                                bucket.name
-                              )
+                            : bucket.name === "fhir"
+                            ? getFhirConfig()
                             : null;
                         if (cfg) {
                           const profile = cfg.validation.profile;

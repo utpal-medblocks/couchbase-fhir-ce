@@ -1,15 +1,5 @@
 import React, { useEffect } from "react";
-import {
-  Tabs,
-  Tab,
-  Box,
-  Alert,
-  AlertTitle,
-  Typography,
-  FormControl,
-  Select,
-  MenuItem,
-} from "@mui/material";
+import { Tabs, Tab, Box, Alert, AlertTitle, Typography } from "@mui/material";
 import BucketsMain from "./BucketsMain";
 import FtsIndexes from "./FtsIndexes";
 import Samples from "./Samples";
@@ -25,17 +15,10 @@ const Buckets = () => {
 
   // Get connection info from the new connection store
   const connection = useConnectionStore((state) => state.connection);
-  const connectionId = connection.connectionName;
 
-  // Get bucket store data
+  // Get bucket store data (single-tenant mode)
   const bucketStore = useBucketStore();
-  const fhirBuckets = bucketStore.getFhirBuckets(connectionId);
-  const activeBucket = bucketStore.getActiveBucket(connectionId);
-
-  // Handle bucket selection
-  const handleBucketChange = (bucketName: string) => {
-    bucketStore.setActiveBucket(connectionId, bucketName);
-  };
+  const bucket = bucketStore.bucket;
 
   // Load initial bucket data only (no refresh interval)
   useEffect(() => {
@@ -46,14 +29,14 @@ const Buckets = () => {
     // Load initial data only once
     const loadInitialData = async () => {
       try {
-        await bucketStore.fetchBucketData(connectionId);
+        await bucketStore.fetchBucketData();
       } catch (error) {
         console.error("Failed to load initial bucket data:", error);
       }
     };
 
     loadInitialData();
-  }, [connection.isConnected, connectionId]);
+  }, [connection.isConnected, bucketStore]);
 
   // Check if we have a valid connection
   if (!connection.isConnected) {
@@ -92,34 +75,20 @@ const Buckets = () => {
       >
         <Tabs value={selectedTab} onChange={handleChange} sx={{ flexGrow: 1 }}>
           <Tab label="Collections" />
-          <Tab disabled={!activeBucket} label="Samples" />
-          <Tab disabled={!activeBucket} label="FTS Indexes" />
+          <Tab disabled={!bucket} label="Samples" />
+          <Tab disabled={!bucket} label="FTS Indexes" />
         </Tabs>
 
-        {/* Bucket and Scope selectors on the right */}
         <Box sx={{ display: "flex", alignItems: "center", gap: 2, pr: 2 }}>
-          <Typography variant="body2" sx={{ color: "primary.main" }}>
-            FHIR Bucket
+          <Typography variant="body2" sx={{ color: "text.secondary" }}>
+            FHIR Bucket:
           </Typography>
-          <FormControl
-            variant="standard"
-            sx={{
-              minWidth: 150,
-              color: "GrayText",
-            }}
-            size="small"
+          <Typography
+            variant="body2"
+            sx={{ color: "primary.main", fontWeight: 600 }}
           >
-            <Select
-              value={activeBucket?.bucketName || ""}
-              onChange={(e) => handleBucketChange(e.target.value)}
-            >
-              {fhirBuckets.map((bucket) => (
-                <MenuItem key={bucket.bucketName} value={bucket.bucketName}>
-                  {bucket.bucketName}
-                </MenuItem>
-              ))}
-            </Select>
-          </FormControl>
+            {bucket?.bucketName || "Loading..."}
+          </Typography>
         </Box>
       </Box>
 

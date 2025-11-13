@@ -1,51 +1,24 @@
-// Example usage of the bucketStore with FHIR bucket filtering
-// This shows how to use the store in a React component
+// Example usage of the bucketStore in single-tenant mode
+// This shows how to use the simplified store in a React component
 
 import React from "react";
 import { useBucketStore } from "../store/bucketStore";
-import { useConnectionStore } from "../store/connectionStore";
 
 export const BucketPageExample: React.FC = () => {
-  const connectionStore = useConnectionStore();
   const bucketStore = useBucketStore();
 
-  // Get the current connection ID (you'd get this from your routing/context)
-  const connectionId = connectionStore.connection.connectionName;
-
-  // Get only FHIR buckets for the dropdown
-  const fhirBuckets = bucketStore.getFhirBuckets(connectionId);
-
-  // Get current active selections
-  const activeBucket = bucketStore.getActiveBucket(connectionId);
-  // All buckets use Resources scope only
-
-  // Get collections for the active bucket and scope
-  const collections = bucketStore.collections[connectionId] || [];
-
-  const handleBucketChange = (bucketName: string) => {
-    bucketStore.setActiveBucket(connectionId, bucketName);
-  };
-
-  // Removed scope selection - all buckets use Resources scope
+  // Single-tenant mode: only one bucket named "fhir"
+  const bucket = bucketStore.bucket;
+  const collections = bucketStore.collections;
 
   return (
     <div>
-      <h1>FHIR Buckets</h1>
+      <h1>FHIR System</h1>
 
-      {/* Bucket Dropdown - Only shows FHIR buckets */}
+      {/* Bucket Info - Fixed to "fhir" bucket */}
       <div>
-        <label>Select FHIR Bucket:</label>
-        <select
-          value={activeBucket?.bucketName || ""}
-          onChange={(e) => handleBucketChange(e.target.value)}
-        >
-          <option value="">Select a bucket...</option>
-          {fhirBuckets.map((bucket) => (
-            <option key={bucket.bucketName} value={bucket.bucketName}>
-              {bucket.bucketName}
-            </option>
-          ))}
-        </select>
+        <label>Bucket:</label>
+        <span> {bucket?.bucketName || "Loading..."}</span>
       </div>
 
       {/* Scope - Fixed to Resources */}
@@ -55,9 +28,9 @@ export const BucketPageExample: React.FC = () => {
       </div>
 
       {/* Collections Table */}
-      {activeBucket && (
+      {bucket && (
         <div>
-          <h2>Collections in {activeBucket.bucketName} - Resources</h2>
+          <h2>Collections in {bucket.bucketName} - Resources</h2>
           <table>
             <thead>
               <tr>
@@ -71,11 +44,7 @@ export const BucketPageExample: React.FC = () => {
             </thead>
             <tbody>
               {collections
-                .filter(
-                  (col) =>
-                    col.bucketName === activeBucket.bucketName &&
-                    col.scopeName === "Resources"
-                )
+                .filter((col) => col.scopeName === "Resources")
                 .map((collection) => (
                   <tr
                     key={`${collection.bucketName}-${collection.scopeName}-${collection.collectionName}`}
@@ -94,7 +63,7 @@ export const BucketPageExample: React.FC = () => {
       )}
 
       {/* Bucket Details Footer */}
-      {activeBucket && (
+      {bucket && (
         <div
           style={{
             marginTop: "20px",
@@ -102,15 +71,13 @@ export const BucketPageExample: React.FC = () => {
             backgroundColor: "#f5f5f5",
           }}
         >
-          <h3>Bucket Details: {activeBucket.bucketName}</h3>
-          <p>Type: {activeBucket.bucketType}</p>
-          <p>Items: {activeBucket.itemCount.toLocaleString()}</p>
-          <p>Operations/sec: {activeBucket.opsPerSec.toLocaleString()}</p>
-          <p>RAM: {(activeBucket.ram / 1024 / 1024).toFixed(2)} MB</p>
-          <p>
-            Disk Used: {(activeBucket.diskUsed / 1024 / 1024).toFixed(2)} MB
-          </p>
-          <p>Quota Used: {activeBucket.quotaPercentUsed.toFixed(1)}%</p>
+          <h3>Bucket Details: {bucket.bucketName}</h3>
+          <p>Type: {bucket.bucketType}</p>
+          <p>Items: {bucket.itemCount.toLocaleString()}</p>
+          <p>Operations/sec: {bucket.opsPerSec.toLocaleString()}</p>
+          <p>RAM: {(bucket.ram / 1024 / 1024).toFixed(2)} MB</p>
+          <p>Disk Used: {(bucket.diskUsed / 1024 / 1024).toFixed(2)} MB</p>
+          <p>Quota Used: {bucket.quotaPercentUsed.toFixed(1)}%</p>
         </div>
       )}
     </div>
