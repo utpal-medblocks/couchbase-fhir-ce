@@ -154,10 +154,18 @@ public class FhirBucketController {
             return ResponseEntity.ok(config);
             
         } catch (Exception e) {
+            // Handle known cases gracefully without stack traces
+            String errorMsg = e.getMessage();
+            if (errorMsg != null && (errorMsg.contains("does not exist") || errorMsg.contains("not FHIR-enabled"))) {
+                logger.debug("FHIR config not available for bucket '{}': {}", bucketName, errorMsg);
+                return ResponseEntity.notFound().build();
+            }
+            
+            // Unknown error - log with stack trace
             logger.error("Failed to get FHIR configuration for bucket: {}", bucketName, e);
             Map<String, Object> errorResponse = Map.of(
                 "error", "Failed to get FHIR configuration",
-                "message", e.getMessage()
+                "message", errorMsg
             );
             return ResponseEntity.internalServerError().body(errorResponse);
         }

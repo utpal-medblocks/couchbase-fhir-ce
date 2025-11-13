@@ -1,6 +1,5 @@
 package com.couchbase.fhir.resources.service;
 
-import com.couchbase.client.java.Cluster;
 import com.couchbase.client.java.json.JsonObject;
 import com.couchbase.client.java.query.QueryResult;
 import org.slf4j.Logger;
@@ -160,14 +159,15 @@ public class FhirBucketConfigService {
             return config;
             
         } catch (Exception e) {
-            logger.error("Failed to retrieve FHIR config for bucket: {}, error: {}", bucketName, e.getMessage());
-            
             // Fast fail - don't return default config, throw exception
             if (e.getMessage() != null && e.getMessage().contains("Keyspace not found")) {
+                logger.debug("Bucket '{}' does not exist", bucketName);
                 throw new RuntimeException("Bucket '" + bucketName + "' does not exist");
             } else if (e.getMessage() != null && e.getMessage().contains("Scope not found")) {
+                logger.debug("Bucket '{}' is not FHIR-enabled (scope not found)", bucketName);
                 throw new RuntimeException("Bucket '" + bucketName + "' is not FHIR-enabled");
             } else {
+                logger.error("Failed to retrieve FHIR config for bucket: {}, error: {}", bucketName, e.getMessage());
                 throw new RuntimeException("Failed to access FHIR configuration for bucket '" + bucketName + "'");
             }
         }

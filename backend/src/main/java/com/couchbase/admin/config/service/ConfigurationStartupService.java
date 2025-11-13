@@ -3,6 +3,8 @@ package com.couchbase.admin.config.service;
 import com.couchbase.admin.connections.model.ConnectionRequest;
 import com.couchbase.admin.connections.model.ConnectionResponse;
 import com.couchbase.admin.connections.service.ConnectionService;
+import com.couchbase.admin.initialization.model.InitializationStatus;
+import com.couchbase.admin.initialization.service.InitializationService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -37,6 +39,9 @@ public class ConfigurationStartupService {
 
     @Autowired
     private ConnectionService connectionService;
+    
+    @Autowired
+    private InitializationService initializationService;
 
     /**
      * Load configuration and establish connection after application is fully started
@@ -173,9 +178,11 @@ public class ConfigurationStartupService {
         ConnectionResponse response = connectionService.createConnection(request);
         
         if (response.isSuccess()) {
-            logger.info("✅ Auto-connection successful! FHIR Server is ready for API requests");
-            logger.info("🚀 Backend startup complete - FHIR APIs are now available");
-            logger.info("💡 Collections will be warmed up automatically on first access to each FHIR bucket");
+            logger.info("✅ Auto-connection successful!");
+            
+            // Check initialization status for single-tenant "fhir" bucket
+            checkAndReportInitializationStatus();
+            
         } else {
             String errorMsg = response.getMessage();
             logger.error("❌ Auto-connection failed: {}", errorMsg);
@@ -195,6 +202,57 @@ public class ConfigurationStartupService {
         return true;
     }
 
+    /**
+     * Check and report FHIR bucket initialization status
+     * Single-tenant mode: expects exactly one bucket named "fhir"
+     */
+    private void checkAndReportInitializationStatus() {
+        try {
+            InitializationStatus status = initializationService.checkStatus(DEFAULT_CONNECTION_NAME);
+            
+            logger.info("╔══════════════════════════════════════════════════════════════╗");
+            logger.info("║         FHIR SYSTEM INITIALIZATION STATUS                    ║");
+            logger.info("╚══════════════════════════════════════════════════════════════╝");
+            logger.info("📊 Status: {}", status.getStatus());
+            logger.info("📦 Bucket: {}", status.getBucketName());
+            logger.info("🔗 Connection: {}", status.isHasConnection() ? "✅ Connected" : "❌ Not Connected");
+            logger.info("🪣 Bucket Exists: {}", status.isBucketExists() ? "✅ Yes" : "❌ No");
+            logger.info("⚙️  FHIR Initialized: {}", status.isFhirInitialized() ? "✅ Yes" : "❌ No");
+            logger.info("─────────────────────────────────────────────────────────────");
+            
+            switch (status.getStatus()) {
+                case READY:
+                    logger.info("✅ {}", status.getMessage());
+                    logger.info("🚀 Backend startup complete - FHIR APIs are now available");
+                    logger.info("💡 Collections will be warmed up automatically on first access");
+                    break;
+                    
+                case BUCKET_MISSING:
+                    logger.warn("⚠️  {}", status.getMessage());
+                    logger.warn("📋 NEXT STEPS:");
+                    logger.warn("   1. Create bucket '{}' in Couchbase UI or CLI", status.getBucketName());
+                    logger.warn("   2. Use Admin UI to initialize FHIR configuration");
+                    break;
+                    
+                case BUCKET_NOT_INITIALIZED:
+                    logger.warn("⚠️  {}", status.getMessage());
+                    logger.warn("📋 NEXT STEPS:");
+                    logger.warn("   1. Open Admin UI in your browser");
+                    logger.warn("   2. Click 'Initialize FHIR Bucket' to set up scopes/collections/indexes");
+                    break;
+                    
+                case NOT_CONNECTED:
+                    logger.error("❌ {}", status.getMessage());
+                    break;
+            }
+            
+            logger.info("╚══════════════════════════════════════════════════════════════╝");
+            
+        } catch (Exception e) {
+            logger.error("❌ Failed to check initialization status: {}", e.getMessage());
+        }
+    }
+    
     /**
      * Apply logging levels supplied in config.yaml under logging.levels
      */

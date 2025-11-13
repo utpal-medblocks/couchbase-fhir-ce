@@ -1,11 +1,13 @@
 import { create } from "zustand";
 
-export type UUID = string; // You can enhance this with specific UUID validation if needed
+export type UUID = string;
+
 export interface SchemaDetails {
   schemaId: string;
   schema: any;
   description: string;
 }
+
 export interface CollectionDetails {
   collectionName: string;
   scopeName: string;
@@ -64,8 +66,8 @@ export interface BucketDetails {
   collectionMetrics?: { [key: string]: { [key: string]: any } };
   // FHIR configuration from Admin.config document
   fhirConfig?: FhirConfiguration;
-  // Note: No need for isFhirBucket flag since ALL buckets in store are FHIR-enabled
 }
+
 export interface IndexDetails {
   bucket: string;
   scope: string;
@@ -84,6 +86,7 @@ export interface IndexDetails {
   predicate: string;
   filterStr: string;
 }
+
 export interface IndexPerformance {
   reqRate: number;
   resident: number;
@@ -96,214 +99,269 @@ export interface IndexPerformance {
   fragmentation: number;
 }
 
-// All FHIR buckets use "Resources" scope only
+/**
+ * Initialization status for single-tenant FHIR system
+ * Mirrors backend InitializationStatus
+ */
+export interface InitializationStatus {
+  status:
+    | "NOT_CONNECTED"
+    | "BUCKET_MISSING"
+    | "BUCKET_NOT_INITIALIZED"
+    | "READY";
+  message: string;
+  bucketName: string;
+  hasConnection: boolean;
+  bucketExists: boolean;
+  isFhirInitialized: boolean;
+}
 
+/**
+ * Single-tenant bucket store
+ * Manages exactly one FHIR bucket named "fhir" with "default" connection
+ */
 export type BucketStore = {
-  buckets: { [connectionId: string]: BucketDetails[] };
-  setBuckets: (connectionId: string, buckets: BucketDetails[]) => void;
+  // Single-tenant state
+  bucket: BucketDetails | null;
+  collections: CollectionDetails[];
+  indexDetails: IndexDetails[];
+  initializationStatus: InitializationStatus | null;
+  status: string;
 
-  // Get all buckets (since all buckets in store are FHIR-enabled)
-  getFhirBuckets: (connectionId: string) => BucketDetails[];
+  // Actions
+  setBucket: (bucket: BucketDetails | null) => void;
+  setCollections: (collections: CollectionDetails[]) => void;
+  setIndexDetails: (indexes: IndexDetails[]) => void;
+  setInitializationStatus: (status: InitializationStatus | null) => void;
+  setStatus: (status: string) => void;
 
-  // Check if a bucket is a FHIR bucket (always true for buckets in our store)
-  isFhirBucket: (bucketName: string) => boolean;
+  // Fetch operations
+  fetchInitializationStatus: () => Promise<InitializationStatus>;
+  fetchBucketData: () => Promise<BucketDetails | null>;
+  fetchFhirConfig: () => Promise<FhirConfiguration | null>;
 
   // FHIR Configuration methods
-  getFhirConfig: (
-    connectionId: string,
-    bucketName: string
-  ) => FhirConfiguration | null;
-  setFhirConfig: (
-    connectionId: string,
-    bucketName: string,
-    config: FhirConfiguration
-  ) => void;
-  fetchFhirConfig: (
-    connectionId: string,
-    bucketName: string
-  ) => Promise<FhirConfiguration | null>;
+  getFhirConfig: () => FhirConfiguration | null;
+  setFhirConfig: (config: FhirConfiguration) => void;
 
-  activeBucket: { [connectionId: string]: BucketDetails | null };
-  setActiveBucket: (connectionId: string, bucketName: string | null) => void;
-  getActiveBucket: (connectionId: string) => BucketDetails | null;
+  // Initialization
+  initializeFhirBucket: () => Promise<{
+    operationId: string;
+    message: string;
+  }>;
 
-  collections: { [connectionId: string]: CollectionDetails[] };
-  setCollections: (connectionId: string, value: CollectionDetails[]) => void;
+  // Clear data
+  clearBucketData: () => void;
 
-  indexDetails: { [connectionId: string]: IndexDetails[] };
-  setIndexDetails: (connectionId: string, value: IndexDetails[]) => void;
-  getIndexDetails: (connectionId: string) => IndexDetails[] | undefined;
-
-  status: { [connectionId: string]: string };
-  setStatus: (connectionId: string, value: string) => void;
-  getStatus: (connectionId: string) => string | undefined;
-
-  clearBucketData: (connectionId: string) => void;
-
-  // Fetch bucket data from backend
-  fetchBucketData: (connectionId: string) => Promise<BucketDetails[]>;
-
-  // Helper functions for session storage
-  _saveActiveState: (connectionId: string) => void;
-  _loadActiveState: (connectionId: string) => any;
+  // Session storage helpers
+  _saveState: () => void;
+  _loadState: () => any;
 };
 
 export const useBucketStore = create<BucketStore>()((set, get) => ({
-  buckets: {},
-  activeBucket: {},
-  collections: {},
-  indexDetails: {},
-  status: {},
+  // Initial state
+  bucket: null,
+  collections: [],
+  indexDetails: [],
+  initializationStatus: null,
+  status: "",
 
-  // Helper function to save active state to session storage
-  _saveActiveState: (connectionId: string) => {
+  // Helper to save state to session storage
+  _saveState: () => {
     const state = get();
-    const activeData = {
-      activeBucket: state.activeBucket[connectionId],
+    const stateData = {
+      bucket: state.bucket,
+      initializationStatus: state.initializationStatus,
     };
-    sessionStorage.setItem(
-      `bucketStore_${connectionId}`,
-      JSON.stringify(activeData)
-    );
+    sessionStorage.setItem("bucketStore", JSON.stringify(stateData));
   },
 
-  // Helper function to load active state from session storage
-  _loadActiveState: (connectionId: string) => {
+  // Helper to load state from session storage
+  _loadState: () => {
     try {
-      const stored = sessionStorage.getItem(`bucketStore_${connectionId}`);
+      const stored = sessionStorage.getItem("bucketStore");
       return stored ? JSON.parse(stored) : null;
     } catch {
       return null;
     }
   },
 
-  // Setter method for buckets
-  setBuckets: (connectionId, buckets) => {
-    // console.log(`🪣 setBuckets called for connection: ${connectionId}`);
-    // console.log(`🪣 Setting ${buckets.length} buckets:`, buckets);
-
-    set((state) => {
-      // console.log(`🪣 Previous state for ${connectionId}:`, {
-      //   buckets: state.buckets[connectionId],
-      //   activeBucket: state.activeBucket[connectionId],
-      //   activeScope: state.activeScope[connectionId],
-      // });
-
-      const newState = {
-        ...state,
-        buckets: {
-          ...state.buckets,
-          [connectionId]: [...buckets],
-        },
-      };
-
-      // Get FHIR buckets from the buckets we just set (all buckets are FHIR)
-      const fhirBuckets = buckets; // Since backend only returns FHIR buckets
-      // console.log(`🪣 FHIR buckets count: ${fhirBuckets.length}`);
-
-      // Auto-set active bucket if only one FHIR bucket exists and no active bucket is set
-      if (fhirBuckets.length === 1 && !state.activeBucket[connectionId]) {
-        // console.log(
-        //   `🪣 Auto-setting active bucket: ${fhirBuckets[0].bucketName}`
-        // );
-        newState.activeBucket = {
-          ...state.activeBucket,
-          [connectionId]: fhirBuckets[0],
-        };
-      } else {
-        // console.log(
-        //   `🪣 Not auto-setting bucket (count: ${
-        //     fhirBuckets.length
-        //   }, existing active: ${!!state.activeBucket[connectionId]})`
-        // );
-        // Try to restore from session storage
-        const stored = get()._loadActiveState(connectionId);
-        if (stored) {
-          if (stored.activeBucket) {
-            // Only restore if it's a FHIR bucket
-            const foundBucket = fhirBuckets.find(
-              (b) => b.bucketName === stored.activeBucket.bucketName
-            );
-            if (foundBucket) {
-              newState.activeBucket = {
-                ...state.activeBucket,
-                [connectionId]: foundBucket,
-              };
-            }
-          }
-        }
-      }
-
-      // console.log(`🪣 Final new state for ${connectionId}:`, {
-      //   buckets: newState.buckets[connectionId],
-      //   activeBucket: newState.activeBucket[connectionId],
-      //   activeScope: newState.activeScope[connectionId],
-      // });
-
-      return newState;
-    });
-  }, // Get all buckets (since all buckets in store are FHIR-enabled)
-  getFhirBuckets: (connectionId) => {
-    // Simply return all buckets since backend only sends FHIR buckets
-    const buckets = get().buckets[connectionId] || [];
-    // console.log(
-    //   `🔍 getFhirBuckets for ${connectionId}: returning ${buckets.length} buckets`,
-    //   buckets
-    // );
-    return buckets;
+  // Set bucket
+  setBucket: (bucket) => {
+    set({ bucket });
+    setTimeout(() => get()._saveState(), 0);
   },
 
-  // Check if a bucket is a FHIR bucket (always true for buckets in our store)
-  isFhirBucket: (bucketName) => {
-    // Check if bucket exists in our store - if it does, it's FHIR-enabled
+  // Set collections
+  setCollections: (collections) => {
+    set({ collections: [...collections] });
+  },
+
+  // Set index details
+  setIndexDetails: (indexes) => {
+    set({ indexDetails: [...indexes] });
+  },
+
+  // Set initialization status
+  setInitializationStatus: (initializationStatus) => {
+    set({ initializationStatus });
+    setTimeout(() => get()._saveState(), 0);
+  },
+
+  // Set status
+  setStatus: (status) => {
+    set({ status });
+  },
+
+  // Get FHIR configuration
+  getFhirConfig: () => {
     const state = get();
-    for (const connectionId of Object.keys(state.buckets)) {
-      const bucket = state.buckets[connectionId]?.find(
-        (b) => b.bucketName === bucketName
-      );
-      if (bucket) {
-        return true; // All buckets in store are FHIR-enabled
-      }
+    return state.bucket?.fhirConfig || null;
+  },
+
+  // Set FHIR configuration
+  setFhirConfig: (config) => {
+    const state = get();
+    if (state.bucket) {
+      set({
+        bucket: {
+          ...state.bucket,
+          fhirConfig: config,
+        },
+      });
     }
-    return false; // Bucket not in our store, so not FHIR-enabled
   },
 
-  // Get FHIR configuration for a specific bucket
-  getFhirConfig: (connectionId, bucketName) => {
-    const state = get();
-    const bucket = state.buckets[connectionId]?.find(
-      (b) => b.bucketName === bucketName
-    );
-    return bucket?.fhirConfig || null;
-  },
-
-  // Set FHIR configuration for a specific bucket
-  setFhirConfig: (connectionId, bucketName, config) => {
-    set((state) => {
-      const buckets = state.buckets[connectionId] || [];
-      const updatedBuckets = buckets.map((bucket) =>
-        bucket.bucketName === bucketName
-          ? { ...bucket, fhirConfig: config }
-          : bucket
+  // Fetch initialization status from backend
+  fetchInitializationStatus: async () => {
+    try {
+      const response = await fetch(
+        "/api/admin/initialization/status?connectionName=default",
+        {
+          method: "GET",
+          headers: {
+            "Content-Type": "application/json",
+          },
+        }
       );
 
-      return {
-        ...state,
-        buckets: {
-          ...state.buckets,
-          [connectionId]: updatedBuckets,
-        },
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const status: InitializationStatus = await response.json();
+      get().setInitializationStatus(status);
+
+      return status;
+    } catch (error) {
+      console.error("Failed to fetch initialization status:", error);
+
+      // Return error status
+      const errorStatus: InitializationStatus = {
+        status: "NOT_CONNECTED",
+        message: "Failed to fetch initialization status",
+        bucketName: "fhir",
+        hasConnection: false,
+        bucketExists: false,
+        isFhirInitialized: false,
       };
-    });
+
+      get().setInitializationStatus(errorStatus);
+      return errorStatus;
+    }
+  },
+
+  // Fetch FHIR bucket data from backend
+  fetchBucketData: async () => {
+    try {
+      // In single-tenant mode, backend returns only the "fhir" bucket
+      const response = await fetch(
+        "/api/buckets/fhir/details?connectionName=default",
+        {
+          method: "GET",
+          headers: {
+            "Content-Type": "application/json",
+          },
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const bucketData: BucketDetails[] = await response.json();
+
+      // Should get exactly one bucket named "fhir"
+      const fhirBucket = bucketData.length > 0 ? bucketData[0] : null;
+
+      get().setBucket(fhirBucket);
+
+      if (fhirBucket) {
+        // Extract collections from bucket data
+        const allCollections: CollectionDetails[] = [];
+
+        if (fhirBucket.collectionMetrics) {
+          Object.entries(fhirBucket.collectionMetrics).forEach(
+            ([scopeName, scopeData]) => {
+              if (
+                scopeData &&
+                typeof scopeData === "object" &&
+                "collections" in scopeData
+              ) {
+                const collections = scopeData.collections as {
+                  [key: string]: any;
+                };
+                Object.entries(collections).forEach(
+                  ([collectionName, metrics]) => {
+                    if (metrics && typeof metrics === "object") {
+                      // Skip internal collections: Versions and Tombstones
+                      if (
+                        collectionName !== "Versions" &&
+                        collectionName !== "Tombstones"
+                      ) {
+                        const collectionDetail: CollectionDetails = {
+                          collectionName,
+                          scopeName,
+                          bucketName: fhirBucket.bucketName,
+                          items: Number(metrics["items"]) || 0,
+                          diskSize: Number(metrics["diskSize"]) || 0,
+                          memUsed: Number(metrics["memUsed"]) || 0,
+                          ops: Number(metrics["ops"]) || 0,
+                          indexes: Number(metrics["indexes"]) || 0,
+                          maxTTL: Number(metrics["maxTTL"]) || 0,
+                        };
+                        allCollections.push(collectionDetail);
+                      }
+                    }
+                  }
+                );
+              }
+            }
+          );
+        }
+
+        get().setCollections(allCollections);
+
+        // Fetch FHIR config
+        await get().fetchFhirConfig();
+      } else {
+        get().setCollections([]);
+      }
+
+      return fhirBucket;
+    } catch (error) {
+      console.error("Failed to fetch FHIR bucket data:", error);
+      get().setBucket(null);
+      get().setCollections([]);
+      return null;
+    }
   },
 
   // Fetch FHIR configuration from backend
-  fetchFhirConfig: async (connectionId, bucketName) => {
+  fetchFhirConfig: async () => {
     try {
       const response = await fetch(
-        `/api/admin/fhir-bucket/${bucketName}/config?connectionName=${encodeURIComponent(
-          connectionId
-        )}`,
+        "/api/admin/fhir-bucket/fhir/config?connectionName=default",
         {
           method: "GET",
           headers: {
@@ -314,13 +372,11 @@ export const useBucketStore = create<BucketStore>()((set, get) => ({
 
       if (!response.ok) {
         if (response.status === 404) {
-          // No FHIR config found, return default
           return null;
         }
         throw new Error(`HTTP error! status: ${response.status}`);
       }
 
-      // Backend returns flat structure
       const backendConfig: {
         fhirRelease?: string;
         validationMode?: string;
@@ -335,7 +391,6 @@ export const useBucketStore = create<BucketStore>()((set, get) => ({
         };
       } = await response.json();
 
-      // Transform flat backend structure to simplified frontend structure
       const config: FhirConfiguration = {
         fhirRelease: backendConfig.fhirRelease || "Release 4",
         validation: {
@@ -368,115 +423,22 @@ export const useBucketStore = create<BucketStore>()((set, get) => ({
             },
       };
 
-      // Update the store with the transformed configuration
-      get().setFhirConfig(connectionId, bucketName, config);
+      get().setFhirConfig(config);
 
       return config;
     } catch (error) {
-      console.error(`Failed to fetch FHIR config for ${bucketName}:`, error);
+      console.error("Failed to fetch FHIR config:", error);
       return null;
     }
   },
 
-  // Set active bucket
-  setActiveBucket: (connectionId, bucketName) => {
-    set((state) => {
-      if (!bucketName) {
-        // Clear active bucket
-        return {
-          ...state,
-          activeBucket: {
-            ...state.activeBucket,
-            [connectionId]: null,
-          },
-        };
-      }
-
-      // Get FHIR buckets only
-      const fhirBuckets = get().getFhirBuckets(connectionId);
-      const bucket =
-        fhirBuckets.find((b) => b.bucketName === bucketName) || null;
-
-      // Only set if it's a FHIR bucket
-      if (bucket) {
-        return {
-          ...state,
-          activeBucket: {
-            ...state.activeBucket,
-            [connectionId]: bucket,
-          },
-        };
-      }
-
-      // If not a FHIR bucket, don't change the state
-      return state;
-    });
-    // Save to session storage
-    setTimeout(() => get()._saveActiveState(connectionId), 0);
-  },
-
-  // Get active bucket
-  getActiveBucket: (connectionId) => get().activeBucket[connectionId] || null,
-
-  // Set collections
-  setCollections: (connectionId, collections) => {
-    set((state) => ({
-      ...state,
-      collections: {
-        ...state.collections,
-        [connectionId]: [...collections],
-      },
-    }));
-  },
-
-  // Set index details
-  setIndexDetails: (connectionId, value) =>
-    set((state) => ({
-      indexDetails: { ...state.indexDetails, [connectionId]: value },
-    })),
-
-  // Get index details
-  getIndexDetails: (connectionId) => get().indexDetails[connectionId],
-
-  // Set status
-  setStatus: (connectionId, value) => {
-    set((state) => ({
-      status: {
-        ...state.status,
-        [connectionId]: value,
-      },
-    }));
-  },
-
-  // Get status
-  getStatus: (connectionId) => get().status[connectionId],
-
-  // Clear bucket data for a connection
-  clearBucketData: (connectionId) => {
-    set((state) => ({
-      ...state,
-      buckets: { ...state.buckets, [connectionId]: [] },
-      activeBucket: { ...state.activeBucket, [connectionId]: null },
-      collections: { ...state.collections, [connectionId]: [] },
-      indexDetails: { ...state.indexDetails, [connectionId]: [] },
-      status: { ...state.status, [connectionId]: "" },
-    }));
-    // Clear session storage
-    sessionStorage.removeItem(`bucketStore_${connectionId}`);
-  },
-
-  // Fetch FHIR bucket data from backend
-  fetchBucketData: async (connectionId: string) => {
+  // Initialize FHIR bucket (creates scopes, collections, indexes)
+  initializeFhirBucket: async () => {
     try {
-      // console.log(`Fetching FHIR bucket data for connection: ${connectionId}`);
-
-      // Call the backend API to get FHIR bucket details
       const response = await fetch(
-        `/api/buckets/fhir/details?connectionName=${encodeURIComponent(
-          connectionId
-        )}`,
+        "/api/admin/initialization/initialize?connectionName=default",
         {
-          method: "GET",
+          method: "POST",
           headers: {
             "Content-Type": "application/json",
           },
@@ -484,122 +446,39 @@ export const useBucketStore = create<BucketStore>()((set, get) => ({
       );
 
       if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
+        const errorData = await response.json();
+        throw new Error(
+          errorData.message || `HTTP error! status: ${response.status}`
+        );
       }
 
-      const bucketData: BucketDetails[] = await response.json();
-      // console.log(`📥 Received ${bucketData.length} FHIR buckets:`, bucketData);
+      const result: {
+        operationId: string;
+        bucketName: string;
+        status: string;
+        message: string;
+      } = await response.json();
 
-      // Update store with fetched data (all FHIR buckets)
-      get().setBuckets(connectionId, bucketData);
-
-      // Fetch FHIR configurations for all buckets
-      const configPromises = bucketData.map(async (bucket) => {
-        try {
-          const config = await get().fetchFhirConfig(
-            connectionId,
-            bucket.bucketName
-          );
-          return { bucketName: bucket.bucketName, config };
-        } catch (error) {
-          console.warn(
-            `Failed to fetch FHIR config for ${bucket.bucketName}:`,
-            error
-          );
-          return { bucketName: bucket.bucketName, config: null };
-        }
-      });
-
-      // Wait for all config fetches to complete (but don't block the main flow)
-      Promise.all(configPromises)
-        .then((results) => {
-          results.forEach(({ bucketName, config }) => {
-            if (config) {
-              get().setFhirConfig(connectionId, bucketName, config);
-            }
-          });
-        })
-        .catch((error) => {
-          console.warn("Some FHIR config fetches failed:", error);
-        });
-
-      // Extract and populate collections from bucket data
-      const allCollections: CollectionDetails[] = [];
-      bucketData.forEach((bucket) => {
-        if (bucket.collectionMetrics) {
-          // console.log(
-          //   `🔍 Processing collectionMetrics for bucket: ${bucket.bucketName}`,
-          //   bucket.collectionMetrics
-          // );
-
-          // Convert collection metrics to CollectionDetails format
-          Object.entries(bucket.collectionMetrics).forEach(
-            ([scopeName, scopeData]) => {
-              if (
-                scopeData &&
-                typeof scopeData === "object" &&
-                "collections" in scopeData
-              ) {
-                const collections = scopeData.collections as {
-                  [key: string]: any;
-                };
-                Object.entries(collections).forEach(
-                  ([collectionName, metrics]) => {
-                    if (metrics && typeof metrics === "object") {
-                      // Skip internal collections: Versions and Tombstones
-                      if (
-                        collectionName !== "Versions" &&
-                        collectionName !== "Tombstones"
-                      ) {
-                        const collectionDetail: CollectionDetails = {
-                          collectionName,
-                          scopeName,
-                          bucketName: bucket.bucketName,
-                          items: Number(metrics["items"]) || 0,
-                          diskSize: Number(metrics["diskSize"]) || 0,
-                          memUsed: Number(metrics["memUsed"]) || 0,
-                          ops: Number(metrics["ops"]) || 0,
-                          indexes: Number(metrics["indexes"]) || 0, // This might not be in the data yet
-                          maxTTL: Number(metrics["maxTTL"]) || 0,
-                        };
-                        allCollections.push(collectionDetail);
-                      }
-                      // console.log(
-                      //   `📦 Added collection: ${scopeName}.${collectionName}`,
-                      //   collectionDetail
-                      // );
-                    }
-                  }
-                );
-              }
-            }
-          );
-        }
-      });
-
-      // console.log(
-      //   `📦 Extracted ${allCollections.length} collections:`,
-      //   allCollections
-      // );
-
-      // Update collections in store
-      get().setCollections(connectionId, allCollections);
-
-      // console.log(
-      //   `✅ Bucket data and collections fetch completed for ${connectionId}`
-      // );
-      return bucketData;
+      return {
+        operationId: result.operationId,
+        message: result.message,
+      };
     } catch (error) {
-      console.error("Failed to fetch FHIR bucket data:", error);
-
-      // For development: if backend is not available, return empty array
-      // In production, you might want to throw the error
-      const bucketData: BucketDetails[] = [];
-      get().setBuckets(connectionId, bucketData);
-      get().setCollections(connectionId, []);
-
-      return bucketData;
+      console.error("Failed to initialize FHIR bucket:", error);
+      throw error;
     }
+  },
+
+  // Clear bucket data
+  clearBucketData: () => {
+    set({
+      bucket: null,
+      collections: [],
+      indexDetails: [],
+      initializationStatus: null,
+      status: "",
+    });
+    sessionStorage.removeItem("bucketStore");
   },
 }));
 

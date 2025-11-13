@@ -4,6 +4,7 @@ import com.couchbase.admin.fhirBucket.model.*;
 import com.couchbase.admin.fhirBucket.config.FhirBucketProperties;
 import com.couchbase.admin.connections.service.ConnectionService;
 import com.couchbase.admin.fts.config.FtsIndexCreator;
+import com.couchbase.admin.gsi.service.GsiIndexService;
 import com.couchbase.client.java.Cluster;
 import com.couchbase.fhir.resources.service.FhirBucketConfigService;
 import com.couchbase.fhir.resources.validation.FhirBucketValidator;
@@ -43,6 +44,9 @@ public class FhirBucketService {
     
     @Autowired
     private FtsIndexCreator ftsIndexCreator;
+    
+    @Autowired
+    private GsiIndexService gsiIndexService;
     
     // Store operation status
     private final Map<String, FhirConversionStatusDetail> operationStatus = new ConcurrentHashMap<>();
@@ -138,10 +142,15 @@ public class FhirBucketService {
             createFtsIndexes(connectionName, bucketName);
             status.setCompletedSteps(7);
             
-            // Step 8: Mark as FHIR bucket with custom configuration
+            // Step 8: Create GSI indexes (for Auth collections)
+            updateStatus(status, "create_gsi_indexes", "Creating GSI indexes from gsi-indexes.sql");
+            createGsiIndexes(cluster, bucketName);
+            status.setCompletedSteps(8);
+            
+            // Step 9: Mark as FHIR bucket with custom configuration
             updateStatus(status, "mark_as_fhir", "Marking bucket as FHIR-enabled");
             markAsFhirBucketWithConfig(bucketName, connectionName, request);
-            status.setCompletedSteps(8);
+            status.setCompletedSteps(9);
             
             // Completion
             status.setStatus(FhirConversionStatus.COMPLETED);
@@ -214,6 +223,11 @@ public class FhirBucketService {
             FhirBucketProperties.ScopeConfiguration scopeConfig = scopeEntry.getValue();
             
             for (FhirBucketProperties.CollectionConfiguration collection : scopeConfig.getCollections()) {
+                // Skip if collection has no indexes defined
+                if (collection.getIndexes() == null || collection.getIndexes().isEmpty()) {
+                    continue;
+                }
+                
                 for (FhirBucketProperties.IndexConfiguration index : collection.getIndexes()) {
                     try {
                         // Add null check and debug logging
@@ -284,6 +298,18 @@ public class FhirBucketService {
             // Don't throw the exception - FTS indexes are optional
             // The bucket creation should continue even if FTS fails
             logger.warn("⚠️ Continuing bucket creation without FTS indexes");
+        }
+    }
+    
+    private void createGsiIndexes(Cluster cluster, String bucketName) throws Exception {
+        try {
+            // Use the GsiIndexService to create GSI indexes from gsi-indexes.sql
+            gsiIndexService.createGsiIndexes(cluster, bucketName);
+        } catch (Exception e) {
+            logger.error("❌ Failed to create GSI indexes for bucket: {}", bucketName, e);
+            // Don't throw the exception - continue with bucket creation
+            // Some GSI indexes might be critical but we'll let the system continue
+            logger.warn("⚠️ Continuing bucket creation - some GSI indexes may be missing");
         }
     }
     
