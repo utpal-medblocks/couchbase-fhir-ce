@@ -44,8 +44,8 @@ public class BucketAwareValidationInterceptor {
     // Early validation - before request is processed
     @Hook(Pointcut.SERVER_INCOMING_REQUEST_PRE_PROCESSED)
     public boolean validateBucketEnabled(RequestDetails theRequestDetails, HttpServletRequest theRequest, HttpServletResponse theResponse) throws IOException {
-        // Extract bucket name directly from URL path since TenantContextHolder isn't populated yet
-        String bucketName = extractBucketFromPath(theRequest.getRequestURI());
+        // Single-tenant mode: always use "fhir" as the bucket name
+        String bucketName = TenantContextHolder.getTenantId();
         
         try {
             logger.debug("🔍 Validating bucket is FHIR-enabled: {}", bucketName);
@@ -204,37 +204,6 @@ public class BucketAwareValidationInterceptor {
             logger.info("🌐 INCOMING REQUEST: {} {} | reqId={}", method, completeUrl, perfBag.getRequestId());
         } catch (Exception e) {
             logger.warn("🌐 Failed to log incoming request details: {}", e.getMessage());
-        }
-    }
-    
-    /**
-     * Extracts bucket name from FHIR URL path
-     * Expected format: /fhir/{bucketName}/ResourceType/...
-     */
-    private String extractBucketFromPath(String requestURI) {
-        if (requestURI == null || requestURI.isEmpty()) {
-            return null;
-        }
-        
-        try {
-            // Split path and find bucket name after /fhir/
-            String[] pathParts = requestURI.split("/");
-            
-            // Look for pattern: /fhir/{bucketName}/...
-            for (int i = 0; i < pathParts.length - 1; i++) {
-                if ("fhir".equals(pathParts[i]) && i + 1 < pathParts.length) {
-                    String bucketName = pathParts[i + 1];
-                    logger.debug("🔍 Extracted bucket name '{}' from path: {}", bucketName, requestURI);
-                    return bucketName;
-                }
-            }
-            
-            logger.warn("🔍 Could not extract bucket name from path: {}", requestURI);
-            return null;
-            
-        } catch (Exception e) {
-            logger.error("🔍 Error extracting bucket name from path {}: {}", requestURI, e.getMessage());
-            return null;
         }
     }
     

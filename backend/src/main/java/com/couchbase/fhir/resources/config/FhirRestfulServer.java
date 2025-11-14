@@ -1,25 +1,13 @@
 package com.couchbase.fhir.resources.config;
 
 import ca.uhn.fhir.context.FhirContext;
-import ca.uhn.fhir.parser.IParser;
-import ca.uhn.fhir.parser.StrictErrorHandler;
-import ca.uhn.fhir.parser.LenientErrorHandler;
-import ca.uhn.fhir.rest.api.RestOperationTypeEnum;
-import ca.uhn.fhir.rest.api.server.RequestDetails;
 import ca.uhn.fhir.rest.server.IResourceProvider;
 import ca.uhn.fhir.rest.server.RestfulServer;
-import ca.uhn.fhir.rest.server.tenant.UrlBaseTenantIdentificationStrategy;
-
-import com.couchbase.common.config.FhirConfig;
 
 import com.couchbase.fhir.resources.provider.USCoreCapabilityProvider;
 import com.couchbase.fhir.resources.interceptor.BucketAwareValidationInterceptor;
 import com.couchbase.fhir.resources.service.FhirBucketConfigService;
 import lombok.RequiredArgsConstructor;
-import net.sf.saxon.lib.Logger;
-
-import org.slf4j.LoggerFactory;
-
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
@@ -102,10 +90,9 @@ public class FhirRestfulServer extends RestfulServer {
             // }
             
             setFhirContext(fhirContext); // Use the injected context
-            setTenantIdentificationStrategy(new UrlBaseTenantIdentificationStrategy());
+            // Single-tenant mode: TenantContextHolder always returns "fhir"
+            // No interceptor needed for tenant identification
             
-            
-            registerInterceptor(new MultiTenantInterceptor());
             registerInterceptor(bucketValidationInterceptor);
             registerInterceptor(cleanExceptionInterceptor);
             registerInterceptor(fastpathResponseInterceptor); // 🚀 Fastpath JSON bypass (10× memory reduction)
@@ -117,10 +104,9 @@ public class FhirRestfulServer extends RestfulServer {
             logger.error("❌ Failed to get dynamic providers, falling back to autowired only: {}", e.getMessage());
             // Fallback to original behavior
             setFhirContext(fhirContext);
-            setTenantIdentificationStrategy(new UrlBaseTenantIdentificationStrategy());
+            // Single-tenant mode: TenantContextHolder always returns "fhir"
+            // No interceptor needed for tenant identification
             
-            
-            registerInterceptor(new MultiTenantInterceptor());
             registerInterceptor(bucketValidationInterceptor);
             registerInterceptor(cleanExceptionInterceptor);
             registerInterceptor(fastpathResponseInterceptor); // 🚀 Fastpath JSON bypass (10× memory reduction)

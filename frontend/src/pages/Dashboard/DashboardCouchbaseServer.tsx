@@ -39,7 +39,8 @@ const DashboardCouchbaseServer: React.FC = () => {
     error,
     backendReady,
   } = useConnectionStore();
-  const { fetchFhirConfig, getFhirConfig, bucket } = useBucketStore();
+  const { fetchFhirConfig, getFhirConfig, bucket, fetchBucketData } =
+    useBucketStore();
 
   // Local helper component for retry button with immediate polling
   const RetryAutoConnectButton: React.FC = () => {
@@ -108,6 +109,13 @@ const DashboardCouchbaseServer: React.FC = () => {
   const borderColor =
     theme.palette.mode === "dark" ? blueGrey[800] : blueGrey[50];
   const borderStyle = `1px solid ${borderColor}`;
+
+  // Fetch bucket data when connected
+  useEffect(() => {
+    if (connection.isConnected && !bucket) {
+      fetchBucketData();
+    }
+  }, [connection.isConnected, bucket, fetchBucketData]);
 
   // Poll metrics every 30 seconds when connected
   useEffect(() => {
