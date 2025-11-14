@@ -3,74 +3,55 @@
 # DO NOT commit config.yaml to git - it contains sensitive credentials
 
 connection:
-  ## connectionString: "ec2-xxx-xxx-xxx-xxx.compute-1.amazonaws.com"
-  ## connectionString: "localhost"
-  ## connectionString: "couchbases://cb.gaxsvcngnxyz.cloud.couchbase.com"
-  ## connectionString: "host.docker.internal" # Works on Docker Desktop for Mac
-
-  connectionString: "localhost"
-  username: "Administrator"
-  password: "password"
+  # connectionString: "ec2-xxx-xxx-xxx-xxx.compute-1.amazonaws.com"
+  # connectionString: "localhost"
+  # connectionString: "couchbases://cb.gaxsvcngnxyz.cloud.couchbase.com"
+  # connectionString: "host.docker.internal" # Works on Docker Desktop for Mac
+  username: "Administrator" # The userid
+  password: "password" # The password
   serverType: "Server" # "Server" or "Capella"
   sslEnabled: false # true for Capella
 
 app:
   autoConnect: true # has to be set to true
-  showConnectionDialog: false # Set to false to prevent dialog if YAML config is valid
+  host: "localhost" # Hostname of the Couchbase FHIR server
 
 # Couchbase SDK Performance Tuning (Optional - defaults optimized for high-concurrency FHIR workloads)
 couchbase:
+  bucket:
+    name: "fhir" # FHIR Bucket Name. Has to exist in the cluster.
+    fhirRelease: "R4" # FHIR Release Fixed for now
+    validation:
+      mode: "lenient" # lenient, none
+      profile: "us-core" # FHIR Profile us-core, none
+    logs:
+      enableSystem: false # Enable System Logs
+      enableCRUDAudit: false # Enable CRUD Audit Logs
+      enableSearchAudit: false # Enable Search Audit Logs
+      rotationBy: "size" # size, days
+      number: 30 # in GB or Days
+      s3Endpoint: "" # Example: https://s3.amazonaws.com" # S3 Endpoint for Log Upload
   sdk:
-    # Connection Pool Configuration
-    max-http-connections: 128      # HTTP connections for N1QL/Analytics/Search (default: 128)
-    num-kv-connections: 8          # KV connections per node (default: 8)
-    
-    # Timeout Configuration (in seconds)
-    query-timeout-seconds: 30      # N1QL query timeout (default: 30)
-    search-timeout-seconds: 30     # FTS search timeout (default: 30)
-    kv-timeout-seconds: 10         # Key-Value operation timeout (default: 10)
-    connect-timeout-seconds: 10    # Initial connection timeout (default: 10)
-    disconnect-timeout-seconds: 10 # Graceful disconnect timeout (default: 10)
-    transaction-timeout-seconds: 30 # Transaction timeout (default: 30)
-    
-    # Transaction Configuration
-    # NONE: Single-node development (no replicas needed) - DEFAULT
-    # MAJORITY: Production multi-node (requires replicas)
-    # MAJORITY_AND_PERSIST_TO_ACTIVE: Highest durability (requires replicas + persistence)
-    # PERSIST_TO_MAJORITY: Persist to majority (requires replicas + persistence)
-    transaction-durability: NONE   # Transaction durability level (default: NONE for dev/test)
-    
-    # Advanced Options
-    enable-mutation-tokens: true   # Enable mutation tokens for consistency (default: true)
+    transaction-durability: NONE # NONE, MAJORITY, MAJORITY_AND_PERSIST_TO_ACTIVE, PERSIST_TO_MAJORITY
+    max-http-connections: 128 # Max HTTP Connections
+    num-kv-connections: 8 # Max KV Connections
+    kv-timeout-seconds: 30 # KV Timeout
+    query-timeout-seconds: 30 # Query Timeout
+    search-timeout-seconds: 30 # Search Timeout
+    connect-timeout-seconds: 10 # Connect Timeout
+    disconnect-timeout-seconds: 10 # Disconnect Timeout
+    transaction-timeout-seconds: 30 # Transaction Timeout
 
+# Super User Credentials - These are seeded into the auth db
+admin:
+  email: "admin@couchbase.com"
+  password: "Admin123!"
+  name: "Admin"
 
 logging:
-  levels: # levels are INFO, WARN, DEBUG, ERROR
-    com.couchbase.admin: ERROR
-    com.couchbase.fhir: ERROR
-    com.couchbase.common: ERROR
-    com.couchbase.admin.config.service.ConfigurationStartupService: INFO # To Show SDK configuration
+  levels:
+    com.couchbase.admin: ERROR # ERROR, WARN, INFO, DEBUG
+    com.couchbase.fhir: ERROR # ERROR, WARN, INFO, DEBUG
+    com.couchbase.common: ERROR # ERROR, WARN, INFO, DEBUG
+    com.couchbase.admin.config.service.ConfigurationStartupService: INFO # INFO, WARN, DEBUG, ERROR
 
-  # sslCertificate: | # (DISABLED FOR BETA RELEASE)
-  # "-----BEGIN CERTIFICATE----
-  #   MIIDDDCCA....
-  #   ....dQwYLu9XZgv4oStAm4nEfPI3ptNJorqXSkMEdGbw1lnA
-  #   EItoo4jU18oLHbU12SWU2A==
-  #   -----END CERTIFICATE-----"
-
-# Log Rotation and S3 Uploads (DISABLED FOR BETA RELEASE)
-# logger:
-#   log-upload-interval-ms: 3600000
-#   log-s3-bucket: bucketname
-#   log-s3-prefix: "logs/"
-
-# AWS Credentials (DISABLED FOR BETA RELEASE)
-# aws:
-#   access-key-id: ""
-#   secret-access-key: ""
-#   region: ""
-
-# HAProxy Metrics Configuration
-haproxy:
-  metrics:
-    host: "localhost" # Change to your server hostname for production deployments
