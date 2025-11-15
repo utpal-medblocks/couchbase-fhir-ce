@@ -375,10 +375,15 @@ public class FhirBucketService {
         }
         
         // Create the comprehensive FHIR configuration document
+        // Format createdAt as human-readable: "November 14, 2025 at 10:30:45 PM PST"
+        java.time.ZonedDateTime now = java.time.ZonedDateTime.now();
+        java.time.format.DateTimeFormatter formatter = java.time.format.DateTimeFormatter.ofPattern("MMMM dd, yyyy 'at' hh:mm:ss a z");
+        String createdAtFormatted = now.format(formatter);
+        
         var fhirConfig = com.couchbase.client.java.json.JsonObject.create()
             .put("isFHIR", true)
-            .put("createdAt", java.time.Instant.now().toString())
-            .put("version", "1.0")
+            .put("createdAt", createdAtFormatted)
+            .put("version", "1")
             .put("description", "FHIR-enabled bucket configuration")
             .put("fhirRelease", customConfig != null && customConfig.getFhirRelease() != null ? 
                  customConfig.getFhirRelease() : "Release 4")

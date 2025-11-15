@@ -380,7 +380,9 @@ export const useBucketStore = create<BucketStore>()((set, get) => ({
       const backendConfig: {
         fhirRelease?: string;
         validationMode?: string;
-        enforceUSCore?: boolean;
+        validationProfile?: string;
+        version?: string;
+        createdAt?: string;
         logs?: {
           enableSystem: boolean;
           enableCRUDAudit: boolean;
@@ -399,9 +401,8 @@ export const useBucketStore = create<BucketStore>()((set, get) => ({
               | "strict"
               | "lenient"
               | "disabled") || "lenient",
-          profile: (backendConfig.enforceUSCore ? "us-core" : "none") as
-            | "none"
-            | "us-core",
+          profile:
+            (backendConfig.validationProfile as "none" | "us-core") || "none",
         },
         logs: backendConfig.logs
           ? {
@@ -421,6 +422,8 @@ export const useBucketStore = create<BucketStore>()((set, get) => ({
               number: 30,
               s3Endpoint: "",
             },
+        version: backendConfig.version,
+        createdAt: backendConfig.createdAt,
       };
 
       get().setFhirConfig(config);

@@ -277,6 +277,12 @@ const InitializationDialog: React.FC<InitializationDialogProps> = ({
                 • GSI indexes for authentication
               </Typography>
             </Box>
+            <Alert severity="info" sx={{ mt: 2 }}>
+              <Typography variant="body2">
+                <strong>Note:</strong> Index creation may take a few minutes.
+                Please wait for the process to complete.
+              </Typography>
+            </Alert>
           </Box>
         );
 

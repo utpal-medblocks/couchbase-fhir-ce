@@ -14,7 +14,7 @@ const ConnectionContext = createContext<ConnectionContextType | undefined>(
 
 export const ConnectionProvider = ({ children }: { children: ReactNode }) => {
   const { fetchConnection } = useConnectionStore();
-  const { fetchInitializationStatus, initializationStatus } = useBucketStore();
+  const { fetchInitializationStatus, initializationStatus, fetchBucketData } = useBucketStore();
   const pollingIntervalRef = useRef<number | null>(null);
   const [showInitDialog, setShowInitDialog] = useState(false);
   const [hasCheckedInit, setHasCheckedInit] = useState(false);
@@ -77,11 +77,30 @@ export const ConnectionProvider = ({ children }: { children: ReactNode }) => {
     checkInitialization();
   }, [hasCheckedInit, fetchInitializationStatus]);
 
-  const handleCloseInitDialog = () => {
+  const handleCloseInitDialog = async () => {
     setShowInitDialog(false);
 
-    // If they closed without completing, allow checking again later
-    if (initializationStatus?.status !== "READY") {
+    // Fetch latest initialization status to determine if we should refresh data
+    try {
+      console.log("🔄 Fetching latest initialization status...");
+      const latestStatus = await fetchInitializationStatus();
+      
+      if (latestStatus.status === "READY") {
+        console.log("✅ Initialization completed - refreshing bucket data");
+        try {
+          await fetchBucketData();
+          console.log("✅ Bucket data refreshed successfully");
+        } catch (error) {
+          console.error("❌ Failed to refresh bucket data:", error);
+        }
+      } else {
+        console.log("⚠️ Initialization not complete, status:", latestStatus.status);
+        // If they closed without completing, allow checking again later
+        setHasCheckedInit(false);
+      }
+    } catch (error) {
+      console.error("❌ Failed to check initialization status on dialog close:", error);
+      // Allow checking again later
       setHasCheckedInit(false);
     }
   };

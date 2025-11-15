@@ -493,7 +493,7 @@ const DashboardCouchbaseServer: React.FC = () => {
       </TableContainer>
 
       {/* FHIR Bucket Information - 3 Panels */}
-      <Typography variant="subtitle1" gutterBottom sx={{ mt: 3 }}>
+      <Typography variant="subtitle1" gutterBottom sx={{ mt: 2 }}>
         FHIR Bucket
       </Typography>
       {(() => {
@@ -516,25 +516,26 @@ const DashboardCouchbaseServer: React.FC = () => {
             sx={{
               display: "flex",
               flexDirection: { xs: "column", md: "row" },
-              gap: 2,
+              gap: 1,
             }}
           >
             {/* Panel 1: FHIR Configuration */}
             <Box sx={{ flex: 1 }}>
+              <Box sx={tableHeaderStyle}>
+                <Typography
+                  variant="subtitle2"
+                  sx={{ m: 0, p: 0, lineHeight: 1, textAlign: "center" }}
+                >
+                  FHIR Configuration
+                </Typography>
+              </Box>
               <Card
                 sx={{
-                  height: "100%",
+                  height: "90%",
                   border: borderStyle,
                 }}
               >
                 <CardContent>
-                  <Typography
-                    variant="subtitle2"
-                    gutterBottom
-                    sx={{ fontWeight: "bold", mb: 2 }}
-                  >
-                    FHIR Configuration
-                  </Typography>
                   {fhirConfig ? (
                     <Box
                       sx={{
@@ -550,7 +551,7 @@ const DashboardCouchbaseServer: React.FC = () => {
                         >
                           Release:
                         </Box>
-                        <Box component="span" sx={{ fontWeight: 500 }}>
+                        <Box component="span">
                           {fhirConfig.fhirRelease || "N/A"}
                         </Box>
                       </Typography>
@@ -561,7 +562,7 @@ const DashboardCouchbaseServer: React.FC = () => {
                         >
                           Validation:
                         </Box>
-                        <Box component="span" sx={{ fontWeight: 500 }}>
+                        <Box component="span">
                           {fhirConfig.validation?.mode || "N/A"}
                         </Box>
                       </Typography>
@@ -572,7 +573,7 @@ const DashboardCouchbaseServer: React.FC = () => {
                         >
                           Profile:
                         </Box>
-                        <Box component="span" sx={{ fontWeight: 500 }}>
+                        <Box component="span">
                           {fhirConfig.validation?.profile === "us-core" ? (
                             <>
                               <span role="img" aria-label="US Flag">
@@ -592,7 +593,7 @@ const DashboardCouchbaseServer: React.FC = () => {
                         >
                           Version:
                         </Box>
-                        <Box component="span" sx={{ fontWeight: 500 }}>
+                        <Box component="span">
                           {fhirConfig.version || "N/A"}
                         </Box>
                       </Typography>
@@ -603,10 +604,8 @@ const DashboardCouchbaseServer: React.FC = () => {
                         >
                           Created:
                         </Box>
-                        <Box component="span" sx={{ fontWeight: 500 }}>
-                          {fhirConfig.createdAt
-                            ? new Date(fhirConfig.createdAt).toLocaleString()
-                            : "N/A"}
+                        <Box component="span">
+                          {fhirConfig.createdAt || "N/A"}
                         </Box>
                       </Typography>
                     </Box>
@@ -623,20 +622,22 @@ const DashboardCouchbaseServer: React.FC = () => {
 
             {/* Panel 2: Bucket Configuration */}
             <Box sx={{ flex: 1 }}>
+              <Box sx={tableHeaderStyle}>
+                <Typography
+                  variant="subtitle2"
+                  sx={{ m: 0, p: 0, lineHeight: 1, textAlign: "center" }}
+                >
+                  Bucket Configuration
+                </Typography>
+              </Box>
+
               <Card
                 sx={{
-                  height: "100%",
+                  height: "90%",
                   border: borderStyle,
                 }}
               >
                 <CardContent>
-                  <Typography
-                    variant="subtitle2"
-                    gutterBottom
-                    sx={{ fontWeight: "bold", mb: 2 }}
-                  >
-                    Bucket Configuration
-                  </Typography>
                   <Box
                     sx={{ display: "flex", flexDirection: "column", gap: 0.5 }}
                   >
@@ -647,9 +648,7 @@ const DashboardCouchbaseServer: React.FC = () => {
                       >
                         Type:
                       </Box>
-                      <Box component="span" sx={{ fontWeight: 500 }}>
-                        {bucket.bucketType || "N/A"}
-                      </Box>
+                      <Box component="span">{bucket.bucketType || "N/A"}</Box>
                     </Typography>
                     <Typography variant="body2" sx={{ lineHeight: 1.8 }}>
                       <Box
@@ -658,7 +657,7 @@ const DashboardCouchbaseServer: React.FC = () => {
                       >
                         Storage:
                       </Box>
-                      <Box component="span" sx={{ fontWeight: 500 }}>
+                      <Box component="span">
                         {bucket.storageBackend || "N/A"}
                       </Box>
                     </Typography>
@@ -669,7 +668,7 @@ const DashboardCouchbaseServer: React.FC = () => {
                       >
                         Replicas:
                       </Box>
-                      <Box component="span" sx={{ fontWeight: 500 }}>
+                      <Box component="span">
                         {bucket.replicaNumber ?? "N/A"}
                       </Box>
                     </Typography>
@@ -680,7 +679,7 @@ const DashboardCouchbaseServer: React.FC = () => {
                       >
                         RAM Quota:
                       </Box>
-                      <Box component="span" sx={{ fontWeight: 500 }}>
+                      <Box component="span">
                         {bucket.ram
                           ? `${(bucket.ram / 1024 / 1024).toFixed(0)} MB`
                           : "N/A"}
@@ -693,7 +692,7 @@ const DashboardCouchbaseServer: React.FC = () => {
                       >
                         Durability:
                       </Box>
-                      <Box component="span" sx={{ fontWeight: 500 }}>
+                      <Box component="span">
                         {bucket.durabilityMinLevel || "none"}
                       </Box>
                     </Typography>
@@ -704,20 +703,21 @@ const DashboardCouchbaseServer: React.FC = () => {
 
             {/* Panel 3: Metrics */}
             <Box sx={{ flex: 1 }}>
+              <Box sx={tableHeaderStyle}>
+                <Typography
+                  variant="subtitle2"
+                  sx={{ m: 0, p: 0, lineHeight: 1, textAlign: "center" }}
+                >
+                  Metrics
+                </Typography>
+              </Box>
               <Card
                 sx={{
-                  height: "100%",
+                  height: "90%",
                   border: borderStyle,
                 }}
               >
                 <CardContent>
-                  <Typography
-                    variant="subtitle2"
-                    gutterBottom
-                    sx={{ fontWeight: "bold", mb: 2 }}
-                  >
-                    Metrics
-                  </Typography>
                   <Box
                     sx={{ display: "flex", flexDirection: "column", gap: 0.5 }}
                   >
@@ -728,7 +728,7 @@ const DashboardCouchbaseServer: React.FC = () => {
                       >
                         Items:
                       </Box>
-                      <Box component="span" sx={{ fontWeight: 500 }}>
+                      <Box component="span">
                         {bucket.itemCount?.toLocaleString() || "0"}
                       </Box>
                     </Typography>
@@ -739,7 +739,7 @@ const DashboardCouchbaseServer: React.FC = () => {
                       >
                         Ops/sec:
                       </Box>
-                      <Box component="span" sx={{ fontWeight: 500 }}>
+                      <Box component="span">
                         {bucket.opsPerSec?.toFixed(2) || "0"}
                       </Box>
                     </Typography>
@@ -750,7 +750,7 @@ const DashboardCouchbaseServer: React.FC = () => {
                       >
                         Disk Used:
                       </Box>
-                      <Box component="span" sx={{ fontWeight: 500 }}>
+                      <Box component="span">
                         {bucket.diskUsed
                           ? `${(bucket.diskUsed / 1024 / 1024).toFixed(2)} MB`
                           : "0 MB"}
@@ -763,7 +763,7 @@ const DashboardCouchbaseServer: React.FC = () => {
                       >
                         Quota Used:
                       </Box>
-                      <Box component="span" sx={{ fontWeight: 500 }}>
+                      <Box component="span">
                         {bucket.quotaPercentUsed
                           ? `${bucket.quotaPercentUsed.toFixed(1)}%`
                           : "0%"}
@@ -776,7 +776,7 @@ const DashboardCouchbaseServer: React.FC = () => {
                       >
                         Resident %:
                       </Box>
-                      <Box component="span" sx={{ fontWeight: 500 }}>
+                      <Box component="span">
                         {bucket.residentRatio
                           ? `${bucket.residentRatio.toFixed(1)}%`
                           : "0%"}
