@@ -167,6 +167,13 @@ public class ConfigurationStartupService {
             logger.info("📋 autoConnect explicitly disabled (app.autoConnect=false) - skipping auto-connection");
             return false;
         }
+        
+        // Extract app.baseUrl and set as system property for FhirServerConfig to use
+        if (appConfig != null && appConfig.get("baseUrl") != null) {
+            String baseUrl = String.valueOf(appConfig.get("baseUrl"));
+            System.setProperty("app.baseUrl", baseUrl);
+            logger.info("📋 FHIR Server base URL: {}", baseUrl);
+        }
 
         // Create connection request from YAML data
         ConnectionRequest request = createConnectionRequest(connectionConfig);

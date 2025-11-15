@@ -59,6 +59,9 @@ public class FhirRestfulServer extends RestfulServer {
     
     @Autowired(required = false)
     private org.springframework.boot.info.BuildProperties buildProperties;
+    
+    @Autowired
+    private com.couchbase.common.config.FhirServerConfig fhirServerConfig;
 
     @Override
     protected void initialize() {
@@ -90,6 +93,15 @@ public class FhirRestfulServer extends RestfulServer {
             // }
             
             setFhirContext(fhirContext); // Use the injected context
+            
+            // Single-tenant mode: Use base URL from config.yaml (app.baseUrl)
+            // This handles HAProxy SSL termination, reverse proxies, and SMART on FHIR correctly
+            String configuredBaseUrl = fhirServerConfig.getNormalizedBaseUrl();
+            logger.info("🌐 Server base URL configured from config.yaml: {}", configuredBaseUrl);
+            
+            setServerAddressStrategy(new ca.uhn.fhir.rest.server.HardcodedServerAddressStrategy(configuredBaseUrl));
+            setPagingProvider(new ca.uhn.fhir.rest.server.FifoMemoryPagingProvider(100));
+            
             // Single-tenant mode: TenantContextHolder always returns "fhir"
             // No interceptor needed for tenant identification
             
@@ -104,6 +116,14 @@ public class FhirRestfulServer extends RestfulServer {
             logger.error("❌ Failed to get dynamic providers, falling back to autowired only: {}", e.getMessage());
             // Fallback to original behavior
             setFhirContext(fhirContext);
+            
+            // Single-tenant mode: Use base URL from config.yaml
+            String configuredBaseUrl = fhirServerConfig.getNormalizedBaseUrl();
+            logger.info("🌐 Server base URL configured from config.yaml: {} (fallback)", configuredBaseUrl);
+            
+            setServerAddressStrategy(new ca.uhn.fhir.rest.server.HardcodedServerAddressStrategy(configuredBaseUrl));
+            setPagingProvider(new ca.uhn.fhir.rest.server.FifoMemoryPagingProvider(100));
+            
             // Single-tenant mode: TenantContextHolder always returns "fhir"
             // No interceptor needed for tenant identification
             

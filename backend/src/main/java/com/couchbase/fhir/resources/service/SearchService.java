@@ -2853,23 +2853,26 @@ public class SearchService {
         try {
             String completeUrl = requestDetails.getCompleteUrl();
             if (completeUrl != null) {
-                // Extract everything up to and including /fhir/bucketName
-                // Example: http://ec2-13-219-88-60.compute-1.amazonaws.com/fhir/test/Patient?...
-                // Should return: http://ec2-13-219-88-60.compute-1.amazonaws.com/fhir/test
-                int fhirIndex = completeUrl.indexOf("/fhir/");
+                // Single-tenant mode: Extract everything up to and including /fhir (without resource type)
+                // Example: http://localhost:8080/fhir/Patient?name=Baxter
+                // Should return: http://localhost:8080/fhir
+                int fhirIndex = completeUrl.indexOf("/fhir");
                 if (fhirIndex != -1) {
-                    int bucketEndIndex = completeUrl.indexOf("/", fhirIndex + 6); // 6 = length of "/fhir/"
-                    if (bucketEndIndex != -1) {
-                        return completeUrl.substring(0, bucketEndIndex);
-                    } else {
-                        // No resource type after bucket, might be a bucket-level request
-                        int queryIndex = completeUrl.indexOf("?", fhirIndex + 6);
-                        if (queryIndex != -1) {
-                            return completeUrl.substring(0, queryIndex);
-                        } else {
-                            return completeUrl;
+                    // Find where /fhir ends (either at '/', '?' or end of string)
+                    int endIndex = fhirIndex + 5; // 5 = length of "/fhir"
+                    
+                    // Make sure we don't include anything after /fhir
+                    // The URL might be /fhir/Patient or /fhir?query or just /fhir
+                    if (endIndex < completeUrl.length()) {
+                        char nextChar = completeUrl.charAt(endIndex);
+                        if (nextChar == '/' || nextChar == '?') {
+                            // Just return up to /fhir
+                            return completeUrl.substring(0, endIndex);
                         }
                     }
+                    
+                    // If we're here, the URL ends with /fhir
+                    return completeUrl.substring(0, endIndex);
                 }
             }
         } catch (Exception e) {

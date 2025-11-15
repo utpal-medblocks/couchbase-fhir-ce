@@ -13,8 +13,8 @@ connection:
   sslEnabled: false # true for Capella
 
 app:
+  baseUrl: "http://localhost:8080/fhir" # Base URL of the FHIR server (used for pagination URLs, SMART on FHIR, etc.)
   autoConnect: true # has to be set to true
-  host: "localhost" # Hostname of the Couchbase FHIR server
 
 # Couchbase SDK Performance Tuning (Optional - defaults optimized for high-concurrency FHIR workloads)
 couchbase:
