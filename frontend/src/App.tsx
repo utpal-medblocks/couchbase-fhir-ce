@@ -149,15 +149,13 @@ function AppContent() {
   return (
     <MuiThemeProvider theme={theme}>
       <CssBaseline />
-      <ConnectionProvider>
-        <ErrorBoundary>
-          <Router>
-            <MainLayout>
-              <AppRoutes />
-            </MainLayout>
-          </Router>
-        </ErrorBoundary>
-      </ConnectionProvider>
+      <Router>
+        <ConnectionProvider>
+          <ErrorBoundary>
+            <AppRoutes />
+          </ErrorBoundary>
+        </ConnectionProvider>
+      </Router>
     </MuiThemeProvider>
   );
 }

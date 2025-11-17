@@ -40,6 +40,8 @@ import { VscFlame } from "react-icons/vsc";
 import CouchbaseLogo from "../../assets/icons/couchbase.png"; // Uncomment when you add the icon
 import ConnectionStatus from "./ConnectionStatus";
 import { useThemeContext } from "../../contexts/ThemeContext";
+import { useAuthStore } from "../../store/authStore";
+import { BsBoxArrowRight } from "react-icons/bs";
 
 const drawerWidth = 200;
 
@@ -136,6 +138,7 @@ export default function MainLayout({ children }: MainLayoutProps) {
   const navigate = useNavigate();
   const location = useLocation();
   const { themeMode, toggleTheme } = useThemeContext();
+  const { logout, user } = useAuthStore();
 
   // Local state for UI controls
   const [drawerOpen, setDrawerOpen] = useState(true);
@@ -274,17 +277,23 @@ export default function MainLayout({ children }: MainLayoutProps) {
                 <BsChatLeftText />
               </IconButton>
             </Tooltip>
-            <IconButton
-              disableRipple
-              sx={{
-                fontSize: "20px",
-                "&:focus": {
-                  outline: "none",
-                },
-              }}
-            >
-              <BsPersonGear />
-            </IconButton>
+            <Tooltip title={`Logout (${user?.email || ""})`} placement="bottom">
+              <IconButton
+                onClick={() => {
+                  logout();
+                  navigate("/login");
+                }}
+                disableRipple
+                sx={{
+                  fontSize: "20px",
+                  "&:focus": {
+                    outline: "none",
+                  },
+                }}
+              >
+                <BsBoxArrowRight />
+              </IconButton>
+            </Tooltip>
           </Box>
         </Toolbar>
       </AppBar>

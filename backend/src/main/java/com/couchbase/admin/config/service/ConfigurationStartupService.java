@@ -175,6 +175,22 @@ public class ConfigurationStartupService {
             logger.info("📋 FHIR Server base URL: {}", baseUrl);
         }
 
+        // Extract admin credentials and set as system properties for AdminConfig to use
+        @SuppressWarnings("unchecked")
+        Map<String, Object> adminConfig = (Map<String, Object>) yamlData.get("admin");
+        if (adminConfig != null) {
+            if (adminConfig.get("email") != null) {
+                System.setProperty("admin.email", String.valueOf(adminConfig.get("email")));
+            }
+            if (adminConfig.get("password") != null) {
+                System.setProperty("admin.password", String.valueOf(adminConfig.get("password")));
+            }
+            if (adminConfig.get("name") != null) {
+                System.setProperty("admin.name", String.valueOf(adminConfig.get("name")));
+            }
+            logger.info("🔐 Admin UI credentials loaded from config.yaml");
+        }
+
         // Create connection request from YAML data
         ConnectionRequest request = createConnectionRequest(connectionConfig);
         

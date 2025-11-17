@@ -1,8 +1,7 @@
-import { createContext, useContext, useEffect, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useRef } from "react";
 import type { ReactNode } from "react";
 import { useConnectionStore } from "../../store/connectionStore";
-import { useBucketStore } from "../../store/bucketStore";
-import InitializationDialog from "../../components/InitializationDialog";
+import { useAuthStore } from "../../store/authStore";
 
 interface ConnectionContextType {
   // Connection management context
@@ -14,13 +13,17 @@ const ConnectionContext = createContext<ConnectionContextType | undefined>(
 
 export const ConnectionProvider = ({ children }: { children: ReactNode }) => {
   const { fetchConnection } = useConnectionStore();
-  const { fetchInitializationStatus, initializationStatus, fetchBucketData } = useBucketStore();
+  const { isAuthenticated } = useAuthStore();
   const pollingIntervalRef = useRef<number | null>(null);
-  const [showInitDialog, setShowInitDialog] = useState(false);
-  const [hasCheckedInit, setHasCheckedInit] = useState(false);
 
-  // Start connection polling on mount
+  // Start connection polling on mount - only if authenticated
   useEffect(() => {
+    // Skip if user is not authenticated (e.g., on login page)
+    if (!isAuthenticated) {
+      console.log("🔗 ConnectionProvider: Skipping - user not authenticated");
+      return;
+    }
+
     console.log("🔗 ConnectionProvider: Starting connection polling");
 
     // Initial check immediately
@@ -47,71 +50,11 @@ export const ConnectionProvider = ({ children }: { children: ReactNode }) => {
         clearInterval(pollingIntervalRef.current);
       }
     };
-  }, [fetchConnection]);
-
-  // Check initialization status after connection is established
-  useEffect(() => {
-    const checkInitialization = async () => {
-      if (!hasCheckedInit) {
-        console.log("🚀 Checking FHIR system initialization status...");
-
-        // Wait a bit for backend to be ready
-        await new Promise((resolve) => setTimeout(resolve, 1000));
-
-        try {
-          const status = await fetchInitializationStatus();
-          console.log("🚀 Initialization status:", status.status);
-
-          // Show dialog if not ready
-          if (status.status !== "READY") {
-            setShowInitDialog(true);
-          }
-
-          setHasCheckedInit(true);
-        } catch (error) {
-          console.error("Failed to check initialization status:", error);
-        }
-      }
-    };
-
-    checkInitialization();
-  }, [hasCheckedInit, fetchInitializationStatus]);
-
-  const handleCloseInitDialog = async () => {
-    setShowInitDialog(false);
-
-    // Fetch latest initialization status to determine if we should refresh data
-    try {
-      console.log("🔄 Fetching latest initialization status...");
-      const latestStatus = await fetchInitializationStatus();
-      
-      if (latestStatus.status === "READY") {
-        console.log("✅ Initialization completed - refreshing bucket data");
-        try {
-          await fetchBucketData();
-          console.log("✅ Bucket data refreshed successfully");
-        } catch (error) {
-          console.error("❌ Failed to refresh bucket data:", error);
-        }
-      } else {
-        console.log("⚠️ Initialization not complete, status:", latestStatus.status);
-        // If they closed without completing, allow checking again later
-        setHasCheckedInit(false);
-      }
-    } catch (error) {
-      console.error("❌ Failed to check initialization status on dialog close:", error);
-      // Allow checking again later
-      setHasCheckedInit(false);
-    }
-  };
+  }, [fetchConnection, isAuthenticated]);
 
   return (
     <ConnectionContext.Provider value={{}}>
       {children}
-      <InitializationDialog
-        open={showInitDialog}
-        onClose={handleCloseInitDialog}
-      />
     </ConnectionContext.Provider>
   );
 };

@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import axios from "axios";
 
 export type UUID = string;
 
@@ -235,21 +236,11 @@ export const useBucketStore = create<BucketStore>()((set, get) => ({
   // Fetch initialization status from backend
   fetchInitializationStatus: async () => {
     try {
-      const response = await fetch(
-        "/api/admin/initialization/status?connectionName=default",
-        {
-          method: "GET",
-          headers: {
-            "Content-Type": "application/json",
-          },
-        }
+      const response = await axios.get<InitializationStatus>(
+        "/api/admin/initialization/status?connectionName=default"
       );
 
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
-      const status: InitializationStatus = await response.json();
+      const status: InitializationStatus = response.data;
       get().setInitializationStatus(status);
 
       return status;
@@ -275,21 +266,11 @@ export const useBucketStore = create<BucketStore>()((set, get) => ({
   fetchBucketData: async () => {
     try {
       // In single-tenant mode, backend returns only the "fhir" bucket
-      const response = await fetch(
-        "/api/buckets/fhir/details?connectionName=default",
-        {
-          method: "GET",
-          headers: {
-            "Content-Type": "application/json",
-          },
-        }
+      const response = await axios.get<BucketDetails[]>(
+        "/api/buckets/fhir/details?connectionName=default"
       );
 
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
-      const bucketData: BucketDetails[] = await response.json();
+      const bucketData: BucketDetails[] = response.data;
 
       // Should get exactly one bucket named "fhir"
       const fhirBucket = bucketData.length > 0 ? bucketData[0] : null;
@@ -360,24 +341,7 @@ export const useBucketStore = create<BucketStore>()((set, get) => ({
   // Fetch FHIR configuration from backend
   fetchFhirConfig: async () => {
     try {
-      const response = await fetch(
-        "/api/admin/fhir-bucket/fhir/config?connectionName=default",
-        {
-          method: "GET",
-          headers: {
-            "Content-Type": "application/json",
-          },
-        }
-      );
-
-      if (!response.ok) {
-        if (response.status === 404) {
-          return null;
-        }
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
-      const backendConfig: {
+      const response = await axios.get<{
         fhirRelease?: string;
         validationMode?: string;
         validationProfile?: string;
@@ -391,7 +355,9 @@ export const useBucketStore = create<BucketStore>()((set, get) => ({
           number: number;
           s3Endpoint: string;
         };
-      } = await response.json();
+      }>("/api/admin/fhir-bucket/fhir/config?connectionName=default");
+
+      const backendConfig = response.data;
 
       const config: FhirConfiguration = {
         fhirRelease: backendConfig.fhirRelease || "Release 4",
@@ -429,7 +395,14 @@ export const useBucketStore = create<BucketStore>()((set, get) => ({
       get().setFhirConfig(config);
 
       return config;
-    } catch (error) {
+    } catch (error: any) {
+      // Handle 404 (config not found) gracefully
+      if (error.response?.status === 404) {
+        console.log(
+          "FHIR config not found (404) - bucket may not be initialized yet"
+        );
+        return null;
+      }
       console.error("Failed to fetch FHIR config:", error);
       return null;
     }
@@ -438,37 +411,26 @@ export const useBucketStore = create<BucketStore>()((set, get) => ({
   // Initialize FHIR bucket (creates scopes, collections, indexes)
   initializeFhirBucket: async () => {
     try {
-      const response = await fetch(
-        "/api/admin/initialization/initialize?connectionName=default",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-        }
-      );
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(
-          errorData.message || `HTTP error! status: ${response.status}`
-        );
-      }
-
-      const result: {
+      const response = await axios.post<{
         operationId: string;
         bucketName: string;
         status: string;
         message: string;
-      } = await response.json();
+      }>("/api/admin/initialization/initialize?connectionName=default");
+
+      const result = response.data;
 
       return {
         operationId: result.operationId,
         message: result.message,
       };
-    } catch (error) {
-      console.error("Failed to initialize FHIR bucket:", error);
-      throw error;
+    } catch (error: any) {
+      const errorMessage =
+        error.response?.data?.message ||
+        error.message ||
+        "Failed to initialize FHIR bucket";
+      console.error("Failed to initialize FHIR bucket:", errorMessage);
+      throw new Error(errorMessage);
     }
   },
 
