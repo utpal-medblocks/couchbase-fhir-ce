@@ -19,6 +19,8 @@ import com.couchbase.common.fhir.FhirMetaHelper;
 import com.couchbase.fhir.resources.search.validation.FhirSearchParameterPreprocessor;
 import com.couchbase.fhir.resources.validation.FhirBucketValidator;
 import com.couchbase.fhir.resources.validation.FhirBucketValidationException;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import org.hl7.fhir.r4.model.*;
 import ca.uhn.fhir.validation.FhirValidator;
 import ca.uhn.fhir.rest.annotation.Operation;
@@ -561,6 +563,7 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
         // Delegate to SearchService for all search operations
         return searchService.search(resourceType, requestDetails);
     }
+
     /**
      * FHIR $validate Operation - Validates a resource without storing it
      * POST /fhir/{bucket}/{ResourceType}/$validate

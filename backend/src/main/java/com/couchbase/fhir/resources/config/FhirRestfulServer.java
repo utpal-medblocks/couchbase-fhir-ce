@@ -12,6 +12,7 @@ import ca.uhn.fhir.rest.server.tenant.UrlBaseTenantIdentificationStrategy;
 
 import com.couchbase.common.config.FhirConfig;
 
+import com.couchbase.fhir.resources.provider.BulkImportProvider;
 import com.couchbase.fhir.resources.provider.USCoreCapabilityProvider;
 import com.couchbase.fhir.resources.interceptor.BucketAwareValidationInterceptor;
 import com.couchbase.fhir.resources.service.FhirBucketConfigService;
@@ -112,7 +113,9 @@ public class FhirRestfulServer extends RestfulServer {
             USCoreCapabilityProvider capabilityProvider = new USCoreCapabilityProvider(this, buildProperties);
             setServerConformanceProvider(capabilityProvider);
             registerProviders(allProviders); // Register all providers
-            
+            registerProvider(new BulkImportProvider(fhirContext));
+
+
         } catch (Exception e) {
             logger.error("❌ Failed to get dynamic providers, falling back to autowired only: {}", e.getMessage());
             // Fallback to original behavior
