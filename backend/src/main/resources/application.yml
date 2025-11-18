@@ -16,7 +16,7 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info,metrics
+        include: health,info,metrics,mappings,beans
       base-path: /actuator
   endpoint:
     health:
@@ -58,7 +58,8 @@ logging:
     "[ca.uhn.fhir.rest.server.RestfulServer]": OFF
     "[org.apache.catalina]": WARN
     "[org.apache.catalina.connector]": OFF
-    "[org.springframework.security]": WARN
+    "[org.springframework.security]": DEBUG # Temporarily DEBUG for troubleshooting
+    "[org.springframework.security.oauth2]": DEBUG # OAuth debug
     "[org.springframework.web.servlet]": WARN
     "[com.couchbase.transactions]": ERROR
   pattern:

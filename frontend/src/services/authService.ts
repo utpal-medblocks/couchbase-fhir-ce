@@ -37,12 +37,15 @@ export const authService = {
    */
   async login(credentials: LoginRequest): Promise<LoginResponse> {
     try {
+      console.log("📡 POST /api/auth/login", { email: credentials.email });
       const response = await axios.post<LoginResponse>(
         `${API_BASE_URL}/login`,
         credentials
       );
+      console.log("📡 Login response received", response.data);
       return response.data;
     } catch (error: any) {
+      console.error("📡 Login request failed:", error);
       if (error.response?.data?.error) {
         throw new Error(error.response.data.error);
       }

@@ -5,8 +5,7 @@ import ca.uhn.fhir.rest.server.RestfulServer;
 import ca.uhn.fhir.rest.server.provider.ServerCapabilityStatementProvider;
 import com.couchbase.fhir.resources.constants.USCoreProfiles;
 import jakarta.servlet.http.HttpServletRequest;
-import org.hl7.fhir.r4.model.CapabilityStatement;
-import org.hl7.fhir.r4.model.Enumerations;
+import org.hl7.fhir.r4.model.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -154,6 +153,11 @@ public class USCoreCapabilityProvider extends ServerCapabilityStatementProvider 
             }
         }
 
+        // ============================================
+        // SMART ON FHIR SECURITY
+        // ============================================
+        addSmartSecurityExtension(statement, fhirBase);
+
         long elapsed = System.currentTimeMillis() - startTime;
         logger.info("✅ CapabilityStatement generated in {} ms for tenant: {}", elapsed, tenant);
         
@@ -161,6 +165,75 @@ public class USCoreCapabilityProvider extends ServerCapabilityStatementProvider 
         cache.put(tenant, new CachedStatement(statement.copy()));
         
         return statement;
+    }
+
+    /**
+     * Add SMART on FHIR security extension to CapabilityStatement
+     * This advertises OAuth 2.0 endpoints and supported capabilities
+     * 
+     * Reference: http://hl7.org/fhir/smart-app-launch/conformance.html
+     */
+    private void addSmartSecurityExtension(CapabilityStatement statement, String fhirBase) {
+        // Get or create the REST component
+        CapabilityStatement.CapabilityStatementRestComponent rest = statement.getRestFirstRep();
+        
+        // Get or create security component
+        CapabilityStatement.CapabilityStatementRestSecurityComponent security;
+        if (rest.hasSecurity()) {
+            security = rest.getSecurity();
+        } else {
+            security = new CapabilityStatement.CapabilityStatementRestSecurityComponent();
+            rest.setSecurity(security);
+        }
+        
+        // Add OAuth2 service type
+        CodeableConcept oauthService = new CodeableConcept();
+        oauthService.addCoding()
+            .setSystem("http://terminology.hl7.org/CodeSystem/restful-security-service")
+            .setCode("SMART-on-FHIR")
+            .setDisplay("SMART-on-FHIR");
+        security.addService(oauthService);
+        
+        // Add SMART extension with OAuth endpoints
+        // Extract base URL (remove /fhir if present)
+        String baseUrl = fhirBase.endsWith("/fhir") 
+            ? fhirBase.substring(0, fhirBase.length() - 5) 
+            : fhirBase;
+        
+        Extension smartExtension = new Extension();
+        smartExtension.setUrl("http://fhir-registry.smarthealthit.org/StructureDefinition/oauth-uris");
+        
+        // Token endpoint
+        Extension tokenExtension = new Extension();
+        tokenExtension.setUrl("token");
+        tokenExtension.setValue(new UriType(baseUrl + "/oauth2/token"));
+        smartExtension.addExtension(tokenExtension);
+        
+        // Authorize endpoint
+        Extension authorizeExtension = new Extension();
+        authorizeExtension.setUrl("authorize");
+        authorizeExtension.setValue(new UriType(baseUrl + "/oauth2/authorize"));
+        smartExtension.addExtension(authorizeExtension);
+        
+        // Introspect endpoint
+        Extension introspectExtension = new Extension();
+        introspectExtension.setUrl("introspect");
+        introspectExtension.setValue(new UriType(baseUrl + "/oauth2/introspect"));
+        smartExtension.addExtension(introspectExtension);
+        
+        // Revoke endpoint
+        Extension revokeExtension = new Extension();
+        revokeExtension.setUrl("revoke");
+        revokeExtension.setValue(new UriType(baseUrl + "/oauth2/revoke"));
+        smartExtension.addExtension(revokeExtension);
+        
+        security.addExtension(smartExtension);
+        
+        // Add description
+        security.setDescription("This server supports SMART on FHIR authorization using OAuth 2.0. " +
+                               "Supported scopes include patient/*, user/*, and system/* for granular access control.");
+        
+        logger.debug("Added SMART on FHIR security extension to CapabilityStatement with base URL: {}", baseUrl);
     }
 
 }

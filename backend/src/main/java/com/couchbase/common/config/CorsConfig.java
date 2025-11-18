@@ -45,7 +45,13 @@ public class CorsConfig {
         configuration.setMaxAge(3600L);
         
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
+        // Register CORS for API endpoints
         source.registerCorsConfiguration("/api/**", configuration);
+        // Register CORS for OAuth 2.0 endpoints (SMART on FHIR)
+        source.registerCorsConfiguration("/oauth2/**", configuration);
+        source.registerCorsConfiguration("/.well-known/**", configuration);
+        // Register CORS for FHIR endpoints
+        source.registerCorsConfiguration("/fhir/**", configuration);
         
         return source;
     }
