@@ -42,12 +42,12 @@
     <!-- Package-specific loggers - start conservatively -->
     <logger name="com.couchbase.admin" level="ERROR"/>
     <logger name="com.couchbase.fhir" level="ERROR"/>
-    <logger name="com.couchbase.fhir.auth" level="INFO"/>  <!-- OAuth info logging -->
+    <logger name="com.couchbase.fhir.auth" level="ERROR"/>
     <logger name="com.couchbase.common" level="ERROR"/>
     
     <!-- Spring Security and OAuth2 logging -->
-    <logger name="org.springframework.security" level="WARN"/>
-    <logger name="org.springframework.security.oauth2" level="INFO"/>
+    <logger name="org.springframework.security" level="ERROR"/>
+    <logger name="org.springframework.security.oauth2" level="ERROR"/>
     
     <!-- Only target the specific noisy classes you mentioned -->
     <logger name="com.couchbase.fhir.repository.service.FhirBundleProcessingService" level="WARN"/>

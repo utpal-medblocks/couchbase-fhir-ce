@@ -56,11 +56,11 @@ server:
 logging:
   level:
     "[ca.uhn.fhir.rest.server.RestfulServer]": OFF
-    "[org.apache.catalina]": WARN
+    "[org.apache.catalina]": ERROR
     "[org.apache.catalina.connector]": OFF
-    "[org.springframework.security]": DEBUG # Temporarily DEBUG for troubleshooting
-    "[org.springframework.security.oauth2]": DEBUG # OAuth debug
-    "[org.springframework.web.servlet]": WARN
+    "[org.springframework.security]": ERROR
+    "[org.springframework.security.oauth2]": ERROR
+    "[org.springframework.web.servlet]": ERROR
     "[com.couchbase.transactions]": ERROR
   pattern:
     console: "%d{HH:mm:ss.SSS} %-5level %logger{20} - %msg%n"

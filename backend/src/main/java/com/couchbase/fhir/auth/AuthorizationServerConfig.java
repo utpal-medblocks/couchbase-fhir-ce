@@ -5,6 +5,7 @@ import com.nimbusds.jose.jwk.RSAKey;
 import com.nimbusds.jose.jwk.source.ImmutableJWKSet;
 import com.nimbusds.jose.jwk.source.JWKSource;
 import com.nimbusds.jose.proc.SecurityContext;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.annotation.Order;
@@ -56,6 +57,9 @@ import java.util.UUID;
 @Configuration
 public class AuthorizationServerConfig {
 
+    @Autowired
+    private com.couchbase.common.config.FhirServerConfig fhirServerConfig;
+
 
     /**
      * OAuth 2.0 Authorization Server Security Filter Chain
@@ -65,15 +69,16 @@ public class AuthorizationServerConfig {
     @Order(1)
     public SecurityFilterChain authorizationServerSecurityFilterChain(HttpSecurity http)
             throws Exception {
-        // Apply Spring Authorization Server's default security configuration
-        OAuth2AuthorizationServerConfiguration.applyDefaultSecurity(http);
+        // Configure OAuth2 Authorization Server with OIDC support
+        OAuth2AuthorizationServerConfigurer authorizationServerConfigurer =
+            OAuth2AuthorizationServerConfigurer.authorizationServer();
         
-        // Enable OpenID Connect 1.0
-        http.getConfigurer(OAuth2AuthorizationServerConfigurer.class)
-            .oidc(Customizer.withDefaults());
-        
-        // Redirect to login page when not authenticated
         http
+            .securityMatcher(authorizationServerConfigurer.getEndpointsMatcher())
+            .with(authorizationServerConfigurer, (authServer) -> 
+                authServer.oidc(Customizer.withDefaults()) // Enable OpenID Connect 1.0
+            )
+            // Redirect to login page when not authenticated
             .exceptionHandling((exceptions) -> exceptions
                 .defaultAuthenticationEntryPointFor(
                     new LoginUrlAuthenticationEntryPoint("/login"),
@@ -102,10 +107,14 @@ public class AuthorizationServerConfig {
                 .authorizationGrantType(AuthorizationGrantType.AUTHORIZATION_CODE)
                 .authorizationGrantType(AuthorizationGrantType.REFRESH_TOKEN)
                 .authorizationGrantType(AuthorizationGrantType.CLIENT_CREDENTIALS)
-                .redirectUri("http://localhost:8080/authorized")
-                .redirectUri("http://localhost:3000/callback")
-                .redirectUri("http://127.0.0.1:8080/authorized")
-                .postLogoutRedirectUri("http://localhost:8080/")
+                // Redirect URIs for testing - support both local dev and Docker deployment
+                .redirectUri("http://localhost:8080/authorized")      // Local dev (backend port)
+                .redirectUri("http://localhost/authorized")           // Docker (HAProxy port 80)
+                .redirectUri("http://localhost:3000/callback")        // Local dev (frontend)
+                .redirectUri("http://localhost/callback")             // Docker (frontend via HAProxy)
+                .redirectUri("http://127.0.0.1:8080/authorized")      // Alternative localhost
+                .postLogoutRedirectUri("http://localhost:8080/")      // Local dev
+                .postLogoutRedirectUri("http://localhost/")           // Docker
                 .scope(OidcScopes.OPENID)
                 .scope(OidcScopes.PROFILE)
                 .scope(SmartScopes.FHIRUSER)
@@ -218,11 +227,16 @@ public class AuthorizationServerConfig {
 
     /**
      * Authorization Server settings (endpoint URLs)
+     * Uses base URL from config.yaml (app.baseUrl)
      */
     @Bean
     public AuthorizationServerSettings authorizationServerSettings() {
+        // Get base URL from config.yaml and extract the issuer (remove /fhir suffix)
+        String baseUrl = fhirServerConfig.getNormalizedBaseUrl();
+        String issuer = baseUrl.replace("/fhir", ""); // http://localhost:8080/fhir -> http://localhost:8080
+        
         return AuthorizationServerSettings.builder()
-                .issuer("http://localhost:8080") // Should match your server URL
+                .issuer(issuer) // Uses base URL from config.yaml
                 .authorizationEndpoint("/oauth2/authorize")
                 .tokenEndpoint("/oauth2/token")
                 .tokenIntrospectionEndpoint("/oauth2/introspect")
