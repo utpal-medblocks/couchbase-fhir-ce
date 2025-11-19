@@ -32,7 +32,6 @@ import com.couchbase.common.config.FhirConfig;
 
 import java.time.Instant;
 import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 /**
@@ -601,8 +600,6 @@ public class SearchService {
                     ftsQueries.add(quantitySearch);
                     logger.debug("🔍 Added Quantity query for {}: {}", paramName, quantitySearch.export());
                     break;
-                case HAS:
-                    logger.debug("here");
                 case SPECIAL:
                 case NUMBER:
                     logger.warn("Unsupported search parameter type: {} for parameter: {}", searchParam.getParamType(), paramName);
