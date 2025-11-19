@@ -6,6 +6,8 @@ import com.couchbase.client.java.Cluster;
 import com.couchbase.client.java.ClusterOptions;
 import com.couchbase.client.java.env.ClusterEnvironment;
 import com.couchbase.client.core.msg.kv.DurabilityLevel;
+import com.couchbase.client.java.codec.JacksonJsonSerializer;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -22,6 +24,9 @@ import java.util.stream.Collectors;
 public class ConnectionService {
     
     private static final Logger logger = LoggerFactory.getLogger(ConnectionService.class);
+    
+    // Inject Spring's auto-configured ObjectMapper (includes JavaTimeModule and all Spring Boot defaults)
+    private final ObjectMapper springObjectMapper;
     
     // SDK Configuration Parameters with sensible defaults for high-concurrency FHIR workloads
     @Value("${couchbase.sdk.max-http-connections:128}")
@@ -73,6 +78,11 @@ public class ConnectionService {
     // Store last connection error for frontend
     private volatile String lastConnectionError = null;
     
+    // Constructor to inject Spring's ObjectMapper
+    public ConnectionService(ObjectMapper objectMapper) {
+        this.springObjectMapper = objectMapper;
+    }
+    
     // Inner class to store connection details
     public static class ConnectionDetails {
         private final boolean sslEnabled;
@@ -103,8 +113,14 @@ public class ConnectionService {
         logger.info("Creating connection: {}", request.getName());
         
         try {
+            // Configure Jackson ObjectMapper with Java 8 date/time support
+            // Use Spring's auto-configured ObjectMapper (already has JavaTimeModule and all Spring Boot defaults)
+            // This ensures consistency with Spring's JSON serialization and avoids missing modules
+            JacksonJsonSerializer jsonSerializer = JacksonJsonSerializer.create(springObjectMapper);
+            
             // Configure cluster environment with comprehensive SDK tuning for high-concurrency FHIR workloads
             ClusterEnvironment.Builder envBuilder = ClusterEnvironment.builder()
+                .jsonSerializer(jsonSerializer)  // Add custom JSON serializer
                 .timeoutConfig(timeoutConfig -> timeoutConfig
                     .queryTimeout(Duration.ofSeconds(queryTimeoutSeconds))
                     .searchTimeout(Duration.ofSeconds(searchTimeoutSeconds))

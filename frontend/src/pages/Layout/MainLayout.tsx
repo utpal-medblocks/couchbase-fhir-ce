@@ -33,6 +33,7 @@ import {
   BsTools,
   BsJournalMedical,
   BsBucket,
+  BsPeople,
 } from "react-icons/bs";
 import { TbApiApp } from "react-icons/tb";
 import { VscFlame } from "react-icons/vsc";
@@ -112,6 +113,7 @@ const menuItems = [
     icon: VscFlame,
     path: "/fhir-resources",
   },
+  { id: "users", label: "Users", icon: BsPeople, path: "/users" },
 ];
 
 const bottomMenuItems = [

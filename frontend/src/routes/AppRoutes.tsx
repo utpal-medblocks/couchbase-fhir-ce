@@ -8,6 +8,7 @@ import Buckets from "../pages/Buckets/Buckets";
 import FhirResources from "../pages/FHIRResources/FhirResources";
 import AuditLogs from "../pages/AuditLogs/AuditLogs";
 import SystemLogs from "../pages/SystemLogs/Logs";
+import Users from "../pages/Users/Users";
 
 const AppRoutes: React.FC = () => {
   return (
@@ -72,6 +73,16 @@ const AppRoutes: React.FC = () => {
           <ProtectedRoute>
             <MainLayout>
               <SystemLogs />
+            </MainLayout>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/users"
+        element={
+          <ProtectedRoute>
+            <MainLayout>
+              <Users />
             </MainLayout>
           </ProtectedRoute>
         }
