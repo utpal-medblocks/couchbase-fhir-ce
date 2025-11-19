@@ -70,6 +70,7 @@ lerna-debug.log*
 config.yaml
 config*.yaml
 *.config.yaml
+.token.env
 
 # Python
 __pycache__/

@@ -1,0 +1,274 @@
+{
+  "info": {
+    "name": "Couchbase FHIR with OAuth",
+    "description": "FHIR API requests with automatic OAuth token generation",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{access_token}}",
+        "type": "string"
+      }
+    ]
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Auto-generate OAuth token before each request",
+          "const baseUrl = pm.environment.get('base_url') || 'http://localhost:8080';",
+          "const clientId = pm.environment.get('client_id') || 'test-client';",
+          "const clientSecret = pm.environment.get('client_secret') || 'test-secret';",
+          "const scope = pm.environment.get('scope') || 'patient/*.read';",
+          "",
+          "// Check if token exists and is still valid",
+          "const tokenExpiry = pm.environment.get('token_expiry');",
+          "const now = Date.now();",
+          "",
+          "if (!tokenExpiry || now >= tokenExpiry) {",
+          "    console.log('🔐 Getting new access token...');",
+          "    ",
+          "    const tokenRequest = {",
+          "        url: `${baseUrl}/oauth2/token`,",
+          "        method: 'POST',",
+          "        header: {",
+          "            'Content-Type': 'application/x-www-form-urlencoded',",
+          "            'Authorization': 'Basic ' + btoa(`${clientId}:${clientSecret}`)",
+          "        },",
+          "        body: {",
+          "            mode: 'urlencoded',",
+          "            urlencoded: [",
+          "                { key: 'grant_type', value: 'client_credentials' },",
+          "                { key: 'scope', value: scope }",
+          "            ]",
+          "        }",
+          "    };",
+          "    ",
+          "    pm.sendRequest(tokenRequest, (err, response) => {",
+          "        if (err) {",
+          "            console.error('❌ Token request failed:', err);",
+          "        } else {",
+          "            const jsonData = response.json();",
+          "            if (jsonData.access_token) {",
+          "                pm.environment.set('access_token', jsonData.access_token);",
+          "                // Set expiry time (expires_in is in seconds, subtract 60s buffer)",
+          "                const expiryTime = now + ((jsonData.expires_in - 60) * 1000);",
+          "                pm.environment.set('token_expiry', expiryTime);",
+          "                console.log('✅ Access token obtained!');",
+          "                console.log('📋 Scope:', jsonData.scope);",
+          "                console.log('⏰ Expires in:', jsonData.expires_in, 'seconds');",
+          "            } else {",
+          "                console.error('❌ No access token in response:', jsonData);",
+          "            }",
+          "        }",
+          "    });",
+          "} else {",
+          "    console.log('✅ Using existing valid token');",
+          "}"
+        ]
+      }
+    }
+  ],
+  "item": [
+    {
+      "name": "OAuth",
+      "item": [
+        {
+          "name": "Get Access Token (Client Credentials)",
+          "request": {
+            "auth": {
+              "type": "basic",
+              "basic": [
+                {
+                  "key": "username",
+                  "value": "{{client_id}}",
+                  "type": "string"
+                },
+                {
+                  "key": "password",
+                  "value": "{{client_secret}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/x-www-form-urlencoded"
+              }
+            ],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "grant_type",
+                  "value": "client_credentials",
+                  "type": "text"
+                },
+                {
+                  "key": "scope",
+                  "value": "patient/*.read",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/oauth2/token",
+              "host": ["{{base_url}}"],
+              "path": ["oauth2", "token"]
+            },
+            "description": "Get OAuth access token using client credentials grant (no user login required)"
+          },
+          "response": []
+        },
+        {
+          "name": "OAuth Server Metadata",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/.well-known/oauth-authorization-server",
+              "host": ["{{base_url}}"],
+              "path": [".well-known", "oauth-authorization-server"]
+            },
+            "description": "Get OAuth server metadata and supported scopes"
+          },
+          "response": []
+        }
+      ],
+      "description": "OAuth token generation endpoints"
+    },
+    {
+      "name": "FHIR Resources",
+      "item": [
+        {
+          "name": "Get CapabilityStatement (No Auth)",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/fhir/metadata",
+              "host": ["{{base_url}}"],
+              "path": ["fhir", "metadata"]
+            },
+            "description": "Public endpoint - no authentication required"
+          },
+          "response": []
+        },
+        {
+          "name": "Search Patients",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/fhir/Patient",
+              "host": ["{{base_url}}"],
+              "path": ["fhir", "Patient"]
+            },
+            "description": "Search all patients (requires patient/*.read scope)"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Patient by ID",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/fhir/Patient/{{patient_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["fhir", "Patient", "{{patient_id}}"]
+            },
+            "description": "Get specific patient (requires patient/*.read scope)"
+          },
+          "response": []
+        },
+        {
+          "name": "Create Patient",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/fhir+json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"resourceType\": \"Patient\",\n  \"name\": [\n    {\n      \"family\": \"Test\",\n      \"given\": [\"OAuth\"]\n    }\n  ],\n  \"gender\": \"unknown\",\n  \"birthDate\": \"2000-01-01\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/fhir/Patient",
+              "host": ["{{base_url}}"],
+              "path": ["fhir", "Patient"]
+            },
+            "description": "Create new patient (requires patient/*.write scope - will fail with read-only token)"
+          },
+          "response": []
+        },
+        {
+          "name": "Search Observations",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/fhir/Observation",
+              "host": ["{{base_url}}"],
+              "path": ["fhir", "Observation"]
+            },
+            "description": "Search observations (requires patient/*.read scope)"
+          },
+          "response": []
+        }
+      ],
+      "description": "FHIR API requests with automatic OAuth authentication"
+    }
+  ],
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:8080",
+      "type": "string"
+    },
+    {
+      "key": "client_id",
+      "value": "test-client",
+      "type": "string"
+    },
+    {
+      "key": "client_secret",
+      "value": "test-secret",
+      "type": "string"
+    },
+    {
+      "key": "scope",
+      "value": "patient/*.read",
+      "type": "string"
+    },
+    {
+      "key": "patient_id",
+      "value": "example-patient-1",
+      "type": "string"
+    },
+    {
+      "key": "access_token",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "token_expiry",
+      "value": "",
+      "type": "string"
+    }
+  ]
+}
+

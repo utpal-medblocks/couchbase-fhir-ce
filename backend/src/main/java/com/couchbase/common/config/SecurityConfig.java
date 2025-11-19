@@ -5,12 +5,12 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.annotation.Order;
-import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.security.web.util.matcher.AntPathRequestMatcher;
 import org.springframework.web.cors.CorsConfigurationSource;
 
 /**
@@ -28,6 +28,9 @@ public class SecurityConfig {
 
     @Autowired
     private JwtAuthenticationFilter jwtAuthenticationFilter;
+    
+    @Autowired
+    private org.springframework.security.oauth2.jwt.JwtDecoder jwtDecoder;
 
     /**
      * Admin UI and general API filter chain
@@ -37,7 +40,8 @@ public class SecurityConfig {
     @Order(2)
     public SecurityFilterChain apiFilterChain(HttpSecurity http) throws Exception {
         http
-            .securityMatcher("/api/**") // Only match /api/* paths
+            // Use AntPathRequestMatcher so this chain applies regardless of MVC servlet mapping
+            .securityMatcher(new AntPathRequestMatcher("/api/**")) // Only match /api/* paths
             .csrf(csrf -> csrf.disable())
             .cors(cors -> cors.configurationSource(corsConfigurationSource))
             .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
@@ -60,22 +64,30 @@ public class SecurityConfig {
     /**
      * FHIR API filter chain
      * Handles OAuth 2.0 JWT for /fhir/* endpoints
+     * Allows public access to /fhir/metadata (CapabilityStatement)
      */
     @Bean
     @Order(3)
     public SecurityFilterChain fhirFilterChain(HttpSecurity http) throws Exception {
         http
-            .securityMatcher("/fhir/**") // Only match /fhir/* paths
+            // Use AntPathRequestMatcher so this chain secures the HAPI FHIR servlet mapped at /fhir/*
+            .securityMatcher(new AntPathRequestMatcher("/fhir/**")) // Only match /fhir/* paths
             .csrf(csrf -> csrf.disable())
             .cors(cors -> cors.configurationSource(corsConfigurationSource))
             .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .authorizeHttpRequests(authz -> authz
-                .requestMatchers("/fhir/**").authenticated()
+                // Allow public access to metadata endpoint (FHIR CapabilityStatement)
+                .requestMatchers("/fhir/metadata").permitAll()
+                // Require a successfully authenticated JWT for all other FHIR endpoints
+                .anyRequest().authenticated()
             )
-            // OAuth 2.0 Resource Server for FHIR API
+            // OAuth 2.0 Resource Server for FHIR API - explicitly use our JwtDecoder
             .oauth2ResourceServer(oauth2 -> oauth2
-                .jwt(Customizer.withDefaults())
-            );
+                .jwt(jwt -> jwt.decoder(jwtDecoder))
+            )
+            // Disable anonymous authentication so that requests without a valid Bearer token
+            // are treated as unauthenticated (no AnonymousAuthenticationToken)
+            .anonymous(anonymous -> anonymous.disable());
         
         return http.build();
     }

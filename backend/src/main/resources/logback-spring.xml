@@ -45,9 +45,11 @@
     <logger name="com.couchbase.fhir.auth" level="ERROR"/>
     <logger name="com.couchbase.common" level="ERROR"/>
     
-    <!-- Spring Security and OAuth2 logging -->
+    <!-- Spring Security and OAuth2 logging (set to ERROR for production, DEBUG for troubleshooting) -->
     <logger name="org.springframework.security" level="ERROR"/>
     <logger name="org.springframework.security.oauth2" level="ERROR"/>
+    <logger name="org.springframework.security.oauth2.server.resource" level="ERROR"/>
+    <logger name="org.springframework.security.web" level="ERROR"/>
     
     <!-- Only target the specific noisy classes you mentioned -->
     <logger name="com.couchbase.fhir.repository.service.FhirBundleProcessingService" level="WARN"/>

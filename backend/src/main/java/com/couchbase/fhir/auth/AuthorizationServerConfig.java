@@ -5,7 +5,10 @@ import com.nimbusds.jose.jwk.RSAKey;
 import com.nimbusds.jose.jwk.source.ImmutableJWKSet;
 import com.nimbusds.jose.jwk.source.JWKSource;
 import com.nimbusds.jose.proc.SecurityContext;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.annotation.Order;
@@ -57,9 +60,10 @@ import java.util.UUID;
 @Configuration
 public class AuthorizationServerConfig {
 
+    private static final Logger logger = LoggerFactory.getLogger(AuthorizationServerConfig.class);
+
     @Autowired
     private com.couchbase.common.config.FhirServerConfig fhirServerConfig;
-
 
     /**
      * OAuth 2.0 Authorization Server Security Filter Chain
@@ -69,25 +73,30 @@ public class AuthorizationServerConfig {
     @Order(1)
     public SecurityFilterChain authorizationServerSecurityFilterChain(HttpSecurity http)
             throws Exception {
-        // Configure OAuth2 Authorization Server with OIDC support
-        OAuth2AuthorizationServerConfigurer authorizationServerConfigurer =
-            OAuth2AuthorizationServerConfigurer.authorizationServer();
-        
-        http
-            .securityMatcher(authorizationServerConfigurer.getEndpointsMatcher())
-            .with(authorizationServerConfigurer, (authServer) -> 
-                authServer.oidc(Customizer.withDefaults()) // Enable OpenID Connect 1.0
-            )
-            // Redirect to login page when not authenticated
-            .exceptionHandling((exceptions) -> exceptions
+        // Apply Spring Authorization Server's default configuration.
+        // This ensures ALL standard endpoints are correctly mapped, including:
+        // - /oauth2/authorize
+        // - /oauth2/token
+        // - /oauth2/introspect
+        // - /oauth2/revoke
+        // - /oauth2/jwks
+        // - /.well-known/oauth-authorization-server
+        OAuth2AuthorizationServerConfiguration.applyDefaultSecurity(http);
+
+        // Enable OpenID Connect 1.0
+        http.getConfigurer(OAuth2AuthorizationServerConfigurer.class)
+            .oidc(Customizer.withDefaults());
+
+        // Redirect to login page when not authenticated for HTML requests
+        http.exceptionHandling((exceptions) -> exceptions
                 .defaultAuthenticationEntryPointFor(
-                    new LoginUrlAuthenticationEntryPoint("/login"),
-                    new MediaTypeRequestMatcher(MediaType.TEXT_HTML)
+                        new LoginUrlAuthenticationEntryPoint("/login"),
+                        new MediaTypeRequestMatcher(MediaType.TEXT_HTML)
                 )
-            )
-            // Accept access tokens for User Info and/or Client Registration
-            .oauth2ResourceServer((oauth2) -> oauth2
-                .jwt(Customizer.withDefaults()));
+        );
+
+        // Accept access tokens for User Info and/or Client Registration
+        http.oauth2ResourceServer((oauth2) -> oauth2.jwt(Customizer.withDefaults()));
 
         return http.build();
     }
@@ -120,13 +129,22 @@ public class AuthorizationServerConfig {
                 .scope(SmartScopes.FHIRUSER)
                 .scope(SmartScopes.ONLINE_ACCESS)
                 .scope(SmartScopes.PATIENT_ALL_READ)
+                .scope(SmartScopes.PATIENT_ALL_WRITE)
                 .scope(SmartScopes.USER_ALL_READ)
+                .scope(SmartScopes.USER_ALL_WRITE)
                 .scope(SmartScopes.SYSTEM_ALL_READ)
+                .scope(SmartScopes.SYSTEM_ALL_WRITE)
                 .clientSettings(ClientSettings.builder()
                         .requireAuthorizationConsent(true) // Require user consent
                         .build())
                 .tokenSettings(TokenSettings.builder()
-                        .accessTokenTimeToLive(Duration.ofHours(1))
+                        // Access token expiry: configurable via environment variable
+                        // Default: 24 hours for testing/development
+                        // Production: 1 hour recommended
+                        .accessTokenTimeToLive(Duration.ofHours(
+                            Long.parseLong(System.getProperty("oauth.token.expiry.hours", 
+                                          System.getenv().getOrDefault("OAUTH_TOKEN_EXPIRY_HOURS", "24")))
+                        ))
                         .refreshTokenTimeToLive(Duration.ofDays(30))
                         .reuseRefreshTokens(false)
                         .build())
@@ -230,10 +248,16 @@ public class AuthorizationServerConfig {
      * Uses base URL from config.yaml (app.baseUrl)
      */
     @Bean
-    public AuthorizationServerSettings authorizationServerSettings() {
-        // Get base URL from config.yaml and extract the issuer (remove /fhir suffix)
-        String baseUrl = fhirServerConfig.getNormalizedBaseUrl();
-        String issuer = baseUrl.replace("/fhir", ""); // http://localhost:8080/fhir -> http://localhost:8080
+    public AuthorizationServerSettings authorizationServerSettings(
+            @Value("${app.baseUrl:http://localhost:8080/fhir}") String configBaseUrl) {
+        // Extract issuer by removing the /fhir path while preserving the full host:port
+        // Example: http://localhost:8080/fhir -> http://localhost:8080
+        String issuer = configBaseUrl;
+        if (issuer.endsWith("/fhir")) {
+            issuer = issuer.substring(0, issuer.length() - 5); // Remove last 5 chars: "/fhir"
+        }
+        
+        logger.info("🔐 OAuth Authorization Server issuer: {}", issuer);
         
         return AuthorizationServerSettings.builder()
                 .issuer(issuer) // Uses base URL from config.yaml

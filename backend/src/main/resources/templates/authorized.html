@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>OAuth Tokens - Couchbase FHIR</title>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+          Oxygen, Ubuntu, Cantarell, sans-serif;
+        background: #0f172a;
+        color: #e5e7eb;
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 20px;
+      }
+
+      .container {
+        background: #020617;
+        border-radius: 12px;
+        box-shadow: 0 10px 40px rgba(0, 0, 0, 0.6);
+        padding: 28px;
+        max-width: 900px;
+        width: 100%;
+        border: 1px solid #1f2937;
+      }
+
+      .header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 20px;
+      }
+
+      .header h1 {
+        font-size: 22px;
+        font-weight: 600;
+      }
+
+      .tag {
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        padding: 4px 8px;
+        border-radius: 999px;
+        border: 1px solid #f97316;
+        color: #fed7aa;
+        background: rgba(251, 146, 60, 0.12);
+      }
+
+      .section {
+        margin-top: 18px;
+      }
+
+      .section-title {
+        font-size: 13px;
+        font-weight: 600;
+        margin-bottom: 6px;
+        color: #9ca3af;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }
+
+      .token-box {
+        position: relative;
+        background: #020617;
+        border-radius: 8px;
+        border: 1px solid #1f2937;
+        padding: 12px 12px 8px 12px;
+        margin-top: 4px;
+      }
+
+      .token-label {
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: #6b7280;
+        margin-bottom: 4px;
+      }
+
+      .token-value {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+          "Liberation Mono", "Courier New", monospace;
+        font-size: 11px;
+        color: #e5e7eb;
+        word-break: break-all;
+        max-height: 110px;
+        overflow: auto;
+      }
+
+      .copy-btn {
+        position: absolute;
+        top: 10px;
+        right: 10px;
+        padding: 4px 8px;
+        font-size: 11px;
+        border-radius: 999px;
+        border: 1px solid #374151;
+        background: #020617;
+        color: #9ca3af;
+        cursor: pointer;
+      }
+
+      .copy-btn:hover {
+        background: #111827;
+        color: #e5e7eb;
+      }
+
+      .meta {
+        font-size: 12px;
+        color: #9ca3af;
+        margin-top: 8px;
+      }
+
+      .meta strong {
+        color: #e5e7eb;
+      }
+
+      .error {
+        background: #7f1d1d;
+        border-radius: 8px;
+        padding: 12px 14px;
+        border: 1px solid #fecaca;
+        color: #fee2e2;
+        font-size: 13px;
+        margin-top: 12px;
+      }
+
+      .scope-badge {
+        display: inline-block;
+        padding: 3px 8px;
+        border-radius: 999px;
+        border: 1px solid #1d4ed8;
+        color: #bfdbfe;
+        font-size: 11px;
+        margin: 2px 4px 0 0;
+      }
+
+      .snippet {
+        margin-top: 10px;
+        background: #020617;
+        border-radius: 8px;
+        border: 1px solid #1f2937;
+        padding: 10px 12px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+          "Liberation Mono", "Courier New", monospace;
+        font-size: 11px;
+        color: #d1d5db;
+        white-space: pre-wrap;
+      }
+
+      .hint {
+        font-size: 11px;
+        color: #6b7280;
+        margin-top: 6px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <div class="header">
+        <div>
+          <h1>OAuth Tokens</h1>
+          <div class="hint">
+            Dev helper page – copy the access token into Postman, curl, or your
+            client.
+          </div>
+        </div>
+        <span class="tag">DEV&nbsp;ONLY</span>
+      </div>
+
+      <div th:if="${error}" class="error" th:text="${error}">
+        Something went wrong exchanging the code.
+      </div>
+
+      <div th:if="${tokens}">
+        <div class="section">
+          <div class="section-title">Access token</div>
+          <div class="token-box">
+            <div class="token-label">access_token</div>
+            <button
+              class="copy-btn"
+              type="button"
+              onclick="copyToken('accessTokenText')"
+            >
+              Copy
+            </button>
+            <div
+              id="accessTokenText"
+              class="token-value"
+              th:text="${tokens['access_token']}"
+            >
+              access_token_here
+            </div>
+          </div>
+
+          <div class="meta">
+            <span th:if="${tokens['expires_in']}">
+              <strong>Expires in:</strong>
+              <span th:text="${tokens['expires_in']}"></span> seconds
+            </span>
+            <span th:if="${expiresAt}">
+              &nbsp;(<strong>approx:</strong>
+              <span th:text="${expiresAt}"></span>)
+            </span>
+          </div>
+        </div>
+
+        <div class="section" th:if="${tokens['id_token']}">
+          <div class="section-title">ID token</div>
+          <div class="token-box">
+            <div class="token-label">id_token</div>
+            <button
+              class="copy-btn"
+              type="button"
+              onclick="copyToken('idTokenText')"
+            >
+              Copy
+            </button>
+            <div
+              id="idTokenText"
+              class="token-value"
+              th:text="${tokens['id_token']}"
+            >
+              id_token_here
+            </div>
+          </div>
+        </div>
+
+        <div class="section" th:if="${tokens['refresh_token']}">
+          <div class="section-title">Refresh token</div>
+          <div class="token-box">
+            <div class="token-label">refresh_token</div>
+            <button
+              class="copy-btn"
+              type="button"
+              onclick="copyToken('refreshTokenText')"
+            >
+              Copy
+            </button>
+            <div
+              id="refreshTokenText"
+              class="token-value"
+              th:text="${tokens['refresh_token']}"
+            >
+              refresh_token_here
+            </div>
+          </div>
+          <div class="hint">
+            Keep refresh tokens secret – they can be used to mint new access
+            tokens.
+          </div>
+        </div>
+
+        <div class="section" th:if="${tokens['scope']}">
+          <div class="section-title">Scopes</div>
+          <div>
+            <span
+              class="scope-badge"
+              th:each="s : ${#strings.arraySplit(tokens['scope'], ' ')}"
+              th:text="${s}"
+            >
+              scope
+            </span>
+          </div>
+        </div>
+
+        <div class="section">
+          <div class="section-title">Example curl</div>
+          <div class="snippet">
+curl -H "Authorization: Bearer <access_token>" \
+  -H "Accept: application/fhir+json" \
+  http://localhost:8080/fhir/Patient
+          </div>
+          <div class="hint">
+            Replace <code>&lt;access_token&gt;</code> with the value above, or
+            paste the token into Postman's Bearer Token field.
+          </div>
+        </div>
+      </div>
+
+      <div th:if="${tokens == null and error == null}">
+        <div class="error">
+          No tokens to display. This page should be loaded as the redirect URI
+          from /oauth2/authorize with a valid <code>code</code> parameter.
+        </div>
+      </div>
+    </div>
+
+    <script>
+      function copyToken(elementId) {
+        const el = document.getElementById(elementId);
+        if (!el) return;
+        const text = el.textContent || el.innerText || "";
+        if (!text) return;
+
+        navigator.clipboard
+          .writeText(text.trim())
+          .catch((err) => console.error("Failed to copy token", err));
+      }
+    </script>
+  </body>
+</html>
+
+

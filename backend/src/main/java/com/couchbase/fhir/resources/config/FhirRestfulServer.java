@@ -57,6 +57,9 @@ public class FhirRestfulServer extends RestfulServer {
     @Autowired
     private com.couchbase.fhir.resources.interceptor.FastpathResponseInterceptor fastpathResponseInterceptor;
     
+    @Autowired
+    private com.couchbase.fhir.auth.SmartAuthorizationInterceptor smartAuthorizationInterceptor;
+    
     @Autowired(required = false)
     private org.springframework.boot.info.BuildProperties buildProperties;
     
@@ -106,6 +109,7 @@ public class FhirRestfulServer extends RestfulServer {
             // No interceptor needed for tenant identification
             
             registerInterceptor(bucketValidationInterceptor);
+            registerInterceptor(smartAuthorizationInterceptor); // 🔐 SMART on FHIR authorization
             registerInterceptor(cleanExceptionInterceptor);
             registerInterceptor(fastpathResponseInterceptor); // 🚀 Fastpath JSON bypass (10× memory reduction)
             USCoreCapabilityProvider capabilityProvider = new USCoreCapabilityProvider(this, buildProperties);
@@ -128,6 +132,7 @@ public class FhirRestfulServer extends RestfulServer {
             // No interceptor needed for tenant identification
             
             registerInterceptor(bucketValidationInterceptor);
+            registerInterceptor(smartAuthorizationInterceptor); // 🔐 SMART on FHIR authorization
             registerInterceptor(cleanExceptionInterceptor);
             registerInterceptor(fastpathResponseInterceptor); // 🚀 Fastpath JSON bypass (10× memory reduction)
             USCoreCapabilityProvider capabilityProvider = new USCoreCapabilityProvider(this, buildProperties);

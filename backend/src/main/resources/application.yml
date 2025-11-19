@@ -4,6 +4,19 @@ spring:
   config:
     import: classpath:fhir.yml
 
+# OAuth2 Authorization Server Configuration
+app:
+  baseUrl: ${APP_BASE_URL:http://localhost:8080/fhir}
+
+# OAuth Token Expiry Configuration
+# Set OAUTH_TOKEN_EXPIRY_HOURS environment variable to change token validity
+# Default: 24 hours (development/testing)
+# Production recommendation: 1 hour
+# Examples:
+#   - 24 hour stress test: export OAUTH_TOKEN_EXPIRY_HOURS=25
+#   - Production: export OAUTH_TOKEN_EXPIRY_HOURS=1
+#   - Week-long testing: export OAUTH_TOKEN_EXPIRY_HOURS=168
+
 # HTTP Compression (applies to all responses including fastpath JSON)
 server:
   compression:
