@@ -39,6 +39,7 @@ public class TokensController {
             String userId = (authentication != null && authentication.isAuthenticated()) ? authentication.getName() : "unknown";
 
             String appName = (String) request.get("appName");
+            String type = (String) request.getOrDefault("type", "pat"); // "pat" or "client"
             @SuppressWarnings("unchecked")
             List<String> scopesList = (List<String>) request.get("scopes");
             String[] scopes = scopesList != null ? scopesList.toArray(new String[0]) : new String[0];
@@ -51,8 +52,8 @@ public class TokensController {
                 return ResponseEntity.badRequest().body(Map.of("error", "At least one scope is required"));
             }
 
-            logger.info("🔑 Generating token for user: {} (app: {})", userId, appName);
-            Map<String, Object> result = tokenService.generateToken(userId, appName, scopes, userId);
+            logger.info("🔑 Generating {} for user: {} (app: {})", type, userId, appName);
+            Map<String, Object> result = tokenService.generateToken(userId, appName, scopes, userId, type);
 
             return ResponseEntity.status(HttpStatus.CREATED).body(result);
         } catch (Exception e) {

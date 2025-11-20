@@ -28,6 +28,8 @@ import {
   OutlinedInput,
   Tooltip,
   Snackbar,
+  Tabs,
+  Tab,
 } from "@mui/material";
 import {
   Add as AddIcon,
@@ -35,6 +37,7 @@ import {
   ContentCopy as CopyIcon,
   Visibility as VisibilityIcon,
   VisibilityOff as VisibilityOffIcon,
+  AppRegistration as AppRegistrationIcon,
 } from "@mui/icons-material";
 import type { Token, GenerateTokenRequest } from "../../services/tokensService";
 import {
@@ -61,13 +64,22 @@ export default function Tokens() {
   const [generateDialogOpen, setGenerateDialogOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [selectedToken, setSelectedToken] = useState<Token | null>(null);
+
+  // Results state
   const [newTokenJWT, setNewTokenJWT] = useState<string | null>(null);
+  const [newClientCreds, setNewClientCreds] = useState<{
+    clientId: string;
+    clientSecret: string;
+  } | null>(null);
+
   const [showToken, setShowToken] = useState(false);
   const [copySnackbar, setCopySnackbar] = useState(false);
+  const [activeTab, setActiveTab] = useState(0);
 
   const [formData, setFormData] = useState<GenerateTokenRequest>({
     appName: "",
     scopes: [],
+    type: "pat",
   });
 
   // Load tokens on mount
@@ -91,11 +103,22 @@ export default function Tokens() {
   const handleGenerateToken = async () => {
     try {
       setError(null);
-      const response = await generateToken(formData);
-      setSuccess(
-        "Token generated successfully! Copy it now - it won't be shown again."
-      );
-      setNewTokenJWT(response.token); // Show the actual JWT
+      const type = activeTab === 0 ? "pat" : "client";
+      const response = await generateToken({ ...formData, type });
+
+      if (type === "pat") {
+        setSuccess(
+          "Token generated successfully! Copy it now - it won't be shown again."
+        );
+        setNewTokenJWT(response.token || "");
+      } else {
+        setSuccess("App registered successfully! Copy the credentials now.");
+        setNewClientCreds({
+          clientId: response.clientId || "",
+          clientSecret: response.clientSecret || "",
+        });
+      }
+
       setGenerateDialogOpen(false);
       resetForm();
       loadTokens();
@@ -110,7 +133,7 @@ export default function Tokens() {
     try {
       setError(null);
       await revokeToken(selectedToken.id);
-      setSuccess("Token revoked successfully");
+      setSuccess("Revoked successfully");
       setDeleteDialogOpen(false);
       setSelectedToken(null);
       loadTokens();
@@ -131,16 +154,18 @@ export default function Tokens() {
     setFormData({
       appName: "",
       scopes: [],
+      type: activeTab === 0 ? "pat" : "client",
     });
   };
 
-  const handleCopyToken = (token: string) => {
-    navigator.clipboard.writeText(token);
+  const handleCopy = (text: string) => {
+    navigator.clipboard.writeText(text);
     setCopySnackbar(true);
   };
 
-  const handleCloseNewTokenDialog = () => {
+  const handleCloseResultsDialog = () => {
     setNewTokenJWT(null);
+    setNewClientCreds(null);
     setShowToken(false);
   };
 
@@ -172,10 +197,20 @@ export default function Tokens() {
     return "active";
   };
 
+  const openGenerateDialog = () => {
+    resetForm();
+    setGenerateDialogOpen(true);
+  };
+
+  const filteredTokens = tokens.filter((t) => {
+    if (activeTab === 0) return t.type === "pat" || !t.type; // Default to PAT for legacy
+    return t.type === "client";
+  });
+
   if (loading) {
     return (
       <Box sx={{ p: 3 }}>
-        <Typography>Loading tokens...</Typography>
+        <Typography>Loading...</Typography>
       </Box>
     );
   }
@@ -190,14 +225,7 @@ export default function Tokens() {
           mb: 3,
         }}
       >
-        <Typography variant="h4">API Tokens</Typography>
-        <Button
-          variant="contained"
-          startIcon={<AddIcon />}
-          onClick={() => setGenerateDialogOpen(true)}
-        >
-          Generate Token
-        </Button>
+        <Typography variant="h4">Developer Settings</Typography>
       </Box>
 
       {error && (
@@ -216,40 +244,69 @@ export default function Tokens() {
         </Alert>
       )}
 
+      <Box sx={{ borderBottom: 1, borderColor: "divider", mb: 3 }}>
+        <Tabs value={activeTab} onChange={(_, val) => setActiveTab(val)}>
+          <Tab label="Personal Access Tokens" />
+          <Tab label="SMART Apps (Clients)" />
+        </Tabs>
+      </Box>
+
       <Card>
         <CardContent>
-          <Typography variant="h6" gutterBottom>
-            Your Tokens
-          </Typography>
-          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-            Generate API tokens to access the FHIR API programmatically. Keep
-            your tokens secure!
-          </Typography>
+          <Box sx={{ display: "flex", justifyContent: "space-between", mb: 2 }}>
+            <Box>
+              <Typography variant="h6" gutterBottom>
+                {activeTab === 0
+                  ? "Personal Access Tokens"
+                  : "Registered SMART Apps"}
+              </Typography>
+              <Typography variant="body2" color="text.secondary">
+                {activeTab === 0
+                  ? "Generate pre-authorized JWTs for testing APIs (e.g. Postman, Scripts)."
+                  : "Register OAuth2 clients for your SMART on FHIR applications."}
+              </Typography>
+            </Box>
+            <Button
+              variant="contained"
+              startIcon={
+                activeTab === 0 ? <AddIcon /> : <AppRegistrationIcon />
+              }
+              onClick={openGenerateDialog}
+            >
+              {activeTab === 0 ? "Generate Token" : "Register App"}
+            </Button>
+          </Box>
 
           <TableContainer component={Paper}>
             <Table>
               <TableHead>
                 <TableRow>
-                  <TableCell>App Name</TableCell>
+                  <TableCell>Name</TableCell>
+                  <TableCell>
+                    {activeTab === 1 ? "Client ID" : "Token ID"}
+                  </TableCell>
                   <TableCell>Scopes</TableCell>
                   <TableCell>Status</TableCell>
                   <TableCell>Created</TableCell>
-                  <TableCell>Expires</TableCell>
-                  <TableCell>Last Used</TableCell>
                   <TableCell align="right">Actions</TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
-                {tokens.length === 0 ? (
+                {filteredTokens.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={7} align="center">
-                      No tokens found. Generate one to get started!
+                    <TableCell colSpan={6} align="center">
+                      No items found.{" "}
+                      {activeTab === 0 ? "Generate a token" : "Register an app"}{" "}
+                      to get started!
                     </TableCell>
                   </TableRow>
                 ) : (
-                  tokens.map((token) => (
+                  filteredTokens.map((token) => (
                     <TableRow key={token.id}>
                       <TableCell>{token.appName}</TableCell>
+                      <TableCell sx={{ fontFamily: "monospace" }}>
+                        {token.clientId}
+                      </TableCell>
                       <TableCell>
                         <Box
                           sx={{ display: "flex", gap: 0.5, flexWrap: "wrap" }}
@@ -267,16 +324,15 @@ export default function Tokens() {
                         />
                       </TableCell>
                       <TableCell>{formatDate(token.createdAt)}</TableCell>
-                      <TableCell>{formatDate(token.expiresAt)}</TableCell>
-                      <TableCell>{formatDate(token.lastUsedAt)}</TableCell>
                       <TableCell align="right">
-                        <Tooltip title="Revoke Token">
+                        <Tooltip title="Revoke">
                           <IconButton
                             onClick={() => {
                               setSelectedToken(token);
                               setDeleteDialogOpen(true);
                             }}
                             disabled={token.status === "revoked"}
+                            color="error"
                           >
                             <DeleteIcon />
                           </IconButton>
@@ -291,14 +347,18 @@ export default function Tokens() {
         </CardContent>
       </Card>
 
-      {/* Generate Token Dialog */}
+      {/* Generate Dialog */}
       <Dialog
         open={generateDialogOpen}
         onClose={() => setGenerateDialogOpen(false)}
         maxWidth="sm"
         fullWidth
       >
-        <DialogTitle>Generate New API Token</DialogTitle>
+        <DialogTitle>
+          {activeTab === 0
+            ? "Generate Personal Access Token"
+            : "Register SMART Application"}
+        </DialogTitle>
         <DialogContent>
           <Box sx={{ display: "flex", flexDirection: "column", gap: 2, mt: 2 }}>
             <TextField
@@ -309,7 +369,7 @@ export default function Tokens() {
               }
               fullWidth
               required
-              helperText="Give your token a descriptive name (e.g., 'Mobile App', 'Testing')"
+              helperText="Descriptive name for identifying this token/app later."
             />
             <FormControl fullWidth required>
               <InputLabel>Scopes</InputLabel>
@@ -340,39 +400,17 @@ export default function Tokens() {
           <Button
             onClick={handleGenerateToken}
             variant="contained"
-            color="primary"
             disabled={!formData.appName || formData.scopes.length === 0}
           >
-            Generate Token
+            {activeTab === 0 ? "Generate Token" : "Register App"}
           </Button>
         </DialogActions>
       </Dialog>
 
-      {/* Delete Confirmation Dialog */}
-      <Dialog
-        open={deleteDialogOpen}
-        onClose={() => setDeleteDialogOpen(false)}
-      >
-        <DialogTitle>Revoke Token?</DialogTitle>
-        <DialogContent>
-          <Typography>
-            Are you sure you want to revoke the token for{" "}
-            <strong>{selectedToken?.appName}</strong>? This action cannot be
-            undone and the token will stop working immediately.
-          </Typography>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setDeleteDialogOpen(false)}>Cancel</Button>
-          <Button onClick={handleRevokeToken} color="error" variant="contained">
-            Revoke Token
-          </Button>
-        </DialogActions>
-      </Dialog>
-
-      {/* New Token Display Dialog */}
+      {/* Results Dialog - Token (PAT) */}
       <Dialog
         open={!!newTokenJWT}
-        onClose={handleCloseNewTokenDialog}
+        onClose={handleCloseResultsDialog}
         maxWidth="md"
         fullWidth
       >
@@ -395,47 +433,115 @@ export default function Tokens() {
               }}
             />
             <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
-              <Tooltip title={showToken ? "Hide Token" : "Show Token"}>
-                <IconButton onClick={() => setShowToken(!showToken)}>
-                  {showToken ? <VisibilityOffIcon /> : <VisibilityIcon />}
-                </IconButton>
-              </Tooltip>
-              <Tooltip title="Copy to Clipboard">
-                <IconButton onClick={() => handleCopyToken(newTokenJWT || "")}>
-                  <CopyIcon />
-                </IconButton>
-              </Tooltip>
+              <IconButton onClick={() => setShowToken(!showToken)}>
+                {showToken ? <VisibilityOffIcon /> : <VisibilityIcon />}
+              </IconButton>
+              <IconButton onClick={() => handleCopy(newTokenJWT || "")}>
+                <CopyIcon />
+              </IconButton>
             </Box>
           </Box>
           <Typography variant="body2" color="text.secondary">
-            Use this token as a Bearer token in your API requests:
+            Use this token as a Bearer token in your API requests.
           </Typography>
-          <Paper
-            sx={{
-              p: 2,
-              mt: 1,
-              bgcolor: "grey.100",
-              fontFamily: "monospace",
-              fontSize: "0.875rem",
-            }}
-          >
-            curl -H "Authorization: Bearer YOUR_TOKEN"
-            http://localhost:8080/fhir/Patient
-          </Paper>
         </DialogContent>
         <DialogActions>
-          <Button onClick={handleCloseNewTokenDialog} variant="contained">
-            I've Copied the Token
+          <Button onClick={handleCloseResultsDialog} variant="contained">
+            Done
           </Button>
         </DialogActions>
       </Dialog>
 
-      {/* Copy Snackbar */}
+      {/* Results Dialog - Client (App) */}
+      <Dialog
+        open={!!newClientCreds}
+        onClose={handleCloseResultsDialog}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle>App Registered Successfully! 🚀</DialogTitle>
+        <DialogContent>
+          <Alert severity="warning" sx={{ mb: 2 }}>
+            <strong>Important:</strong> Copy the Client Secret now! It won't be
+            shown again.
+          </Alert>
+
+          <Box sx={{ mb: 2 }}>
+            <Typography variant="subtitle2" gutterBottom>
+              Client ID
+            </Typography>
+            <Box sx={{ display: "flex", gap: 1 }}>
+              <TextField
+                fullWidth
+                value={newClientCreds?.clientId}
+                InputProps={{ readOnly: true, sx: { fontFamily: "monospace" } }}
+                size="small"
+              />
+              <IconButton
+                onClick={() => handleCopy(newClientCreds?.clientId || "")}
+              >
+                <CopyIcon />
+              </IconButton>
+            </Box>
+          </Box>
+
+          <Box sx={{ mb: 2 }}>
+            <Typography variant="subtitle2" gutterBottom>
+              Client Secret
+            </Typography>
+            <Box sx={{ display: "flex", gap: 1 }}>
+              <TextField
+                fullWidth
+                value={newClientCreds?.clientSecret}
+                type={showToken ? "text" : "password"}
+                InputProps={{ readOnly: true, sx: { fontFamily: "monospace" } }}
+                size="small"
+              />
+              <IconButton onClick={() => setShowToken(!showToken)}>
+                {showToken ? <VisibilityOffIcon /> : <VisibilityIcon />}
+              </IconButton>
+              <IconButton
+                onClick={() => handleCopy(newClientCreds?.clientSecret || "")}
+              >
+                <CopyIcon />
+              </IconButton>
+            </Box>
+          </Box>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleCloseResultsDialog} variant="contained">
+            Done
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Revoke Dialog */}
+      <Dialog
+        open={deleteDialogOpen}
+        onClose={() => setDeleteDialogOpen(false)}
+      >
+        <DialogTitle>Revoke Access?</DialogTitle>
+        <DialogContent>
+          <Typography>
+            Are you sure you want to revoke{" "}
+            <strong>{selectedToken?.appName}</strong>? This will immediately
+            invalidate{" "}
+            {activeTab === 0 ? "the token" : "the application credentials"}.
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setDeleteDialogOpen(false)}>Cancel</Button>
+          <Button onClick={handleRevokeToken} color="error" variant="contained">
+            Revoke
+          </Button>
+        </DialogActions>
+      </Dialog>
+
       <Snackbar
         open={copySnackbar}
         autoHideDuration={2000}
         onClose={() => setCopySnackbar(false)}
-        message="Token copied to clipboard!"
+        message="Copied to clipboard!"
       />
     </Box>
   );

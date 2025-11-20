@@ -37,11 +37,17 @@ public class User {
     private String passwordHash;
     
     /**
-     * User role: "admin" or "api_user"
+     * User role: "admin", "developer", or "smart_user"
      * - admin: Full access to Admin UI and user management
-     * - api_user: Can only generate/manage API tokens
+     * - developer: Full Admin-UI without access to Users Page
+     * - smart_user: No login, just for SMART apps
      */
     private String role;
+
+    /**
+     * Allowed scopes for this user
+     */
+    private String[] allowedScopes;
     
     /**
      * Authentication method: "local" or "social"
@@ -135,6 +141,33 @@ public class User {
 
     public void setRole(String role) {
         this.role = role;
+        // Auto-assign scopes based on role if not already set
+        if (this.allowedScopes == null || this.allowedScopes.length == 0) {
+            if ("admin".equals(role)) {
+                this.allowedScopes = new String[]{"user/*.*", "system/*.*"};
+            } else if ("developer".equals(role)) {
+                this.allowedScopes = new String[]{"user/*.*"};
+            } else if ("smart_user".equals(role)) {
+                this.allowedScopes = new String[]{"openid", "profile", "launch/patient", "patient/*.read", "offline_access"};
+            }
+        }
+    }
+
+    public String[] getAllowedScopes() {
+        if (allowedScopes == null || allowedScopes.length == 0) {
+            if ("admin".equals(role)) {
+                return new String[]{"user/*.*", "system/*.*"};
+            } else if ("developer".equals(role)) {
+                return new String[]{"user/*.*"};
+            } else if ("smart_user".equals(role)) {
+                return new String[]{"openid", "profile", "launch/patient", "patient/*.read", "offline_access"};
+            }
+        }
+        return allowedScopes;
+    }
+
+    public void setAllowedScopes(String[] allowedScopes) {
+        this.allowedScopes = allowedScopes;
     }
 
     public String getAuthMethod() {
@@ -201,6 +234,14 @@ public class User {
     @com.fasterxml.jackson.annotation.JsonIgnore
     public boolean isAdmin() {
         return "admin".equals(role);
+    }
+
+    /**
+     * Check if user is a developer
+     */
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    public boolean isDeveloper() {
+        return "developer".equals(role);
     }
     
     /**

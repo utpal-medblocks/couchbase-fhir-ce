@@ -23,12 +23,21 @@ import {
   MenuItem,
   Alert,
   CircularProgress,
+  FormControl,
+  InputLabel,
+  Select,
+  OutlinedInput,
+  InputAdornment,
 } from "@mui/material";
 import {
   Add as AddIcon,
   Edit as EditIcon,
   Delete as DeleteIcon,
+  Block as BlockIcon,
+  CheckCircle as CheckCircleIcon,
   Refresh as RefreshIcon,
+  Visibility as VisibilityIcon,
+  VisibilityOff as VisibilityOffIcon,
 } from "@mui/icons-material";
 import type {
   User,
@@ -47,6 +56,37 @@ import {
   getStatusColor,
 } from "../../services/usersService";
 
+// Helper function to get scope options based on role
+const getScopeOptionsForRole = (role: string): string[] => {
+  switch (role) {
+    case "admin":
+      return ["system/*.*"];
+    case "developer":
+      return [
+        "user/*.*",
+        "launch/patient",
+        "launch/encounter",
+        "openid",
+        "profile",
+        "offline_access",
+      ];
+    case "smart_user":
+      return [
+        "openid",
+        "profile",
+        "launch/patient",
+        "launch/encounter",
+        "patient/*.read",
+        "patient/*.write",
+        "user/*.read",
+        "user/*.write",
+        "offline_access",
+      ];
+    default:
+      return [];
+  }
+};
+
 const Users: React.FC = () => {
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
@@ -57,6 +97,7 @@ const Users: React.FC = () => {
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [inactivateDialogOpen, setInactivateDialogOpen] = useState(false);
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
 
   // Form states
@@ -64,9 +105,15 @@ const Users: React.FC = () => {
     username: "",
     email: "",
     passwordHash: "",
-    role: "api_user",
+    role: "developer",
     authMethod: "local",
+    allowedScopes: getScopeOptionsForRole("developer"),
   });
+
+  // UI states
+  const [createSubmitAttempted, setCreateSubmitAttempted] = useState(false);
+  const [showCreatePassword, setShowCreatePassword] = useState(false);
+  const [showEditPassword, setShowEditPassword] = useState(false);
 
   // Load users on mount
   useEffect(() => {
@@ -89,6 +136,26 @@ const Users: React.FC = () => {
   const handleCreateUser = async () => {
     try {
       setError(null);
+      setCreateSubmitAttempted(true);
+
+      // Validate required fields
+      if (!formData.email || !formData.username) {
+        setError("Email and username are required");
+        return;
+      }
+
+      // Validate password for local auth
+      if (formData.authMethod === "local" && !formData.passwordHash) {
+        setError("Password is required for local authentication");
+        return;
+      }
+
+      // Validate scopes
+      if (!formData.allowedScopes || formData.allowedScopes.length === 0) {
+        setError("At least one scope must be selected");
+        return;
+      }
+
       // Use email as user ID
       const userRequest = {
         ...formData,
@@ -124,13 +191,28 @@ const Users: React.FC = () => {
     }
   };
 
+  const handleInactivateUser = async () => {
+    if (!selectedUser) return;
+
+    try {
+      setError(null);
+      await updateUser(selectedUser.id, { status: "inactive" });
+      setSuccess("User inactivated successfully");
+      setInactivateDialogOpen(false);
+      setSelectedUser(null);
+      loadUsers();
+    } catch (err: any) {
+      setError(err.response?.data?.error || "Failed to inactivate user");
+    }
+  };
+
   const handleDeleteUser = async () => {
     if (!selectedUser) return;
 
     try {
       setError(null);
       await deleteUser(selectedUser.id);
-      setSuccess("User deleted successfully");
+      setSuccess("User permanently deleted");
       setDeleteDialogOpen(false);
       setSelectedUser(null);
       loadUsers();
@@ -141,6 +223,8 @@ const Users: React.FC = () => {
 
   const openCreateDialog = () => {
     resetForm();
+    setCreateSubmitAttempted(false);
+    setShowCreatePassword(false);
     setCreateDialogOpen(true);
   };
 
@@ -154,6 +238,36 @@ const Users: React.FC = () => {
     setEditDialogOpen(true);
   };
 
+  const openInactivateDialog = (user: User) => {
+    setSelectedUser(user);
+    setInactivateDialogOpen(true);
+  };
+
+  const handleToggleUserStatus = async (user: User) => {
+    try {
+      setError(null);
+      const newStatus = user.status === "active" ? "inactive" : "active";
+      await updateUser(user.id, { status: newStatus });
+      setSuccess(
+        `User ${
+          newStatus === "active" ? "activated" : "inactivated"
+        } successfully`
+      );
+      loadUsers();
+    } catch (err: any) {
+      setError(err.response?.data?.error || "Failed to update user status");
+    }
+  };
+
+  const handleRemoveScope = (scopeToRemove: string) => {
+    setFormData((prev) => ({
+      ...prev,
+      allowedScopes: (prev?.allowedScopes || []).filter(
+        (scope) => scope !== scopeToRemove
+      ),
+    }));
+  };
+
   const openDeleteDialog = (user: User) => {
     setSelectedUser(user);
     setDeleteDialogOpen(true);
@@ -164,10 +278,12 @@ const Users: React.FC = () => {
       username: "",
       email: "",
       passwordHash: "",
-      role: "api_user",
+      role: "developer",
       authMethod: "local",
+      allowedScopes: getScopeOptionsForRole("developer"),
     });
     setSelectedUser(null);
+    setCreateSubmitAttempted(false);
   };
 
   const formatDate = (dateString?: string) => {
@@ -176,19 +292,18 @@ const Users: React.FC = () => {
   };
 
   return (
-    <Box sx={{ p: 3 }}>
+    <Box sx={{ p: 2, width: "100%" }}>
       {/* Header */}
       <Box
         sx={{
           display: "flex",
           justifyContent: "space-between",
           alignItems: "center",
-          mb: 3,
+          mb: 2,
+          gap: 2,
         }}
       >
-        <Typography variant="h4" component="h1">
-          User Management
-        </Typography>
+        <Typography variant="h6">User Management</Typography>
         <Box sx={{ display: "flex", gap: 2 }}>
           <Button
             variant="outlined"
@@ -224,7 +339,7 @@ const Users: React.FC = () => {
       )}
 
       {/* Users Table */}
-      <Card>
+      <Card sx={{ width: "100%", minHeight: 200 }}>
         <CardContent>
           {loading ? (
             <Box sx={{ display: "flex", justifyContent: "center", p: 4 }}>
@@ -293,14 +408,32 @@ const Users: React.FC = () => {
                           size="small"
                           onClick={() => openEditDialog(user)}
                           title="Edit user"
+                          disabled={user.authMethod === "social"}
                         >
                           <EditIcon fontSize="small" />
                         </IconButton>
                         <IconButton
                           size="small"
+                          onClick={() => handleToggleUserStatus(user)}
+                          title={
+                            user.status === "active"
+                              ? "Inactivate user"
+                              : "Activate user"
+                          }
+                          color={
+                            user.status === "active" ? "warning" : "success"
+                          }
+                        >
+                          {user.status === "active" ? (
+                            <BlockIcon fontSize="small" />
+                          ) : (
+                            <CheckCircleIcon fontSize="small" />
+                          )}
+                        </IconButton>
+                        <IconButton
+                          size="small"
                           onClick={() => openDeleteDialog(user)}
-                          title="Delete user"
-                          color="error"
+                          title="Permanently delete user"
                         >
                           <DeleteIcon fontSize="small" />
                         </IconButton>
@@ -346,30 +479,64 @@ const Users: React.FC = () => {
             />
             <TextField
               label="Password"
-              type="password"
+              type={showCreatePassword ? "text" : "password"}
               value={formData.passwordHash || ""}
               onChange={(e) =>
                 setFormData({ ...formData, passwordHash: e.target.value })
               }
               fullWidth
-              helperText="Required for local authentication"
+              required={formData.authMethod === "local"}
+              disabled={formData.authMethod === "social"}
+              error={
+                createSubmitAttempted &&
+                formData.authMethod === "local" &&
+                !formData.passwordHash
+              }
+              helperText={
+                formData.authMethod === "social"
+                  ? "Not required for social login"
+                  : "Required for local authentication"
+              }
+              InputProps={{
+                endAdornment: (
+                  <InputAdornment position="end">
+                    <IconButton
+                      aria-label="toggle password visibility"
+                      onClick={() => setShowCreatePassword((prev) => !prev)}
+                      edge="end"
+                    >
+                      {showCreatePassword ? (
+                        <VisibilityOffIcon />
+                      ) : (
+                        <VisibilityIcon />
+                      )}
+                    </IconButton>
+                  </InputAdornment>
+                ),
+              }}
             />
             <TextField
               select
               label="Role"
-              value={formData.role || "api_user"}
-              onChange={(e) =>
+              value={formData.role || "developer"}
+              onChange={(e) => {
+                const newRole = e.target.value as
+                  | "admin"
+                  | "developer"
+                  | "smart_user";
                 setFormData({
                   ...formData,
-                  role: e.target.value as "admin" | "api_user",
-                })
-              }
+                  role: newRole,
+                  allowedScopes: getScopeOptionsForRole(newRole), // Auto-populate default scopes
+                });
+              }}
               fullWidth
             >
-              <MenuItem value="api_user">
-                API User (Token generation only)
+              <MenuItem value="developer">
+                Developer (API & App Management)
               </MenuItem>
               <MenuItem value="admin">Administrator (Full access)</MenuItem>
+              <MenuItem value="smart_user">SMART User (No UI access)</MenuItem>
             </TextField>
             <TextField
               select
@@ -386,6 +553,57 @@ const Users: React.FC = () => {
               <MenuItem value="local">Local (Email/Password)</MenuItem>
               <MenuItem value="social">Social (Google/GitHub)</MenuItem>
             </TextField>
+            {/* Allowed Scopes - Multi-Select with Chips */}
+            <FormControl fullWidth>
+              <InputLabel>Allowed Scopes</InputLabel>
+              <Select
+                multiple
+                value={formData.allowedScopes || []}
+                onChange={(e) =>
+                  setFormData({
+                    ...formData,
+                    allowedScopes:
+                      typeof e.target.value === "string"
+                        ? e.target.value.split(",")
+                        : e.target.value,
+                  })
+                }
+                input={<OutlinedInput label="Allowed Scopes" />}
+                renderValue={(selected) => (
+                  <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.5 }}>
+                    {(selected as string[]).map((value) => (
+                      <Chip
+                        key={value}
+                        label={value}
+                        size="small"
+                        onMouseDown={(event) => {
+                          // Prevent the select dropdown from opening when clicking the delete icon
+                          event.stopPropagation();
+                        }}
+                        onDelete={() => handleRemoveScope(value)}
+                      />
+                    ))}
+                  </Box>
+                )}
+              >
+                {getScopeOptionsForRole(formData.role || "developer").map(
+                  (scope) => (
+                    <MenuItem key={scope} value={scope}>
+                      {scope}
+                    </MenuItem>
+                  )
+                )}
+              </Select>
+              <Typography
+                variant="caption"
+                color="text.secondary"
+                sx={{ mt: 0.5 }}
+              >
+                {formData.role === "smart_user"
+                  ? "External apps can request these scopes. User will grant consent for a subset."
+                  : "User can generate tokens with these scopes for API testing."}
+              </Typography>
+            </FormControl>
           </Box>
         </DialogContent>
         <DialogActions>
@@ -403,50 +621,123 @@ const Users: React.FC = () => {
         maxWidth="sm"
         fullWidth
       >
-        <DialogTitle>Edit User: {selectedUser?.username}</DialogTitle>
+        <DialogTitle>
+          Edit User: {selectedUser?.username}
+          {selectedUser?.authMethod === "social" && " (Social Login)"}
+        </DialogTitle>
         <DialogContent>
           <Box sx={{ display: "flex", flexDirection: "column", gap: 2, mt: 2 }}>
-            <TextField
-              label="Full Name"
-              value={formData.username || ""}
-              onChange={(e) =>
-                setFormData({ ...formData, username: e.target.value })
-              }
-              fullWidth
-            />
-            <TextField
-              select
-              label="Role"
-              value={formData.role || "api_user"}
-              onChange={(e) =>
-                setFormData({
-                  ...formData,
-                  role: e.target.value as "admin" | "api_user",
-                })
-              }
-              fullWidth
-            >
-              <MenuItem value="api_user">
-                API User (Token generation only)
-              </MenuItem>
-              <MenuItem value="admin">Administrator (Full access)</MenuItem>
-            </TextField>
-            <TextField
-              label="New Password"
-              type="password"
-              value={formData.passwordHash || ""}
-              onChange={(e) =>
-                setFormData({ ...formData, passwordHash: e.target.value })
-              }
-              fullWidth
-              helperText="Leave blank to keep current password"
-            />
+            {selectedUser?.authMethod === "local" ? (
+              // Local users: only allow password change
+              <>
+                <TextField
+                  label="Full Name"
+                  value={selectedUser?.username || ""}
+                  disabled
+                  fullWidth
+                  helperText="Cannot be changed"
+                />
+                <TextField
+                  label="Role"
+                  value={selectedUser?.role || ""}
+                  disabled
+                  fullWidth
+                  helperText="Cannot be changed"
+                />
+                <TextField
+                  label="New Password"
+                  type={showEditPassword ? "text" : "password"}
+                  value={formData.passwordHash || ""}
+                  onChange={(e) =>
+                    setFormData({ ...formData, passwordHash: e.target.value })
+                  }
+                  fullWidth
+                  required
+                  helperText="Enter new password to change"
+                  InputProps={{
+                    endAdornment: (
+                      <InputAdornment position="end">
+                        <IconButton
+                          aria-label="toggle password visibility"
+                          onClick={() => setShowEditPassword((prev) => !prev)}
+                          edge="end"
+                        >
+                          {showEditPassword ? (
+                            <VisibilityOffIcon />
+                          ) : (
+                            <VisibilityIcon />
+                          )}
+                        </IconButton>
+                      </InputAdornment>
+                    ),
+                  }}
+                />
+              </>
+            ) : (
+              // Social users: cannot edit
+              <>
+                <TextField
+                  label="Full Name"
+                  value={selectedUser?.username || ""}
+                  disabled
+                  fullWidth
+                />
+                <TextField
+                  label="Role"
+                  value={selectedUser?.role || ""}
+                  disabled
+                  fullWidth
+                />
+                <TextField
+                  label="Authentication Method"
+                  value={selectedUser?.authMethod || ""}
+                  disabled
+                  fullWidth
+                />
+                <Typography
+                  variant="body2"
+                  color="text.secondary"
+                  sx={{ mt: 1 }}
+                >
+                  Social login users cannot be edited. Use Inactivate/Delete if
+                  needed.
+                </Typography>
+              </>
+            )}
           </Box>
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setEditDialogOpen(false)}>Cancel</Button>
-          <Button onClick={handleUpdateUser} variant="contained">
-            Update User
+          {selectedUser?.authMethod === "local" && (
+            <Button onClick={handleUpdateUser} variant="contained">
+              Update Password
+            </Button>
+          )}
+        </DialogActions>
+      </Dialog>
+
+      {/* Inactivate User Dialog */}
+      <Dialog
+        open={inactivateDialogOpen}
+        onClose={() => setInactivateDialogOpen(false)}
+      >
+        <DialogTitle>Inactivate User</DialogTitle>
+        <DialogContent>
+          <Typography>
+            Are you sure you want to inactivate user{" "}
+            <strong>{selectedUser?.username}</strong>? The user will not be able
+            to log in but their data will be preserved. You can reactivate them
+            later.
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setInactivateDialogOpen(false)}>Cancel</Button>
+          <Button
+            onClick={handleInactivateUser}
+            variant="contained"
+            color="warning"
+          >
+            Inactivate
           </Button>
         </DialogActions>
       </Dialog>
@@ -456,18 +747,24 @@ const Users: React.FC = () => {
         open={deleteDialogOpen}
         onClose={() => setDeleteDialogOpen(false)}
       >
-        <DialogTitle>Delete User</DialogTitle>
+        <DialogTitle>Permanently Delete User</DialogTitle>
         <DialogContent>
+          <Typography color="error" sx={{ mb: 1 }}>
+            ⚠️ <strong>WARNING: This action cannot be undone!</strong>
+          </Typography>
           <Typography>
-            Are you sure you want to delete user{" "}
-            <strong>{selectedUser?.username}</strong>? This action will
-            deactivate the user account.
+            Are you sure you want to permanently delete user{" "}
+            <strong>{selectedUser?.username}</strong>? This will remove all
+            their data from the system.
+          </Typography>
+          <Typography sx={{ mt: 2 }} color="text.secondary">
+            Consider using "Inactivate" instead to preserve their data.
           </Typography>
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setDeleteDialogOpen(false)}>Cancel</Button>
-          <Button onClick={handleDeleteUser} variant="contained" color="error">
-            Delete
+          <Button onClick={handleDeleteUser} variant="contained">
+            Permanently Delete
           </Button>
         </DialogActions>
       </Dialog>

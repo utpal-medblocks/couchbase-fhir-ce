@@ -5,7 +5,7 @@ export interface User {
   username: string;
   email: string;
   passwordHash?: string;
-  role: "admin" | "api_user";
+  role: "admin" | "developer" | "smart_user";
   authMethod: "local" | "social";
   status: "active" | "inactive" | "suspended";
   createdBy: string;
@@ -13,6 +13,7 @@ export interface User {
   lastLogin?: string;
   profilePicture?: string;
   socialAuthId?: string;
+  allowedScopes?: string[];
 }
 
 export interface CreateUserRequest {
@@ -20,13 +21,14 @@ export interface CreateUserRequest {
   username: string;
   email: string;
   passwordHash?: string;
-  role: "admin" | "api_user";
+  role: "admin" | "developer" | "smart_user";
   authMethod: "local" | "social";
+  allowedScopes?: string[];
 }
 
 export interface UpdateUserRequest {
   username?: string;
-  role?: "admin" | "api_user";
+  role?: "admin" | "developer" | "smart_user";
   status?: "active" | "inactive" | "suspended";
   passwordHash?: string;
 }
@@ -75,7 +77,14 @@ export const updateUser = async (
 };
 
 /**
- * Delete user (soft delete)
+ * Deactivate user (soft delete)
+ */
+export const deactivateUser = async (userId: string): Promise<void> => {
+  await axios.put(`/api/admin/users/${userId}/deactivate`);
+};
+
+/**
+ * Delete user (hard delete)
  */
 export const deleteUser = async (userId: string): Promise<void> => {
   await axios.delete(`/api/admin/users/${userId}`);
@@ -109,8 +118,10 @@ export const formatRole = (role: string): string => {
   switch (role) {
     case "admin":
       return "Administrator";
-    case "api_user":
-      return "API User";
+    case "developer":
+      return "Developer";
+    case "smart_user":
+      return "SMART User";
     default:
       return role;
   }

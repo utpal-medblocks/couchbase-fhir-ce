@@ -10,6 +10,8 @@ import com.couchbase.client.java.query.QueryOptions;
 import com.couchbase.client.java.query.QueryResult;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import com.couchbase.admin.users.model.User;
+import com.couchbase.admin.users.service.UserService;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -56,11 +58,14 @@ public class TokenService {
     private final RegisteredClientRepository clientRepository;
     private final PasswordEncoder passwordEncoder;
     private final RestTemplate restTemplate;
+    private final UserService userService;
 
     public TokenService(ConnectionService connectionService,
-                       RegisteredClientRepository clientRepository) {
+                       RegisteredClientRepository clientRepository,
+                       UserService userService) {
         this.connectionService = connectionService;
         this.clientRepository = clientRepository;
+        this.userService = userService;
         this.passwordEncoder = new BCryptPasswordEncoder();
         this.restTemplate = new RestTemplate();
     }
@@ -79,10 +84,17 @@ public class TokenService {
      * @param appName Application name
      * @param scopes FHIR scopes
      * @param createdBy Who is creating this token
+     * @param type "pat" (Personal Access Token) or "client" (SMART App)
      * @return Map with "clientId", "clientSecret" (plain text, show once!), and "tokenMetadata"
      */
-    public Map<String, Object> generateToken(String userId, String appName, String[] scopes, String createdBy) {
-        logger.info("🔑 Generating OAuth2 client for user: {} (app: {})", userId, appName);
+    public Map<String, Object> generateToken(String userId, String appName, String[] scopes, String createdBy, String type) {
+        logger.info("🔑 Generating OAuth2 {} for user: {} (app: {})", type, userId, appName);
+
+        // Validate that requested scopes are allowed for this user
+        User user = userService.getUserById(userId)
+                .orElseThrow(() -> new IllegalArgumentException("User not found: " + userId));
+        
+        validateScopes(scopes, user);
 
         // Generate client ID and secret
         String clientId = "api-token-" + UUID.randomUUID().toString();
@@ -112,7 +124,7 @@ public class TokenService {
         clientRepository.save(registeredClient);
 
         // Create token metadata for our database
-        Token tokenMetadata = new Token(clientId, userId, appName, clientId, clientSecretHash, createdBy, scopes);
+        Token tokenMetadata = new Token(clientId, userId, appName, clientId, clientSecretHash, createdBy, scopes, type);
 
         // Store in Couchbase
         Collection tokensCollection = getTokensCollection();
@@ -120,20 +132,29 @@ public class TokenService {
 
         logger.info("✅ OAuth2 client created: {} (scopes: {})", clientId, String.join(",", scopes));
 
-        // Exchange credentials for JWT access token
-        String accessToken = exchangeForAccessToken(clientId, clientSecret, scopes);
-
-        // Return JWT token (ready to use!) and metadata
         Map<String, Object> result = new HashMap<>();
-        result.put("token", accessToken); // JWT access token - ready to use!
         result.put("tokenMetadata", tokenMetadata);
-        result.put("clientId", clientId); // Keep for reference
+        result.put("clientId", clientId);
+        
+        // If Type is PAT (Personal Access Token), immediately exchange for JWT
+        if ("pat".equals(type)) {
+            String accessToken = exchangeForAccessToken(clientId, clientSecret, scopes);
+            result.put("token", accessToken); // JWT access token
+        } else {
+            // If Type is Client (SMART App), return the secret so they can use it
+            result.put("clientSecret", clientSecret); // Plain text - show once!
+        }
         
         // Also include info for advanced users who want to refresh tokens
         result.put("tokenEndpoint", "/oauth2/token");
         result.put("grantType", "client_credentials");
 
         return result;
+    }
+
+    // Overload for backward compatibility
+    public Map<String, Object> generateToken(String userId, String appName, String[] scopes, String createdBy) {
+        return generateToken(userId, appName, scopes, createdBy, "pat");
     }
     
     /**
@@ -268,6 +289,56 @@ public class TokenService {
         } catch (Exception e) {
             logger.debug("Failed to update last used for token {}: {}", tokenId, e.getMessage());
         }
+    }
+
+    /**
+     * Validate that requested scopes are a subset of user's allowed scopes
+     * Handles wildcard matching (e.g. user has "patient/*.read", requested "patient/Patient.read" is allowed)
+     */
+    private void validateScopes(String[] requestedScopes, User user) {
+        String[] allowedScopes = user.getAllowedScopes();
+        if (allowedScopes == null || allowedScopes.length == 0) {
+             // If no allowed scopes defined, default to restrictive (or allow none)
+             // For now, if allowedScopes is null, we assume legacy user/admin and rely on role check
+             if (user.isAdmin()) return; // Admin allowed everything
+             throw new IllegalArgumentException("User has no allowed scopes defined");
+        }
+
+        for (String requested : requestedScopes) {
+            boolean allowed = false;
+            for (String allowedScope : allowedScopes) {
+                if (scopesMatch(requested, allowedScope)) {
+                    allowed = true;
+                    break;
+                }
+            }
+            if (!allowed) {
+                throw new IllegalArgumentException("Scope not allowed for this user: " + requested);
+            }
+        }
+    }
+
+    /**
+     * Check if requested scope matches allowed scope pattern
+     * Supported patterns:
+     * - Exact match: "patient/Patient.read" == "patient/Patient.read"
+     * - Wildcard resource: "patient/*.read" matches "patient/Patient.read"
+     * - Wildcard action: "patient/Patient.*" matches "patient/Patient.read"
+     * - Full wildcard: "system/*.*" matches anything starting with "system/"
+     */
+    private boolean scopesMatch(String requested, String allowed) {
+        if (allowed.equals(requested)) return true;
+        
+        // Handle "system/*.*" or "user/*.*"
+        if (allowed.endsWith("*.*")) {
+            String prefix = allowed.substring(0, allowed.indexOf("*.*"));
+            return requested.startsWith(prefix);
+        }
+
+        // Simple regex-like matching for single wildcards could be added here
+        // For now, we support the basic FHIR patterns used in our defaults
+        
+        return false;
     }
 
     /**

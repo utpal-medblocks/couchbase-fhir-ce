@@ -25,6 +25,7 @@ public class Token {
     private Instant lastUsedAt;
     private String createdBy; // Who created this token (usually same as userId)
     private String[] scopes; // FHIR scopes: ["patient/*.read", "patient/*.write", etc.]
+    private String type; // "pat" (Personal Access Token) or "client" (SMART App)
 
     // Default constructor for Jackson
     public Token() {
@@ -32,7 +33,7 @@ public class Token {
 
     // Constructor for creating new tokens
     public Token(String id, String userId, String appName, String clientId,
-                 String clientSecretHash, String createdBy, String[] scopes) {
+                 String clientSecretHash, String createdBy, String[] scopes, String type) {
         this.id = id;
         this.userId = userId;
         this.appName = appName;
@@ -42,6 +43,12 @@ public class Token {
         this.createdAt = Instant.now();
         this.createdBy = createdBy;
         this.scopes = scopes;
+        this.type = type;
+    }
+
+    public Token(String id, String userId, String appName, String clientId,
+                 String clientSecretHash, String createdBy, String[] scopes) {
+        this(id, userId, appName, clientId, clientSecretHash, createdBy, scopes, "pat");
     }
 
     // Getters and Setters
@@ -123,6 +130,14 @@ public class Token {
 
     public void setScopes(String[] scopes) {
         this.scopes = scopes;
+    }
+
+    public String getType() {
+        return type;
+    }
+
+    public void setType(String type) {
+        this.type = type;
     }
 
     // Helper methods

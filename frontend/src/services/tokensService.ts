@@ -5,21 +5,26 @@ export interface Token {
   userId: string;
   appName: string;
   tokenHash: string;
+  clientId?: string;
   status: "active" | "revoked" | "expired";
   createdAt: string;
   expiresAt: string;
   lastUsedAt?: string;
   createdBy: string;
   scopes: string[];
+  type?: "pat" | "client";
 }
 
 export interface GenerateTokenRequest {
   appName: string;
   scopes: string[];
+  type?: "pat" | "client";
 }
 
 export interface GenerateTokenResponse {
-  token: string; // The actual JWT token (show once!)
+  token?: string; // The actual JWT token (for PATs)
+  clientId?: string; // For SMART Apps
+  clientSecret?: string; // For SMART Apps
   tokenMetadata: Token;
 }
 

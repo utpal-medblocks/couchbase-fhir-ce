@@ -106,7 +106,31 @@ public class UsersController {
     }
     
     /**
-     * Delete user (soft delete)
+     * Deactivate user (soft delete)
+     * PUT /api/admin/users/{userId}/deactivate
+     */
+    @PutMapping("/{userId}/deactivate")
+    public ResponseEntity<?> deactivateUser(@PathVariable String userId) {
+        try {
+            logger.info("⏸️ Deactivating user: {}", userId);
+            
+            userService.deactivateUser(userId);
+            return ResponseEntity.ok()
+                .body(Map.of("message", "User deactivated successfully"));
+            
+        } catch (IllegalArgumentException e) {
+            logger.error("❌ Error deactivating user: {}", e.getMessage());
+            return ResponseEntity.badRequest()
+                .body(Map.of("error", e.getMessage()));
+        } catch (Exception e) {
+            logger.error("❌ Unexpected error deactivating user", e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(Map.of("error", "Failed to deactivate user"));
+        }
+    }
+
+    /**
+     * Delete user (hard delete)
      * DELETE /api/admin/users/{userId}
      */
     @DeleteMapping("/{userId}")

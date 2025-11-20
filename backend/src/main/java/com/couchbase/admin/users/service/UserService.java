@@ -59,6 +59,13 @@ public class UserService {
             throw new IllegalArgumentException("Email is required");
         }
         
+        // Validate password for local auth users
+        if ("local".equals(user.getAuthMethod())) {
+            if (user.getPasswordHash() == null || user.getPasswordHash().isEmpty()) {
+                throw new IllegalArgumentException("Password is required for local authentication");
+            }
+        }
+        
         // Check if user already exists
         if (getUserById(user.getId()).isPresent()) {
             throw new IllegalArgumentException("User with ID '" + user.getId() + "' already exists");
@@ -178,11 +185,11 @@ public class UserService {
     }
     
     /**
-     * Delete user (soft delete - set status to inactive)
+     * Deactivate user (soft delete - set status to inactive)
      * @param userId User ID
      */
-    public void deleteUser(String userId) {
-        logger.info("🗑️ Deleting user: {}", userId);
+    public void deactivateUser(String userId) {
+        logger.info("⏸️ Deactivating user: {}", userId);
         
         User user = getUserById(userId)
             .orElseThrow(() -> new IllegalArgumentException("User not found: " + userId));
@@ -192,7 +199,25 @@ public class UserService {
         Collection collection = getUsersCollection();
         collection.replace(userId, user);
         
-        logger.info("✅ User deleted (soft): {}", userId);
+        logger.info("✅ User deactivated: {}", userId);
+    }
+
+    /**
+     * Delete user (hard delete - remove document)
+     * @param userId User ID
+     */
+    public void deleteUser(String userId) {
+        logger.info("🗑️ Hard deleting user: {}", userId);
+        
+        // Check existence
+        if (getUserById(userId).isEmpty()) {
+            throw new IllegalArgumentException("User not found: " + userId);
+        }
+        
+        Collection collection = getUsersCollection();
+        collection.remove(userId);
+        
+        logger.info("✅ User deleted (hard): {}", userId);
     }
     
     /**
