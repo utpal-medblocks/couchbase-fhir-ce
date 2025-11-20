@@ -9,6 +9,7 @@ import FhirResources from "../pages/FHIRResources/FhirResources";
 import AuditLogs from "../pages/AuditLogs/AuditLogs";
 import SystemLogs from "../pages/SystemLogs/Logs";
 import Users from "../pages/Users/Users";
+import Tokens from "../pages/Tokens/Tokens";
 
 const AppRoutes: React.FC = () => {
   return (
@@ -83,6 +84,16 @@ const AppRoutes: React.FC = () => {
           <ProtectedRoute>
             <MainLayout>
               <Users />
+            </MainLayout>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/tokens"
+        element={
+          <ProtectedRoute>
+            <MainLayout>
+              <Tokens />
             </MainLayout>
           </ProtectedRoute>
         }

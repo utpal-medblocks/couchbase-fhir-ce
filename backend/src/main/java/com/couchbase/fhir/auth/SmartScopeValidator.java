@@ -129,6 +129,22 @@ public class SmartScopeValidator {
      * Extract scopes from JWT authentication
      */
     private List<String> extractScopes(Authentication authentication) {
+        // First, try to extract from Spring Security authorities (for API tokens)
+        // API tokens set authorities with "SCOPE_" prefix
+        if (authentication.getAuthorities() != null && !authentication.getAuthorities().isEmpty()) {
+            List<String> scopesFromAuthorities = authentication.getAuthorities().stream()
+                .map(authority -> authority.getAuthority())
+                .filter(auth -> auth.startsWith("SCOPE_"))
+                .map(auth -> auth.substring(6)) // Remove "SCOPE_" prefix
+                .collect(Collectors.toList());
+            
+            if (!scopesFromAuthorities.isEmpty()) {
+                logger.debug("Extracted scopes from authorities: {}", scopesFromAuthorities);
+                return scopesFromAuthorities;
+            }
+        }
+        
+        // Fallback: Extract from JWT claims (for OAuth2 tokens)
         if (authentication instanceof JwtAuthenticationToken) {
             Jwt jwt = ((JwtAuthenticationToken) authentication).getToken();
             

@@ -15,7 +15,9 @@ import org.springframework.web.cors.CorsConfigurationSource;
 
 /**
  * Security configuration for Couchbase FHIR Server
- * - Protects /fhir/* endpoints with OAuth 2.0 (SMART on FHIR)
+ * - Protects /fhir/* endpoints with:
+ *   1. API Tokens (user-generated from /tokens page)
+ *   2. OAuth 2.0 JWT (SMART on FHIR from Spring Authorization Server)
  * - Protects /api/admin/* endpoints with JWT authentication (Admin UI only)
  * - OAuth 2.0 endpoints handled by AuthorizationServerConfig (@Order(1))
  */
@@ -63,7 +65,7 @@ public class SecurityConfig {
 
     /**
      * FHIR API filter chain
-     * Handles OAuth 2.0 JWT for /fhir/* endpoints
+     * Handles OAuth2 JWT tokens (both SMART on FHIR and API tokens via client_credentials grant)
      * Allows public access to /fhir/metadata (CapabilityStatement)
      */
     @Bean
@@ -78,15 +80,14 @@ public class SecurityConfig {
             .authorizeHttpRequests(authz -> authz
                 // Allow public access to metadata endpoint (FHIR CapabilityStatement)
                 .requestMatchers("/fhir/metadata").permitAll()
-                // Require a successfully authenticated JWT for all other FHIR endpoints
+                // Require authentication for all other FHIR endpoints
                 .anyRequest().authenticated()
             )
-            // OAuth 2.0 Resource Server for FHIR API - explicitly use our JwtDecoder
+            // OAuth 2.0 Resource Server - validates all OAuth2 JWT tokens
             .oauth2ResourceServer(oauth2 -> oauth2
                 .jwt(jwt -> jwt.decoder(jwtDecoder))
             )
-            // Disable anonymous authentication so that requests without a valid Bearer token
-            // are treated as unauthenticated (no AnonymousAuthenticationToken)
+            // Disable anonymous authentication
             .anonymous(anonymous -> anonymous.disable());
         
         return http.build();

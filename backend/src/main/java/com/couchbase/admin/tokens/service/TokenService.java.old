@@ -1,0 +1,298 @@
+package com.couchbase.admin.tokens.service;
+
+import com.couchbase.admin.connections.service.ConnectionService;
+import com.couchbase.admin.tokens.model.Token;
+import com.couchbase.client.core.error.DocumentNotFoundException;
+import com.couchbase.client.java.Cluster;
+import com.couchbase.client.java.Collection;
+import com.couchbase.client.java.json.JsonObject;
+import com.couchbase.client.java.query.QueryOptions;
+import com.couchbase.client.java.query.QueryResult;
+import io.jsonwebtoken.Claims;
+import io.jsonwebtoken.Jwts;
+import io.jsonwebtoken.security.Keys;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Service;
+
+import javax.crypto.SecretKey;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.time.Instant;
+import java.util.*;
+import java.util.stream.Collectors;
+
+/**
+ * Service for managing API tokens
+ * Tokens are stored in fhir.Admin.tokens collection
+ */
+@Service
+public class TokenService {
+
+    private static final Logger logger = LoggerFactory.getLogger(TokenService.class);
+    private static final String BUCKET_NAME = "fhir";
+    private static final String SCOPE_NAME = "Admin";
+    private static final String COLLECTION_NAME = "tokens";
+    private static final String DEFAULT_CONNECTION = "default";
+
+    // Secret key for signing JWT tokens - should match or be different from Admin UI JWT
+    // In production, load from secure config
+    private static final String TOKEN_SECRET_KEY = "couchbase-fhir-api-token-secret-key-minimum-256-bits-required-for-HS256-algorithm";
+
+    // Default token validity: 90 days
+    @Value("${api.token.validity.days:90}")
+    private int tokenValidityDays;
+
+    private final ConnectionService connectionService;
+
+    public TokenService(ConnectionService connectionService) {
+        this.connectionService = connectionService;
+    }
+
+    private Collection getTokensCollection() {
+        Cluster cluster = connectionService.getConnection(DEFAULT_CONNECTION);
+        if (cluster == null) {
+            throw new IllegalStateException("No active Couchbase connection: " + DEFAULT_CONNECTION);
+        }
+        return cluster.bucket(BUCKET_NAME).scope(SCOPE_NAME).collection(COLLECTION_NAME);
+    }
+
+    private SecretKey getSigningKey() {
+        return Keys.hmacShaKeyFor(TOKEN_SECRET_KEY.getBytes(StandardCharsets.UTF_8));
+    }
+
+    /**
+     * Generate a new API token for a user
+     * @param userId User ID (email)
+     * @param appName Application name
+     * @param scopes FHIR scopes
+     * @param createdBy Who is creating this token
+     * @return Map with "token" (actual JWT) and "tokenMetadata" (Token object)
+     */
+    public Map<String, Object> generateToken(String userId, String appName, String[] scopes, String createdBy) {
+        logger.info("🔑 Generating API token for user: {} (app: {})", userId, appName);
+
+        // Generate unique token ID
+        String tokenId = UUID.randomUUID().toString();
+        
+        // Set expiration
+        Instant expiresAt = Instant.now().plusSeconds(tokenValidityDays * 24 * 60 * 60);
+
+        // Create JWT token
+        Map<String, Object> claims = new HashMap<>();
+        claims.put("userId", userId);
+        claims.put("appName", appName);
+        claims.put("scopes", String.join(" ", scopes));
+        claims.put("tokenId", tokenId);
+
+        String jwtToken = Jwts.builder()
+                .claims(claims)
+                .subject(userId)
+                .issuedAt(Date.from(Instant.now()))
+                .expiration(Date.from(expiresAt))
+                .signWith(getSigningKey())
+                .compact();
+
+        // Hash the token for storage (never store plain JWT)
+        String tokenHash = hashToken(jwtToken);
+
+        // Create token metadata
+        Token tokenMetadata = new Token(tokenId, userId, appName, tokenHash, expiresAt, createdBy, scopes);
+
+        // Store in Couchbase
+        Collection tokensCollection = getTokensCollection();
+        tokensCollection.insert(tokenId, tokenMetadata);
+
+        logger.info("✅ Token created: {} (expires: {})", tokenId, expiresAt);
+
+        // Return both the actual JWT (show once) and metadata (for display)
+        Map<String, Object> result = new HashMap<>();
+        result.put("token", jwtToken);
+        result.put("tokenMetadata", tokenMetadata);
+
+        return result;
+    }
+
+    /**
+     * Validate an API token
+     * @param token JWT token string
+     * @return Token metadata if valid, null if invalid
+     */
+    public Token validateToken(String token) {
+        try {
+            // Parse and verify JWT
+            Claims claims = Jwts.parser()
+                    .verifyWith(getSigningKey())
+                    .build()
+                    .parseSignedClaims(token)
+                    .getPayload();
+
+            String tokenId = claims.get("tokenId", String.class);
+            String userId = claims.getSubject();
+
+            // Get token metadata from database
+            Optional<Token> tokenMetadata = getTokenById(tokenId);
+            if (tokenMetadata.isEmpty()) {
+                logger.warn("⚠️  Token not found in database: {}", tokenId);
+                return null;
+            }
+
+            Token tokenRecord = tokenMetadata.get();
+
+            // Check if token is active
+            if (!tokenRecord.isActive()) {
+                logger.warn("⚠️  Token is not active: {} (status: {})", tokenId, tokenRecord.getStatus());
+                return null;
+            }
+
+            // Verify token hash matches (prevents token reuse if revoked)
+            String tokenHash = hashToken(token);
+            if (!tokenHash.equals(tokenRecord.getTokenHash())) {
+                logger.warn("⚠️  Token hash mismatch: {}", tokenId);
+                return null;
+            }
+
+            // Update last used timestamp (async, don't block)
+            updateLastUsed(tokenId);
+
+            logger.debug("✅ Token validated: {} (user: {})", tokenId, userId);
+            return tokenRecord;
+
+        } catch (Exception e) {
+            logger.debug("❌ Token validation failed: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * Get token by ID
+     */
+    public Optional<Token> getTokenById(String id) {
+        Collection tokensCollection = getTokensCollection();
+        try {
+            Token token = tokensCollection.get(id).contentAs(Token.class);
+            return Optional.of(token);
+        } catch (DocumentNotFoundException e) {
+            logger.debug("Token not found: {}", id);
+            return Optional.empty();
+        } catch (Exception e) {
+            logger.error("Error getting token by ID {}: {}", id, e.getMessage());
+            throw new RuntimeException("Failed to retrieve token: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Get all tokens for a user
+     */
+    public List<Token> getTokensByUserId(String userId) {
+        Cluster cluster = connectionService.getConnection(DEFAULT_CONNECTION);
+        String query = String.format(
+                "SELECT META().id, t.* FROM `%s`.`%s`.`%s` t WHERE t.userId = $userId ORDER BY t.createdAt DESC",
+                BUCKET_NAME, SCOPE_NAME, COLLECTION_NAME
+        );
+        try {
+            QueryResult result = cluster.query(query,
+                    QueryOptions.queryOptions().parameters(JsonObject.create().put("userId", userId)));
+            return result.rowsAs(Token.class).stream().collect(Collectors.toList());
+        } catch (Exception e) {
+            logger.error("Error fetching tokens for user {}: {}", userId, e.getMessage());
+            throw new RuntimeException("Failed to fetch tokens: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Get all tokens (admin only)
+     */
+    public List<Token> getAllTokens() {
+        Cluster cluster = connectionService.getConnection(DEFAULT_CONNECTION);
+        String query = String.format(
+                "SELECT META().id, t.* FROM `%s`.`%s`.`%s` t ORDER BY t.createdAt DESC",
+                BUCKET_NAME, SCOPE_NAME, COLLECTION_NAME
+        );
+        try {
+            QueryResult result = cluster.query(query);
+            return result.rowsAs(Token.class).stream().collect(Collectors.toList());
+        } catch (Exception e) {
+            logger.error("Error fetching all tokens", e);
+            throw new RuntimeException("Failed to fetch all tokens: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Revoke a token
+     */
+    public void revokeToken(String tokenId) {
+        Collection tokensCollection = getTokensCollection();
+        tokensCollection.replace(tokenId, getTokenById(tokenId)
+                .map(token -> {
+                    token.setStatus("revoked");
+                    return token;
+                })
+                .orElseThrow(() -> new IllegalArgumentException("Token not found: " + tokenId)));
+        logger.info("🗑️  Token revoked: {}", tokenId);
+    }
+
+    /**
+     * Update last used timestamp
+     */
+    private void updateLastUsed(String tokenId) {
+        try {
+            Collection tokensCollection = getTokensCollection();
+            getTokenById(tokenId).ifPresent(token -> {
+                token.setLastUsedAt(Instant.now());
+                tokensCollection.replace(tokenId, token);
+            });
+        } catch (Exception e) {
+            // Don't fail the request if we can't update last used
+            logger.debug("Failed to update last used for token {}: {}", tokenId, e.getMessage());
+        }
+    }
+
+    /**
+     * Hash token using SHA-256
+     */
+    private String hashToken(String token) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] hash = digest.digest(token.getBytes(StandardCharsets.UTF_8));
+            return Base64.getEncoder().encodeToString(hash);
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to hash token", e);
+        }
+    }
+
+    /**
+     * Extract user ID from token (without full validation)
+     */
+    public String extractUserId(String token) {
+        try {
+            Claims claims = Jwts.parser()
+                    .verifyWith(getSigningKey())
+                    .build()
+                    .parseSignedClaims(token)
+                    .getPayload();
+            return claims.getSubject();
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /**
+     * Extract scopes from token
+     */
+    public String[] extractScopes(String token) {
+        try {
+            Claims claims = Jwts.parser()
+                    .verifyWith(getSigningKey())
+                    .build()
+                    .parseSignedClaims(token)
+                    .getPayload();
+            String scopesString = claims.get("scopes", String.class);
+            return scopesString != null ? scopesString.split(" ") : new String[0];
+        } catch (Exception e) {
+            return new String[0];
+        }
+    }
+}
+
