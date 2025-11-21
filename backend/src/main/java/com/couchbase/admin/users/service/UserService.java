@@ -126,7 +126,8 @@ public class UserService {
             
             return Optional.of(result.rowsAs(User.class).get(0));
         } catch (Exception e) {
-            logger.error("Error finding user by email: {}", email, e);
+            // Debug level only - this is expected when bucket/scope not initialized yet
+            logger.debug("Could not find user by email (database may not be initialized): {}", email);
             return Optional.empty();
         }
     }
@@ -265,7 +266,8 @@ public class UserService {
             int count = result.rowsAsObject().get(0).getInt("count");
             return count > 0;
         } catch (Exception e) {
-            logger.error("Error checking if users exist", e);
+            // Debug level only - this is expected when Admin scope not initialized yet
+            logger.debug("Could not check if users exist (database may not be initialized): {}", e.getMessage());
             return false;
         }
     }

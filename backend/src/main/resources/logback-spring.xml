@@ -40,22 +40,22 @@
     <logger name="com.couchbase.tracing" level="ERROR"/>
 
     <!-- Package-specific loggers - start conservatively -->
-    <logger name="com.couchbase.admin" level="DEBUG"/>
-    <logger name="com.couchbase.fhir" level="DEBUG"/>
-    <logger name="com.couchbase.fhir.auth" level="DEBUG"/>
+    <logger name="com.couchbase.admin" level="ERROR"/>
+    <logger name="com.couchbase.fhir" level="ERROR"/>
+    <logger name="com.couchbase.fhir.auth" level="ERROR"/>
     <logger name="com.couchbase.common" level="ERROR"/>
     
     <!-- Spring Security and OAuth2 logging (set to ERROR for production, DEBUG for troubleshooting) -->
-    <logger name="org.springframework.security" level="DEBUG"/>
-    <logger name="org.springframework.security.oauth2" level="DEBUG"/>
-    <logger name="org.springframework.security.oauth2.server.resource" level="DEBUG"/>
-    <logger name="org.springframework.security.web" level="DEBUG"/>
-    <logger name="org.springframework.security.web.access" level="DEBUG"/>
+    <logger name="org.springframework.security" level="ERROR"/>
+    <logger name="org.springframework.security.oauth2" level="ERROR"/>
+    <logger name="org.springframework.security.oauth2.server.resource" level="ERROR"/>
+    <logger name="org.springframework.security.web" level="ERROR"/>
+    <logger name="org.springframework.security.web.access" level="ERROR"/>
     
     <!-- Only target the specific noisy classes you mentioned -->
-    <logger name="com.couchbase.fhir.repository.service.FhirBundleProcessingService" level="WARN"/>
-    <logger name="com.couchbase.fhir.repository.provider.BundleTransactionProvider" level="WARN"/>
-    <logger name="com.couchbase.admin.controller.service.ConnectionService" level="WARN"/>
+    <logger name="com.couchbase.fhir.repository.service.FhirBundleProcessingService" level="ERROR"/>
+    <logger name="com.couchbase.fhir.repository.provider.BundleTransactionProvider" level="ERROR"/>
+    <logger name="com.couchbase.admin.controller.service.ConnectionService" level="ERROR"/>
 
     <!-- Suppress noisy HAPI FHIR parser warnings -->
     <logger name="ca.uhn.fhir.parser.LenientErrorHandler" level="ERROR"/>
@@ -70,5 +70,5 @@
     
     <!-- Suppress known client disconnection errors -->
     <logger name="org.apache.catalina.connector" level="OFF"/>
-    <logger name="org.apache.catalina" level="WARN"/>
+    <logger name="org.apache.catalina" level="ERROR"/>
 </configuration>

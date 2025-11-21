@@ -1,6 +1,9 @@
 package com.couchbase.admin.fhirBucket.service;
 
 import com.couchbase.admin.fhirBucket.model.*;
+import com.couchbase.admin.users.model.User;
+import com.couchbase.admin.users.service.UserService;
+import com.couchbase.common.config.AdminConfig;
 import com.couchbase.admin.fhirBucket.config.FhirBucketProperties;
 import com.couchbase.admin.connections.service.ConnectionService;
 import com.couchbase.admin.fts.config.FtsIndexCreator;
@@ -47,6 +50,12 @@ public class FhirBucketService {
     
     @Autowired
     private GsiIndexService gsiIndexService;
+
+    @Autowired
+    private UserService userService;
+
+    @Autowired
+    private AdminConfig adminConfig;
     
     // Store operation status
     private final Map<String, FhirConversionStatusDetail> operationStatus = new ConcurrentHashMap<>();
@@ -151,6 +160,11 @@ public class FhirBucketService {
             updateStatus(status, "mark_as_fhir", "Marking bucket as FHIR-enabled");
             markAsFhirBucketWithConfig(bucketName, connectionName, request);
             status.setCompletedSteps(9);
+
+            // Step 10: Seed initial Admin user from config.yaml (if not already present)
+            updateStatus(status, "create_admin_user", "Creating initial Admin user");
+            createInitialAdminUserIfNeeded();
+            status.setCompletedSteps(10);
             
             // Completion
             status.setStatus(FhirConversionStatus.COMPLETED);
@@ -162,6 +176,43 @@ public class FhirBucketService {
             status.setStatus(FhirConversionStatus.FAILED);
             status.setErrorMessage(e.getMessage());
             status.setCurrentStepDescription("Conversion failed: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Create the initial Admin user based on config.yaml credentials, if it does not already exist.
+     * Uses local authentication so the Admin can later change their password via the Users UI.
+     */
+    private void createInitialAdminUserIfNeeded() {
+        try {
+            String email = adminConfig.getEmail();
+            String password = adminConfig.getPassword();
+            String name = adminConfig.getName();
+
+            if (email == null || email.isEmpty()) {
+                logger.warn("⚠️ Skipping initial Admin user creation: admin.email is not configured");
+                return;
+            }
+
+            // Check if user already exists
+            if (userService.getUserById(email).isPresent()) {
+                logger.info("👤 Initial Admin user '{}' already exists - skipping creation", email);
+                return;
+            }
+
+            User adminUser = new User();
+            adminUser.setId(email);               // Use email as ID (consistent with Admin UI)
+            adminUser.setUsername(name != null ? name : "Administrator");
+            adminUser.setEmail(email);
+            adminUser.setRole("admin");
+            adminUser.setAuthMethod("local");
+            adminUser.setPasswordHash(password);  // Will be hashed by UserService.createUser
+
+            userService.createUser(adminUser, "system");
+            logger.info("✅ Initial Admin user '{}' created successfully in Admin.users collection", email);
+        } catch (Exception e) {
+            // Do not fail bucket initialization if seeding the Admin user fails
+            logger.error("❌ Failed to create initial Admin user from config.yaml: {}", e.getMessage());
         }
     }
     

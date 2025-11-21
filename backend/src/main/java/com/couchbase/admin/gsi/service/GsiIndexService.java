@@ -73,6 +73,10 @@ public class GsiIndexService {
                     if (e.getMessage() != null && e.getMessage().contains("already exists")) {
                         skipCount.incrementAndGet();
                         logger.debug("⏭️  GSI index already exists: {}", extractIndexName(processedSql));
+                    } else if (e.getMessage() != null && e.getMessage().contains("Build Already In Progress")) {
+                        // Index is being built in background - this is normal
+                        successCount.incrementAndGet();
+                        logger.info("⏳ GSI index building in background: {}", extractIndexName(processedSql));
                     } else {
                         failCount.incrementAndGet();
                         logger.error("❌ Failed to create GSI index: {} - {}", 

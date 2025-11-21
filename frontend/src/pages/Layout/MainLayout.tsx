@@ -41,8 +41,11 @@ import { VscFlame } from "react-icons/vsc";
 
 import CouchbaseLogo from "../../assets/icons/couchbase.png"; // Uncomment when you add the icon
 import ConnectionStatus from "./ConnectionStatus";
+import InitializationDialog from "../../components/InitializationDialog";
 import { useThemeContext } from "../../contexts/ThemeContext";
 import { useAuthStore } from "../../store/authStore";
+import { useBucketStore } from "../../store/bucketStore";
+import { useConnectionStore } from "../../store/connectionStore";
 import { BsBoxArrowRight } from "react-icons/bs";
 
 const drawerWidth = 200;
@@ -146,6 +149,27 @@ export default function MainLayout({ children }: MainLayoutProps) {
 
   // Local state for UI controls
   const [drawerOpen, setDrawerOpen] = useState(true);
+  const [initDialogOpen, setInitDialogOpen] = useState(false);
+  
+  const { connection } = useConnectionStore();
+  const { initializationStatus, fetchInitializationStatus } = useBucketStore();
+  
+  // Check initialization status when connected
+  React.useEffect(() => {
+    if (connection.isConnected) {
+      fetchInitializationStatus();
+    }
+  }, [connection.isConnected, fetchInitializationStatus]);
+  
+  // Show initialization dialog when bucket missing or not initialized
+  React.useEffect(() => {
+    if (
+      initializationStatus?.status === "BUCKET_MISSING" ||
+      initializationStatus?.status === "BUCKET_NOT_INITIALIZED"
+    ) {
+      setInitDialogOpen(true);
+    }
+  }, [initializationStatus]);
 
   const toggleDrawer = () => setDrawerOpen(!drawerOpen);
 
@@ -419,6 +443,12 @@ export default function MainLayout({ children }: MainLayoutProps) {
       >
         {children}
       </Box>
+      
+      {/* Initialization Dialog */}
+      <InitializationDialog
+        open={initDialogOpen}
+        onClose={() => setInitDialogOpen(false)}
+      />
     </Box>
   );
 }

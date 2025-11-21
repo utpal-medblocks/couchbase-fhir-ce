@@ -4,6 +4,8 @@ import com.couchbase.admin.auth.model.LoginRequest;
 import com.couchbase.admin.auth.model.LoginResponse;
 import com.couchbase.admin.auth.model.UserInfo;
 import com.couchbase.admin.auth.util.JwtUtil;
+import com.couchbase.admin.users.model.User;
+import com.couchbase.admin.users.service.UserService;
 import com.couchbase.common.config.AdminConfig;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
@@ -27,6 +29,9 @@ public class AuthController {
     @Autowired
     private JwtUtil jwtUtil;
 
+    @Autowired
+    private UserService userService;
+
     /**
      * Login endpoint for Admin UI
      * Validates credentials against config.yaml admin section
@@ -36,27 +41,49 @@ public class AuthController {
      */
     @PostMapping("/login")
     public ResponseEntity<?> login(@RequestBody LoginRequest loginRequest) {
-        // Validate credentials against config.yaml
-        String configEmail = adminConfig.getEmail();
-        String configPassword = adminConfig.getPassword();
-        String configName = adminConfig.getName();
-
         if (loginRequest.getEmail() == null || loginRequest.getPassword() == null) {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                     .body(createErrorResponse("Email and password are required"));
         }
 
-        // Check if credentials match
-        if (configEmail.equals(loginRequest.getEmail()) && 
-            configPassword.equals(loginRequest.getPassword())) {
-            
-            // Generate JWT token
+        String email = loginRequest.getEmail();
+        String password = loginRequest.getPassword();
+
+        // 1) Try authenticating against Admin.users (if database is available)
+        try {
+            java.util.Optional<User> userOpt = userService.getUserById(email);
+
+            if (userOpt.isPresent()) {
+                User user = userOpt.get();
+                // Only support local auth users for Admin UI login
+                if ("local".equals(user.getAuthMethod())) {
+                    boolean passwordOk = userService.verifyPassword(user.getId(), password);
+                    if (passwordOk) {
+                        String displayName = user.getUsername() != null ? user.getUsername() : user.getEmail();
+                        String token = jwtUtil.generateToken(user.getEmail(), displayName);
+                        UserInfo userInfo = new UserInfo(user.getEmail(), displayName);
+                        return ResponseEntity.ok(new LoginResponse(token, userInfo));
+                    }
+
+                    // Local user exists but password doesn't match
+                    return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                            .body(createErrorResponse("Invalid email or password"));
+                }
+            }
+        } catch (Exception e) {
+            // Silently fall through to config-based auth if database not available
+            // This is expected on first startup before FHIR bucket is initialized
+        }
+
+        // 2) Fallback: Validate credentials against config.yaml
+        // This allows login before bucket creation/initialization
+        String configEmail = adminConfig.getEmail();
+        String configPassword = adminConfig.getPassword();
+        String configName = adminConfig.getName();
+
+        if (configEmail.equals(email) && configPassword.equals(password)) {
             String token = jwtUtil.generateToken(configEmail, configName);
-            
-            // Create user info
             UserInfo userInfo = new UserInfo(configEmail, configName);
-            
-            // Return success response
             return ResponseEntity.ok(new LoginResponse(token, userInfo));
         }
 

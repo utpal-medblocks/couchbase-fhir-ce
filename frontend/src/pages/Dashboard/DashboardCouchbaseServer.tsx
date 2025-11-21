@@ -502,11 +502,12 @@ const DashboardCouchbaseServer: React.FC = () => {
         const metricsData = buckets.find((b: any) => b.name === "fhir");
         const fhirConfig = bucket ? getFhirConfig() : null;
 
+        // If no FHIR-enabled bucket found, the bucket might exist but not be initialized
+        // The initialization dialog will be shown by the InitializationProvider
         if (!bucket) {
           return (
             <Alert severity="info">
-              No FHIR bucket found. Please ensure a bucket named "fhir" is
-              created and initialized.
+              FHIR bucket not yet initialized. Please complete initialization to see bucket details.
             </Alert>
           );
         }

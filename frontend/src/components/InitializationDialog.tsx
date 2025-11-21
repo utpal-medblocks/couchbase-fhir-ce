@@ -21,6 +21,7 @@ import {
   Storage as StorageIcon,
 } from "@mui/icons-material";
 import { useBucketStore } from "../store/bucketStore";
+import axios from "../config/axiosConfig";
 
 interface InitializationDialogProps {
   open: boolean;
@@ -52,34 +53,52 @@ const InitializationDialog: React.FC<InitializationDialogProps> = ({
   // Poll operation status if initializing
   useEffect(() => {
     if (operationId && initializing) {
+      console.log("🔄 Starting polling for operationId:", operationId);
       const pollInterval = setInterval(async () => {
         try {
-          const response = await fetch(
+          const response = await axios.get(
             `/api/admin/initialization/operation/${operationId}`
           );
-          if (response.ok) {
-            const status = await response.json();
-            setOperationStatus(status);
+          const status = response.data;
+          console.log(
+            "📊 Operation status:",
+            status.status,
+            "Step:",
+            status.completedSteps
+          );
+          setOperationStatus(status);
 
-            // Check if completed or failed
-            if (status.status === "COMPLETED") {
-              setInitializing(false);
-              // Refresh initialization status
-              await fetchInitializationStatus();
-              setTimeout(() => {
-                onClose();
-              }, 2000);
-            } else if (status.status === "FAILED") {
-              setInitializing(false);
-              setInitError(status.errorMessage || "Initialization failed");
-            }
+          // Check if completed or failed
+          if (status.status === "COMPLETED") {
+            console.log("✅ Initialization COMPLETED!");
+            setInitializing(false);
+            // Refresh initialization status
+            await fetchInitializationStatus();
+            setTimeout(() => {
+              onClose();
+            }, 2000);
+          } else if (status.status === "FAILED") {
+            console.error("❌ Initialization FAILED:", status.errorMessage);
+            setInitializing(false);
+            setInitError(status.errorMessage || "Initialization failed");
           }
-        } catch (error) {
-          console.error("Failed to poll operation status:", error);
+        } catch (error: any) {
+          console.error(
+            "❌ Failed to poll operation status:",
+            error.response?.status,
+            error.message
+          );
         }
       }, 1000); // Poll every second
 
-      return () => clearInterval(pollInterval);
+      return () => {
+        console.log("🛑 Stopping polling");
+        clearInterval(pollInterval);
+      };
+    } else {
+      if (initializing) {
+        console.warn("⚠️ Initializing but no operationId yet");
+      }
     }
   }, [operationId, initializing, fetchInitializationStatus, onClose]);
 
@@ -89,8 +108,13 @@ const InitializationDialog: React.FC<InitializationDialogProps> = ({
 
     try {
       const result = await initializeFhirBucket();
+      console.log(
+        "✅ Initialization started, operationId:",
+        result.operationId
+      );
       setOperationId(result.operationId);
     } catch (error: any) {
+      console.error("❌ Failed to start initialization:", error);
       setInitializing(false);
       setInitError(error.message || "Failed to start initialization");
     }
@@ -128,58 +152,78 @@ const InitializationDialog: React.FC<InitializationDialogProps> = ({
     }
 
     // Show initialization progress if initializing
-    if (initializing && operationStatus) {
-      return (
-        <Box>
-          <Typography variant="body1" gutterBottom>
-            Initializing FHIR system...
-          </Typography>
-          <Box mt={2} mb={2}>
-            <LinearProgress
-              variant="determinate"
-              value={(operationStatus.completedSteps / 9) * 100}
-            />
+    if (initializing) {
+      if (operationStatus) {
+        return (
+          <Box>
+            <Typography variant="body1" gutterBottom>
+              Initializing FHIR system...
+            </Typography>
+            <Box mt={2} mb={2}>
+              <LinearProgress
+                variant="determinate"
+                value={(operationStatus.completedSteps / 10) * 100}
+              />
+            </Box>
+            <Typography variant="body2" color="text.secondary" gutterBottom>
+              Step {operationStatus.completedSteps} of 10:{" "}
+              {operationStatus.currentStepDescription}
+            </Typography>
+            <Box mt={3}>
+              <Stepper
+                activeStep={operationStatus.completedSteps - 1}
+                alternativeLabel
+              >
+                <Step>
+                  <StepLabel>Admin Scope</StepLabel>
+                </Step>
+                <Step>
+                  <StepLabel>Resources Scope</StepLabel>
+                </Step>
+                <Step>
+                  <StepLabel>Admin Collections</StepLabel>
+                </Step>
+                <Step>
+                  <StepLabel>Resource Collections</StepLabel>
+                </Step>
+                <Step>
+                  <StepLabel>Primary Indexes</StepLabel>
+                </Step>
+                <Step>
+                  <StepLabel>Deferred Indexes</StepLabel>
+                </Step>
+                <Step>
+                  <StepLabel>FTS Indexes</StepLabel>
+                </Step>
+                <Step>
+                  <StepLabel>GSI Indexes</StepLabel>
+                </Step>
+                <Step>
+                  <StepLabel>Mark as FHIR</StepLabel>
+                </Step>
+                <Step>
+                  <StepLabel>Create Admin User</StepLabel>
+                </Step>
+              </Stepper>
+            </Box>
           </Box>
-          <Typography variant="body2" color="text.secondary" gutterBottom>
-            Step {operationStatus.completedSteps} of 9:{" "}
-            {operationStatus.currentStepDescription}
-          </Typography>
-          <Box mt={3}>
-            <Stepper
-              activeStep={operationStatus.completedSteps - 1}
-              alternativeLabel
-            >
-              <Step>
-                <StepLabel>Admin Scope</StepLabel>
-              </Step>
-              <Step>
-                <StepLabel>Resources Scope</StepLabel>
-              </Step>
-              <Step>
-                <StepLabel>Admin Collections</StepLabel>
-              </Step>
-              <Step>
-                <StepLabel>Resource Collections</StepLabel>
-              </Step>
-              <Step>
-                <StepLabel>Primary Indexes</StepLabel>
-              </Step>
-              <Step>
-                <StepLabel>Deferred Indexes</StepLabel>
-              </Step>
-              <Step>
-                <StepLabel>FTS Indexes</StepLabel>
-              </Step>
-              <Step>
-                <StepLabel>GSI Indexes</StepLabel>
-              </Step>
-              <Step>
-                <StepLabel>Mark as FHIR</StepLabel>
-              </Step>
-            </Stepper>
+        );
+      } else {
+        // Show loading while waiting for first status update
+        return (
+          <Box>
+            <Typography variant="body1" gutterBottom>
+              Starting initialization...
+            </Typography>
+            <Box mt={2} mb={2}>
+              <LinearProgress />
+            </Box>
+            <Typography variant="body2" color="text.secondary">
+              Preparing FHIR bucket initialization. Please wait...
+            </Typography>
           </Box>
-        </Box>
-      );
+        );
+      }
     }
 
     // Show error if initialization failed
