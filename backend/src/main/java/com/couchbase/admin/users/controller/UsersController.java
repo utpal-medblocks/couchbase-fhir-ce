@@ -1,6 +1,7 @@
 package com.couchbase.admin.users.controller;
 
 import com.couchbase.admin.users.model.User;
+import com.couchbase.admin.users.dto.UserResponse;
 import com.couchbase.admin.users.service.UserService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -31,10 +32,11 @@ public class UsersController {
      * GET /api/admin/users
      */
     @GetMapping
-    public ResponseEntity<List<User>> getAllUsers() {
+    public ResponseEntity<List<UserResponse>> getAllUsers() {
         logger.info("📋 Fetching all users");
         List<User> users = userService.getAllUsers();
-        return ResponseEntity.ok(users);
+        List<UserResponse> dto = users.stream().map(UserResponse::from).toList();
+        return ResponseEntity.ok(dto);
     }
     
     /**
@@ -44,9 +46,8 @@ public class UsersController {
     @GetMapping("/{userId}")
     public ResponseEntity<?> getUserById(@PathVariable String userId) {
         logger.info("🔍 Fetching user: {}", userId);
-        
         return userService.getUserById(userId)
-            .map(ResponseEntity::ok)
+            .map(u -> ResponseEntity.ok(UserResponse.from(u)))
             .orElse(ResponseEntity.notFound().build());
     }
     
@@ -66,7 +67,7 @@ public class UsersController {
             logger.info("➕ Creating user: {} by {}", user.getId(), createdBy);
             
             User createdUser = userService.createUser(user, createdBy);
-            return ResponseEntity.status(HttpStatus.CREATED).body(createdUser);
+            return ResponseEntity.status(HttpStatus.CREATED).body(UserResponse.from(createdUser));
             
         } catch (IllegalArgumentException e) {
             logger.error("❌ Error creating user: {}", e.getMessage());
@@ -92,7 +93,7 @@ public class UsersController {
             logger.info("📝 Updating user: {}", userId);
             
             User updatedUser = userService.updateUser(userId, user);
-            return ResponseEntity.ok(updatedUser);
+            return ResponseEntity.ok(UserResponse.from(updatedUser));
             
         } catch (IllegalArgumentException e) {
             logger.error("❌ Error updating user: {}", e.getMessage());
@@ -165,9 +166,8 @@ public class UsersController {
         
         String userId = authentication.getName();
         logger.info("👤 Fetching current user profile: {}", userId);
-        
         return userService.getUserById(userId)
-            .map(ResponseEntity::ok)
+            .map(u -> ResponseEntity.ok(UserResponse.from(u)))
             .orElse(ResponseEntity.notFound().build());
     }
     

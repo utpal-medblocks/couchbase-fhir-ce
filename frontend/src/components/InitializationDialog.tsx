@@ -36,6 +36,7 @@ const InitializationDialog: React.FC<InitializationDialogProps> = ({
     initializationStatus,
     fetchInitializationStatus,
     initializeFhirBucket,
+    fetchBucketData,
   } = useBucketStore();
 
   const [initializing, setInitializing] = useState(false);
@@ -74,6 +75,15 @@ const InitializationDialog: React.FC<InitializationDialogProps> = ({
             setInitializing(false);
             // Refresh initialization status
             await fetchInitializationStatus();
+            // Immediately load bucket details now that system is READY
+            try {
+              await fetchBucketData();
+            } catch (e) {
+              console.warn(
+                "⚠️ Failed to fetch bucket data after init completion",
+                e
+              );
+            }
             setTimeout(() => {
               onClose();
             }, 2000);

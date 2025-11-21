@@ -54,51 +54,45 @@ public class GsiIndexService {
         AtomicInteger skipCount = new AtomicInteger(0);
         AtomicInteger failCount = new AtomicInteger(0);
         
-        // Create all indexes in parallel using CompletableFuture
+        // Fire-and-forget creation: run in parallel but do NOT block overall bucket initialization.
+        // We attach a completion stage that logs a summary when all have finished.
         List<CompletableFuture<Void>> indexCreationFutures = sqlStatements.stream()
             .filter(sql -> !sql.trim().isEmpty())
             .map(sql -> CompletableFuture.runAsync(() -> {
-                // Replace placeholder bucket name with actual bucket name
                 String processedSql = sql.replace("`fhir`", "`" + bucketName + "`");
-                
                 try {
-                    logger.debug("Executing GSI: {}", processedSql);
-                    cluster.query(processedSql, QueryOptions.queryOptions()
-                        .timeout(Duration.ofMinutes(5)));
-                    
+                    cluster.query(processedSql, QueryOptions.queryOptions().timeout(Duration.ofMinutes(5)));
                     successCount.incrementAndGet();
-                    logger.info("✅ Created GSI index: {}", extractIndexName(processedSql));
-                    
+                    logger.info("✅ (async) GSI create accepted: {}", extractIndexName(processedSql));
                 } catch (Exception e) {
+                    String idxName = extractIndexName(processedSql);
                     if (e.getMessage() != null && e.getMessage().contains("already exists")) {
                         skipCount.incrementAndGet();
-                        logger.debug("⏭️  GSI index already exists: {}", extractIndexName(processedSql));
+                        logger.debug("⏭️ (async) GSI exists: {}", idxName);
                     } else if (e.getMessage() != null && e.getMessage().contains("Build Already In Progress")) {
-                        // Index is being built in background - this is normal
                         successCount.incrementAndGet();
-                        logger.info("⏳ GSI index building in background: {}", extractIndexName(processedSql));
+                        logger.info("⏳ (async) GSI building in background: {}", idxName);
                     } else {
                         failCount.incrementAndGet();
-                        logger.error("❌ Failed to create GSI index: {} - {}", 
-                            extractIndexName(processedSql), e.getMessage());
+                        logger.error("❌ (async) GSI create failed: {} - {}", idxName, e.getMessage());
                     }
                 }
             }))
             .collect(Collectors.toList());
-        
-        // Wait for all index creation operations to complete
-        try {
-            CompletableFuture.allOf(indexCreationFutures.toArray(new CompletableFuture[0])).join();
-        } catch (Exception e) {
-            logger.error("❌ Error during parallel GSI index creation: {}", e.getMessage());
-        }
-        
-        logger.info("📊 GSI Index Creation Summary: {} created, {} skipped (already exist), {} failed", 
-            successCount.get(), skipCount.get(), failCount.get());
-        
-        if (failCount.get() > 0) {
-            logger.warn("⚠️ Some GSI indexes failed to create. Check logs for details.");
-        }
+
+        CompletableFuture.allOf(indexCreationFutures.toArray(new CompletableFuture[0]))
+            .whenComplete((v, ex) -> {
+                if (ex != null) {
+                    logger.error("❌ Error during async GSI index creation batch: {}", ex.getMessage());
+                }
+                logger.info("📊 (async) GSI Index Creation Summary: {} created, {} skipped, {} failed", 
+                    successCount.get(), skipCount.get(), failCount.get());
+                if (failCount.get() > 0) {
+                    logger.warn("⚠️ Some GSI indexes failed to create. Check logs for details.");
+                }
+            });
+
+        logger.info("🚀 Proceeding without waiting for GSI indexes to finish building (they will build in background)." );
     }
     
     /**

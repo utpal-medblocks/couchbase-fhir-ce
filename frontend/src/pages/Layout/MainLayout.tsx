@@ -150,17 +150,64 @@ export default function MainLayout({ children }: MainLayoutProps) {
   // Local state for UI controls
   const [drawerOpen, setDrawerOpen] = useState(true);
   const [initDialogOpen, setInitDialogOpen] = useState(false);
-  
+
   const { connection } = useConnectionStore();
-  const { initializationStatus, fetchInitializationStatus } = useBucketStore();
-  
+  const {
+    initializationStatus,
+    fetchInitializationStatus,
+    fetchBucketData,
+    bucket,
+  } = useBucketStore();
+
   // Check initialization status when connected
   React.useEffect(() => {
     if (connection.isConnected) {
       fetchInitializationStatus();
     }
   }, [connection.isConnected, fetchInitializationStatus]);
-  
+
+  // When initialization transitions to READY and bucket data not yet loaded, fetch bucket details
+  React.useEffect(() => {
+    if (
+      initializationStatus?.status === "READY" &&
+      connection.isConnected &&
+      !bucket
+    ) {
+      // When status becomes READY, attempt aggressive short polling (fast warm-up) until bucket appears or timeout
+      let attempts = 0;
+      const maxAttempts = 30; // ~60s total at 2s interval
+      const interval = setInterval(() => {
+        attempts++;
+        fetchBucketData()
+          .then((b) => {
+            if (b) {
+              clearInterval(interval);
+              // optional: console.log("Bucket became available after", attempts, "attempts");
+            }
+          })
+          .catch((e) => {
+            // Non-fatal: keep trying
+            if (attempts % 5 === 0) {
+              console.warn(
+                "Retry fetchBucketData attempt",
+                attempts,
+                e?.message || e
+              );
+            }
+          });
+        if (attempts >= maxAttempts) {
+          clearInterval(interval);
+        }
+      }, 2000);
+      return () => clearInterval(interval);
+    }
+  }, [
+    initializationStatus?.status,
+    connection.isConnected,
+    bucket,
+    fetchBucketData,
+  ]);
+
   // Show initialization dialog when bucket missing or not initialized
   React.useEffect(() => {
     if (
@@ -443,7 +490,7 @@ export default function MainLayout({ children }: MainLayoutProps) {
       >
         {children}
       </Box>
-      
+
       {/* Initialization Dialog */}
       <InitializationDialog
         open={initDialogOpen}

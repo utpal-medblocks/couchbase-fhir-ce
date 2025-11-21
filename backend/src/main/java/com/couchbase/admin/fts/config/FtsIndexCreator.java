@@ -218,7 +218,6 @@ public class FtsIndexCreator {
                    response.contentAsString().contains("index with the same name already exists")) {
             // Handle the case where index already exists - this should be an update but Couchbase is rejecting it
             logger.warn("⚠️ FTS index '{}' already exists - skipping creation (this should have been an update)", indexName);
-            logger.debug("Response body: {}", response.contentAsString());
         } else {
             logger.error("❌ FTS index creation failed: {} - Status: {}, Body: {}", 
                         indexName, response.statusCode(), response.contentAsString());

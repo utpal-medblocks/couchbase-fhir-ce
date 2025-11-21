@@ -10,7 +10,6 @@ import org.springframework.security.config.annotation.web.configuration.EnableWe
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
-import org.springframework.security.web.util.matcher.AntPathRequestMatcher;
 import org.springframework.web.cors.CorsConfigurationSource;
 
 /**
@@ -43,7 +42,7 @@ public class SecurityConfig {
     public SecurityFilterChain apiFilterChain(HttpSecurity http) throws Exception {
         http
             // Use AntPathRequestMatcher so this chain applies regardless of MVC servlet mapping
-            .securityMatcher(new AntPathRequestMatcher("/api/**")) // Only match /api/* paths
+            .securityMatcher("/api/**") // Only match /api/* paths
             .csrf(csrf -> csrf.disable())
             .cors(cors -> cors.configurationSource(corsConfigurationSource))
             .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
@@ -73,7 +72,7 @@ public class SecurityConfig {
     public SecurityFilterChain fhirFilterChain(HttpSecurity http) throws Exception {
         http
             // Use AntPathRequestMatcher so this chain secures the HAPI FHIR servlet mapped at /fhir/*
-            .securityMatcher(new AntPathRequestMatcher("/fhir/**")) // Only match /fhir/* paths
+            .securityMatcher("/fhir/**") // Only match /fhir/* paths
             .csrf(csrf -> csrf.disable())
             .cors(cors -> cors.configurationSource(corsConfigurationSource))
             .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))

@@ -5,7 +5,6 @@ import com.couchbase.admin.connections.model.ConnectionResponse;
 import com.couchbase.admin.connections.service.ConnectionService;
 import com.couchbase.admin.initialization.model.InitializationStatus;
 import com.couchbase.admin.initialization.service.InitializationService;
-import com.couchbase.client.java.Cluster;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;

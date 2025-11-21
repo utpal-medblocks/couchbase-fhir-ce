@@ -1,7 +1,6 @@
 package com.couchbase.admin.users.model;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
-import com.fasterxml.jackson.annotation.JsonProperty;
 
 import java.time.Instant;
 
@@ -32,8 +31,10 @@ public class User {
     
     /**
      * BCrypt hashed password (null for social auth only users)
+     * NOTE: Intentionally no Jackson write-only / ignore annotation so that the
+     * hash is actually persisted in Couchbase. API controllers MUST avoid
+     * exposing this value by mapping to a response DTO.
      */
-    @JsonProperty(access = JsonProperty.Access.WRITE_ONLY)
     private String passwordHash;
     
     /**
