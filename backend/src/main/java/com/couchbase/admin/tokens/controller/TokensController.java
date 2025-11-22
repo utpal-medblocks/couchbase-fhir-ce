@@ -39,7 +39,6 @@ public class TokensController {
             String userId = (authentication != null && authentication.isAuthenticated()) ? authentication.getName() : "unknown";
 
             String appName = (String) request.get("appName");
-            String type = (String) request.getOrDefault("type", "pat"); // "pat" or "client"
             @SuppressWarnings("unchecked")
             List<String> scopesList = (List<String>) request.get("scopes");
             String[] scopes = scopesList != null ? scopesList.toArray(new String[0]) : new String[0];
@@ -52,8 +51,8 @@ public class TokensController {
                 return ResponseEntity.badRequest().body(Map.of("error", "At least one scope is required"));
             }
 
-            logger.info("🔑 Generating {} for user: {} (app: {})", type, userId, appName);
-            Map<String, Object> result = tokenService.generateToken(userId, appName, scopes, userId, type);
+            logger.info("🔑 Generating JWT access token for user: {} (app: {})", userId, appName);
+            Map<String, Object> result = tokenService.generateToken(userId, appName, scopes, userId);
 
             return ResponseEntity.status(HttpStatus.CREATED).body(result);
         } catch (Exception e) {
@@ -121,35 +120,10 @@ public class TokensController {
         }
     }
 
-    /**
-     * Get token by ID
-     */
-    @GetMapping("/{id}")
-    public ResponseEntity<?> getTokenById(@PathVariable String id) {
-        try {
-            Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
-            String userId = (authentication != null && authentication.isAuthenticated()) ? authentication.getName() : null;
-
-            logger.info("🔍 Fetching token: {}", id);
-            return tokenService.getTokenById(id)
-                    .map(token -> {
-                        // Check if user owns this token
-                        if (!token.getUserId().equals(userId)) {
-                            return ResponseEntity.status(HttpStatus.FORBIDDEN)
-                                    .body(Map.of("error", "You don't have access to this token"));
-                        }
-                        return ResponseEntity.ok(token);
-                    })
-                    .orElseGet(() -> ResponseEntity.notFound().build());
-        } catch (Exception e) {
-            logger.error("❌ Error fetching token {}", id, e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body(Map.of("error", "Failed to fetch token: " + e.getMessage()));
-        }
-    }
+    // getTokenById removed - use getMyTokens() instead which returns all user's tokens
 
     /**
-     * Revoke a token (marks as revoked)
+     * Revoke a token (marks as revoked and removes from cache)
      */
     @PutMapping("/{id}/revoke")
     public ResponseEntity<?> revokeToken(@PathVariable String id) {
@@ -157,22 +131,12 @@ public class TokensController {
             Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
             String userId = (authentication != null && authentication.isAuthenticated()) ? authentication.getName() : null;
 
-            // Check if user owns this token or is admin
-            return tokenService.getTokenById(id)
-                    .map(token -> {
-                        boolean isAdmin = authentication.getAuthorities().stream()
-                                .anyMatch(auth -> auth.getAuthority().contains("system/*.*") ||
-                                                 auth.getAuthority().equals("ROLE_ADMIN"));
-                        
-                        if (!token.getUserId().equals(userId) && !isAdmin) {
-                            return ResponseEntity.status(HttpStatus.FORBIDDEN)
-                                    .body(Map.of("error", "You don't have access to this token"));
-                        }
-                        logger.info("🚫 Revoking token: {} (user: {})", id, userId);
-                        tokenService.revokeToken(id);
-                        return ResponseEntity.noContent().build();
-                    })
-                    .orElseGet(() -> ResponseEntity.notFound().build());
+            logger.info("🚫 Revoking token: {} (requested by: {})", id, userId);
+            tokenService.revokeToken(id);
+            return ResponseEntity.noContent().build();
+            
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.notFound().build();
         } catch (Exception e) {
             logger.error("❌ Error revoking token {}", id, e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
@@ -189,22 +153,12 @@ public class TokensController {
             Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
             String userId = (authentication != null && authentication.isAuthenticated()) ? authentication.getName() : null;
 
-            // Check if user owns this token or is admin
-            return tokenService.getTokenById(id)
-                    .map(token -> {
-                        boolean isAdmin = authentication.getAuthorities().stream()
-                                .anyMatch(auth -> auth.getAuthority().contains("system/*.*") ||
-                                                 auth.getAuthority().equals("ROLE_ADMIN"));
-                        
-                        if (!token.getUserId().equals(userId) && !isAdmin) {
-                            return ResponseEntity.status(HttpStatus.FORBIDDEN)
-                                    .body(Map.of("error", "You don't have access to this token"));
-                        }
-                        logger.info("🗑️  Permanently deleting token: {} (user: {})", id, userId);
-                        tokenService.deleteToken(id);
-                        return ResponseEntity.noContent().build();
-                    })
-                    .orElseGet(() -> ResponseEntity.notFound().build());
+            logger.info("🗑️  Permanently deleting token: {} (requested by: {})", id, userId);
+            tokenService.deleteToken(id);
+            return ResponseEntity.noContent().build();
+            
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.notFound().build();
         } catch (Exception e) {
             logger.error("❌ Error deleting token {}", id, e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)

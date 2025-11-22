@@ -5,6 +5,7 @@ import com.couchbase.admin.connections.model.ConnectionResponse;
 import com.couchbase.admin.connections.service.ConnectionService;
 import com.couchbase.admin.initialization.model.InitializationStatus;
 import com.couchbase.admin.initialization.service.InitializationService;
+import com.couchbase.admin.tokens.service.JwtTokenCacheService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -42,6 +43,9 @@ public class ConfigurationStartupService {
     
     @Autowired
     private InitializationService initializationService;
+    
+    @Autowired
+    private JwtTokenCacheService jwtTokenCacheService;
 
     /**
      * Load configuration and establish connection after application is fully started
@@ -202,6 +206,9 @@ public class ConfigurationStartupService {
         
         if (response.isSuccess()) {
             logger.info("✅ Auto-connection successful!");
+            
+            // Initialize JWT token cache after connection is established
+            initializeTokenCache();
             
             // Check initialization status for single-tenant "fhir" bucket
             checkAndReportInitializationStatus();
@@ -374,6 +381,28 @@ public class ConfigurationStartupService {
             logger.info("🔒 Transaction durability: {} (suitable for development/single-node)", durability);
         } else {
             logger.info("🔒 Transaction durability: {} (production setting - requires replicas)", durability);
+        }
+    }
+    
+    /**
+     * Initialize the JWT token cache after Couchbase connection is established
+     */
+    private void initializeTokenCache() {
+        try {
+            logger.info("🔐 Loading active JWT tokens into cache...");
+            jwtTokenCacheService.loadActiveTokens();
+            
+            if (jwtTokenCacheService.isInitialized()) {
+                int cacheSize = jwtTokenCacheService.getCacheSize();
+                logger.info("✅ Token cache initialized with {} active tokens", cacheSize);
+            } else {
+                logger.warn("⏭️ Token cache not initialized (FHIR bucket may not be initialized yet)");
+            }
+            
+        } catch (Exception e) {
+            logger.warn("⚠️ Failed to initialize token cache: {}", e.getMessage());
+            logger.debug("Token cache initialization error:", e);
+            // Don't fail startup if cache initialization fails
         }
     }
 }

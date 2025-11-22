@@ -7,48 +7,47 @@ import java.time.Instant;
 import java.util.Objects;
 
 /**
- * API Token model for OAuth2 client credentials
+ * JWT Access Token metadata
  * Stored in fhir.Admin.tokens collection
  * 
- * Each token represents an OAuth2 client that can obtain access tokens
- * via client_credentials grant
+ * Stores metadata about issued JWT tokens for tracking and revocation.
+ * The actual JWT is issued by Spring Authorization Server using OAuth signing key.
+ * This document allows us to:
+ * - Track active tokens and revoke them
+ * - Maintain an in-memory cache of active JTIs for fast validation
+ * - Audit token usage and lifecycle
  */
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public class Token {
-    private String id; // Token ID = OAuth2 client_id
+    private String id; // Document ID: "token::<jti>"
+    private String type; // Always "jwt_access_token"
+    private String jti; // JWT ID (unique identifier for this token)
     private String userId; // Owner of the token (user email/ID)
     private String appName; // Application name for this token
-    private String clientId; // OAuth2 client_id
-    private String clientSecretHash; // BCrypt hash of client_secret (never store plain secret)
     private String status; // "active", "revoked"
+    private String[] scopes; // FHIR scopes: ["system/*.*", "user/*.*", etc.]
     private Instant createdAt;
-    private Instant lastUsedAt;
+    private Instant expiresAt; // Token expiration (from JWT exp claim)
+    private Instant lastUsedAt; // Last time this token was used
     private String createdBy; // Who created this token (usually same as userId)
-    private String[] scopes; // FHIR scopes: ["patient/*.read", "patient/*.write", etc.]
-    private String type; // "pat" (Personal Access Token) or "client" (SMART App)
 
     // Default constructor for Jackson
     public Token() {
     }
 
-    // Constructor for creating new tokens
-    public Token(String id, String userId, String appName, String clientId,
-                 String clientSecretHash, String createdBy, String[] scopes, String type) {
-        this.id = id;
+    // Constructor for creating new JWT tokens
+    public Token(String jti, String userId, String appName, String[] scopes, 
+                 Instant expiresAt, String createdBy) {
+        this.id = "token::" + jti;
+        this.type = "jwt_access_token";
+        this.jti = jti;
         this.userId = userId;
         this.appName = appName;
-        this.clientId = clientId;
-        this.clientSecretHash = clientSecretHash;
+        this.scopes = scopes;
         this.status = "active";
         this.createdAt = Instant.now();
+        this.expiresAt = expiresAt;
         this.createdBy = createdBy;
-        this.scopes = scopes;
-        this.type = type;
-    }
-
-    public Token(String id, String userId, String appName, String clientId,
-                 String clientSecretHash, String createdBy, String[] scopes) {
-        this(id, userId, appName, clientId, clientSecretHash, createdBy, scopes, "pat");
     }
 
     // Getters and Setters
@@ -76,20 +75,20 @@ public class Token {
         this.appName = appName;
     }
 
-    public String getClientId() {
-        return clientId;
+    public String getJti() {
+        return jti;
     }
 
-    public void setClientId(String clientId) {
-        this.clientId = clientId;
+    public void setJti(String jti) {
+        this.jti = jti;
     }
 
-    public String getClientSecretHash() {
-        return clientSecretHash;
+    public Instant getExpiresAt() {
+        return expiresAt;
     }
 
-    public void setClientSecretHash(String clientSecretHash) {
-        this.clientSecretHash = clientSecretHash;
+    public void setExpiresAt(Instant expiresAt) {
+        this.expiresAt = expiresAt;
     }
 
     public String getStatus() {
@@ -164,15 +163,21 @@ public class Token {
         return Objects.hash(id);
     }
 
+    @JsonIgnore
+    public boolean isExpired() {
+        return expiresAt != null && Instant.now().isAfter(expiresAt);
+    }
+
     @Override
     public String toString() {
         return "Token{" +
                 "id='" + id + '\'' +
+                ", jti='" + jti + '\'' +
                 ", userId='" + userId + '\'' +
                 ", appName='" + appName + '\'' +
-                ", clientId='" + clientId + '\'' +
                 ", status='" + status + '\'' +
                 ", createdAt=" + createdAt +
+                ", expiresAt=" + expiresAt +
                 '}';
     }
 }
