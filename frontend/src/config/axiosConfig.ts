@@ -39,13 +39,23 @@ axios.interceptors.response.use(
   (response) => response,
   (error) => {
     if (error.response?.status === 401) {
-      // Token is invalid or expired
-      // Clear auth state and redirect to login
-      localStorage.removeItem("auth-storage");
+      // Check if we sent an Authorization header
+      const sentAuthHeader = error.config?.headers?.Authorization;
       
-      // Only redirect if we're not already on the login page
-      if (!window.location.pathname.includes("/login")) {
-        window.location.href = "/login";
+      // Only redirect to login if we actually sent a token and it was rejected
+      // If we didn't send a token (pre-initialization), don't redirect
+      if (sentAuthHeader) {
+        console.warn("⚠️ 401 Unauthorized - Token invalid/expired, redirecting to login");
+        // Token is invalid or expired
+        // Clear auth state and redirect to login
+        localStorage.removeItem("auth-storage");
+        
+        // Only redirect if we're not already on the login page
+        if (!window.location.pathname.includes("/login")) {
+          window.location.href = "/login";
+        }
+      } else {
+        console.debug("⚠️ 401 Unauthorized but no token was sent - likely pre-initialization, not redirecting");
       }
     }
     

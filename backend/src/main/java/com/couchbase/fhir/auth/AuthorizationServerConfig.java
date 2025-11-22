@@ -1,13 +1,15 @@
 package com.couchbase.fhir.auth;
 
+import com.couchbase.admin.connections.service.ConnectionService;
+import com.couchbase.client.java.Cluster;
+import com.couchbase.client.java.json.JsonObject;
 import com.nimbusds.jose.jwk.JWKSet;
 import com.nimbusds.jose.jwk.RSAKey;
-import com.nimbusds.jose.jwk.source.ImmutableJWKSet;
 import com.nimbusds.jose.jwk.source.JWKSource;
 import com.nimbusds.jose.proc.SecurityContext;
-import com.nimbusds.jose.util.JSONObjectUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -43,8 +45,6 @@ import org.springframework.security.web.util.matcher.MediaTypeRequestMatcher;
 
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
-import java.security.interfaces.RSAPrivateKey;
-import java.security.interfaces.RSAPublicKey;
 import java.time.Duration;
 import java.util.UUID;
 
@@ -63,6 +63,26 @@ import java.util.UUID;
 public class AuthorizationServerConfig {
 
     private static final Logger logger = LoggerFactory.getLogger(AuthorizationServerConfig.class);
+    private static final String BUCKET_NAME = "fhir";
+    private static final String SCOPE_NAME = "Admin";
+    private static final String COLLECTION_NAME = "config";
+    private static final String JWK_DOCUMENT_ID = "oauth-signing-key";
+    private static final String DEFAULT_CONNECTION = "default";
+
+    @Autowired
+    private ConnectionService connectionService;
+    
+    // Cache the RSA key to avoid repeated Couchbase lookups
+    private volatile RSAKey cachedRsaKey = null;
+    
+    /**
+     * Invalidate the cached RSA key to force reload from Couchbase
+     * Called after initialization creates a new key
+     */
+    public void invalidateKeyCache() {
+        logger.info("🔄 Invalidating OAuth key cache to reload from Couchbase");
+        cachedRsaKey = null;
+    }
 
     // FhirServerConfig was previously used for deriving issuer; logic now moved to authorizationServerSettings
     // Remove unused injection to avoid warning.
@@ -257,21 +277,26 @@ public class AuthorizationServerConfig {
 
     /**
      * JWK Source for signing and validating JWTs
-     * In production, use persistent key storage
+     * Uses lazy-loading pattern to ensure fhir.Admin.config collection exists
      */
     @Bean
     public JWKSource<SecurityContext> jwkSource() {
-        // Persist the generated RSA key so tokens remain valid across restarts.
-        // Path can be overridden by system property or env var; default relative file.
-        String jwkPath = System.getProperty("oauth.jwk.path", System.getenv().getOrDefault("OAUTH_JWK_PATH", "oauth-signing-key.jwk"));
-        RSAKey rsaKey = loadOrCreateRsaJwk(jwkPath);
-        JWKSet jwkSet = new JWKSet(rsaKey);
-        return new ImmutableJWKSet<>(jwkSet);
+        // Return a dynamic JWKSource that lazy-loads the key on first use
+        return (jwkSelector, securityContext) -> {
+            if (cachedRsaKey == null) {
+                synchronized (this) {
+                    if (cachedRsaKey == null) {
+                        cachedRsaKey = loadOrCreateRsaJwkFromCouchbase();
+                    }
+                }
+            }
+            JWKSet jwkSet = new JWKSet(cachedRsaKey);
+            return jwkSelector.select(jwkSet);
+        };
     }
 
     /**
      * Generate RSA key pair for JWT signing
-     * In production, load from secure key storage
      */
     private static KeyPair generateRsaKey() {
         KeyPair keyPair;
@@ -286,47 +311,136 @@ public class AuthorizationServerConfig {
     }
 
     /**
-     * Load existing RSA JWK from disk or create and persist a new one.
-     * This prevents key rotation on each restart which invalidates previously issued tokens.
+     * Get the config collection from Couchbase
+     * Returns null if collection doesn't exist yet (during initialization)
+     * FAST-FAIL: Checks collection existence before attempting KV operations
      */
-    private RSAKey loadOrCreateRsaJwk(String path) {
-        java.io.File file = new java.io.File(path);
-        if (file.exists()) {
-            try (java.io.FileReader reader = new java.io.FileReader(file)) {
-                char[] buf = new char[(int) file.length()];
-                int read = reader.read(buf);
-                String json = new String(buf, 0, read);
-                JWKSet set = JWKSet.parse(json);
-                RSAKey loaded = (RSAKey) set.getKeys().get(0);
-                if (loaded.isPrivate()) {
-                    logger.info("🔐 Loaded existing RSA signing key from {}", file.getAbsolutePath());
-                    return loaded;
-                } else {
-                    logger.warn("⚠️ Existing JWK file {} lacks private key; regenerating", file.getAbsolutePath());
-                }
-            } catch (Exception e) {
-                logger.warn("⚠️ Failed to load existing JWK (will regenerate): {}", e.getMessage());
-            }
+    private boolean isConfigCollectionAvailable() {
+        Cluster cluster = connectionService.getConnection(DEFAULT_CONNECTION);
+        if (cluster == null) {
+            logger.debug("No active Couchbase connection for '{}'", DEFAULT_CONNECTION);
+            return false;
         }
-
-        // Generate new key and persist
-        KeyPair kp = generateRsaKey();
-        RSAPublicKey publicKey = (RSAPublicKey) kp.getPublic();
-        RSAPrivateKey privateKey = (RSAPrivateKey) kp.getPrivate();
-        RSAKey rsaKey = new RSAKey.Builder(publicKey)
-                .privateKey(privateKey)
-                .keyID(UUID.randomUUID().toString())
-                .build();
-        try (java.io.FileWriter writer = new java.io.FileWriter(file)) {
-            JWKSet set = new JWKSet(rsaKey);
-            // Include private parts when persisting so encoder can sign after restart
-            writer.write(JSONObjectUtils.toJSONString(set.toJSONObject(true)));
-            writer.flush();
-            logger.info("🔐 Generated new RSA signing key (with private) and persisted to {}", file.getAbsolutePath());
+        boolean bucketOk = false, scopeOk = false, collectionOk = false;
+        try {
+            String bucketCheckSql = "SELECT RAW name FROM system:buckets WHERE `name` = $name LIMIT 1";
+            var result = cluster.query(bucketCheckSql, com.couchbase.client.java.query.QueryOptions.queryOptions().parameters(JsonObject.create().put("name", BUCKET_NAME)));
+            bucketOk = !result.rowsAs(String.class).isEmpty();
+            if (!bucketOk) logger.debug("Bucket '{}' NOT found (system:buckets)", BUCKET_NAME);
         } catch (Exception e) {
-            logger.error("❌ Failed to persist JWK: {}", e.getMessage());
+            logger.debug("Bucket existence check error: {}", e.getMessage());
         }
-        return rsaKey;
+        try {
+            if (bucketOk) {
+                String scopeSql = "SELECT RAW name FROM system:scopes WHERE `bucket` = $bucket AND `name` = $scope LIMIT 1";
+                var result = cluster.query(scopeSql, com.couchbase.client.java.query.QueryOptions.queryOptions().parameters(JsonObject.create().put("bucket", BUCKET_NAME).put("scope", SCOPE_NAME)));
+                scopeOk = !result.rowsAs(String.class).isEmpty();
+                if (!scopeOk) logger.debug("Scope '{}.{}' NOT found (system:scopes)", BUCKET_NAME, SCOPE_NAME);
+            }
+        } catch (Exception e) {
+            logger.debug("Scope existence check error: {}", e.getMessage());
+        }
+        try {
+            if (bucketOk && scopeOk) {
+                String collSql = "SELECT RAW name FROM system:keyspaces WHERE `bucket` = $bucket AND `scope` = $scope AND `name` = $name LIMIT 1";
+                var result = cluster.query(collSql, com.couchbase.client.java.query.QueryOptions.queryOptions().parameters(JsonObject.create().put("bucket", BUCKET_NAME).put("scope", SCOPE_NAME).put("name", COLLECTION_NAME)));
+                collectionOk = !result.rowsAs(String.class).isEmpty();
+                if (!collectionOk) logger.debug("Collection '{}.{}.{}' NOT found (system:keyspaces)", BUCKET_NAME, SCOPE_NAME, COLLECTION_NAME);
+            }
+        } catch (Exception e) {
+            logger.debug("Collection existence check error: {}", e.getMessage());
+        }
+        if (!(bucketOk && scopeOk && collectionOk)) {
+            logger.info("OAuth JWK collection unavailable (bucketOk={} scopeOk={} collectionOk={})", bucketOk, scopeOk, collectionOk);
+        }
+        return bucketOk && scopeOk && collectionOk;
+    }
+
+    /**
+     * Load existing RSA JWK from Couchbase - ONLY loads, never creates
+     * Key must be created during initialization (Step 11)
+     * Stored in: fhir.Admin.config collection with document ID "oauth-signing-key"
+     */
+    private RSAKey loadOrCreateRsaJwkFromCouchbase() {
+        if (!isConfigCollectionAvailable()) {
+            throw new IllegalStateException("Cannot load OAuth signing key: fhir.Admin.config collection does not exist. Please initialize the FHIR bucket first.");
+        }
+        try {
+            Cluster cluster = connectionService.getConnection(DEFAULT_CONNECTION);
+            if (cluster == null) {
+                throw new IllegalStateException("No active Couchbase connection");
+            }
+             // N1QL fetch (avoids KV timeout). Use VALUE to get raw doc object.
+             // IMPORTANT: Previous query used SELECT VALUE d without alias; resulted in null row. Corrected to use RAW with alias.
+             String docSql = String.format("SELECT RAW d FROM `%s`.`%s`.`%s` AS d USE KEYS '%s'", BUCKET_NAME, SCOPE_NAME, COLLECTION_NAME, JWK_DOCUMENT_ID);
+             long start = System.nanoTime();
+             logger.debug("🔍 [JWK-LOAD] Executing signing key query: {}", docSql);
+             var queryResult = cluster.query(docSql);
+             var docs = queryResult.rowsAs(JsonObject.class);
+             long elapsedMs = (System.nanoTime() - start) / 1_000_000L;
+             logger.debug("🔍 [JWK-LOAD] Query completed in {} ms; rowCount={}", elapsedMs, docs.size());
+
+            if (docs.isEmpty()) {
+                logger.warn("❌ OAuth signing key document not found in fhir.Admin.config - was Step 11 skipped during initialization?");
+                // For deeper diagnostics, log any raw rows as String (should be empty too)
+                var rawRows = queryResult.rowsAs(String.class);
+                logger.debug("[JWK-LOAD] Raw string rows size={} contents={}", rawRows.size(), rawRows);
+                throw new IllegalStateException("OAuth signing key not found in fhir.Admin.config. Please initialize the FHIR bucket first.");
+            }
+            JsonObject doc = docs.get(0);
+            if (doc == null) {
+                // Fallback: attempt alternate projection without alias to see if document loads
+                String altSql = String.format("SELECT RAW `%s`.`%s`.`%s` USE KEYS '%s'", BUCKET_NAME, SCOPE_NAME, COLLECTION_NAME, JWK_DOCUMENT_ID);
+                logger.warn("[JWK-LOAD] Null row returned; attempting alternate query: {}", altSql);
+                var altResult = cluster.query(altSql);
+                var altDocs = altResult.rowsAs(JsonObject.class);
+                if (!altDocs.isEmpty() && altDocs.get(0) != null) {
+                    doc = altDocs.get(0);
+                    logger.info("[JWK-LOAD] Alternate query succeeded; continuing with loaded document.");
+                } else {
+                    var rawRows = queryResult.rowsAs(String.class);
+                    logger.warn("❌ First row still null after alternate query. originalRawRowsSize={} originalRawRows={} altRowsSize={} altRows={}", rawRows.size(), rawRows, altDocs.size(), altResult.rowsAs(String.class));
+                    throw new IllegalStateException("Signing key query returned null row (both primary and alternate forms)");
+                }
+            }
+             // Log truncated doc for diagnostics (avoid dumping private key material fully)
+             logger.debug("🔍 [JWK-LOAD] Retrieved doc keys={}", doc.getNames());
+             
+             // Try new format first (jwkSetString) - stores JWK as raw string to preserve private key
+             String jwkSetJson = doc.getString("jwkSetString");
+             if (jwkSetJson == null) {
+                 // Fallback to old format (jwkSet as JsonObject) for backwards compatibility
+                 logger.warn("⚠️ [JWK-LOAD] No 'jwkSetString' field, trying legacy 'jwkSet' field...");
+                 JsonObject jwkSetObj = doc.getObject("jwkSet");
+                 if (jwkSetObj == null) {
+                     logger.error("❌ [JWK-LOAD] Document has neither 'jwkSetString' nor 'jwkSet' field. Document structure: {}", doc.getNames());
+                     throw new IllegalStateException("JWK document exists but has no jwkSet");
+                 }
+                 jwkSetJson = jwkSetObj.toString();
+                 logger.warn("⚠️ [JWK-LOAD] Using legacy 'jwkSet' field - private key may be missing!");
+             }
+             logger.debug("🔍 [JWK-LOAD] jwkSet found, parsing JWKSet JSON...");
+             logger.debug("🔍 [JWK-LOAD] jwkSet JSON length: {} chars", jwkSetJson.length());
+             
+             JWKSet set = JWKSet.parse(jwkSetJson);
+             logger.debug("🔍 [JWK-LOAD] Parsed JWKSet with {} keys", set.getKeys().size());
+             
+             RSAKey loaded = (RSAKey) set.getKeys().get(0);
+             logger.debug("🔍 [JWK-LOAD] First key: kty={}, kid={}, hasPrivateKey={}", 
+                 loaded.getKeyType(), loaded.getKeyID(), loaded.isPrivate());
+             
+             if (!loaded.isPrivate()) {
+                 logger.error("❌ [JWK-LOAD] RSA key lacks private key! This means the JWKSet was exported without private parts.");
+                 logger.error("❌ [JWK-LOAD] Key details: algorithm={}, keyUse={}, keyOperations={}", 
+                     loaded.getAlgorithm(), loaded.getKeyUse(), loaded.getKeyOperations());
+                 throw new IllegalStateException("JWK in Couchbase lacks private key - was it exported without private parts?");
+             }
+             logger.info("🔐 Loaded existing RSA signing key from fhir.Admin.config (kid: {})", loaded.getKeyID());
+             return loaded;
+        } catch (Exception e) {
+            logger.error("❌ Failed to load OAuth signing key via N1QL: {}", e.getMessage());
+            throw new IllegalStateException("Failed to load OAuth signing key: " + e.getMessage(), e);
+        }
     }
 
     /**

@@ -43,11 +43,14 @@ public class SecurityConfig {
             .cors(cors -> cors.configurationSource(corsConfigurationSource))
             .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .authorizeHttpRequests(authz -> authz
-                // Protect Admin UI endpoints - require custom JWT
-                .requestMatchers("/api/admin/**").authenticated()
-                
                 // Allow open access to Admin UI authentication
                 .requestMatchers("/api/auth/**").permitAll()
+                
+                // Allow open access to initialization endpoints (needed before JWT exists)
+                .requestMatchers("/api/admin/initialization/**").permitAll()
+                
+                // Protect all other Admin UI endpoints - require JWT
+                .requestMatchers("/api/admin/**").authenticated()
                 
                 // Allow open access to other API endpoints
                 .requestMatchers("/api/**").permitAll()

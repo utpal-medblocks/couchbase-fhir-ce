@@ -34,9 +34,6 @@ fhir:
         - name: "consents"
           description: "Consent management, authentication"
 
-        - name: "jwks"
-          description: "JSON Web Key Set, authentication"
-
     resources:
       name: "Resources"
       description: "FHIR clinical and administrative resource collections"

@@ -10,6 +10,7 @@ import org.springframework.security.oauth2.jwt.JwtEncoderParameters;
 import com.couchbase.admin.users.model.User;
 import com.couchbase.admin.users.service.UserService;
 import com.couchbase.admin.connections.service.ConnectionService;
+import com.couchbase.admin.initialization.service.InitializationService;
 import com.couchbase.client.java.Cluster;
 import com.couchbase.common.config.AdminConfig;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -46,6 +47,9 @@ public class AuthController {
 
     @Autowired
     private ConnectionService connectionService;
+    
+    @Autowired
+    private InitializationService initializationService;
 
     // Simple cached presence flag to avoid repeating management API calls on every login.
     // null = unknown (not checked yet). True/false cached after first check.
@@ -91,8 +95,23 @@ public class AuthController {
         String email = loginRequest.getEmail();
         String password = loginRequest.getPassword();
 
-        // 1) Try authenticating against Admin.users ONLY if the fhir bucket exists
+        // 1) Try authenticating against Admin.users ONLY if the fhir bucket exists AND is initialized
+        // Check initialization status to avoid 10-second KV timeout on non-existent collections
+        boolean shouldTryDatabase = false;
         if (isFhirBucketPresent()) {
+            try {
+                // Quick check: is the bucket initialized? (fast HTTP call, no KV timeout)
+                var initStatus = initializationService.checkStatus("default");
+                shouldTryDatabase = (initStatus.getStatus() == com.couchbase.admin.initialization.model.InitializationStatus.Status.READY);
+            } catch (Exception e) {
+                // If check fails, skip database lookup
+                logger.debug("⏭️  [LOGIN] Cannot check initialization status, skipping database auth: {}", e.getMessage());
+            }
+        } else {
+            logger.debug("⏭️  [LOGIN] Skipping Admin.users lookup; bucket 'fhir' not present yet (falling back to config.yaml)");
+        }
+        
+        if (shouldTryDatabase) {
             try {
                 java.util.Optional<User> userOpt = userService.getUserById(email);
 
@@ -121,8 +140,6 @@ public class AuthController {
                 // Silently fall through to config-based auth if database not available
                 // This can occur during initialization races; we intentionally suppress.
             }
-        } else {
-            logger.debug("⏭️  [LOGIN] Skipping Admin.users lookup; bucket 'fhir' not present yet (falling back to config.yaml)");
         }
 
         // 2) Fallback: Validate credentials against config.yaml
@@ -135,11 +152,25 @@ public class AuthController {
             long elapsedMs = (System.nanoTime() - startNs) / 1_000_000L;
             logger.debug("✅ [LOGIN] Authenticated via config.yaml fallback email='{}' in {} ms", email, elapsedMs);
             String[] scopes = new String[]{"system/*.*","user/*.*"};
-            String token = isFhirBucketPresent() ? issueAdminAccessToken(configEmail, scopes) : null;
-            if (token == null) {
-                return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
-                        .body(createErrorResponse("FHIR bucket not initialized; cannot issue access token yet"));
+            
+            // Try to issue token, but allow login even if it fails (before initialization)
+            String token = null;
+            try {
+                if (isFhirBucketPresent()) {
+                    token = issueAdminAccessToken(configEmail, scopes);
+                }
+            } catch (Exception e) {
+                logger.warn("⚠️ Cannot issue JWT token yet (FHIR bucket not initialized): {}", e.getMessage());
             }
+            
+            // If no token, return a special response indicating initialization needed
+            if (token == null) {
+                logger.info("🔄 Login successful but no JWT issued - FHIR bucket not initialized");
+                // Return success with null token - frontend will show initialization dialog
+                UserInfo userInfo = new UserInfo(configEmail, configName, "admin", scopes);
+                return ResponseEntity.ok(new LoginResponse(null, userInfo));
+            }
+            
             UserInfo userInfo = new UserInfo(configEmail, configName, "admin", scopes);
             return ResponseEntity.ok(new LoginResponse(token, userInfo));
         }

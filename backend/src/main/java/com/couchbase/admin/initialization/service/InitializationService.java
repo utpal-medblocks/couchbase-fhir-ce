@@ -4,6 +4,7 @@ import com.couchbase.admin.connections.service.ConnectionService;
 import com.couchbase.admin.initialization.model.InitializationStatus;
 import com.couchbase.admin.initialization.model.InitializationStatus.Status;
 import com.couchbase.client.java.Cluster;
+import com.couchbase.fhir.auth.AuthorizationServerConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -22,6 +23,9 @@ public class InitializationService {
     
     @Autowired
     private ConnectionService connectionService;
+    
+    @Autowired(required = false)  // Optional - only needed if OAuth is configured
+    private AuthorizationServerConfig authorizationServerConfig;
     
     /**
      * Check the initialization status of the FHIR system
@@ -57,6 +61,14 @@ public class InitializationService {
                 FHIR_BUCKET_NAME
             ));
             status.setFhirInitialized(false);
+            
+            // CRITICAL: Invalidate OAuth key cache when bucket is missing
+            // This ensures old JWTs stop working after bucket is dropped
+            if (authorizationServerConfig != null) {
+                logger.warn("⚠️ Bucket missing - invalidating OAuth key cache to reject old JWTs");
+                authorizationServerConfig.invalidateKeyCache();
+            }
+            
             return status;
         }
         
@@ -72,6 +84,14 @@ public class InitializationService {
                 "Bucket '%s' exists but is not FHIR-initialized. Click 'Initialize' to create scopes, collections, and indexes.",
                 FHIR_BUCKET_NAME
             ));
+            
+            // CRITICAL: Invalidate OAuth key cache when bucket is not initialized
+            // This ensures old JWTs stop working if bucket was re-created empty
+            if (authorizationServerConfig != null) {
+                logger.warn("⚠️ Bucket not initialized - invalidating OAuth key cache to reject old JWTs");
+                authorizationServerConfig.invalidateKeyCache();
+            }
+            
             return status;
         }
         

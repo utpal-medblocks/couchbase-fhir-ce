@@ -41,12 +41,22 @@ export default function Login() {
     try {
       console.log("🔐 Calling authService.login...");
       const response = await authService.login({ email, password });
-      console.log("✅ Login successful", { user: response.user });
-      
-      login(response.token, response.user);
-      console.log("✅ Token stored in Zustand, navigating to /");
-      
-      navigate("/");
+      console.log("✅ Login successful", {
+        user: response.user,
+        hasToken: !!response.token,
+      });
+
+      // Handle case where bucket is not initialized (token will be null)
+      if (!response.token) {
+        console.warn("⚠️ No JWT token received - FHIR bucket not initialized");
+        // Still store user info but with empty token - this allows showing initialization UI
+        login("", response.user);
+        navigate("/");
+      } else {
+        login(response.token, response.user);
+        console.log("✅ Token stored in Zustand, navigating to /");
+        navigate("/");
+      }
     } catch (err: any) {
       console.error("❌ Login failed:", err);
       setError(err.message || "Login failed");

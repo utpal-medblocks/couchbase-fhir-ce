@@ -9,13 +9,22 @@ import com.couchbase.admin.connections.service.ConnectionService;
 import com.couchbase.admin.fts.config.FtsIndexCreator;
 import com.couchbase.admin.gsi.service.GsiIndexService;
 import com.couchbase.client.java.Cluster;
+import com.couchbase.client.java.Collection;
+import com.couchbase.client.java.json.JsonObject;
 import com.couchbase.fhir.resources.service.FhirBucketConfigService;
 import com.couchbase.fhir.resources.validation.FhirBucketValidator;
 import com.couchbase.client.java.manager.collection.CollectionManager;
 import com.couchbase.client.java.manager.collection.CollectionSpec;
+import com.nimbusds.jose.jwk.JWKSet;
+import com.nimbusds.jose.jwk.RSAKey;
 
 import com.couchbase.client.java.query.QueryOptions;
+import java.security.KeyPair;
+import java.security.KeyPairGenerator;
+import java.security.interfaces.RSAPrivateKey;
+import java.security.interfaces.RSAPublicKey;
 import java.time.Duration;
+import java.time.Instant;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -56,6 +65,9 @@ public class FhirBucketService {
 
     @Autowired
     private AdminConfig adminConfig;
+    
+    @Autowired(required = false)
+    private com.couchbase.fhir.auth.AuthorizationServerConfig authorizationServerConfig;
     
     // Store operation status
     private final Map<String, FhirConversionStatusDetail> operationStatus = new ConcurrentHashMap<>();
@@ -165,6 +177,11 @@ public class FhirBucketService {
             updateStatus(status, "create_admin_user", "Creating initial Admin user");
             createInitialAdminUserIfNeeded();
             status.setCompletedSteps(10);
+            
+            // Step 11: Generate and persist OAuth signing key
+            updateStatus(status, "create_oauth_key", "Generating OAuth signing key");
+            createOAuthSigningKey(cluster, bucketName);
+            status.setCompletedSteps(11);
             
             // Completion
             status.setStatus(FhirConversionStatus.COMPLETED);
@@ -566,6 +583,100 @@ public class FhirBucketService {
             // Log the error but don't fail the check
             logger.error("REST check for FHIR config failed: {}", e.getMessage());
             return false;
+        }
+    }
+    
+    /**
+     * Generate and persist OAuth signing key to fhir.Admin.config collection
+     * Called during FHIR bucket initialization (Step 11)
+     */
+    private void createOAuthSigningKey(Cluster cluster, String bucketName) {
+        try {
+            Collection configCollection = cluster.bucket(bucketName).scope("Admin").collection("config");
+            
+            // Check if key already exists
+            try {
+                configCollection.get("oauth-signing-key");
+                logger.info("🔐 OAuth signing key already exists in fhir.Admin.config");
+                return;
+            } catch (com.couchbase.client.core.error.DocumentNotFoundException e) {
+                // Key doesn't exist, create it
+            }
+            
+            // Generate new RSA key pair
+            KeyPairGenerator keyPairGenerator = KeyPairGenerator.getInstance("RSA");
+            keyPairGenerator.initialize(2048);
+            KeyPair keyPair = keyPairGenerator.generateKeyPair();
+            
+            RSAPublicKey publicKey = (RSAPublicKey) keyPair.getPublic();
+            RSAPrivateKey privateKey = (RSAPrivateKey) keyPair.getPrivate();
+            String keyId = UUID.randomUUID().toString();
+            
+            RSAKey rsaKey = new RSAKey.Builder(publicKey)
+                    .privateKey(privateKey)
+                    .keyID(keyId)
+                    .build();
+            
+            // Create JWK Set and convert to JSON
+            // CRITICAL: Use toJSONString() directly to preserve private key
+            logger.info("🔐 [STEP-11] RSA key before serialization - hasPrivateKey: {}, kid: {}", rsaKey.isPrivate(), keyId);
+            
+            // Serialize the RSAKey directly (not via JWKSet) to ensure private parts are included
+            String jwkJson = rsaKey.toJSONString();
+            logger.info("🔐 [STEP-11] Serialized RSAKey JSON length: {} chars", jwkJson.length());
+            logger.debug("🔐 [STEP-11] RSAKey JSON (first 200 chars): {}", 
+                jwkJson.length() > 200 ? jwkJson.substring(0, 200) + "..." : jwkJson);
+            
+            // Wrap in JWKSet format
+            String jwkSetJson = String.format("{\"keys\":[%s]}", jwkJson);
+            logger.info("🔐 [STEP-11] Complete JWKSet JSON length: {} chars", jwkSetJson.length());
+            
+            // Verify it can be parsed back with private key
+            JWKSet testParse = JWKSet.parse(jwkSetJson);
+            RSAKey testKey = (RSAKey) testParse.getKeys().get(0);
+            logger.info("🔐 [STEP-11] Verification after parse - hasPrivateKey: {}", testKey.isPrivate());
+            
+            if (!testKey.isPrivate()) {
+                logger.error("❌ [STEP-11] BUG: Serialization lost private key! This should never happen.");
+                throw new IllegalStateException("JWKSet serialization lost private key");
+            }
+            
+            // Create document
+            // IMPORTANT: Store jwkSet as raw string to preserve private key parts
+            // JsonObject.fromJson() can strip private fields during re-serialization
+            JsonObject doc = JsonObject.create()
+                    .put("id", "oauth-signing-key")
+                    .put("type", "jwk")
+                    .put("jwkSetString", jwkSetJson)  // Store as string
+                    .put("createdAt", Instant.now().toString())
+                    .put("updatedAt", Instant.now().toString());
+            
+            configCollection.upsert("oauth-signing-key", doc);
+            logger.info("🔐 Generated and persisted OAuth signing key to fhir.Admin.config (kid: {})", keyId);
+            
+            // Verify what was actually saved by reading it back
+            try {
+                var savedDoc = configCollection.get("oauth-signing-key").contentAsObject();
+                String savedJwkStr = savedDoc.getString("jwkSetString");
+                JWKSet verifySet = JWKSet.parse(savedJwkStr);
+                RSAKey verifyKey = (RSAKey) verifySet.getKeys().get(0);
+                logger.info("🔐 [STEP-11] Verification after save - hasPrivateKey: {}", verifyKey.isPrivate());
+                if (!verifyKey.isPrivate()) {
+                    logger.error("❌ [STEP-11] Saved document lost private key!");
+                }
+            } catch (Exception e) {
+                logger.warn("⚠️ [STEP-11] Could not verify saved key: {}", e.getMessage());
+            }
+            
+            // Invalidate the cached key in AuthorizationServerConfig so it reloads from Couchbase
+            if (authorizationServerConfig != null) {
+                authorizationServerConfig.invalidateKeyCache();
+            }
+            
+        } catch (Exception e) {
+            // Don't fail initialization if key creation fails
+            logger.error("❌ Failed to create OAuth signing key: {}", e.getMessage(), e);
+            logger.warn("⚠️ OAuth tokens will use ephemeral key (won't survive restarts)");
         }
     }
 }
