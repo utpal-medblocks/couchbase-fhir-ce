@@ -5,9 +5,9 @@ import com.nimbusds.jose.jwk.RSAKey;
 import com.nimbusds.jose.jwk.source.ImmutableJWKSet;
 import com.nimbusds.jose.jwk.source.JWKSource;
 import com.nimbusds.jose.proc.SecurityContext;
+import com.nimbusds.jose.util.JSONObjectUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -24,6 +24,8 @@ import org.springframework.security.oauth2.core.AuthorizationGrantType;
 import org.springframework.security.oauth2.core.ClientAuthenticationMethod;
 import org.springframework.security.oauth2.core.oidc.OidcScopes;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
+import org.springframework.security.oauth2.jwt.JwtEncoder;
+import org.springframework.security.oauth2.jwt.NimbusJwtEncoder;
 import org.springframework.security.oauth2.server.authorization.client.InMemoryRegisteredClientRepository;
 import org.springframework.security.oauth2.server.authorization.client.RegisteredClient;
 import org.springframework.security.oauth2.server.authorization.client.RegisteredClientRepository;
@@ -62,8 +64,8 @@ public class AuthorizationServerConfig {
 
     private static final Logger logger = LoggerFactory.getLogger(AuthorizationServerConfig.class);
 
-    @Autowired
-    private com.couchbase.common.config.FhirServerConfig fhirServerConfig;
+    // FhirServerConfig was previously used for deriving issuer; logic now moved to authorizationServerSettings
+    // Remove unused injection to avoid warning.
 
     /**
      * OAuth 2.0 Authorization Server Security Filter Chain
@@ -106,9 +108,44 @@ public class AuthorizationServerConfig {
      * For testing, we create a simple client with default SMART scopes
      */
     @Bean
-    public RegisteredClientRepository registeredClientRepository() {
-        // Test client for development
-        RegisteredClient testClient = RegisteredClient.withId(UUID.randomUUID().toString())
+    public RegisteredClientRepository registeredClientRepository(
+        @Value("${admin.ui.client.secret:}") String adminUiClientSecretProp,
+        @Value("${admin.ui.client.id:admin-ui}") String adminUiClientId,
+        @Value("${admin.ui.scopes:system/*.*,user/*.*}") String adminUiScopesProp) {
+    // Derive static admin-ui client secret:
+    // Priority: explicit property -> env var ADMIN_UI_CLIENT_SECRET -> fallback test-secret (NOT for production).
+    String envSecret = System.getenv("ADMIN_UI_CLIENT_SECRET");
+    String rawAdminSecret = (adminUiClientSecretProp != null && !adminUiClientSecretProp.isBlank()) ? adminUiClientSecretProp
+        : (envSecret != null && !envSecret.isBlank()) ? envSecret
+        : "change-me-admin-ui-secret";
+    if ("change-me-admin-ui-secret".equals(rawAdminSecret)) {
+        logger.warn("⚠️ Using fallback admin-ui client secret. Set ADMIN_UI_CLIENT_SECRET or admin.ui.client.secret property for production.");
+    }
+
+    // Parse scopes (comma or space separated)
+    String[] adminScopesArr = adminUiScopesProp.split("[ ,]+");
+
+    // Static admin client for interactive logins (client_credentials only)
+    RegisteredClient adminClient = RegisteredClient.withId(UUID.randomUUID().toString())
+        .clientId(adminUiClientId)
+        .clientSecret(passwordEncoder().encode(rawAdminSecret))
+        .clientAuthenticationMethod(ClientAuthenticationMethod.CLIENT_SECRET_BASIC)
+        .clientAuthenticationMethod(ClientAuthenticationMethod.CLIENT_SECRET_POST)
+        .authorizationGrantType(AuthorizationGrantType.CLIENT_CREDENTIALS)
+        .scopes(s -> {
+            for (String sc : adminScopesArr) if (!sc.isBlank()) s.add(sc.trim());
+        })
+        .tokenSettings(TokenSettings.builder()
+            .accessTokenTimeToLive(Duration.ofHours(
+                Long.parseLong(System.getProperty("oauth.token.expiry.hours",
+                    System.getenv().getOrDefault("OAUTH_TOKEN_EXPIRY_HOURS", "24"))))
+            )
+            .build())
+        .clientSettings(ClientSettings.builder().requireAuthorizationConsent(false).build())
+        .build();
+
+    // Existing test client for development / SMART flows
+    RegisteredClient testClient = RegisteredClient.withId(UUID.randomUUID().toString())
                 .clientId("test-client")
                 .clientSecret(passwordEncoder().encode("test-secret"))
                 .clientAuthenticationMethod(ClientAuthenticationMethod.CLIENT_SECRET_BASIC)
@@ -150,7 +187,7 @@ public class AuthorizationServerConfig {
                         .build())
                 .build();
 
-        return new InMemoryRegisteredClientRepository(testClient);
+        return new InMemoryRegisteredClientRepository(java.util.List.of(adminClient, testClient));
     }
 
     /**
@@ -211,18 +248,23 @@ public class AuthorizationServerConfig {
     }
 
     /**
+     * JwtEncoder for issuing custom application tokens (e.g., admin login) signed with same JWK.
+     */
+    @Bean
+    public JwtEncoder jwtEncoder(JWKSource<SecurityContext> jwkSource) {
+        return new NimbusJwtEncoder(jwkSource);
+    }
+
+    /**
      * JWK Source for signing and validating JWTs
      * In production, use persistent key storage
      */
     @Bean
     public JWKSource<SecurityContext> jwkSource() {
-        KeyPair keyPair = generateRsaKey();
-        RSAPublicKey publicKey = (RSAPublicKey) keyPair.getPublic();
-        RSAPrivateKey privateKey = (RSAPrivateKey) keyPair.getPrivate();
-        RSAKey rsaKey = new RSAKey.Builder(publicKey)
-                .privateKey(privateKey)
-                .keyID(UUID.randomUUID().toString())
-                .build();
+        // Persist the generated RSA key so tokens remain valid across restarts.
+        // Path can be overridden by system property or env var; default relative file.
+        String jwkPath = System.getProperty("oauth.jwk.path", System.getenv().getOrDefault("OAUTH_JWK_PATH", "oauth-signing-key.jwk"));
+        RSAKey rsaKey = loadOrCreateRsaJwk(jwkPath);
         JWKSet jwkSet = new JWKSet(rsaKey);
         return new ImmutableJWKSet<>(jwkSet);
     }
@@ -241,6 +283,50 @@ public class AuthorizationServerConfig {
             throw new IllegalStateException(ex);
         }
         return keyPair;
+    }
+
+    /**
+     * Load existing RSA JWK from disk or create and persist a new one.
+     * This prevents key rotation on each restart which invalidates previously issued tokens.
+     */
+    private RSAKey loadOrCreateRsaJwk(String path) {
+        java.io.File file = new java.io.File(path);
+        if (file.exists()) {
+            try (java.io.FileReader reader = new java.io.FileReader(file)) {
+                char[] buf = new char[(int) file.length()];
+                int read = reader.read(buf);
+                String json = new String(buf, 0, read);
+                JWKSet set = JWKSet.parse(json);
+                RSAKey loaded = (RSAKey) set.getKeys().get(0);
+                if (loaded.isPrivate()) {
+                    logger.info("🔐 Loaded existing RSA signing key from {}", file.getAbsolutePath());
+                    return loaded;
+                } else {
+                    logger.warn("⚠️ Existing JWK file {} lacks private key; regenerating", file.getAbsolutePath());
+                }
+            } catch (Exception e) {
+                logger.warn("⚠️ Failed to load existing JWK (will regenerate): {}", e.getMessage());
+            }
+        }
+
+        // Generate new key and persist
+        KeyPair kp = generateRsaKey();
+        RSAPublicKey publicKey = (RSAPublicKey) kp.getPublic();
+        RSAPrivateKey privateKey = (RSAPrivateKey) kp.getPrivate();
+        RSAKey rsaKey = new RSAKey.Builder(publicKey)
+                .privateKey(privateKey)
+                .keyID(UUID.randomUUID().toString())
+                .build();
+        try (java.io.FileWriter writer = new java.io.FileWriter(file)) {
+            JWKSet set = new JWKSet(rsaKey);
+            // Include private parts when persisting so encoder can sign after restart
+            writer.write(JSONObjectUtils.toJSONString(set.toJSONObject(true)));
+            writer.flush();
+            logger.info("🔐 Generated new RSA signing key (with private) and persisted to {}", file.getAbsolutePath());
+        } catch (Exception e) {
+            logger.error("❌ Failed to persist JWK: {}", e.getMessage());
+        }
+        return rsaKey;
     }
 
     /**

@@ -3,7 +3,10 @@ package com.couchbase.admin.auth.controller;
 import com.couchbase.admin.auth.model.LoginRequest;
 import com.couchbase.admin.auth.model.LoginResponse;
 import com.couchbase.admin.auth.model.UserInfo;
-import com.couchbase.admin.auth.util.JwtUtil;
+import org.springframework.security.oauth2.jwt.JwtDecoder;
+import org.springframework.security.oauth2.jwt.JwtEncoder;
+import org.springframework.security.oauth2.jwt.JwtClaimsSet;
+import org.springframework.security.oauth2.jwt.JwtEncoderParameters;
 import com.couchbase.admin.users.model.User;
 import com.couchbase.admin.users.service.UserService;
 import com.couchbase.admin.connections.service.ConnectionService;
@@ -33,7 +36,10 @@ public class AuthController {
     private AdminConfig adminConfig;
 
     @Autowired
-    private JwtUtil jwtUtil;
+    private JwtDecoder jwtDecoder;
+
+    @Autowired
+    private JwtEncoder jwtEncoder;
 
     @Autowired
     private UserService userService;
@@ -99,8 +105,10 @@ public class AuthController {
                             long elapsedMs = (System.nanoTime() - startNs) / 1_000_000L;
                             logger.debug("✅ [LOGIN] Authenticated via Admin.users (doc lookup) email='{}' in {} ms", email, elapsedMs);
                             String displayName = user.getUsername() != null ? user.getUsername() : user.getEmail();
-                            String token = jwtUtil.generateToken(user.getEmail(), displayName);
-                            UserInfo userInfo = new UserInfo(user.getEmail(), displayName);
+                String[] scopes = user.getAllowedScopes() != null && user.getAllowedScopes().length > 0
+                    ? user.getAllowedScopes() : new String[]{"system/*.*","user/*.*"};
+                String token = issueAdminAccessToken(user.getEmail(), scopes);
+                            UserInfo userInfo = new UserInfo(user.getEmail(), displayName, user.getRole(), user.getAllowedScopes());
                             return ResponseEntity.ok(new LoginResponse(token, userInfo));
                         }
 
@@ -126,8 +134,13 @@ public class AuthController {
         if (configEmail.equals(email) && configPassword.equals(password)) {
             long elapsedMs = (System.nanoTime() - startNs) / 1_000_000L;
             logger.debug("✅ [LOGIN] Authenticated via config.yaml fallback email='{}' in {} ms", email, elapsedMs);
-            String token = jwtUtil.generateToken(configEmail, configName);
-            UserInfo userInfo = new UserInfo(configEmail, configName);
+            String[] scopes = new String[]{"system/*.*","user/*.*"};
+            String token = isFhirBucketPresent() ? issueAdminAccessToken(configEmail, scopes) : null;
+            if (token == null) {
+                return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                        .body(createErrorResponse("FHIR bucket not initialized; cannot issue access token yet"));
+            }
+            UserInfo userInfo = new UserInfo(configEmail, configName, "admin", scopes);
             return ResponseEntity.ok(new LoginResponse(token, userInfo));
         }
 
@@ -153,15 +166,21 @@ public class AuthController {
 
         String token = authHeader.substring(7);
         
-        if (jwtUtil.validateToken(token)) {
-            String email = jwtUtil.extractEmail(token);
-            String name = jwtUtil.extractName(token);
-            UserInfo userInfo = new UserInfo(email, name);
-            return ResponseEntity.ok(userInfo);
+        try {
+            var jwt = jwtDecoder.decode(token);
+            String subject = jwt.getSubject(); // clientId for client_credentials tokens
+            // Attempt to map subject to token metadata if bucket present
+            if (isFhirBucketPresent()) {
+                // subject may be clientId (api-token-uuid). We don't store user role in JWT directly.
+                // For now, return minimal info; full user context can be derived via token introspection in future.
+                UserInfo userInfo = new UserInfo(subject, subject, "unknown", new String[]{});
+                return ResponseEntity.ok(userInfo);
+            }
+            return ResponseEntity.ok(new UserInfo(subject, subject, "unknown", new String[]{}));
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                    .body(createErrorResponse("Invalid or expired token"));
         }
-
-        return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
-                .body(createErrorResponse("Invalid or expired token"));
     }
 
     /**
@@ -171,6 +190,30 @@ public class AuthController {
         Map<String, String> error = new HashMap<>();
         error.put("error", message);
         return error;
+    }
+
+    /**
+     * Issue an RS256 access token for the admin user directly using JwtEncoder.
+     * Subject = user email; includes scope claim; 24h default validity.
+     */
+    private String issueAdminAccessToken(String email, String[] scopes) {
+        try {
+            java.time.Instant now = java.time.Instant.now();
+            long hours = Long.parseLong(System.getProperty("oauth.token.expiry.hours",
+                    System.getenv().getOrDefault("OAUTH_TOKEN_EXPIRY_HOURS", "24")));
+            java.time.Instant exp = now.plus(java.time.Duration.ofHours(hours));
+            JwtClaimsSet claims = JwtClaimsSet.builder()
+                    .subject(email)
+                    .issuedAt(now)
+                    .expiresAt(exp)
+                    .claim("scope", String.join(" ", scopes))
+                    .claim("email", email)
+                    .build();
+            return jwtEncoder.encode(JwtEncoderParameters.from(claims)).getTokenValue();
+        } catch (Exception e) {
+            logger.error("❌ Failed to issue admin access token: {}", e.getMessage());
+            return null;
+        }
     }
 }
 

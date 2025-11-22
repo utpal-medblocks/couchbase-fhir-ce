@@ -64,7 +64,7 @@ public class TokensController {
     }
 
     /**
-     * Get all tokens for the current user
+     * Get tokens - returns all tokens if admin, otherwise only user's tokens
      */
     @GetMapping
     public ResponseEntity<?> getMyTokens() {
@@ -76,9 +76,26 @@ public class TokensController {
                 return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(Map.of("error", "Not authenticated"));
             }
 
-            logger.info("📋 Fetching tokens for user: {}", userId);
-            List<Token> tokens = tokenService.getTokensByUserId(userId);
-            return ResponseEntity.ok(tokens);
+            // Check if user is admin (has "admin" role in their authorities/claims)
+            boolean isAdmin = authentication.getAuthorities().stream()
+                    .anyMatch(auth -> auth.getAuthority().equals("ROLE_ADMIN") || 
+                                     auth.getAuthority().equals("admin"));
+            
+            // For simplicity, also check if user has system/*.* scope (admin scope)
+            if (!isAdmin) {
+                isAdmin = authentication.getAuthorities().stream()
+                        .anyMatch(auth -> auth.getAuthority().contains("system/*.*"));
+            }
+
+            if (isAdmin) {
+                logger.info("📋 Fetching all tokens (admin user: {})", userId);
+                List<Token> tokens = tokenService.getAllTokens();
+                return ResponseEntity.ok(tokens);
+            } else {
+                logger.info("📋 Fetching tokens for user: {}", userId);
+                List<Token> tokens = tokenService.getTokensByUserId(userId);
+                return ResponseEntity.ok(tokens);
+            }
         } catch (Exception e) {
             logger.error("❌ Error fetching tokens", e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
@@ -87,13 +104,14 @@ public class TokensController {
     }
 
     /**
-     * Get all tokens (admin only)
+     * Get all tokens (admin only) - DEPRECATED: Use GET / instead (auto-detects admin)
+     * Kept for backwards compatibility
      */
+    @Deprecated
     @GetMapping("/all")
     public ResponseEntity<?> getAllTokens() {
         try {
-            // TODO: Add admin role check
-            logger.info("📋 Fetching all tokens (admin)");
+            logger.info("📋 Fetching all tokens (deprecated endpoint, use GET / instead)");
             List<Token> tokens = tokenService.getAllTokens();
             return ResponseEntity.ok(tokens);
         } catch (Exception e) {
@@ -131,22 +149,26 @@ public class TokensController {
     }
 
     /**
-     * Revoke a token
+     * Revoke a token (marks as revoked)
      */
-    @DeleteMapping("/{id}")
+    @PutMapping("/{id}/revoke")
     public ResponseEntity<?> revokeToken(@PathVariable String id) {
         try {
             Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
             String userId = (authentication != null && authentication.isAuthenticated()) ? authentication.getName() : null;
 
-            // Check if user owns this token
+            // Check if user owns this token or is admin
             return tokenService.getTokenById(id)
                     .map(token -> {
-                        if (!token.getUserId().equals(userId)) {
+                        boolean isAdmin = authentication.getAuthorities().stream()
+                                .anyMatch(auth -> auth.getAuthority().contains("system/*.*") ||
+                                                 auth.getAuthority().equals("ROLE_ADMIN"));
+                        
+                        if (!token.getUserId().equals(userId) && !isAdmin) {
                             return ResponseEntity.status(HttpStatus.FORBIDDEN)
                                     .body(Map.of("error", "You don't have access to this token"));
                         }
-                        logger.info("🗑️  Revoking token: {} (user: {})", id, userId);
+                        logger.info("🚫 Revoking token: {} (user: {})", id, userId);
                         tokenService.revokeToken(id);
                         return ResponseEntity.noContent().build();
                     })
@@ -155,6 +177,38 @@ public class TokensController {
             logger.error("❌ Error revoking token {}", id, e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                     .body(Map.of("error", "Failed to revoke token: " + e.getMessage()));
+        }
+    }
+
+    /**
+     * Permanently delete a token
+     */
+    @DeleteMapping("/{id}")
+    public ResponseEntity<?> deleteToken(@PathVariable String id) {
+        try {
+            Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+            String userId = (authentication != null && authentication.isAuthenticated()) ? authentication.getName() : null;
+
+            // Check if user owns this token or is admin
+            return tokenService.getTokenById(id)
+                    .map(token -> {
+                        boolean isAdmin = authentication.getAuthorities().stream()
+                                .anyMatch(auth -> auth.getAuthority().contains("system/*.*") ||
+                                                 auth.getAuthority().equals("ROLE_ADMIN"));
+                        
+                        if (!token.getUserId().equals(userId) && !isAdmin) {
+                            return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                                    .body(Map.of("error", "You don't have access to this token"));
+                        }
+                        logger.info("🗑️  Permanently deleting token: {} (user: {})", id, userId);
+                        tokenService.deleteToken(id);
+                        return ResponseEntity.noContent().build();
+                    })
+                    .orElseGet(() -> ResponseEntity.notFound().build());
+        } catch (Exception e) {
+            logger.error("❌ Error deleting token {}", id, e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("error", "Failed to delete token: " + e.getMessage()));
         }
     }
 }

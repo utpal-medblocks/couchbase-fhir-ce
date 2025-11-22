@@ -16,6 +16,8 @@ export interface LoginRequest {
 export interface UserInfo {
   email: string;
   name: string;
+  role: string;
+  allowedScopes: string[];
 }
 
 /**

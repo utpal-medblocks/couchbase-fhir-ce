@@ -7,6 +7,8 @@ import { persist } from "zustand/middleware";
 export interface UserInfo {
   email: string;
   name: string;
+  role: string;
+  allowedScopes: string[];
 }
 
 /**
@@ -41,7 +43,10 @@ export const useAuthStore = create<AuthState>()(
 
       // Login action
       login: (token: string, user: UserInfo) => {
-        console.log("💾 Storing auth in Zustand", { user, tokenLength: token.length });
+        console.log("💾 Storing auth in Zustand", {
+          user,
+          tokenLength: token.length,
+        });
         set({
           token,
           user,
@@ -90,4 +95,3 @@ export const useAuthStore = create<AuthState>()(
     }
   )
 );
-

@@ -42,18 +42,10 @@ export const generateToken = async (
 };
 
 /**
- * Get all tokens for the current user
+ * Get tokens - returns all tokens for admin, user's tokens for others
  */
 export const getMyTokens = async (): Promise<Token[]> => {
   const response = await axios.get<Token[]>("/api/admin/tokens");
-  return response.data;
-};
-
-/**
- * Get all tokens (admin only)
- */
-export const getAllTokens = async (): Promise<Token[]> => {
-  const response = await axios.get<Token[]>("/api/admin/tokens/all");
   return response.data;
 };
 
@@ -66,8 +58,15 @@ export const getTokenById = async (id: string): Promise<Token> => {
 };
 
 /**
- * Revoke a token
+ * Revoke a token (marks as revoked)
  */
 export const revokeToken = async (id: string): Promise<void> => {
+  await axios.put(`/api/admin/tokens/${id}/revoke`);
+};
+
+/**
+ * Permanently delete a token
+ */
+export const deleteToken = async (id: string): Promise<void> => {
   await axios.delete(`/api/admin/tokens/${id}`);
 };

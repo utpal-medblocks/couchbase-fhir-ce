@@ -1,6 +1,5 @@
 package com.couchbase.common.config;
 
-import com.couchbase.admin.auth.filter.JwtAuthenticationFilter;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -8,8 +7,8 @@ import org.springframework.core.annotation.Order;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
+import org.springframework.security.web.util.matcher.RequestMatcher;
 import org.springframework.security.web.SecurityFilterChain;
-import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 import org.springframework.web.cors.CorsConfigurationSource;
 
 /**
@@ -27,9 +26,6 @@ public class SecurityConfig {
     @Autowired
     private CorsConfigurationSource corsConfigurationSource;
 
-    @Autowired
-    private JwtAuthenticationFilter jwtAuthenticationFilter;
-    
     @Autowired
     private org.springframework.security.oauth2.jwt.JwtDecoder jwtDecoder;
 
@@ -56,8 +52,8 @@ public class SecurityConfig {
                 // Allow open access to other API endpoints
                 .requestMatchers("/api/**").permitAll()
             )
-            // Add Admin UI JWT filter for custom JWT validation
-            .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
+            // Use same OAuth2 Resource Server JWT for admin endpoints now
+            .oauth2ResourceServer(oauth2 -> oauth2.jwt(jwt -> jwt.decoder(jwtDecoder)));
         
         return http.build();
     }
@@ -70,9 +66,16 @@ public class SecurityConfig {
     @Bean
     @Order(3)
     public SecurityFilterChain fhirFilterChain(HttpSecurity http) throws Exception {
+        // Custom matcher: in some deployments HAPI internally remaps the servlet path so Spring may
+        // see just /Patient (etc.). We match if the original URI or servletPath starts with /fhir.
+        RequestMatcher fhirRequestMatcher = request -> {
+            String uri = request.getRequestURI();
+            String servlet = request.getServletPath();
+            return uri.startsWith("/fhir") || servlet.startsWith("/fhir");
+        };
+
         http
-            // Use AntPathRequestMatcher so this chain secures the HAPI FHIR servlet mapped at /fhir/*
-            .securityMatcher("/fhir/**") // Only match /fhir/* paths
+            .securityMatcher(fhirRequestMatcher)
             .csrf(csrf -> csrf.disable())
             .cors(cors -> cors.configurationSource(corsConfigurationSource))
             .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))

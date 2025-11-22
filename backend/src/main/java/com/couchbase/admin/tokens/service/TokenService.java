@@ -254,13 +254,16 @@ public class TokenService {
     /**
      * Revoke a token (delete OAuth2 client)
      */
+    /**
+     * Revoke a token (marks as revoked but keeps in database)
+     */
     public void revokeToken(String tokenId) {
         // Delete from Spring's RegisteredClientRepository
         try {
             RegisteredClient client = clientRepository.findById(tokenId);
             if (client != null) {
                 // Spring Security doesn't have a delete method, so we mark as inactive in our DB
-                logger.info("🗑️  Revoking OAuth2 client: {}", tokenId);
+                logger.info("🚫 Revoking OAuth2 client: {}", tokenId);
             }
         } catch (Exception e) {
             logger.warn("Failed to find OAuth2 client {}: {}", tokenId, e.getMessage());
@@ -273,7 +276,24 @@ public class TokenService {
             tokensCollection.replace(tokenId, token);
         });
         
-        logger.info("🗑️  Token revoked: {}", tokenId);
+        logger.info("🚫 Token revoked: {}", tokenId);
+    }
+
+    /**
+     * Permanently delete a token from the database
+     */
+    public void deleteToken(String tokenId) {
+        try {
+            Collection tokensCollection = getTokensCollection();
+            tokensCollection.remove(tokenId);
+            logger.info("🗑️  Token permanently deleted: {}", tokenId);
+        } catch (DocumentNotFoundException e) {
+            logger.warn("Token not found for deletion: {}", tokenId);
+            throw new RuntimeException("Token not found: " + tokenId);
+        } catch (Exception e) {
+            logger.error("❌ Failed to delete token: {}", tokenId, e);
+            throw new RuntimeException("Failed to delete token: " + e.getMessage());
+        }
     }
 
     /**
