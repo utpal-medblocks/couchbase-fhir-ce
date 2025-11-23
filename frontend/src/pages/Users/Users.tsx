@@ -31,7 +31,6 @@ import {
 } from "@mui/material";
 import {
   Add as AddIcon,
-  Edit as EditIcon,
   Delete as DeleteIcon,
   Block as BlockIcon,
   CheckCircle as CheckCircleIcon,
@@ -95,7 +94,6 @@ const Users: React.FC = () => {
 
   // Dialog states
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
-  const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [inactivateDialogOpen, setInactivateDialogOpen] = useState(false);
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
@@ -113,7 +111,6 @@ const Users: React.FC = () => {
   // UI states
   const [createSubmitAttempted, setCreateSubmitAttempted] = useState(false);
   const [showCreatePassword, setShowCreatePassword] = useState(false);
-  const [showEditPassword, setShowEditPassword] = useState(false);
 
   // Load users on mount
   useEffect(() => {
@@ -171,26 +168,6 @@ const Users: React.FC = () => {
     }
   };
 
-  const handleUpdateUser = async () => {
-    if (!selectedUser) return;
-
-    try {
-      setError(null);
-      const updates: UpdateUserRequest = {};
-      if (formData.username) updates.username = formData.username;
-      if (formData.role) updates.role = formData.role;
-      if (formData.passwordHash) updates.passwordHash = formData.passwordHash;
-
-      await updateUser(selectedUser.id, updates);
-      setSuccess("User updated successfully");
-      setEditDialogOpen(false);
-      resetForm();
-      loadUsers();
-    } catch (err: any) {
-      setError(err.response?.data?.error || "Failed to update user");
-    }
-  };
-
   const handleInactivateUser = async () => {
     if (!selectedUser) return;
 
@@ -226,16 +203,6 @@ const Users: React.FC = () => {
     setCreateSubmitAttempted(false);
     setShowCreatePassword(false);
     setCreateDialogOpen(true);
-  };
-
-  const openEditDialog = (user: User) => {
-    setSelectedUser(user);
-    setFormData({
-      username: user.username,
-      role: user.role,
-      passwordHash: "",
-    });
-    setEditDialogOpen(true);
   };
 
   const openInactivateDialog = (user: User) => {
@@ -404,14 +371,6 @@ const Users: React.FC = () => {
                       </TableCell>
                       <TableCell>{formatDate(user.lastLogin)}</TableCell>
                       <TableCell align="right">
-                        <IconButton
-                          size="small"
-                          onClick={() => openEditDialog(user)}
-                          title="Edit user"
-                          disabled={user.authMethod === "social"}
-                        >
-                          <EditIcon fontSize="small" />
-                        </IconButton>
                         <IconButton
                           size="small"
                           onClick={() => handleToggleUserStatus(user)}
@@ -611,108 +570,6 @@ const Users: React.FC = () => {
           <Button onClick={handleCreateUser} variant="contained">
             Create User
           </Button>
-        </DialogActions>
-      </Dialog>
-
-      {/* Edit User Dialog */}
-      <Dialog
-        open={editDialogOpen}
-        onClose={() => setEditDialogOpen(false)}
-        maxWidth="sm"
-        fullWidth
-      >
-        <DialogTitle>
-          Edit User: {selectedUser?.username}
-          {selectedUser?.authMethod === "social" && " (Social Login)"}
-        </DialogTitle>
-        <DialogContent>
-          <Box sx={{ display: "flex", flexDirection: "column", gap: 2, mt: 2 }}>
-            {selectedUser?.authMethod === "local" ? (
-              // Local users: only allow password change
-              <>
-                <TextField
-                  label="Full Name"
-                  value={selectedUser?.username || ""}
-                  disabled
-                  fullWidth
-                  helperText="Cannot be changed"
-                />
-                <TextField
-                  label="Role"
-                  value={selectedUser?.role || ""}
-                  disabled
-                  fullWidth
-                  helperText="Cannot be changed"
-                />
-                <TextField
-                  label="New Password"
-                  type={showEditPassword ? "text" : "password"}
-                  value={formData.passwordHash || ""}
-                  onChange={(e) =>
-                    setFormData({ ...formData, passwordHash: e.target.value })
-                  }
-                  fullWidth
-                  required
-                  helperText="Enter new password to change"
-                  InputProps={{
-                    endAdornment: (
-                      <InputAdornment position="end">
-                        <IconButton
-                          aria-label="toggle password visibility"
-                          onClick={() => setShowEditPassword((prev) => !prev)}
-                          edge="end"
-                        >
-                          {showEditPassword ? (
-                            <VisibilityOffIcon />
-                          ) : (
-                            <VisibilityIcon />
-                          )}
-                        </IconButton>
-                      </InputAdornment>
-                    ),
-                  }}
-                />
-              </>
-            ) : (
-              // Social users: cannot edit
-              <>
-                <TextField
-                  label="Full Name"
-                  value={selectedUser?.username || ""}
-                  disabled
-                  fullWidth
-                />
-                <TextField
-                  label="Role"
-                  value={selectedUser?.role || ""}
-                  disabled
-                  fullWidth
-                />
-                <TextField
-                  label="Authentication Method"
-                  value={selectedUser?.authMethod || ""}
-                  disabled
-                  fullWidth
-                />
-                <Typography
-                  variant="body2"
-                  color="text.secondary"
-                  sx={{ mt: 1 }}
-                >
-                  Social login users cannot be edited. Use Inactivate/Delete if
-                  needed.
-                </Typography>
-              </>
-            )}
-          </Box>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setEditDialogOpen(false)}>Cancel</Button>
-          {selectedUser?.authMethod === "local" && (
-            <Button onClick={handleUpdateUser} variant="contained">
-              Update Password
-            </Button>
-          )}
         </DialogActions>
       </Dialog>
 

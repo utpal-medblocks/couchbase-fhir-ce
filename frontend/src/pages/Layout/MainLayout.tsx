@@ -17,6 +17,16 @@ import {
   ListItemIcon,
   ListItemText,
   Tooltip,
+  Avatar,
+  Menu,
+  MenuItem,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  TextField,
+  InputAdornment,
+  Button,
 } from "@mui/material";
 import MenuIcon from "@mui/icons-material/Menu";
 import { LightMode, DarkMode } from "@mui/icons-material";
@@ -35,6 +45,7 @@ import {
   BsBucket,
   BsPeople,
   BsKey,
+  BsShieldLock,
 } from "react-icons/bs";
 import { TbApiApp } from "react-icons/tb";
 import { VscFlame } from "react-icons/vsc";
@@ -47,6 +58,8 @@ import { useAuthStore } from "../../store/authStore";
 import { useBucketStore } from "../../store/bucketStore";
 import { useConnectionStore } from "../../store/connectionStore";
 import { BsBoxArrowRight } from "react-icons/bs";
+import { updateUser } from "../../services/usersService";
+import { Visibility as VisibilityIcon, VisibilityOff as VisibilityOffIcon } from "@mui/icons-material";
 
 const drawerWidth = 200;
 
@@ -146,6 +159,66 @@ export default function MainLayout({ children }: MainLayoutProps) {
   const location = useLocation();
   const { themeMode, toggleTheme } = useThemeContext();
   const { logout, user } = useAuthStore();
+
+  // Avatar menu state
+  const [userMenuAnchor, setUserMenuAnchor] = useState<null | HTMLElement>(
+    null
+  );
+  const userMenuOpen = Boolean(userMenuAnchor);
+  const handleOpenUserMenu = (event: React.MouseEvent<HTMLElement>) => {
+    setUserMenuAnchor(event.currentTarget);
+  };
+  const handleCloseUserMenu = () => setUserMenuAnchor(null);
+
+  // Change password dialog state
+  const [changePwdOpen, setChangePwdOpen] = useState(false);
+  const [newPassword, setNewPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [pwdError, setPwdError] = useState<string | null>(null);
+  const [pwdSubmitting, setPwdSubmitting] = useState(false);
+  const handleOpenChangePwd = () => {
+    setNewPassword("");
+    setPwdError(null);
+    setShowPassword(false);
+    setChangePwdOpen(true);
+  };
+  const handleCloseChangePwd = () => {
+    if (!pwdSubmitting) setChangePwdOpen(false);
+  };
+  const handleSubmitPassword = async () => {
+    if (!user) return;
+    if (!newPassword || newPassword.length < 8) {
+      setPwdError("Password must be at least 8 characters");
+      return;
+    }
+    try {
+      setPwdSubmitting(true);
+      setPwdError(null);
+      // Using email as ID (created that way in user creation flow)
+      await updateUser(user.email, { passwordHash: newPassword });
+      setChangePwdOpen(false);
+    } catch (e: any) {
+      setPwdError(e?.response?.data?.error || "Failed to update password");
+    } finally {
+      setPwdSubmitting(false);
+    }
+  };
+
+  // Derive initials from user name or email
+  const getInitials = (): string => {
+    if (user?.name) {
+      const parts = user.name.trim().split(/\s+/);
+      const initials = parts
+        .slice(0, 2)
+        .map((p) => p[0]?.toUpperCase())
+        .join("");
+      return initials || "?";
+    }
+    if (user?.email) {
+      return user.email[0]?.toUpperCase() || "?";
+    }
+    return "?";
+  };
 
   // Local state for UI controls
   const [drawerOpen, setDrawerOpen] = useState(true);
@@ -352,23 +425,109 @@ export default function MainLayout({ children }: MainLayoutProps) {
                 <BsChatLeftText />
               </IconButton>
             </Tooltip>
-            <Tooltip title={`Logout (${user?.email || ""})`} placement="bottom">
+            {/* User Avatar & Menu */}
+            <Tooltip
+              title={user?.name || user?.email || "Account"}
+              placement="bottom"
+            >
               <IconButton
+                onClick={handleOpenUserMenu}
+                disableRipple
+                sx={{
+                  p: 0,
+                  width: 36,
+                  height: 36,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  "&:focus": { outline: "none" },
+                }}
+              >
+                <Avatar
+                  sx={{
+                    bgcolor:
+                      theme.palette.mode === "dark"
+                        ? theme.palette.primary.dark
+                        : theme.palette.primary.main,
+                    width: 28,
+                    height: 28,
+                    fontSize: 14,
+                  }}
+                >
+                  {getInitials()}
+                </Avatar>
+              </IconButton>
+            </Tooltip>
+            <Menu
+              anchorEl={userMenuAnchor}
+              open={userMenuOpen}
+              onClose={handleCloseUserMenu}
+              anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
+              transformOrigin={{ vertical: "top", horizontal: "right" }}
+              slotProps={{ paper: { sx: { minWidth: 180, py: 0.5 } } }}
+            >
+              {/* Header section inside menu */}
+              <Box sx={{ px: 2, py: 1 }}>
+                <Box display="flex" alignItems="center" gap={1}>
+                  <Avatar
+                    sx={{
+                      bgcolor:
+                        theme.palette.mode === "dark"
+                          ? theme.palette.primary.dark
+                          : theme.palette.primary.main,
+                      width: 32,
+                      height: 32,
+                      fontSize: 14,
+                    }}
+                  >
+                    {getInitials()}
+                  </Avatar>
+                  <Box>
+                    <Typography
+                      variant="body2"
+                      sx={{ lineHeight: 1.2, fontWeight: 600 }}
+                    >
+                      {user?.name || user?.email || "Anonymous"}
+                    </Typography>
+                    {user?.email && (
+                      <Typography
+                        variant="caption"
+                        color="text.secondary"
+                        sx={{ lineHeight: 1.2 }}
+                      >
+                        {user.email}
+                      </Typography>
+                    )}
+                  </Box>
+                </Box>
+              </Box>
+              <Divider sx={{ my: 0.5 }} />
+              <MenuItem
                 onClick={() => {
+                  handleCloseUserMenu();
+                  handleOpenChangePwd();
+                }}
+                sx={{ fontSize: 14 }}
+              >
+                <Box display="flex" alignItems="center" gap={1}>
+                  <BsShieldLock style={{ fontSize: 16 }} />
+                  Change Password
+                </Box>
+              </MenuItem>
+              <MenuItem
+                onClick={() => {
+                  handleCloseUserMenu();
                   logout();
                   navigate("/login");
                 }}
-                disableRipple
-                sx={{
-                  fontSize: "20px",
-                  "&:focus": {
-                    outline: "none",
-                  },
-                }}
+                sx={{ fontSize: 14 }}
               >
-                <BsBoxArrowRight />
-              </IconButton>
-            </Tooltip>
+                <Box display="flex" alignItems="center" gap={1}>
+                  <BsBoxArrowRight style={{ fontSize: 16 }} />
+                  Logout
+                </Box>
+              </MenuItem>
+            </Menu>
           </Box>
         </Toolbar>
       </AppBar>
@@ -380,6 +539,9 @@ export default function MainLayout({ children }: MainLayoutProps) {
           <List sx={{ paddingTop: 0, paddingBottom: 0 }}>
             {menuItems.map((item) => {
               const IconComponent = item.icon;
+              // Disable "Users" menu item for non-admin users
+              const isDisabled = item.id === "users" && user?.role !== "admin";
+              
               return (
                 <ListItem
                   key={item.id}
@@ -389,16 +551,23 @@ export default function MainLayout({ children }: MainLayoutProps) {
                     backgroundColor: isActive(item.path)
                       ? theme.palette.action.selected
                       : undefined,
+                    opacity: isDisabled ? 0.5 : 1,
                   }}
-                  onClick={() => handleMenuClick(item.path)}
+                  onClick={() => !isDisabled && handleMenuClick(item.path)}
                 >
                   <Tooltip
-                    title={item.label}
+                    title={isDisabled ? "Admin access required" : item.label}
                     placement="right"
-                    disableHoverListener={drawerOpen}
+                    disableHoverListener={drawerOpen && !isDisabled}
                     arrow
                   >
-                    <ListItemButton sx={listItemButtonStyles}>
+                    <ListItemButton 
+                      sx={{
+                        ...listItemButtonStyles,
+                        cursor: isDisabled ? "not-allowed" : "pointer",
+                      }}
+                      disabled={isDisabled}
+                    >
                       <ListItemIcon sx={listItemIconStyles}>
                         <IconComponent
                           style={{
@@ -496,6 +665,49 @@ export default function MainLayout({ children }: MainLayoutProps) {
         open={initDialogOpen}
         onClose={() => setInitDialogOpen(false)}
       />
+
+      {/* Change Password Dialog */}
+      <Dialog open={changePwdOpen} onClose={handleCloseChangePwd} maxWidth="xs" fullWidth>
+        <DialogTitle>Change Password</DialogTitle>
+        <DialogContent>
+          <Typography variant="body2" sx={{ mb: 2 }}>
+            Set a new password for your account ({user?.email}).
+          </Typography>
+          <TextField
+            label="New Password"
+            type={showPassword ? "text" : "password"}
+            value={newPassword}
+            fullWidth
+            onChange={(e) => setNewPassword(e.target.value)}
+            error={!!pwdError}
+            helperText={pwdError || "Minimum 8 characters"}
+            InputProps={{
+              endAdornment: (
+                <InputAdornment position="end">
+                  <IconButton
+                    aria-label="toggle password visibility"
+                    onClick={() => setShowPassword((p) => !p)}
+                    edge="end"
+                    size="small"
+                  >
+                    {showPassword ? <VisibilityOffIcon /> : <VisibilityIcon />}
+                  </IconButton>
+                </InputAdornment>
+              ),
+            }}
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleCloseChangePwd} disabled={pwdSubmitting}>Cancel</Button>
+          <Button
+            onClick={handleSubmitPassword}
+            variant="contained"
+            disabled={pwdSubmitting}
+          >
+            {pwdSubmitting ? "Updating..." : "Update Password"}
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 }
