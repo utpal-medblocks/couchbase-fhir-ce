@@ -3,7 +3,7 @@
 # DO NOT commit config.yaml to git - it contains sensitive credentials
 
 connection:
-  # connectionString: "ec2-xxx-xxx-xxx-xxx.compute-1.amazonaws.com"
+  connectionString: "ec2-xxx-xxx-xxx-xxx.compute-1.amazonaws.com"
   # connectionString: "localhost"
   # connectionString: "couchbases://cb.gaxsvcngnxyz.cloud.couchbase.com"
   # connectionString: "host.docker.internal" # Works on Docker Desktop for Mac
@@ -44,7 +44,7 @@ couchbase:
 
 # Super User Credentials - These are seeded into the auth db
 admin:
-  email: "admin@couchbase.com"
+  email: "admin@cb-fhir.com"
   password: "Admin123!"
   name: "Admin"
 
@@ -54,4 +54,5 @@ logging:
     com.couchbase.fhir: ERROR # ERROR, WARN, INFO, DEBUG
     com.couchbase.common: ERROR # ERROR, WARN, INFO, DEBUG
     com.couchbase.admin.config.service.ConfigurationStartupService: INFO # INFO, WARN, DEBUG, ERROR
+    org.springframework.security: ERROR
 
