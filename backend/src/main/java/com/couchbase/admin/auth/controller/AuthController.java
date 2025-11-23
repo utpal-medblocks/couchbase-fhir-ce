@@ -153,23 +153,8 @@ public class AuthController {
             logger.debug("✅ [LOGIN] Authenticated via config.yaml fallback email='{}' in {} ms", email, elapsedMs);
             String[] scopes = new String[]{"system/*.*","user/*.*"};
             
-            // Try to issue token, but allow login even if it fails (before initialization)
-            String token = null;
-            try {
-                if (isFhirBucketPresent()) {
-                    token = issueAdminAccessToken(configEmail, scopes);
-                }
-            } catch (Exception e) {
-                logger.warn("⚠️ Cannot issue JWT token yet (FHIR bucket not initialized): {}", e.getMessage());
-            }
-            
-            // If no token, return a special response indicating initialization needed
-            if (token == null) {
-                logger.info("🔄 Login successful but no JWT issued - FHIR bucket not initialized");
-                // Return success with null token - frontend will show initialization dialog
-                UserInfo userInfo = new UserInfo(configEmail, configName, "admin", scopes);
-                return ResponseEntity.ok(new LoginResponse(null, userInfo));
-            }
+            // Issue JWT token - signing key is always available (generated on startup)
+            String token = issueAdminAccessToken(configEmail, scopes);
             
             UserInfo userInfo = new UserInfo(configEmail, configName, "admin", scopes);
             return ResponseEntity.ok(new LoginResponse(token, userInfo));

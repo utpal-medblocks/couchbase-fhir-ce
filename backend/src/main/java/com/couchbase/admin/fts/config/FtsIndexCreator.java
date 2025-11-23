@@ -86,7 +86,7 @@ public class FtsIndexCreator {
      */
     public void createFtsIndex(String connectionName, String jsonFilePath, String bucketName) {
         try {
-            logger.info("🚀 Creating FTS index from file: {} for bucket: {}", jsonFilePath, bucketName);
+            logger.debug("🚀 Creating FTS index from file: {} for bucket: {}", jsonFilePath, bucketName);
             
             // Read JSON file
             Path path = Paths.get(jsonFilePath);
@@ -119,9 +119,7 @@ public class FtsIndexCreator {
      * Create all FTS indexes for a bucket
      */
     public void createAllFtsIndexesForBucket(String connectionName, String bucketName) {
-        try {
-            logger.info("🔄 Creating all FTS indexes for bucket: {}", bucketName);
-            
+        try {            
             // Find all JSON files in fts-indexes directory
             PathMatchingResourcePatternResolver resolver = 
                 new PathMatchingResourcePatternResolver(FtsIndexCreator.class.getClassLoader());
@@ -132,7 +130,7 @@ public class FtsIndexCreator {
                 return;
             }
             
-            logger.info("📋 Found {} FTS index files", resources.length);
+            logger.debug("📋 Found {} FTS index files", resources.length);
             
             int successCount = 0;
             int skippedCount = 0;
@@ -198,7 +196,7 @@ public class FtsIndexCreator {
         // Build FTS API path - the SDK's HTTP client handles the full URL construction
         String apiPath = String.format("/api/bucket/%s/scope/%s/index/%s", bucketName, scopeName, indexName);
         
-        logger.info("🔗 Creating FTS index '{}' via Couchbase SDK HTTP client: {}", indexName, apiPath);
+        logger.debug("🔗 Creating FTS index '{}' via Couchbase SDK HTTP client: {}", indexName, apiPath);
         
         // Use the cluster's HTTP client - this handles SSL certificates and authentication automatically
         CouchbaseHttpClient httpClient = cluster.httpClient();

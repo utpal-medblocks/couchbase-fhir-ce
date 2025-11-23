@@ -172,11 +172,11 @@ const InitializationDialog: React.FC<InitializationDialogProps> = ({
             <Box mt={2} mb={2}>
               <LinearProgress
                 variant="determinate"
-                value={(operationStatus.completedSteps / 10) * 100}
+                value={(operationStatus.completedSteps / 11) * 100}
               />
             </Box>
             <Typography variant="body2" color="text.secondary" gutterBottom>
-              Step {operationStatus.completedSteps} of 10:{" "}
+              Step {operationStatus.completedSteps} of 11:{" "}
               {operationStatus.currentStepDescription}
             </Typography>
             <Box mt={3}>
@@ -215,7 +215,7 @@ const InitializationDialog: React.FC<InitializationDialogProps> = ({
                   <StepLabel>Create Admin User</StepLabel>
                 </Step>
                 <Step>
-                  <StepLabel>Generate OAuth Key</StepLabel>
+                  <StepLabel>Persist OAuth Key</StepLabel>
                 </Step>
               </Stepper>
             </Box>

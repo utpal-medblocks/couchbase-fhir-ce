@@ -43,8 +43,11 @@ import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.LoginUrlAuthenticationEntryPoint;
 import org.springframework.security.web.util.matcher.MediaTypeRequestMatcher;
 
+import java.net.URI;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
+import java.security.interfaces.RSAPrivateKey;
+import java.security.interfaces.RSAPublicKey;
 import java.time.Duration;
 import java.util.UUID;
 
@@ -72,16 +75,61 @@ public class AuthorizationServerConfig {
     @Autowired
     private ConnectionService connectionService;
     
-    // Cache the RSA key to avoid repeated Couchbase lookups
-    private volatile RSAKey cachedRsaKey = null;
+    // The RSA signing key - generated on startup, persisted during initialization
+    private volatile RSAKey signingKey = null;
     
     /**
-     * Invalidate the cached RSA key to force reload from Couchbase
-     * Called after initialization creates a new key
+     * Initialize the OAuth signing key after Couchbase connection is established
+     * Called explicitly by ConfigurationStartupService after connection succeeds
+     * Strategy:
+     * 1. Try to load from fhir.Admin.config (if bucket initialized)
+     * 2. If not found, generate new key in-memory
+     * 3. During initialization (Step 11), persist the key to Couchbase
+     * 4. On next restart, load the persisted key
+     */
+    public void initializeSigningKey() {
+        logger.info("🔐 Initializing OAuth signing key...");
+        
+        // Try to load existing key from bucket (if initialized)
+        if (isConfigCollectionAvailable()) {
+            try {
+                RSAKey loadedKey = loadKeyFromCouchbase();
+                if (loadedKey != null) {
+                    this.signingKey = loadedKey;
+                    logger.info("✅ Loaded existing OAuth signing key from fhir.Admin.config (kid: {})", loadedKey.getKeyID());
+                    return;
+                }
+            } catch (Exception e) {
+                logger.warn("⚠️ Failed to load key from Couchbase: {} - will generate new key", e.getMessage());
+            }
+        }
+        
+        // No persisted key found - generate new key
+        try {
+            RSAKey newKey = generateRsaKey();
+            this.signingKey = newKey;
+            logger.info("✅ Generated new OAuth signing key (kid: {})", newKey.getKeyID());
+            logger.warn("⚠️ Key is in-memory only - will NOT survive restart until FHIR bucket is initialized");
+        } catch (Exception e) {
+            logger.error("❌ Failed to generate OAuth signing key: {}", e.getMessage(), e);
+            throw new IllegalStateException("Cannot start without OAuth signing key", e);
+        }
+    }
+    
+    /**
+     * Get the current signing key (for persistence during initialization)
+     */
+    public RSAKey getCurrentKey() {
+        return signingKey;
+    }
+    
+    /**
+     * Called after a new key is persisted to Couchbase during initialization
+     * This is a no-op now since we already have the key in memory
      */
     public void invalidateKeyCache() {
-        logger.info("🔄 Invalidating OAuth key cache to reload from Couchbase");
-        cachedRsaKey = null;
+        // No-op: key is already in memory and doesn't need reloading
+        logger.debug("🔄 Key cache invalidation called (no-op - key already in memory)");
     }
 
     // FhirServerConfig was previously used for deriving issuer; logic now moved to authorizationServerSettings
@@ -103,11 +151,12 @@ public class AuthorizationServerConfig {
         // - /oauth2/revoke
         // - /oauth2/jwks
         // - /.well-known/oauth-authorization-server
+        // Use the new configuration pattern instead of deprecated applyDefaultSecurity
+        OAuth2AuthorizationServerConfigurer authorizationServerConfigurer = new OAuth2AuthorizationServerConfigurer();
         OAuth2AuthorizationServerConfiguration.applyDefaultSecurity(http);
 
         // Enable OpenID Connect 1.0
-        http.getConfigurer(OAuth2AuthorizationServerConfigurer.class)
-            .oidc(Customizer.withDefaults());
+        authorizationServerConfigurer.oidc(Customizer.withDefaults());
 
         // Redirect to login page when not authenticated for HTML requests
         http.exceptionHandling((exceptions) -> exceptions
@@ -131,7 +180,9 @@ public class AuthorizationServerConfig {
     public RegisteredClientRepository registeredClientRepository(
         @Value("${admin.ui.client.secret:}") String adminUiClientSecretProp,
         @Value("${admin.ui.client.id:admin-ui}") String adminUiClientId,
-        @Value("${admin.ui.scopes:system/*.*,user/*.*}") String adminUiScopesProp) {
+        @Value("${admin.ui.scopes:system/*.*,user/*.*}") String adminUiScopesProp,
+        @Value("${app.baseUrl}") String configBaseUrl,
+        @Value("${frontend.dev.port:3000}") int frontendDevPort) {
     // Derive static admin-ui client secret:
     // Priority: explicit property -> env var ADMIN_UI_CLIENT_SECRET -> fallback test-secret (NOT for production).
     String envSecret = System.getenv("ADMIN_UI_CLIENT_SECRET");
@@ -164,23 +215,37 @@ public class AuthorizationServerConfig {
         .clientSettings(ClientSettings.builder().requireAuthorizationConsent(false).build())
         .build();
 
-    // Existing test client for development / SMART flows
+    // Derive issuer (strip trailing /fhir if present) and compute dynamic redirect bases
+    String issuer = configBaseUrl.endsWith("/fhir") ? configBaseUrl.substring(0, configBaseUrl.length() - 5) : configBaseUrl;
+    URI issuerUri = URI.create(issuer);
+    String scheme = issuerUri.getScheme() == null ? "http" : issuerUri.getScheme();
+    String host = issuerUri.getHost() == null ? "localhost" : issuerUri.getHost();
+    int port = issuerUri.getPort();
+    String hostOnlyBase = scheme + "://" + host;                           // e.g. http://localhost
+    String issuerWithPort = (port == -1 ? hostOnlyBase : hostOnlyBase + ":" + port); // e.g. http://localhost
+    String altLoopbackBase = scheme + "://127.0.0.1" + (port == -1 ? "" : ":" + port); // 127.0.0.1 variant
+    String frontendDevBase = scheme + "://" + host + ":" + frontendDevPort;            // e.g. http://localhost:3000
+
+    logger.debug("OAuth redirect bases resolved: issuerWithPort={}, hostOnlyBase={}, altLoopbackBase={}, frontendDevBase={}",
+        issuerWithPort, hostOnlyBase, altLoopbackBase, frontendDevBase);
+
+    // Existing test client for development / SMART flows (dynamic redirect URIs)
     RegisteredClient testClient = RegisteredClient.withId(UUID.randomUUID().toString())
-                .clientId("test-client")
-                .clientSecret(passwordEncoder().encode("test-secret"))
-                .clientAuthenticationMethod(ClientAuthenticationMethod.CLIENT_SECRET_BASIC)
-                .clientAuthenticationMethod(ClientAuthenticationMethod.CLIENT_SECRET_POST)
-                .authorizationGrantType(AuthorizationGrantType.AUTHORIZATION_CODE)
-                .authorizationGrantType(AuthorizationGrantType.REFRESH_TOKEN)
-                .authorizationGrantType(AuthorizationGrantType.CLIENT_CREDENTIALS)
-                // Redirect URIs for testing - support both local dev and Docker deployment
-                .redirectUri("http://localhost:8080/authorized")      // Local dev (backend port)
-                .redirectUri("http://localhost/authorized")           // Docker (HAProxy port 80)
-                .redirectUri("http://localhost:3000/callback")        // Local dev (frontend)
-                .redirectUri("http://localhost/callback")             // Docker (frontend via HAProxy)
-                .redirectUri("http://127.0.0.1:8080/authorized")      // Alternative localhost
-                .postLogoutRedirectUri("http://localhost:8080/")      // Local dev
-                .postLogoutRedirectUri("http://localhost/")           // Docker
+        .clientId("test-client")
+        .clientSecret(passwordEncoder().encode("test-secret"))
+        .clientAuthenticationMethod(ClientAuthenticationMethod.CLIENT_SECRET_BASIC)
+        .clientAuthenticationMethod(ClientAuthenticationMethod.CLIENT_SECRET_POST)
+        .authorizationGrantType(AuthorizationGrantType.AUTHORIZATION_CODE)
+        .authorizationGrantType(AuthorizationGrantType.REFRESH_TOKEN)
+        .authorizationGrantType(AuthorizationGrantType.CLIENT_CREDENTIALS)
+        // Redirect URIs constructed from config base URL & dev frontend port
+        .redirectUri(issuerWithPort + "/authorized")        // Primary backend URL
+        .redirectUri(hostOnlyBase + "/authorized")          // Host-only (HAProxy 80)
+        .redirectUri(frontendDevBase + "/callback")         // Frontend dev port
+        .redirectUri(hostOnlyBase + "/callback")            // Host-only callback
+        .redirectUri(altLoopbackBase + "/authorized")       // 127.0.0.1 alternative
+        .postLogoutRedirectUri(issuerWithPort + "/")         // Post-logout backend
+        .postLogoutRedirectUri(hostOnlyBase + "/")           // Post-logout host-only
                 .scope(OidcScopes.OPENID)
                 .scope(OidcScopes.PROFILE)
                 .scope(SmartScopes.FHIRUSER)
@@ -277,37 +342,38 @@ public class AuthorizationServerConfig {
 
     /**
      * JWK Source for signing and validating JWTs
-     * Uses lazy-loading pattern to ensure fhir.Admin.config collection exists
+     * Uses the pre-initialized signing key from @PostConstruct
      */
     @Bean
     public JWKSource<SecurityContext> jwkSource() {
-        // Return a dynamic JWKSource that lazy-loads the key on first use
         return (jwkSelector, securityContext) -> {
-            if (cachedRsaKey == null) {
-                synchronized (this) {
-                    if (cachedRsaKey == null) {
-                        cachedRsaKey = loadOrCreateRsaJwkFromCouchbase();
-                    }
-                }
+            if (signingKey == null) {
+                throw new IllegalStateException("OAuth signing key not initialized");
             }
-            JWKSet jwkSet = new JWKSet(cachedRsaKey);
+            JWKSet jwkSet = new JWKSet(signingKey);
             return jwkSelector.select(jwkSet);
         };
     }
-
+    
     /**
-     * Generate RSA key pair for JWT signing
+     * Generate a new RSA key pair for JWT signing
      */
-    private static KeyPair generateRsaKey() {
-        KeyPair keyPair;
+    private RSAKey generateRsaKey() {
         try {
             KeyPairGenerator keyPairGenerator = KeyPairGenerator.getInstance("RSA");
             keyPairGenerator.initialize(2048);
-            keyPair = keyPairGenerator.generateKeyPair();
-        } catch (Exception ex) {
-            throw new IllegalStateException(ex);
+            KeyPair keyPair = keyPairGenerator.generateKeyPair();
+            
+            RSAPublicKey publicKey = (RSAPublicKey) keyPair.getPublic();
+            RSAPrivateKey privateKey = (RSAPrivateKey) keyPair.getPrivate();
+            
+            return new RSAKey.Builder(publicKey)
+                    .privateKey(privateKey)
+                    .keyID(UUID.randomUUID().toString())
+                    .build();
+        } catch (Exception e) {
+            throw new IllegalStateException("Failed to generate RSA key pair", e);
         }
-        return keyPair;
     }
 
     /**
@@ -357,18 +423,16 @@ public class AuthorizationServerConfig {
     }
 
     /**
-     * Load existing RSA JWK from Couchbase - ONLY loads, never creates
-     * Key must be created during initialization (Step 11)
+     * Load existing RSA JWK from Couchbase
+     * Returns null if key doesn't exist (will generate new one)
      * Stored in: fhir.Admin.config collection with document ID "oauth-signing-key"
      */
-    private RSAKey loadOrCreateRsaJwkFromCouchbase() {
-        if (!isConfigCollectionAvailable()) {
-            throw new IllegalStateException("Cannot load OAuth signing key: fhir.Admin.config collection does not exist. Please initialize the FHIR bucket first.");
-        }
+    private RSAKey loadKeyFromCouchbase() {
         try {
             Cluster cluster = connectionService.getConnection(DEFAULT_CONNECTION);
             if (cluster == null) {
-                throw new IllegalStateException("No active Couchbase connection");
+                logger.debug("No active Couchbase connection");
+                return null;
             }
              // N1QL fetch (avoids KV timeout). Use VALUE to get raw doc object.
              // IMPORTANT: Previous query used SELECT VALUE d without alias; resulted in null row. Corrected to use RAW with alias.
@@ -381,11 +445,8 @@ public class AuthorizationServerConfig {
              logger.debug("🔍 [JWK-LOAD] Query completed in {} ms; rowCount={}", elapsedMs, docs.size());
 
             if (docs.isEmpty()) {
-                logger.warn("❌ OAuth signing key document not found in fhir.Admin.config - was Step 11 skipped during initialization?");
-                // For deeper diagnostics, log any raw rows as String (should be empty too)
-                var rawRows = queryResult.rowsAs(String.class);
-                logger.debug("[JWK-LOAD] Raw string rows size={} contents={}", rawRows.size(), rawRows);
-                throw new IllegalStateException("OAuth signing key not found in fhir.Admin.config. Please initialize the FHIR bucket first.");
+                logger.debug("OAuth signing key document not found in fhir.Admin.config (bucket not initialized yet)");
+                return null;
             }
             JsonObject doc = docs.get(0);
             if (doc == null) {
@@ -435,11 +496,10 @@ public class AuthorizationServerConfig {
                      loaded.getAlgorithm(), loaded.getKeyUse(), loaded.getKeyOperations());
                  throw new IllegalStateException("JWK in Couchbase lacks private key - was it exported without private parts?");
              }
-             logger.info("🔐 Loaded existing RSA signing key from fhir.Admin.config (kid: {})", loaded.getKeyID());
              return loaded;
         } catch (Exception e) {
-            logger.error("❌ Failed to load OAuth signing key via N1QL: {}", e.getMessage());
-            throw new IllegalStateException("Failed to load OAuth signing key: " + e.getMessage(), e);
+            logger.warn("Failed to load OAuth signing key from Couchbase: {}", e.getMessage());
+            return null;
         }
     }
 
@@ -449,9 +509,8 @@ public class AuthorizationServerConfig {
      */
     @Bean
     public AuthorizationServerSettings authorizationServerSettings(
-            @Value("${app.baseUrl:http://localhost:8080/fhir}") String configBaseUrl) {
+        @Value("${app.baseUrl}") String configBaseUrl) {
         // Extract issuer by removing the /fhir path while preserving the full host:port
-        // Example: http://localhost:8080/fhir -> http://localhost:8080
         String issuer = configBaseUrl;
         if (issuer.endsWith("/fhir")) {
             issuer = issuer.substring(0, issuer.length() - 5); // Remove last 5 chars: "/fhir"

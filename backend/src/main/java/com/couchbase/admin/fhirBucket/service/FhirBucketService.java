@@ -19,10 +19,6 @@ import com.nimbusds.jose.jwk.JWKSet;
 import com.nimbusds.jose.jwk.RSAKey;
 
 import com.couchbase.client.java.query.QueryOptions;
-import java.security.KeyPair;
-import java.security.KeyPairGenerator;
-import java.security.interfaces.RSAPrivateKey;
-import java.security.interfaces.RSAPublicKey;
 import java.time.Duration;
 import java.time.Instant;
 import org.slf4j.Logger;
@@ -68,6 +64,9 @@ public class FhirBucketService {
     
     @Autowired(required = false)
     private com.couchbase.fhir.auth.AuthorizationServerConfig authorizationServerConfig;
+    
+    @Autowired
+    private com.couchbase.admin.tokens.service.JwtTokenCacheService jwtTokenCacheService;
     
     // Store operation status
     private final Map<String, FhirConversionStatusDetail> operationStatus = new ConcurrentHashMap<>();
@@ -178,10 +177,26 @@ public class FhirBucketService {
             createInitialAdminUserIfNeeded();
             status.setCompletedSteps(10);
             
-            // Step 11: Generate and persist OAuth signing key
-            updateStatus(status, "create_oauth_key", "Generating OAuth signing key");
+            // Step 11: Persist OAuth signing key (same key used since startup)
+            updateStatus(status, "persist_oauth_key", "Persisting OAuth signing key");
             createOAuthSigningKey(cluster, bucketName);
             status.setCompletedSteps(11);
+            
+            // Reload JWT token cache after initialization completes
+            // This ensures the cache is ready for token validation
+            logger.info("🔐 Reloading JWT token cache after initialization...");
+            try {
+                jwtTokenCacheService.loadActiveTokens();
+                if (jwtTokenCacheService.isInitialized()) {
+                    int cacheSize = jwtTokenCacheService.getCacheSize();
+                    logger.info("✅ Token cache reloaded with {} active tokens", cacheSize);
+                } else {
+                    logger.info("✅ Token cache initialized (no tokens yet)");
+                }
+            } catch (Exception e) {
+                logger.warn("⚠️ Failed to reload token cache after initialization: {}", e.getMessage());
+                // Don't fail the initialization if cache reload fails
+            }
             
             // Completion
             status.setStatus(FhirConversionStatus.COMPLETED);
@@ -587,8 +602,9 @@ public class FhirBucketService {
     }
     
     /**
-     * Generate and persist OAuth signing key to fhir.Admin.config collection
+     * Persist the current in-memory OAuth signing key to fhir.Admin.config collection
      * Called during FHIR bucket initialization (Step 11)
+     * Uses the SAME key that was generated on startup for authentication
      */
     private void createOAuthSigningKey(Cluster cluster, String bucketName) {
         try {
@@ -600,26 +616,18 @@ public class FhirBucketService {
                 logger.info("🔐 OAuth signing key already exists in fhir.Admin.config");
                 return;
             } catch (com.couchbase.client.core.error.DocumentNotFoundException e) {
-                // Key doesn't exist, create it
+                // Key doesn't exist, persist it
             }
             
-            // Generate new RSA key pair
-            KeyPairGenerator keyPairGenerator = KeyPairGenerator.getInstance("RSA");
-            keyPairGenerator.initialize(2048);
-            KeyPair keyPair = keyPairGenerator.generateKeyPair();
+            // Get the CURRENT in-memory key from AuthorizationServerConfig
+            // This is the same key used for all JWTs issued since startup
+            RSAKey rsaKey = authorizationServerConfig.getCurrentKey();
+            if (rsaKey == null) {
+                throw new IllegalStateException("No OAuth signing key available to persist");
+            }
             
-            RSAPublicKey publicKey = (RSAPublicKey) keyPair.getPublic();
-            RSAPrivateKey privateKey = (RSAPrivateKey) keyPair.getPrivate();
-            String keyId = UUID.randomUUID().toString();
-            
-            RSAKey rsaKey = new RSAKey.Builder(publicKey)
-                    .privateKey(privateKey)
-                    .keyID(keyId)
-                    .build();
-            
-            // Create JWK Set and convert to JSON
-            // CRITICAL: Use toJSONString() directly to preserve private key
-            logger.info("🔐 [STEP-11] RSA key before serialization - hasPrivateKey: {}, kid: {}", rsaKey.isPrivate(), keyId);
+            String keyId = rsaKey.getKeyID();
+            logger.info("🔐 [STEP-11] Persisting in-memory OAuth signing key - hasPrivateKey: {}, kid: {}", rsaKey.isPrivate(), keyId);
             
             // Serialize the RSAKey directly (not via JWKSet) to ensure private parts are included
             String jwkJson = rsaKey.toJSONString();
@@ -652,7 +660,8 @@ public class FhirBucketService {
                     .put("updatedAt", Instant.now().toString());
             
             configCollection.upsert("oauth-signing-key", doc);
-            logger.info("🔐 Generated and persisted OAuth signing key to fhir.Admin.config (kid: {})", keyId);
+            logger.info("✅ Persisted OAuth signing key to fhir.Admin.config (kid: {})", keyId);
+            logger.info("🔐 All JWTs issued since startup remain valid - same key now persisted");
             
             // Verify what was actually saved by reading it back
             try {

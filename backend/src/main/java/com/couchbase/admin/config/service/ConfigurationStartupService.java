@@ -46,6 +46,9 @@ public class ConfigurationStartupService {
     
     @Autowired
     private JwtTokenCacheService jwtTokenCacheService;
+    
+    @Autowired
+    private com.couchbase.fhir.auth.AuthorizationServerConfig authorizationServerConfig;
 
     /**
      * Load configuration and establish connection after application is fully started
@@ -206,6 +209,9 @@ public class ConfigurationStartupService {
         
         if (response.isSuccess()) {
             logger.info("✅ Auto-connection successful!");
+            
+            // Initialize OAuth signing key after connection is established
+            initializeOAuthSigningKey();
             
             // Initialize JWT token cache after connection is established
             initializeTokenCache();
@@ -381,6 +387,20 @@ public class ConfigurationStartupService {
             logger.info("🔒 Transaction durability: {} (suitable for development/single-node)", durability);
         } else {
             logger.info("🔒 Transaction durability: {} (production setting - requires replicas)", durability);
+        }
+    }
+    
+    /**
+     * Initialize the OAuth signing key after Couchbase connection is established
+     * This must run AFTER the connection is established, before any login attempts
+     */
+    private void initializeOAuthSigningKey() {
+        try {
+            logger.info("🔐 Initializing OAuth signing key...");
+            authorizationServerConfig.initializeSigningKey();
+        } catch (Exception e) {
+            logger.error("❌ Failed to initialize OAuth signing key: {}", e.getMessage());
+            throw new IllegalStateException("Cannot start without OAuth signing key", e);
         }
     }
     

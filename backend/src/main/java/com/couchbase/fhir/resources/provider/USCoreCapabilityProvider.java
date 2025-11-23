@@ -12,8 +12,6 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.info.BuildProperties;
 
 import java.util.List;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.Map;
 
 import static com.couchbase.fhir.resources.constants.USCoreProfiles.US_CORE_BASE_URL;
 
@@ -34,28 +32,20 @@ public class USCoreCapabilityProvider extends ServerCapabilityStatementProvider 
 
     private static final Logger logger = LoggerFactory.getLogger(USCoreCapabilityProvider.class);
     private final String appVersion;
-    
-    // Simple cache: tenant -> capability statement
-    // Cache for 1 hour (3600000 ms)
-    private final Map<String, CachedStatement> cache = new ConcurrentHashMap<>();
+    private final String configuredBaseUrl; // Injected base URL (expected to include /fhir)
+    private volatile CachedStatement cachedStatement; // Single cached statement (no tenants)
     private static final long CACHE_TTL_MS = 3600000L; // 1 hour
-    
+
     private static class CachedStatement {
         final CapabilityStatement statement;
         final long timestamp;
-        
-        CachedStatement(CapabilityStatement statement) {
-            this.statement = statement;
-            this.timestamp = System.currentTimeMillis();
-        }
-        
-        boolean isExpired() {
-            return System.currentTimeMillis() - timestamp > CACHE_TTL_MS;
-        }
+        CachedStatement(CapabilityStatement statement) { this.statement = statement; this.timestamp = System.currentTimeMillis(); }
+        boolean isExpired() { return System.currentTimeMillis() - timestamp > CACHE_TTL_MS; }
     }
 
-    public USCoreCapabilityProvider(RestfulServer restfulServer, 
-                                    @Autowired(required = false) BuildProperties buildProperties) {
+    public USCoreCapabilityProvider(RestfulServer restfulServer,
+                                    @Autowired(required = false) BuildProperties buildProperties,
+                                    @org.springframework.beans.factory.annotation.Value("${app.baseUrl}") String baseUrl) {
         super(restfulServer);
         
         // Determine version: prefer build-info, then JAR manifest, else dev
@@ -69,29 +59,22 @@ public class USCoreCapabilityProvider extends ServerCapabilityStatementProvider 
             v = getClass().getPackage().getImplementationVersion();
         }
         this.appVersion = v != null ? v : "dev";
-        
-        logger.info("✅ USCoreCapabilityProvider initialized with explicit caching (1 hour TTL), version: {}", appVersion);
+        // Normalize configured base URL to ensure it ends with /fhir
+        this.configuredBaseUrl = baseUrl.endsWith("/fhir") ? baseUrl : (baseUrl + "/fhir");
+        logger.info("✅ USCoreCapabilityProvider initialized (no tenant mode) version={} baseUrl={}", appVersion, this.configuredBaseUrl);
     }
 
     @Override
     public CapabilityStatement getServerConformance(HttpServletRequest request, RequestDetails requestDetails) {
         long startTime = System.currentTimeMillis();
         
-        // Get tenant/bucket identifier for cache key
-        String tenant = "default";
-        if (requestDetails != null && requestDetails.getTenantId() != null) {
-            tenant = requestDetails.getTenantId();
-        }
-        
-        // Check cache first
-        CachedStatement cached = cache.get(tenant);
+        // Check single cache (no multi-tenant)
+        CachedStatement cached = cachedStatement;
         if (cached != null && !cached.isExpired()) {
-            logger.debug("📋 Using cached CapabilityStatement for tenant: {} (cached {} ms ago)", 
-                        tenant, System.currentTimeMillis() - cached.timestamp);
-            return cached.statement.copy(); // Return a copy to avoid mutations
+            logger.debug("📋 Using cached CapabilityStatement (cached {} ms ago)", System.currentTimeMillis() - cached.timestamp);
+            return cached.statement.copy();
         }
-        
-        logger.info("📋 Generating new CapabilityStatement for tenant: {}...", tenant);
+        logger.info("📋 Generating new CapabilityStatement (cache miss or expired)...");
         
         CapabilityStatement statement = (CapabilityStatement) super.getServerConformance(request, requestDetails);
 
@@ -118,15 +101,18 @@ public class USCoreCapabilityProvider extends ServerCapabilityStatementProvider 
                 .setVersion(appVersion));
         }
         
-        // Implementation block (per tenant/bucket)
-        String fhirBase = requestDetails != null ? requestDetails.getFhirServerBase() : "http://localhost:8080/fhir";
+        // Implementation base URL (prefer requestDetails server base if provided, else configured)
+        String fhirBase = (requestDetails != null && requestDetails.getFhirServerBase() != null && !requestDetails.getFhirServerBase().isBlank())
+                ? requestDetails.getFhirServerBase()
+                : this.configuredBaseUrl;
+        if (fhirBase == null || fhirBase.isBlank()) {
+            throw new IllegalStateException("Base FHIR server URL missing (app.baseUrl must be configured)");
+        }
         if (statement.hasImplementation()) {
-            statement.getImplementation()
-                .setDescription("Couchbase FHIR CE (" + tenant + ")")
-                .setUrl(fhirBase);
+            statement.getImplementation().setDescription("Couchbase FHIR CE").setUrl(fhirBase);
         } else {
             statement.setImplementation(new CapabilityStatement.CapabilityStatementImplementationComponent()
-                .setDescription("Couchbase FHIR CE (" + tenant + ")")
+                .setDescription("Couchbase FHIR CE")
                 .setUrl(fhirBase));
         }
 
@@ -159,10 +145,8 @@ public class USCoreCapabilityProvider extends ServerCapabilityStatementProvider 
         addSmartSecurityExtension(statement, fhirBase);
 
         long elapsed = System.currentTimeMillis() - startTime;
-        logger.info("✅ CapabilityStatement generated in {} ms for tenant: {}", elapsed, tenant);
-        
-        // Cache the statement
-        cache.put(tenant, new CachedStatement(statement.copy()));
+        logger.info("✅ CapabilityStatement generated in {} ms", elapsed);
+        cachedStatement = new CachedStatement(statement.copy());
         
         return statement;
     }

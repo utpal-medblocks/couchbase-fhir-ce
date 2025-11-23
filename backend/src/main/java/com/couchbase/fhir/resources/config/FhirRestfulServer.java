@@ -116,7 +116,7 @@ public class FhirRestfulServer extends RestfulServer {
             registerInterceptor(jwtValidationInterceptor); // 🔒 JWT token revocation check
             registerInterceptor(cleanExceptionInterceptor);
             registerInterceptor(fastpathResponseInterceptor); // 🚀 Fastpath JSON bypass (10× memory reduction)
-            USCoreCapabilityProvider capabilityProvider = new USCoreCapabilityProvider(this, buildProperties);
+            USCoreCapabilityProvider capabilityProvider = new USCoreCapabilityProvider(this, buildProperties, configuredBaseUrl);
             setServerConformanceProvider(capabilityProvider);
             registerProviders(allProviders); // Register all providers
             
@@ -140,7 +140,7 @@ public class FhirRestfulServer extends RestfulServer {
             registerInterceptor(jwtValidationInterceptor); // 🔒 JWT token revocation check
             registerInterceptor(cleanExceptionInterceptor);
             registerInterceptor(fastpathResponseInterceptor); // 🚀 Fastpath JSON bypass (10× memory reduction)
-            USCoreCapabilityProvider capabilityProvider = new USCoreCapabilityProvider(this, buildProperties);
+            USCoreCapabilityProvider capabilityProvider = new USCoreCapabilityProvider(this, buildProperties, configuredBaseUrl);
             setServerConformanceProvider(capabilityProvider);
             registerProviders(providers);
         }
