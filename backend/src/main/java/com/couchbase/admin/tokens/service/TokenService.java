@@ -94,6 +94,7 @@ public class TokenService {
                 .subject(userId)
                 .issuedAt(now)
                 .expiresAt(expiresAt)
+                .claim("token_type", "api")  // Explicit token type (API tokens from /tokens page)
                 .claim("scope", String.join(" ", scopes))
                 .claim("email", userId)
                 .claim("appName", appName)

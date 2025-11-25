@@ -222,6 +222,8 @@ public class AuthController {
                     .subject(email)
                     .issuedAt(now)
                     .expiresAt(exp)
+                    .id(java.util.UUID.randomUUID().toString())  // Add JTI for revocation tracking
+                    .claim("token_type", "admin")  // Explicit token type (hardening)
                     .claim("scope", String.join(" ", scopes))
                     .claim("email", email)
                     .build();

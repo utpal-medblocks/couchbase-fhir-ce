@@ -312,6 +312,9 @@ public class AuthorizationServerConfig {
     public OAuth2TokenCustomizer<JwtEncodingContext> tokenCustomizer() {
         return context -> {
             if (context.getTokenType().getValue().equals("access_token")) {
+                // Add token type for explicit identification (hardening)
+                context.getClaims().claim("token_type", "oauth");
+                
                 // Add SMART-specific claims
                 // Convert scopes to space-separated string (OAuth 2.0 standard)
                 String scopeString = String.join(" ", context.getAuthorizedScopes());
