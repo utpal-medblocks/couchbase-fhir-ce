@@ -80,7 +80,7 @@ public class JwtTokenCacheService {
             activeJtis.addAll(jtis);
             
             long elapsedMs = (System.nanoTime() - start) / 1_000_000L;
-            logger.info("✅ [JWT-CACHE] Loaded {} active token JTIs in {} ms", jtis.size(), elapsedMs);
+            logger.debug("✅ [JWT-CACHE] Loaded {} active token JTIs in {} ms", jtis.size(), elapsedMs);
             initialized = true;
             
         } catch (Exception e) {
@@ -176,7 +176,7 @@ public class JwtTokenCacheService {
             }
             
             if (removed > 0) {
-                logger.info("🧹 [JWT-CACHE] Cleaned up {} expired tokens from cache", removed);
+                logger.debug("🧹 [JWT-CACHE] Cleaned up {} expired tokens from cache", removed);
             }
             
         } catch (Exception e) {

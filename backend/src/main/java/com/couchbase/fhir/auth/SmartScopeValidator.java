@@ -129,17 +129,25 @@ public class SmartScopeValidator {
      * Extract scopes from JWT authentication
      */
     private List<String> extractScopes(Authentication authentication) {
+        logger.debug("🔍 [SCOPE-EXTRACT] Extracting scopes from authentication: {}", authentication.getClass().getSimpleName());
+        
         // First, try to extract from Spring Security authorities (for API tokens)
         // API tokens set authorities with "SCOPE_" prefix
         if (authentication.getAuthorities() != null && !authentication.getAuthorities().isEmpty()) {
+            logger.debug("🔍 [SCOPE-EXTRACT] Found {} authorities", authentication.getAuthorities().size());
+            
             List<String> scopesFromAuthorities = authentication.getAuthorities().stream()
-                .map(authority -> authority.getAuthority())
+                .map(authority -> {
+                    String auth = authority.getAuthority();
+                    logger.debug("🔍 [SCOPE-EXTRACT] Authority: {} (type: {})", auth, authority.getClass().getSimpleName());
+                    return auth;
+                })
                 .filter(auth -> auth.startsWith("SCOPE_"))
                 .map(auth -> auth.substring(6)) // Remove "SCOPE_" prefix
                 .collect(Collectors.toList());
             
             if (!scopesFromAuthorities.isEmpty()) {
-                logger.debug("Extracted scopes from authorities: {}", scopesFromAuthorities);
+                logger.debug("✅ [SCOPE-EXTRACT] Extracted scopes from authorities: {}", scopesFromAuthorities);
                 return scopesFromAuthorities;
             }
         }
@@ -147,26 +155,41 @@ public class SmartScopeValidator {
         // Fallback: Extract from JWT claims (for OAuth2 tokens)
         if (authentication instanceof JwtAuthenticationToken) {
             Jwt jwt = ((JwtAuthenticationToken) authentication).getToken();
+            logger.debug("🔍 [SCOPE-EXTRACT] JWT Authentication detected, checking claims");
             
             // Try to get scopes from "scope" claim (space-separated string)
             Object scopeClaim = jwt.getClaim("scope");
+            logger.debug("🔍 [SCOPE-EXTRACT] scope claim: {} (type: {})", 
+                scopeClaim, scopeClaim != null ? scopeClaim.getClass().getName() : "null");
+            
             if (scopeClaim instanceof String) {
-                return List.of(((String) scopeClaim).split(" "));
+                String[] scopes = ((String) scopeClaim).split(" ");
+                logger.debug("✅ [SCOPE-EXTRACT] Extracted scopes from String claim: {}", List.of(scopes));
+                return List.of(scopes);
             } else if (scopeClaim instanceof Collection) {
-                return ((Collection<?>) scopeClaim).stream()
+                List<String> scopes = ((Collection<?>) scopeClaim).stream()
                     .map(Object::toString)
                     .collect(Collectors.toList());
+                logger.debug("✅ [SCOPE-EXTRACT] Extracted scopes from Collection claim: {}", scopes);
+                return scopes;
             }
             
             // Try to get from "scp" claim (alternative claim name)
             Object scpClaim = jwt.getClaim("scp");
+            if (scpClaim != null) {
+                logger.debug("🔍 [SCOPE-EXTRACT] scp claim: {} (type: {})", 
+                    scpClaim, scpClaim.getClass().getName());
+            }
             if (scpClaim instanceof Collection) {
-                return ((Collection<?>) scpClaim).stream()
+                List<String> scopes = ((Collection<?>) scpClaim).stream()
                     .map(Object::toString)
                     .collect(Collectors.toList());
+                logger.debug("✅ [SCOPE-EXTRACT] Extracted scopes from scp Collection: {}", scopes);
+                return scopes;
             }
         }
         
+        logger.warn("⚠️ [SCOPE-EXTRACT] No scopes found in authentication");
         return List.of();
     }
 }

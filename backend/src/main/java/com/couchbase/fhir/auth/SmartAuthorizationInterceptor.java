@@ -45,6 +45,9 @@ public class SmartAuthorizationInterceptor {
         String resourceType = theRequestDetails.getResourceName();
         RestOperationTypeEnum operationType = theRequestDetails.getRestOperationType();
         
+        logger.debug("🔍 [SMART-AUTH] Incoming request: {} {} (operation: {})", 
+            theRequestDetails.getRequestType(), resourceType, operationType);
+        
         // Skip authorization for CapabilityStatement (metadata endpoint) - must check FIRST
         if ("metadata".equals(theRequestDetails.getOperation()) || 
             RestOperationTypeEnum.METADATA.equals(operationType)) {
@@ -54,6 +57,9 @@ public class SmartAuthorizationInterceptor {
         
         // Get Spring Security authentication
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        logger.debug("🔍 [SMART-AUTH] Authentication: {} (authenticated: {})", 
+            authentication != null ? authentication.getClass().getSimpleName() : "null",
+            authentication != null ? authentication.isAuthenticated() : false);
         
         // Skip authorization if no authentication present (should not happen for /fhir/* due to SecurityFilterChain)
         if (authentication == null || !authentication.isAuthenticated()) {
@@ -76,7 +82,14 @@ public class SmartAuthorizationInterceptor {
         }
         
         // Validate scopes
-        boolean authorized = scopeValidator.hasPermission(authentication, resourceType, operation);
+        boolean authorized = false;
+        try {
+            logger.debug("🔍 [SMART-AUTH] Validating scopes for resource: {}, operation: {}", resourceType, operation);
+            authorized = scopeValidator.hasPermission(authentication, resourceType, operation);
+        } catch (Exception e) {
+            logger.error("❌ [SMART-AUTH] Exception during scope validation: {}", e.getMessage(), e);
+            throw new AuthenticationException("Error validating scopes: " + e.getMessage());
+        }
         
         if (!authorized) {
             String username = authentication.getName();

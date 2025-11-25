@@ -28,6 +28,9 @@ public class SecurityConfig {
 
     @Autowired
     private org.springframework.security.oauth2.jwt.JwtDecoder jwtDecoder;
+    
+    @Autowired
+    private org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter jwtAuthenticationConverter;
 
     /**
      * Admin UI and general API filter chain
@@ -56,7 +59,9 @@ public class SecurityConfig {
                 .requestMatchers("/api/**").permitAll()
             )
             // Use same OAuth2 Resource Server JWT for admin endpoints now
-            .oauth2ResourceServer(oauth2 -> oauth2.jwt(jwt -> jwt.decoder(jwtDecoder)));
+            .oauth2ResourceServer(oauth2 -> oauth2.jwt(jwt -> jwt
+                .decoder(jwtDecoder)
+                .jwtAuthenticationConverter(jwtAuthenticationConverter)));
         
         return http.build();
     }
@@ -90,7 +95,9 @@ public class SecurityConfig {
             )
             // OAuth 2.0 Resource Server - validates all OAuth2 JWT tokens
             .oauth2ResourceServer(oauth2 -> oauth2
-                .jwt(jwt -> jwt.decoder(jwtDecoder))
+                .jwt(jwt -> jwt
+                    .decoder(jwtDecoder)
+                    .jwtAuthenticationConverter(jwtAuthenticationConverter))
             )
             // Disable anonymous authentication
             .anonymous(anonymous -> anonymous.disable());
@@ -100,7 +107,7 @@ public class SecurityConfig {
 
     /**
      * Default filter chain for all other endpoints
-     * Includes form login for OAuth authentication
+     * Includes form login for OAuth authentication and public SMART discovery
      */
     @Bean
     @Order(4)
@@ -114,6 +121,9 @@ public class SecurityConfig {
             .authorizeHttpRequests(authz -> authz
                 // Allow open access to actuator endpoints (health, metrics)
                 .requestMatchers("/actuator/**").permitAll()
+                
+                // Allow open access to SMART configuration (FHIR discovery)
+                .requestMatchers("/.well-known/smart-configuration").permitAll()
                 
                 // Allow login page and static resources
                 .requestMatchers("/login", "/error", "/css/**", "/js/**").permitAll()

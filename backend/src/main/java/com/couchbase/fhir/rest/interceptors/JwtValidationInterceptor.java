@@ -15,17 +15,21 @@ import org.springframework.security.oauth2.server.resource.authentication.JwtAut
 import org.springframework.stereotype.Component;
 
 /**
- * HAPI FHIR Interceptor to validate JWT tokens against active token cache
+ * HAPI FHIR Interceptor to validate Admin API JWT tokens against active token cache
  * 
  * This interceptor runs AFTER Spring Security has validated the JWT signature,
- * but BEFORE the FHIR operation is executed. It checks if the JWT ID (jti) is
- * in the active token cache. If not, the token has been revoked and the request
- * is rejected.
+ * but BEFORE the FHIR operation is executed.
+ * 
+ * Token Types:
+ * - OAuth tokens (from Spring Authorization Server): Skipped - managed by Spring
+ * - Admin API tokens (from /api/admin/tokens): Validated against cache
  * 
  * Flow:
  * 1. Spring Security validates JWT signature and expiry
- * 2. This interceptor checks if JTI is active (not revoked)
- * 3. If active → proceed to FHIR operation
+ * 2. This interceptor checks token type:
+ *    - If OAuth token (has 'aud' claim) → Skip cache check
+ *    - If Admin API token → Check if JTI is in active cache
+ * 3. If active (or OAuth) → proceed to FHIR operation
  * 4. If not active → throw AuthenticationException (401)
  */
 @Component
@@ -70,15 +74,24 @@ public class JwtValidationInterceptor {
             return;
         }
         
-        // Check if JTI is in active cache
+        // Check if this is an OAuth token (from Spring Authorization Server)
+        // OAuth tokens have 'aud' (audience) claim, Admin API tokens don't
+        String audience = jwt.getClaim("aud");
+        if (audience != null) {
+            logger.trace("[JWT-VALIDATION] OAuth token detected (aud: {}) - skipping cache validation (managed by Spring Authorization Server)", audience);
+            // OAuth tokens are managed by Spring Authorization Server, not our cache
+            return;
+        }
+        
+        // This is an Admin API token - check if it's in the active cache
         if (!jwtTokenCacheService.isActive(jti)) {
-            logger.warn("🚫 [JWT-VALIDATION] Token with JTI '{}' is not active (revoked or expired)", jti);
+            logger.warn("🚫 [JWT-VALIDATION] Admin API token with JTI '{}' is not active (revoked or expired)", jti);
             
             // Token has been revoked or doesn't exist
             throw new AuthenticationException("Token has been revoked or is no longer valid");
         }
         
-        logger.trace("[JWT-VALIDATION] Token JTI '{}' is active - proceeding with request", jti);
+        logger.trace("[JWT-VALIDATION] Admin API token JTI '{}' is active - proceeding with request", jti);
     }
 }
 

@@ -17,9 +17,6 @@ import org.springframework.core.annotation.Order;
 import org.springframework.http.MediaType;
 import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
-import org.springframework.security.core.userdetails.User;
-import org.springframework.security.core.userdetails.UserDetails;
-import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.crypto.factory.PasswordEncoderFactories;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.oauth2.core.AuthorizationGrantType;
@@ -38,7 +35,6 @@ import org.springframework.security.oauth2.server.authorization.settings.ClientS
 import org.springframework.security.oauth2.server.authorization.settings.TokenSettings;
 import org.springframework.security.oauth2.server.authorization.token.JwtEncodingContext;
 import org.springframework.security.oauth2.server.authorization.token.OAuth2TokenCustomizer;
-import org.springframework.security.provisioning.InMemoryUserDetailsManager;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.LoginUrlAuthenticationEntryPoint;
 import org.springframework.security.web.util.matcher.MediaTypeRequestMatcher;
@@ -151,12 +147,11 @@ public class AuthorizationServerConfig {
         // - /oauth2/revoke
         // - /oauth2/jwks
         // - /.well-known/oauth-authorization-server
-        // Use the new configuration pattern instead of deprecated applyDefaultSecurity
-        OAuth2AuthorizationServerConfigurer authorizationServerConfigurer = new OAuth2AuthorizationServerConfigurer();
         OAuth2AuthorizationServerConfiguration.applyDefaultSecurity(http);
 
-        // Enable OpenID Connect 1.0
-        authorizationServerConfigurer.oidc(Customizer.withDefaults());
+        // Enable OpenID Connect 1.0 (get the configurer from http after applyDefaultSecurity)
+        http.getConfigurer(OAuth2AuthorizationServerConfigurer.class)
+                .oidc(Customizer.withDefaults());
 
         // Redirect to login page when not authenticated for HTML requests
         http.exceptionHandling((exceptions) -> exceptions
@@ -277,19 +272,30 @@ public class AuthorizationServerConfig {
 
     /**
      * User details for OAuth authentication
-     * In production, this should use Couchbase fhir.Admin.users
+     * 
+     * IMPORTANT: This bean is intentionally NOT defined here.
+     * Spring will auto-wire the CouchbaseUserDetailsService (annotated with @Service("couchbaseUserDetailsService"))
+     * which loads users from fhir.Admin.users collection.
+     * 
+     * Users must exist in Couchbase with:
+     * - status: "active"
+     * - authMethod: "local"
+     * - passwordHash: BCrypt hashed password
+     * - role: "admin", "developer", or "smart_user"
+     * 
+     * For backward compatibility during development, you can create a test user via:
+     * POST /api/admin/users with:
+     * {
+     *   "id": "fhiruser@example.com",
+     *   "username": "FHIR User",
+     *   "email": "fhiruser@example.com",
+     *   "password": "password",
+     *   "role": "smart_user",
+     *   "authMethod": "local"
+     * }
      */
-    @Bean
-    public UserDetailsService userDetailsService() {
-        // Test user for development
-        UserDetails user = User.builder()
-                .username("fhiruser")
-                .password(passwordEncoder().encode("password"))
-                .roles("USER")
-                .build();
-
-        return new InMemoryUserDetailsManager(user);
-    }
+    // UserDetailsService bean now provided by CouchbaseUserDetailsService
+    // @Bean public UserDetailsService userDetailsService() { ... }
 
     /**
      * Password encoder for client secrets and user passwords
@@ -307,7 +313,9 @@ public class AuthorizationServerConfig {
         return context -> {
             if (context.getTokenType().getValue().equals("access_token")) {
                 // Add SMART-specific claims
-                context.getClaims().claim("scope", context.getAuthorizedScopes());
+                // Convert scopes to space-separated string (OAuth 2.0 standard)
+                String scopeString = String.join(" ", context.getAuthorizedScopes());
+                context.getClaims().claim("scope", scopeString);
                 
                 // Add fhirUser claim if scope includes fhirUser
                 if (context.getAuthorizedScopes().contains(SmartScopes.FHIRUSER)) {
@@ -330,6 +338,25 @@ public class AuthorizationServerConfig {
     @Bean
     public JwtDecoder jwtDecoder(JWKSource<SecurityContext> jwkSource) {
         return OAuth2AuthorizationServerConfiguration.jwtDecoder(jwkSource);
+    }
+    
+    /**
+     * JWT Authentication Converter for extracting authorities from scope claim
+     * Uses our custom converter that safely handles both String and Collection scope claims
+     */
+    @Bean
+    public org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter jwtAuthenticationConverter() {
+        logger.info("🔧 Configuring JwtAuthenticationConverter with CustomJwtGrantedAuthoritiesConverter");
+        
+        // Use our custom converter that handles both String and Collection types
+        CustomJwtGrantedAuthoritiesConverter grantedAuthoritiesConverter = new CustomJwtGrantedAuthoritiesConverter();
+        
+        org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter jwtAuthenticationConverter = 
+            new org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter();
+        jwtAuthenticationConverter.setJwtGrantedAuthoritiesConverter(grantedAuthoritiesConverter);
+        
+        logger.info("✅ JwtAuthenticationConverter configured with custom scope handler");
+        return jwtAuthenticationConverter;
     }
 
     /**

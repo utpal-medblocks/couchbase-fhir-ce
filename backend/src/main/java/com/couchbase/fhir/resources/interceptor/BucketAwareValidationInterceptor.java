@@ -47,9 +47,7 @@ public class BucketAwareValidationInterceptor {
         // Single-tenant mode: always use "fhir" as the bucket name
         String bucketName = TenantContextHolder.getTenantId();
         
-        try {
-            logger.debug("🔍 Validating bucket is FHIR-enabled: {}", bucketName);
-            
+        try {            
             // This will throw FhirBucketValidationException if bucket is not FHIR-enabled
             FhirBucketConfigService.FhirBucketConfig config = configService.getFhirBucketConfig(bucketName);
             
@@ -94,14 +92,12 @@ public class BucketAwareValidationInterceptor {
 
         // Get bucket config (this should work now since we validated bucket earlier)
         try {
-            logger.debug("🔍 Getting bucket config for strict validation: {}", bucketName);
             FhirBucketConfigService.FhirBucketConfig config = configService.getFhirBucketConfig(bucketName);
             logger.debug("🔍 Bucket config - mode: {}, profile: {}", config.getValidationMode(), config.getValidationProfile());
             
             if ("strict".equals(config.getValidationMode())) {
-                logger.debug("🔍 APPLYING STRICT VALIDATION for bucket: {}", bucketName);
                 byte[] requestBody = (byte[]) theRequestDetails.getUserData().get(UD_REQ_BODY);
-                logger.debug("🔍 Request body size: {} bytes", requestBody != null ? requestBody.length : 0);
+                logger.debug("🔍 STRICT Request body size: {} bytes", requestBody != null ? requestBody.length : 0);
                 
                 if (requestBody != null && requestBody.length > 0) {
                     String jsonContent = new String(requestBody, java.nio.charset.StandardCharsets.UTF_8);
@@ -153,7 +149,7 @@ public class BucketAwareValidationInterceptor {
             long tookMs = (System.nanoTime() - start) / 1_000_000;
             var op = rd.getRestOperationType();
             var rt = rd.getResourceName();
-            logger.info("✅ op={}, resource={}, took={}ms, params={}",
+            logger.debug("✅ op={}, resource={}, took={}ms, params={}",
                 (op != null ? op.name() : "UNKNOWN"),
                 (rt != null ? rt : "UNKNOWN"),
                 tookMs,
