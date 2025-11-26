@@ -97,6 +97,14 @@ public class User {
      * Format: "patient-id" (just the ID, not "Patient/patient-id")
      */
     private String defaultPatientId;
+    
+    /**
+     * Optional FHIR resource reference for this user
+     * Links the user account to their FHIR resource (Patient/Practitioner)
+     * Format: "ResourceType/resource-id" (e.g., "Patient/example", "Practitioner/practitioner-1")
+     * Used for test users created during sample data load
+     */
+    private String fhirUserRef;
 
     // Constructors
     
@@ -246,6 +254,14 @@ public class User {
 
     public void setDefaultPatientId(String defaultPatientId) {
         this.defaultPatientId = defaultPatientId;
+    }
+
+    public String getFhirUserRef() {
+        return fhirUserRef;
+    }
+
+    public void setFhirUserRef(String fhirUserRef) {
+        this.fhirUserRef = fhirUserRef;
     }
 
     // Utility methods

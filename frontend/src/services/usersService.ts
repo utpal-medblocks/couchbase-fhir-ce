@@ -14,6 +14,7 @@ export interface User {
   profilePicture?: string;
   socialAuthId?: string;
   allowedScopes?: string[]; // Auto-assigned by backend based on role
+  fhirUserRef?: string; // Optional FHIR resource reference (e.g., "Patient/example")
 }
 
 export interface CreateUserRequest {
