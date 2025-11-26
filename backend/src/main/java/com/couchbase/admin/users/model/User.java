@@ -38,22 +38,26 @@ public class User {
     private String passwordHash;
     
     /**
-     * User role: "admin", "developer", or "smart_user"
-     * - admin: Full access to Admin UI and user management
-     * - developer: Full Admin-UI without access to Users Page
-     * - smart_user: No login, just for SMART apps
+     * User role: "admin", "developer", "patient", or "practitioner"
+     * - admin: Full access to Admin UI (Dashboard, Tokens, Users, etc.) - scopes: user/*.*,  system/*.*
+     * - developer: Limited Admin UI access (Tokens and Client Registration only) - scopes: user/*.*
+     * - patient: Cannot login to UI - created during sample data load for SMART app testing
+     * - practitioner: Cannot login to UI - created during sample data load for SMART app testing
+     * Note: Only admin and developer roles can login to the UI, all use local auth
      */
     private String role;
 
     /**
-     * Allowed scopes for this user
+     * Allowed scopes for this user - automatically assigned based on role
+     * - admin: ["user/*.*", "system/*.*"]
+     * - developer: ["user/*.*"]
+     * - patient/practitioner: minimal scopes for testing
      */
     private String[] allowedScopes;
     
     /**
-     * Authentication method: "local" or "social"
-     * - local: Email/password authentication
-     * - social: OAuth (Google, GitHub, etc.)
+     * Authentication method: always "local"
+     * All users use local email/password authentication
      */
     private String authMethod;
     
@@ -155,7 +159,8 @@ public class User {
                 this.allowedScopes = new String[]{"user/*.*", "system/*.*"};
             } else if ("developer".equals(role)) {
                 this.allowedScopes = new String[]{"user/*.*"};
-            } else if ("smart_user".equals(role)) {
+            } else if ("patient".equals(role) || "practitioner".equals(role)) {
+                // Minimal scopes for testing only - these users cannot login to UI
                 this.allowedScopes = new String[]{"openid", "profile", "launch/patient", "patient/*.read", "offline_access"};
             }
         }
@@ -167,7 +172,8 @@ public class User {
                 return new String[]{"user/*.*", "system/*.*"};
             } else if ("developer".equals(role)) {
                 return new String[]{"user/*.*"};
-            } else if ("smart_user".equals(role)) {
+            } else if ("patient".equals(role) || "practitioner".equals(role)) {
+                // Minimal scopes for testing only - these users cannot login to UI
                 return new String[]{"openid", "profile", "launch/patient", "patient/*.read", "offline_access"};
             }
         }

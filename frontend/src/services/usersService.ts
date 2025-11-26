@@ -5,15 +5,15 @@ export interface User {
   username: string;
   email: string;
   passwordHash?: string;
-  role: "admin" | "developer" | "smart_user";
-  authMethod: "local" | "social";
+  role: "admin" | "developer" | "patient" | "practitioner";
+  authMethod: "local"; // Always local
   status: "active" | "inactive" | "suspended";
   createdBy: string;
   createdAt: string;
   lastLogin?: string;
   profilePicture?: string;
   socialAuthId?: string;
-  allowedScopes?: string[];
+  allowedScopes?: string[]; // Auto-assigned by backend based on role
 }
 
 export interface CreateUserRequest {
@@ -120,8 +120,10 @@ export const formatRole = (role: string): string => {
       return "Administrator";
     case "developer":
       return "Developer";
-    case "smart_user":
-      return "SMART User";
+    case "patient":
+      return "Patient (Test Only)";
+    case "practitioner":
+      return "Practitioner (Test Only)";
     default:
       return role;
   }
@@ -133,9 +135,7 @@ export const formatRole = (role: string): string => {
 export const formatAuthMethod = (authMethod: string): string => {
   switch (authMethod) {
     case "local":
-      return "Email/Password";
-    case "social":
-      return "Social (Google/GitHub)";
+      return "Local";
     default:
       return authMethod;
   }

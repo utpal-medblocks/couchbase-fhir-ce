@@ -54,8 +54,16 @@ export default function Login() {
         navigate("/");
       } else {
         login(response.token, response.user);
-        console.log("✅ Token stored in Zustand, navigating to /");
-        navigate("/");
+        console.log("✅ Token stored in Zustand");
+
+        // Role-based redirect
+        if (response.user.role === "developer") {
+          console.log("🔀 Redirecting developer to /tokens");
+          navigate("/tokens");
+        } else {
+          console.log("🔀 Redirecting to /dashboard");
+          navigate("/");
+        }
       }
     } catch (err: any) {
       console.error("❌ Login failed:", err);

@@ -10,6 +10,7 @@ import AuditLogs from "../pages/AuditLogs/AuditLogs";
 import SystemLogs from "../pages/SystemLogs/Logs";
 import Users from "../pages/Users/Users";
 import Tokens from "../pages/Tokens/Tokens";
+import ClientRegistration from "../pages/ClientRegistration/ClientRegistration";
 
 const AppRoutes: React.FC = () => {
   return (
@@ -23,7 +24,7 @@ const AppRoutes: React.FC = () => {
         element={
           <ProtectedRoute>
             <MainLayout>
-              <Navigate to="/dashboard" replace />
+              <Dashboard />
             </MainLayout>
           </ProtectedRoute>
         }
@@ -94,6 +95,16 @@ const AppRoutes: React.FC = () => {
           <ProtectedRoute>
             <MainLayout>
               <Tokens />
+            </MainLayout>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/clients"
+        element={
+          <ProtectedRoute>
+            <MainLayout>
+              <ClientRegistration />
             </MainLayout>
           </ProtectedRoute>
         }

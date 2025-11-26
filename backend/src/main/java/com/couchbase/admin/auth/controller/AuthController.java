@@ -121,8 +121,16 @@ public class AuthController {
                     if ("local".equals(user.getAuthMethod())) {
                         boolean passwordOk = userService.verifyPassword(user.getId(), password);
                         if (passwordOk) {
+                            // Check if user role is allowed to login to UI
+                            // Only admin and developer can login - patient and practitioner are for testing only
+                            if (!"admin".equals(user.getRole()) && !"developer".equals(user.getRole())) {
+                                logger.warn("⚠️ [LOGIN] User '{}' has role '{}' which cannot login to UI", email, user.getRole());
+                                return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                                        .body(createErrorResponse("Access denied: Your role does not have UI access"));
+                            }
+                            
                             long elapsedMs = (System.nanoTime() - startNs) / 1_000_000L;
-                            logger.debug("✅ [LOGIN] Authenticated via Admin.users (doc lookup) email='{}' in {} ms", email, elapsedMs);
+                            logger.debug("✅ [LOGIN] Authenticated via Admin.users (doc lookup) email='{}' role='{}' in {} ms", email, user.getRole(), elapsedMs);
                             String displayName = user.getUsername() != null ? user.getUsername() : user.getEmail();
                 String[] scopes = user.getAllowedScopes() != null && user.getAllowedScopes().length > 0
                     ? user.getAllowedScopes() : new String[]{"system/*.*","user/*.*"};

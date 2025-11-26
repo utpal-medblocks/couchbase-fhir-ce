@@ -55,36 +55,9 @@ import {
   getStatusColor,
 } from "../../services/usersService";
 
-// Helper function to get scope options based on role
-const getScopeOptionsForRole = (role: string): string[] => {
-  switch (role) {
-    case "admin":
-      return ["system/*.*"];
-    case "developer":
-      return [
-        "user/*.*",
-        "launch/patient",
-        "launch/encounter",
-        "openid",
-        "profile",
-        "offline_access",
-      ];
-    case "smart_user":
-      return [
-        "openid",
-        "profile",
-        "launch/patient",
-        "launch/encounter",
-        "patient/*.read",
-        "patient/*.write",
-        "user/*.read",
-        "user/*.write",
-        "offline_access",
-      ];
-    default:
-      return [];
-  }
-};
+// Scopes are now automatically assigned by the backend based on role
+// admin: ["user/*.*", "system/*.*"]
+// developer: ["user/*.*"]
 
 const Users: React.FC = () => {
   const [users, setUsers] = useState<User[]>([]);
@@ -105,7 +78,6 @@ const Users: React.FC = () => {
     passwordHash: "",
     role: "developer",
     authMethod: "local",
-    allowedScopes: getScopeOptionsForRole("developer"),
   });
 
   // UI states
@@ -141,15 +113,9 @@ const Users: React.FC = () => {
         return;
       }
 
-      // Validate password for local auth
-      if (formData.authMethod === "local" && !formData.passwordHash) {
-        setError("Password is required for local authentication");
-        return;
-      }
-
-      // Validate scopes
-      if (!formData.allowedScopes || formData.allowedScopes.length === 0) {
-        setError("At least one scope must be selected");
+      // Validate password (all users use local auth)
+      if (!formData.passwordHash) {
+        setError("Password is required");
         return;
       }
 
@@ -226,15 +192,6 @@ const Users: React.FC = () => {
     }
   };
 
-  const handleRemoveScope = (scopeToRemove: string) => {
-    setFormData((prev) => ({
-      ...prev,
-      allowedScopes: (prev?.allowedScopes || []).filter(
-        (scope) => scope !== scopeToRemove
-      ),
-    }));
-  };
-
   const openDeleteDialog = (user: User) => {
     setSelectedUser(user);
     setDeleteDialogOpen(true);
@@ -247,7 +204,6 @@ const Users: React.FC = () => {
       passwordHash: "",
       role: "developer",
       authMethod: "local",
-      allowedScopes: getScopeOptionsForRole("developer"),
     });
     setSelectedUser(null);
     setCreateSubmitAttempted(false);
@@ -444,18 +400,9 @@ const Users: React.FC = () => {
                 setFormData({ ...formData, passwordHash: e.target.value })
               }
               fullWidth
-              required={formData.authMethod === "local"}
-              disabled={formData.authMethod === "social"}
-              error={
-                createSubmitAttempted &&
-                formData.authMethod === "local" &&
-                !formData.passwordHash
-              }
-              helperText={
-                formData.authMethod === "social"
-                  ? "Not required for social login"
-                  : "Required for local authentication"
-              }
+              required
+              error={createSubmitAttempted && !formData.passwordHash}
+              helperText="All users use local authentication"
               InputProps={{
                 endAdornment: (
                   <InputAdornment position="end">
@@ -479,90 +426,22 @@ const Users: React.FC = () => {
               label="Role"
               value={formData.role || "developer"}
               onChange={(e) => {
-                const newRole = e.target.value as
-                  | "admin"
-                  | "developer"
-                  | "smart_user";
+                const newRole = e.target.value as "admin" | "developer";
                 setFormData({
                   ...formData,
                   role: newRole,
-                  allowedScopes: getScopeOptionsForRole(newRole), // Auto-populate default scopes
                 });
               }}
               fullWidth
+              helperText="Scopes are automatically assigned based on role"
             >
               <MenuItem value="developer">
-                Developer (API & App Management)
+                Developer - Tokens & Client Registration access (user/*.*)
               </MenuItem>
-              <MenuItem value="admin">Administrator (Full access)</MenuItem>
-              <MenuItem value="smart_user">SMART User (No UI access)</MenuItem>
+              <MenuItem value="admin">
+                Administrator - Full UI access (user/*.*, system/*.*)
+              </MenuItem>
             </TextField>
-            <TextField
-              select
-              label="Authentication Method"
-              value={formData.authMethod || "local"}
-              onChange={(e) =>
-                setFormData({
-                  ...formData,
-                  authMethod: e.target.value as "local" | "social",
-                })
-              }
-              fullWidth
-            >
-              <MenuItem value="local">Local (Email/Password)</MenuItem>
-              <MenuItem value="social">Social (Google/GitHub)</MenuItem>
-            </TextField>
-            {/* Allowed Scopes - Multi-Select with Chips */}
-            <FormControl fullWidth>
-              <InputLabel>Allowed Scopes</InputLabel>
-              <Select
-                multiple
-                value={formData.allowedScopes || []}
-                onChange={(e) =>
-                  setFormData({
-                    ...formData,
-                    allowedScopes:
-                      typeof e.target.value === "string"
-                        ? e.target.value.split(",")
-                        : e.target.value,
-                  })
-                }
-                input={<OutlinedInput label="Allowed Scopes" />}
-                renderValue={(selected) => (
-                  <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.5 }}>
-                    {(selected as string[]).map((value) => (
-                      <Chip
-                        key={value}
-                        label={value}
-                        size="small"
-                        onMouseDown={(event) => {
-                          // Prevent the select dropdown from opening when clicking the delete icon
-                          event.stopPropagation();
-                        }}
-                        onDelete={() => handleRemoveScope(value)}
-                      />
-                    ))}
-                  </Box>
-                )}
-              >
-                {getScopeOptionsForRole(formData.role || "developer").map(
-                  (scope) => (
-                    <MenuItem key={scope} value={scope}>
-                      {scope}
-                    </MenuItem>
-                  )
-                )}
-              </Select>
-              <Typography
-                variant="caption"
-                color="text.secondary"
-                sx={{ mt: 0.5 }}
-              >
-                {formData.role === "smart_user"
-                  ? "External apps can request these scopes. User will grant consent for a subset."
-                  : "User can generate tokens with these scopes for API testing."}
-              </Typography>
-            </FormControl>
           </Box>
         </DialogContent>
         <DialogActions>

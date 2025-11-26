@@ -59,7 +59,10 @@ import { useBucketStore } from "../../store/bucketStore";
 import { useConnectionStore } from "../../store/connectionStore";
 import { BsBoxArrowRight } from "react-icons/bs";
 import { updateUser } from "../../services/usersService";
-import { Visibility as VisibilityIcon, VisibilityOff as VisibilityOffIcon } from "@mui/icons-material";
+import {
+  Visibility as VisibilityIcon,
+  VisibilityOff as VisibilityOffIcon,
+} from "@mui/icons-material";
 
 const drawerWidth = 200;
 
@@ -122,16 +125,48 @@ const Drawer = styled(MuiDrawer, {
 }));
 
 const menuItems = [
-  { id: "dashboard", label: "Dashboard", icon: BsHouse, path: "/dashboard" },
-  { id: "buckets", label: "Buckets", icon: BsBucket, path: "/buckets" },
+  {
+    id: "dashboard",
+    label: "Dashboard",
+    icon: BsHouse,
+    path: "/dashboard",
+    adminOnly: false,
+  },
+  {
+    id: "buckets",
+    label: "Buckets",
+    icon: BsBucket,
+    path: "/buckets",
+    adminOnly: false,
+  },
   {
     id: "fhir-resources",
     label: "FHIR Resources",
     icon: VscFlame,
     path: "/fhir-resources",
+    adminOnly: false,
   },
-  { id: "users", label: "Users", icon: BsPeople, path: "/users" },
-  { id: "tokens", label: "API Tokens", icon: BsKey, path: "/tokens" },
+  {
+    id: "users",
+    label: "Users",
+    icon: BsPeople,
+    path: "/users",
+    adminOnly: true,
+  },
+  {
+    id: "tokens",
+    label: "API Tokens",
+    icon: BsKey,
+    path: "/tokens",
+    adminOnly: false,
+  },
+  {
+    id: "clients",
+    label: "Client Registration",
+    icon: TbApiApp,
+    path: "/clients",
+    adminOnly: false,
+  },
 ];
 
 const bottomMenuItems = [
@@ -539,9 +574,18 @@ export default function MainLayout({ children }: MainLayoutProps) {
           <List sx={{ paddingTop: 0, paddingBottom: 0 }}>
             {menuItems.map((item) => {
               const IconComponent = item.icon;
-              // Disable "Users" menu item for non-admin users
-              const isDisabled = item.id === "users" && user?.role !== "admin";
-              
+              // Disable admin-only menu items for non-admin users
+              const isDisabled = item.adminOnly && user?.role !== "admin";
+              // Hide certain pages completely from developers
+              const isDeveloper = user?.role === "developer";
+              const shouldHide =
+                isDeveloper &&
+                (item.id === "dashboard" ||
+                  item.id === "buckets" ||
+                  item.id === "fhir-resources");
+
+              if (shouldHide) return null;
+
               return (
                 <ListItem
                   key={item.id}
@@ -561,7 +605,7 @@ export default function MainLayout({ children }: MainLayoutProps) {
                     disableHoverListener={drawerOpen && !isDisabled}
                     arrow
                   >
-                    <ListItemButton 
+                    <ListItemButton
                       sx={{
                         ...listItemButtonStyles,
                         cursor: isDisabled ? "not-allowed" : "pointer",
@@ -594,6 +638,10 @@ export default function MainLayout({ children }: MainLayoutProps) {
             <Divider />
             {bottomMenuItems.map((item) => {
               const IconComponent = item.icon;
+              // Hide logs from developers
+              const isDeveloper = user?.role === "developer";
+              if (isDeveloper) return null;
+
               return (
                 <ListItem
                   key={item.id}
@@ -667,7 +715,12 @@ export default function MainLayout({ children }: MainLayoutProps) {
       />
 
       {/* Change Password Dialog */}
-      <Dialog open={changePwdOpen} onClose={handleCloseChangePwd} maxWidth="xs" fullWidth>
+      <Dialog
+        open={changePwdOpen}
+        onClose={handleCloseChangePwd}
+        maxWidth="xs"
+        fullWidth
+      >
         <DialogTitle>Change Password</DialogTitle>
         <DialogContent>
           <Typography variant="body2" sx={{ mb: 2 }}>
@@ -698,7 +751,9 @@ export default function MainLayout({ children }: MainLayoutProps) {
           />
         </DialogContent>
         <DialogActions>
-          <Button onClick={handleCloseChangePwd} disabled={pwdSubmitting}>Cancel</Button>
+          <Button onClick={handleCloseChangePwd} disabled={pwdSubmitting}>
+            Cancel
+          </Button>
           <Button
             onClick={handleSubmitPassword}
             variant="contained"
