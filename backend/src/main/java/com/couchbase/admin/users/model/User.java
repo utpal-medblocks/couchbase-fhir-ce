@@ -86,6 +86,13 @@ public class User {
      * Optional social auth provider user ID
      */
     private String socialAuthId;
+    
+    /**
+     * Optional default patient ID for SMART on FHIR patient context
+     * Used when user launches SMART apps without explicit patient selection
+     * Format: "patient-id" (just the ID, not "Patient/patient-id")
+     */
+    private String defaultPatientId;
 
     // Constructors
     
@@ -225,6 +232,14 @@ public class User {
 
     public void setSocialAuthId(String socialAuthId) {
         this.socialAuthId = socialAuthId;
+    }
+
+    public String getDefaultPatientId() {
+        return defaultPatientId;
+    }
+
+    public void setDefaultPatientId(String defaultPatientId) {
+        this.defaultPatientId = defaultPatientId;
     }
 
     // Utility methods

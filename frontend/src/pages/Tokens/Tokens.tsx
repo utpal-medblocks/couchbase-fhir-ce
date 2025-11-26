@@ -282,7 +282,7 @@ export default function Tokens() {
                       <TableCell>{token.appName}</TableCell>
                       {isAdmin && <TableCell>{token.userId}</TableCell>}
                       <TableCell sx={{ fontFamily: "monospace" }}>
-                        {token.clientId}
+                        {token.id}
                       </TableCell>
                       <TableCell>
                         <Box

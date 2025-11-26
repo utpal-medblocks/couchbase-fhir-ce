@@ -30,6 +30,38 @@ OAuth user authentication now uses **real users** from `fhir.Admin.users` collec
 - ✅ Automatic lastLogin tracking
 - ✅ Support for admin, developer, and smart_user roles
 
+### 3. Patient Context Resolution ✅
+
+For SMART on FHIR `patient/` scopes, the system automatically resolves patient context in this priority order:
+
+**Priority 1: User's Default Patient** (Most Common)
+
+- Set `defaultPatientId` field when creating the user
+- This patient ID is automatically included in access tokens
+- Format: Just the patient ID (e.g., `"example-patient-123"`)
+
+**Priority 2: First Accessible Patient** (Fallback)
+
+- If no default patient is set, queries for the first patient resource
+- Useful for development/testing
+
+**Priority 3: No Patient Context**
+
+- If no patient is found, the `patient` claim is omitted from the token
+- SMART apps should handle missing patient context gracefully
+
+**Example Token with Patient Context:**
+
+```json
+{
+  "sub": "smart.user@example.com",
+  "patient": "example-patient-123",
+  "scope": "openid fhirUser patient/*.read",
+  "fhirUser": "Practitioner/smart.user@example.com",
+  "token_type": "oauth"
+}
+```
+
 ---
 
 ## Testing the Implementation
@@ -77,6 +109,7 @@ Before you can test OAuth flows, you need to create a user in Couchbase.
    - **Role:** `smart_user`
    - **Auth Method:** `local`
    - **Status:** `active`
+   - **Default Patient ID:** `example-patient-123` (for SMART patient context)
    - **Scopes:** Auto-populated based on role
 5. Click **Save**
 
@@ -89,7 +122,7 @@ ADMIN_TOKEN=$(curl -s -X POST http://localhost:8080/api/auth/login \
   -d '{"email":"admin@cb-fhir.com","password":"Admin123!"}' \
   | jq -r '.token')
 
-# Create the test user
+# Create the test user (with patient context)
 curl -X POST http://localhost:8080/api/admin/users \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
@@ -98,6 +131,7 @@ curl -X POST http://localhost:8080/api/admin/users \
     "username": "Smart User",
     "email": "smart.user@example.com",
     "password": "password123",
+    "defaultPatientId": "example-patient-123",
     "role": "smart_user",
     "authMethod": "local",
     "status": "active",

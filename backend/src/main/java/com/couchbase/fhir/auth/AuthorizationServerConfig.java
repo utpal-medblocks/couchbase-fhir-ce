@@ -17,7 +17,6 @@ import org.springframework.core.annotation.Order;
 import org.springframework.http.MediaType;
 import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
-import org.springframework.security.crypto.factory.PasswordEncoderFactories;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.oauth2.core.AuthorizationGrantType;
 import org.springframework.security.oauth2.core.ClientAuthenticationMethod;
@@ -70,6 +69,12 @@ public class AuthorizationServerConfig {
 
     @Autowired
     private ConnectionService connectionService;
+    
+    @Autowired
+    private com.couchbase.fhir.auth.service.PatientContextService patientContextService;
+    
+    @Autowired
+    private PasswordEncoder passwordEncoder;
     
     // The RSA signing key - generated on startup, persisted during initialization
     private volatile RSAKey signingKey = null;
@@ -194,7 +199,7 @@ public class AuthorizationServerConfig {
     // Static admin client for interactive logins (client_credentials only)
     RegisteredClient adminClient = RegisteredClient.withId(UUID.randomUUID().toString())
         .clientId(adminUiClientId)
-        .clientSecret(passwordEncoder().encode(rawAdminSecret))
+        .clientSecret(passwordEncoder.encode(rawAdminSecret))
         .clientAuthenticationMethod(ClientAuthenticationMethod.CLIENT_SECRET_BASIC)
         .clientAuthenticationMethod(ClientAuthenticationMethod.CLIENT_SECRET_POST)
         .authorizationGrantType(AuthorizationGrantType.CLIENT_CREDENTIALS)
@@ -227,7 +232,7 @@ public class AuthorizationServerConfig {
     // Existing test client for development / SMART flows (dynamic redirect URIs)
     RegisteredClient testClient = RegisteredClient.withId(UUID.randomUUID().toString())
         .clientId("test-client")
-        .clientSecret(passwordEncoder().encode("test-secret"))
+        .clientSecret(passwordEncoder.encode("test-secret"))
         .clientAuthenticationMethod(ClientAuthenticationMethod.CLIENT_SECRET_BASIC)
         .clientAuthenticationMethod(ClientAuthenticationMethod.CLIENT_SECRET_POST)
         .authorizationGrantType(AuthorizationGrantType.AUTHORIZATION_CODE)
@@ -297,13 +302,8 @@ public class AuthorizationServerConfig {
     // UserDetailsService bean now provided by CouchbaseUserDetailsService
     // @Bean public UserDetailsService userDetailsService() { ... }
 
-    /**
-     * Password encoder for client secrets and user passwords
-     */
-    @Bean
-    public PasswordEncoder passwordEncoder() {
-        return PasswordEncoderFactories.createDelegatingPasswordEncoder();
-    }
+    // PasswordEncoder bean now provided by PasswordEncoderConfig (separate config to avoid circular dependencies)
+    // @Bean public PasswordEncoder passwordEncoder() { ... }
 
     /**
      * JWT token customizer to add SMART scopes and custom claims
@@ -327,9 +327,21 @@ public class AuthorizationServerConfig {
                 }
                 
                 // Add patient context if patient scope is present
-                // TODO: In production, retrieve actual patient ID from context
                 if (context.getAuthorizedScopes().stream().anyMatch(s -> s.startsWith("patient/"))) {
-                    context.getClaims().claim("patient", "example-patient-123");
+                    String username = context.getPrincipal().getName();
+                    String authorizationId = context.getAuthorization() != null ? context.getAuthorization().getId() : null;
+                    
+                    // Resolve patient context using PatientContextService
+                    String patientId = patientContextService.resolvePatientContext(username, authorizationId);
+                    
+                    if (patientId != null) {
+                        logger.debug("✅ Adding patient claim: {}", patientId);
+                        context.getClaims().claim("patient", patientId);
+                    } else {
+                        logger.warn("⚠️ No patient context found for user: {}", username);
+                        // Don't add patient claim if none found
+                        // SMART apps should handle missing patient context gracefully
+                    }
                 }
             }
         };
