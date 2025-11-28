@@ -198,6 +198,24 @@ public class ConfigurationStartupService {
             logger.info("🔐 Admin UI credentials loaded from config.yaml");
         }
 
+        // Extract CORS configuration for diagnostics (bean already created earlier with initial values)
+        @SuppressWarnings("unchecked")
+        Map<String, Object> corsConfig = (Map<String, Object>) yamlData.get("cors");
+        if (corsConfig != null) {
+            Object origins = corsConfig.getOrDefault("allowed-origins", "(default) http://localhost:5173");
+            Object methods = corsConfig.getOrDefault("allowed-methods", "GET,POST,PUT,DELETE,OPTIONS");
+            Object headers = corsConfig.getOrDefault("allowed-headers", "*");
+            logger.info("🌐 CORS configuration (from config.yaml):");
+            logger.info("   Origins: {}", origins);
+            logger.info("   Methods: {}", methods);
+            logger.info("   Headers: {}", headers);
+            if (String.valueOf(origins).contains("*") && "true".equalsIgnoreCase(System.getProperty("cors.credentials.allowed", "true"))) {
+                logger.info("   ⚠️ Wildcard origin detected with credentials allowed; Spring will use allowedOriginPatterns");
+            }
+        } else {
+            logger.info("🌐 No 'cors' section found in config.yaml - using default origin http://localhost:5173");
+        }
+
         // Create connection request from YAML data
         ConnectionRequest request = createConnectionRequest(connectionConfig);
         
