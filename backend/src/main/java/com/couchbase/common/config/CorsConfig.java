@@ -1,7 +1,5 @@
 package com.couchbase.common.config;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -14,8 +12,6 @@ import java.util.Arrays;
 @Configuration
 public class CorsConfig {
     
-    private static final Logger logger = LoggerFactory.getLogger(CorsConfig.class);
-    
     @Value("${cors.allowed-origins:http://localhost:5173}")
     private String allowedOrigins;
     
@@ -27,11 +23,6 @@ public class CorsConfig {
     
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
-        logger.info("🌐 Configuring CORS...");
-        logger.info("🌐 CORS Allowed Origins: {}", allowedOrigins);
-        logger.info("🌐 CORS Allowed Methods: {}", allowedMethods);
-        logger.info("🌐 CORS Allowed Headers: {}", allowedHeaders);
-        
         CorsConfiguration configuration = new CorsConfiguration();
         
         // Split and set allowed origins
@@ -42,10 +33,8 @@ public class CorsConfig {
             if (origin.equals("*")) {
                 // Cannot use * with credentials - use allowedOriginPatterns instead
                 configuration.addAllowedOriginPattern("*");
-                logger.info("🌐 CORS: Using wildcard pattern (*) - allows all origins");
             } else {
                 configuration.addAllowedOrigin(origin);
-                logger.info("🌐 CORS: Added allowed origin: {}", origin);
             }
         }
         
@@ -73,8 +62,6 @@ public class CorsConfig {
         source.registerCorsConfiguration("/.well-known/**", configuration);
         // Register CORS for FHIR endpoints
         source.registerCorsConfiguration("/fhir/**", configuration);
-        
-        logger.info("✅ CORS configuration completed - registered for /api/**, /oauth2/**, /.well-known/**, /fhir/**");
         
         return source;
     }

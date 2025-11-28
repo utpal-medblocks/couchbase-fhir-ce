@@ -8,6 +8,12 @@ spring:
 app:
   baseUrl: ${APP_BASE_URL:http://localhost:8080/fhir}
 
+# CORS Configuration (can be overridden via environment variables)
+cors:
+  allowed-origins: ${CORS_ALLOWED_ORIGINS:*}
+  allowed-methods: ${CORS_ALLOWED_METHODS:GET,POST,PUT,DELETE,OPTIONS}
+  allowed-headers: ${CORS_ALLOWED_HEADERS:*}
+
 # OAuth Token Expiry Configuration
 # Set OAUTH_TOKEN_EXPIRY_HOURS environment variable to change token validity
 # Default: 24 hours (development/testing)
