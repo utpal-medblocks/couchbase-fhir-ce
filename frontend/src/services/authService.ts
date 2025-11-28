@@ -1,4 +1,4 @@
-import axios from "axios";
+import axios from "../config/axiosConfig";
 
 const API_BASE_URL = "/api/auth";
 
@@ -73,4 +73,3 @@ export const authService = {
     }
   },
 };
-
