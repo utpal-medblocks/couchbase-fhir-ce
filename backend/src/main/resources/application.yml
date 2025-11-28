@@ -5,6 +5,8 @@ spring:
     import: classpath:fhir.yml
 
 # OAuth2 Authorization Server Configuration
+# Default value for local development
+# Production deployments should set this in config.yaml (takes precedence at runtime)
 app:
   baseUrl: ${APP_BASE_URL:http://localhost:8080/fhir}
 

@@ -3,7 +3,6 @@ package com.couchbase.fhir.auth.controller;
 import com.couchbase.fhir.auth.SmartScopes;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -28,9 +27,6 @@ public class SmartConfigurationController {
     
     private static final Logger logger = LoggerFactory.getLogger(SmartConfigurationController.class);
     
-    @Value("${app.baseUrl}")
-    private String baseUrl;
-    
     /**
      * SMART Configuration Discovery Endpoint
      * GET /.well-known/smart-configuration (root)
@@ -42,6 +38,10 @@ public class SmartConfigurationController {
     @GetMapping(value = {"/.well-known/smart-configuration", "/fhir/.well-known/smart-configuration"}, produces = MediaType.APPLICATION_JSON_VALUE)
     public ResponseEntity<Map<String, Object>> getSmartConfiguration() {
         logger.debug("🔍 SMART configuration requested");
+        
+        // Read baseUrl from system property (set by ConfigurationStartupService from config.yaml)
+        // This ensures we get the value from config.yaml, not application.yml default
+        String baseUrl = System.getProperty("app.baseUrl", "http://localhost:8080/fhir");
         
         // Extract issuer (remove /fhir suffix if present)
         String issuer = baseUrl;
