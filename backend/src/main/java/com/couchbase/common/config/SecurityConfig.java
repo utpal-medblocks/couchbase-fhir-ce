@@ -123,7 +123,7 @@ public class SecurityConfig {
                 .requestMatchers("/actuator/**").permitAll()
                 
                 // Allow open access to SMART configuration (FHIR discovery)
-                .requestMatchers("/.well-known/smart-configuration").permitAll()
+                .requestMatchers("/.well-known/smart-configuration", "/fhir/.well-known/smart-configuration").permitAll()
                 
                 // Allow login page and static resources
                 .requestMatchers("/login", "/error", "/css/**", "/js/**").permitAll()

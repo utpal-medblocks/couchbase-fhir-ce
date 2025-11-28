@@ -33,12 +33,13 @@ public class SmartConfigurationController {
     
     /**
      * SMART Configuration Discovery Endpoint
-     * GET /.well-known/smart-configuration
+     * GET /.well-known/smart-configuration (root)
+     * GET /fhir/.well-known/smart-configuration (FHIR base)
      * 
      * Returns JSON describing the SMART server's OAuth 2.0 endpoints and capabilities.
      * This endpoint MUST be publicly accessible (no authentication required).
      */
-    @GetMapping(value = "/.well-known/smart-configuration", produces = MediaType.APPLICATION_JSON_VALUE)
+    @GetMapping(value = {"/.well-known/smart-configuration", "/fhir/.well-known/smart-configuration"}, produces = MediaType.APPLICATION_JSON_VALUE)
     public ResponseEntity<Map<String, Object>> getSmartConfiguration() {
         logger.debug("🔍 SMART configuration requested");
         
