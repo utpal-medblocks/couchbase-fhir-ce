@@ -1,8 +1,11 @@
 package com.couchbase.fhir.auth;
 
 import com.couchbase.admin.connections.service.ConnectionService;
+import com.couchbase.admin.oauth.service.OAuthClientService;
 import com.couchbase.client.java.Cluster;
 import com.couchbase.client.java.json.JsonObject;
+import com.couchbase.fhir.auth.repository.CouchbaseRegisteredClientRepository;
+import com.couchbase.fhir.auth.repository.CompositeRegisteredClientRepository;
 import com.nimbusds.jose.jwk.JWKSet;
 import com.nimbusds.jose.jwk.RSAKey;
 import com.nimbusds.jose.jwk.source.JWKSource;
@@ -190,10 +193,13 @@ public class AuthorizationServerConfig {
 
     /**
      * Register OAuth 2.0 clients
-     * For testing, we create a simple client with default SMART scopes
+     * Uses composite repository to combine:
+     * 1. In-memory clients (admin-ui, test-client for development)
+     * 2. Couchbase clients (SMART apps registered via UI)
      */
     @Bean
     public RegisteredClientRepository registeredClientRepository(
+        OAuthClientService oauthClientService,
         @Value("${admin.ui.client.secret:}") String adminUiClientSecretProp,
         @Value("${admin.ui.client.id:admin-ui}") String adminUiClientId,
         @Value("${admin.ui.scopes:system/*.*,user/*.*}") String adminUiScopesProp,
@@ -288,7 +294,17 @@ public class AuthorizationServerConfig {
                         .build())
                 .build();
 
-        return new InMemoryRegisteredClientRepository(java.util.List.of(adminClient, testClient));
+        // Create in-memory repository for built-in clients
+        InMemoryRegisteredClientRepository inMemoryRepo = 
+            new InMemoryRegisteredClientRepository(java.util.List.of(adminClient, testClient));
+        
+        // Create Couchbase repository for SMART apps
+        CouchbaseRegisteredClientRepository couchbaseRepo = 
+            new CouchbaseRegisteredClientRepository(oauthClientService);
+        
+        // Combine both repositories (in-memory checked first, then Couchbase)
+        logger.info("🔗 Initializing composite RegisteredClientRepository (in-memory + Couchbase)");
+        return new CompositeRegisteredClientRepository(inMemoryRepo, couchbaseRepo);
     }
 
     /**
