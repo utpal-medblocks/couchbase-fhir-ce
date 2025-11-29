@@ -137,6 +137,22 @@ public class AuthorizationServerConfig {
     // Remove unused injection to avoid warning.
 
     /**
+     * SMART Configuration Public Access Filter Chain
+     * MUST come before Authorization Server chain (@Order(0) < @Order(1))
+     * Allows public access to SMART configuration endpoint per SMART spec
+     */
+    @Bean
+    @Order(0)
+    public SecurityFilterChain smartConfigPublicAccessFilterChain(HttpSecurity http) throws Exception {
+        http
+            .securityMatcher("/.well-known/smart-configuration", "/fhir/.well-known/smart-configuration")
+            .authorizeHttpRequests(authz -> authz.anyRequest().permitAll())
+            .csrf(csrf -> csrf.disable());
+        
+        return http.build();
+    }
+    
+    /**
      * OAuth 2.0 Authorization Server Security Filter Chain
      * Uses Spring's standard configuration pattern
      */
@@ -157,11 +173,6 @@ public class AuthorizationServerConfig {
         // Enable OpenID Connect 1.0 (get the configurer from http after applyDefaultSecurity)
         http.getConfigurer(OAuth2AuthorizationServerConfigurer.class)
                 .oidc(Customizer.withDefaults());
-        
-        // Whitelist SMART configuration endpoint (must be public per SMART spec)
-        http.authorizeHttpRequests(authz -> authz
-                .requestMatchers("/.well-known/smart-configuration", "/fhir/.well-known/smart-configuration").permitAll()
-        );
 
         // Redirect to login page when not authenticated for HTML requests
         http.exceptionHandling((exceptions) -> exceptions
