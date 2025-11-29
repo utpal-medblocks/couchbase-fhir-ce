@@ -23,7 +23,6 @@ import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.oauth2.core.AuthorizationGrantType;
 import org.springframework.security.oauth2.core.ClientAuthenticationMethod;
-import org.springframework.security.oauth2.core.oidc.OidcScopes;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.security.oauth2.jwt.JwtEncoder;
 import org.springframework.security.oauth2.jwt.NimbusJwtEncoder;
@@ -199,10 +198,10 @@ public class AuthorizationServerConfig {
     }
 
     /**
-     * Register OAuth 2.0 clients
-     * Uses composite repository to combine:
-     * 1. In-memory clients (admin-ui, test-client for development)
-     * 2. Couchbase clients (SMART apps registered via UI)
+     * Register OAuth 2.0 clients.
+     * In-memory now provides ONLY the built-in administrative client (admin-ui).
+     * SMART application clients are persisted in Couchbase and loaded via OAuthClientService.
+     * Removed legacy dev test-client for hardening.
      */
     @Bean
     public RegisteredClientRepository registeredClientRepository(
@@ -244,66 +243,15 @@ public class AuthorizationServerConfig {
         .clientSettings(ClientSettings.builder().requireAuthorizationConsent(false).build())
         .build();
 
-    // Derive issuer (strip trailing /fhir if present) and compute dynamic redirect bases
+    // Derive issuer (strip trailing /fhir if present) for potential future use (SMART dynamic redirects)
     String issuer = configBaseUrl.endsWith("/fhir") ? configBaseUrl.substring(0, configBaseUrl.length() - 5) : configBaseUrl;
     URI issuerUri = URI.create(issuer);
-    String scheme = issuerUri.getScheme() == null ? "http" : issuerUri.getScheme();
     String host = issuerUri.getHost() == null ? "localhost" : issuerUri.getHost();
-    int port = issuerUri.getPort();
-    String hostOnlyBase = scheme + "://" + host;                           // e.g. http://localhost
-    String issuerWithPort = (port == -1 ? hostOnlyBase : hostOnlyBase + ":" + port); // e.g. http://localhost
-    String altLoopbackBase = scheme + "://127.0.0.1" + (port == -1 ? "" : ":" + port); // 127.0.0.1 variant
-    String frontendDevBase = scheme + "://" + host + ":" + frontendDevPort;            // e.g. http://localhost:3000
+    logger.debug("OAuth issuer resolved for admin-ui: issuer={} host={}", issuer, host);
 
-    logger.debug("OAuth redirect bases resolved: issuerWithPort={}, hostOnlyBase={}, altLoopbackBase={}, frontendDevBase={}",
-        issuerWithPort, hostOnlyBase, altLoopbackBase, frontendDevBase);
-
-    // Existing test client for development / SMART flows (dynamic redirect URIs)
-    RegisteredClient testClient = RegisteredClient.withId(UUID.randomUUID().toString())
-        .clientId("test-client")
-        .clientSecret(passwordEncoder.encode("test-secret"))
-        .clientAuthenticationMethod(ClientAuthenticationMethod.CLIENT_SECRET_BASIC)
-        .clientAuthenticationMethod(ClientAuthenticationMethod.CLIENT_SECRET_POST)
-        .authorizationGrantType(AuthorizationGrantType.AUTHORIZATION_CODE)
-        .authorizationGrantType(AuthorizationGrantType.REFRESH_TOKEN)
-        .authorizationGrantType(AuthorizationGrantType.CLIENT_CREDENTIALS)
-        // Redirect URIs constructed from config base URL & dev frontend port
-        .redirectUri(issuerWithPort + "/authorized")        // Primary backend URL
-        .redirectUri(hostOnlyBase + "/authorized")          // Host-only (HAProxy 80)
-        .redirectUri(frontendDevBase + "/callback")         // Frontend dev port
-        .redirectUri(hostOnlyBase + "/callback")            // Host-only callback
-        .redirectUri(altLoopbackBase + "/authorized")       // 127.0.0.1 alternative
-        .postLogoutRedirectUri(issuerWithPort + "/")         // Post-logout backend
-        .postLogoutRedirectUri(hostOnlyBase + "/")           // Post-logout host-only
-                .scope(OidcScopes.OPENID)
-                .scope(OidcScopes.PROFILE)
-                .scope(SmartScopes.FHIRUSER)
-                .scope(SmartScopes.ONLINE_ACCESS)
-                .scope(SmartScopes.PATIENT_ALL_READ)
-                .scope(SmartScopes.PATIENT_ALL_WRITE)
-                .scope(SmartScopes.USER_ALL_READ)
-                .scope(SmartScopes.USER_ALL_WRITE)
-                .scope(SmartScopes.SYSTEM_ALL_READ)
-                .scope(SmartScopes.SYSTEM_ALL_WRITE)
-                .clientSettings(ClientSettings.builder()
-                        .requireAuthorizationConsent(true) // Require user consent
-                        .build())
-                .tokenSettings(TokenSettings.builder()
-                        // Access token expiry: configurable via environment variable
-                        // Default: 24 hours for testing/development
-                        // Production: 1 hour recommended
-                        .accessTokenTimeToLive(Duration.ofHours(
-                            Long.parseLong(System.getProperty("oauth.token.expiry.hours", 
-                                          System.getenv().getOrDefault("OAUTH_TOKEN_EXPIRY_HOURS", "24")))
-                        ))
-                        .refreshTokenTimeToLive(Duration.ofDays(30))
-                        .reuseRefreshTokens(false)
-                        .build())
-                .build();
-
-        // Create in-memory repository for built-in clients
-        InMemoryRegisteredClientRepository inMemoryRepo = 
-            new InMemoryRegisteredClientRepository(java.util.List.of(adminClient, testClient));
+    // Create in-memory repository for built-in admin client ONLY
+    InMemoryRegisteredClientRepository inMemoryRepo = 
+        new InMemoryRegisteredClientRepository(java.util.List.of(adminClient));
         
         // Create Couchbase repository for SMART apps
         CouchbaseRegisteredClientRepository couchbaseRepo = 

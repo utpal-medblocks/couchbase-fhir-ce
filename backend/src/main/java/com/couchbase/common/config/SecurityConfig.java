@@ -88,6 +88,8 @@ public class SecurityConfig {
             .cors(cors -> cors.configurationSource(corsConfigurationSource))
             .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .authorizeHttpRequests(authz -> authz
+                // Allow public access to SMART discovery under FHIR base
+                .requestMatchers("/fhir/.well-known/**").permitAll()
                 // Allow public access to metadata endpoint (FHIR CapabilityStatement)
                 .requestMatchers("/fhir/metadata").permitAll()
                 // Require authentication for all other FHIR endpoints
@@ -121,9 +123,6 @@ public class SecurityConfig {
             .authorizeHttpRequests(authz -> authz
                 // Allow open access to actuator endpoints (health, metrics)
                 .requestMatchers("/actuator/**").permitAll()
-                
-                // Allow open access to SMART configuration (FHIR discovery)
-                .requestMatchers("/.well-known/smart-configuration", "/fhir/.well-known/smart-configuration").permitAll()
                 
                 // Allow login page and static resources
                 .requestMatchers("/login", "/error", "/css/**", "/js/**").permitAll()
