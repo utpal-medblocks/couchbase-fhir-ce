@@ -122,7 +122,7 @@
     <div class="login-container">
       <div class="login-header">
         <h1>Couchbase FHIR</h1>
-        <p>Sign in to authorize application</p>
+        <p>OAuth 2.0 Authorization</p>
       </div>
 
       <div th:if="${param.error}" class="error-message">
@@ -134,6 +134,9 @@
       </div>
 
       <form method="post" th:action="@{/login}">
+        <!-- CSRF token for Spring Security -->
+        <input type="hidden" th:name="${_csrf.parameterName}" th:value="${_csrf.token}" />
+        
         <div class="form-group">
           <label for="username">Username</label>
           <input
