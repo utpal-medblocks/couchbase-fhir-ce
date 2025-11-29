@@ -122,7 +122,7 @@
     <div class="login-container">
       <div class="login-header">
         <h1>Couchbase FHIR</h1>
-        <p>OAuth 2.0 Authorization</p>
+        <p>Sign in to authorize application</p>
       </div>
 
       <div th:if="${param.error}" class="error-message">
@@ -159,10 +159,6 @@
 
         <button type="submit">Sign In</button>
       </form>
-
-      <div class="info-message">
-        Test credentials: <strong>fhiruser</strong> / <strong>password</strong>
-      </div>
     </div>
   </body>
 </html>
