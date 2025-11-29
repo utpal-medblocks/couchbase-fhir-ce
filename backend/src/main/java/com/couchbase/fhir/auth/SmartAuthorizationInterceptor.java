@@ -48,10 +48,15 @@ public class SmartAuthorizationInterceptor {
         logger.debug("🔍 [SMART-AUTH] Incoming request: {} {} (operation: {})", 
             theRequestDetails.getRequestType(), resourceType, operationType);
         
-        // Skip authorization for .well-known endpoints (SMART configuration discovery)
+        // Skip authorization only for SMART discovery (smart-configuration), both root and /fhir forms
         String requestPath = theRequestDetails.getRequestPath();
-        if (requestPath != null && requestPath.contains("/.well-known/")) {
-            logger.debug("✅ Allowing public access to .well-known endpoint: {}", requestPath);
+        String completeUrl = theRequestDetails.getCompleteUrl();
+        boolean isSmartDiscovery =
+                (requestPath != null && (requestPath.contains("/.well-known/smart-configuration")
+                                         || requestPath.startsWith("/fhir/.well-known/smart-configuration")))
+             || (completeUrl != null && completeUrl.contains("/.well-known/smart-configuration"));
+        if (isSmartDiscovery) {
+            logger.debug("✅ Allowing public access to SMART discovery endpoint: path={} url={}", requestPath, completeUrl);
             return;
         }
         
