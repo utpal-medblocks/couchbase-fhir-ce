@@ -123,6 +123,8 @@ public class SecurityConfig {
             .authorizeHttpRequests(authz -> authz
                 // Allow open access to actuator endpoints (health, metrics)
                 .requestMatchers("/actuator/**").permitAll()
+                // Allow OAuth authorization server endpoints (authorize, token, jwks, userinfo)
+                .requestMatchers("/oauth2/**").permitAll()
                 
                 // Allow login page and static resources
                 .requestMatchers("/login", "/error", "/css/**", "/js/**").permitAll()
