@@ -132,6 +132,7 @@ public class SecurityConfig {
                 .anyRequest().permitAll()
             )
             // Enable form login for OAuth authentication
+            // Uses SavedRequestAwareAuthenticationSuccessHandler to redirect back to original OAuth request
             .formLogin(form -> form
                 .loginPage("/login")
                 .permitAll()

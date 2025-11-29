@@ -184,6 +184,13 @@ public class AuthorizationServerConfig {
                         new MediaTypeRequestMatcher(MediaType.TEXT_HTML)
                 )
         );
+        
+        // Configure form login for OAuth authorization flow
+        // This ensures that after login, user is redirected back to the OAuth consent page
+        http.formLogin(form -> form
+                .loginPage("/login")
+                .permitAll()
+        );
 
         // Accept access tokens for User Info and/or Client Registration
         http.oauth2ResourceServer((oauth2) -> oauth2.jwt(Customizer.withDefaults()));
