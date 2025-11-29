@@ -48,6 +48,13 @@ public class SmartAuthorizationInterceptor {
         logger.debug("🔍 [SMART-AUTH] Incoming request: {} {} (operation: {})", 
             theRequestDetails.getRequestType(), resourceType, operationType);
         
+        // Skip authorization for .well-known endpoints (SMART configuration discovery)
+        String requestPath = theRequestDetails.getRequestPath();
+        if (requestPath != null && requestPath.contains("/.well-known/")) {
+            logger.debug("✅ Allowing public access to .well-known endpoint: {}", requestPath);
+            return;
+        }
+        
         // Skip authorization for CapabilityStatement (metadata endpoint) - must check FIRST
         if ("metadata".equals(theRequestDetails.getOperation()) || 
             RestOperationTypeEnum.METADATA.equals(operationType)) {
