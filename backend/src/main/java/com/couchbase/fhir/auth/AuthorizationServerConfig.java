@@ -157,6 +157,11 @@ public class AuthorizationServerConfig {
         // Enable OpenID Connect 1.0 (get the configurer from http after applyDefaultSecurity)
         http.getConfigurer(OAuth2AuthorizationServerConfigurer.class)
                 .oidc(Customizer.withDefaults());
+        
+        // Whitelist SMART configuration endpoint (must be public per SMART spec)
+        http.authorizeHttpRequests(authz -> authz
+                .requestMatchers("/.well-known/smart-configuration", "/fhir/.well-known/smart-configuration").permitAll()
+        );
 
         // Redirect to login page when not authenticated for HTML requests
         http.exceptionHandling((exceptions) -> exceptions
