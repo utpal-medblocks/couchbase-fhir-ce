@@ -328,13 +328,16 @@ public class AuthorizationServerConfig {
                 
                 // Add fhirUser claim if user has a FHIR resource reference
                 if (user != null && user.getFhirUser() != null && !user.getFhirUser().isEmpty()) {
-                    context.getClaims().claim("fhirUser", user.getFhirUser());
-                    logger.debug("✅ Added fhirUser claim: {}", user.getFhirUser());
+                    String fhirUserRef = user.getFhirUser();
+                    context.getClaims().claim("fhirUser", fhirUserRef);
+                    logger.debug("✅ Added fhirUser claim: {}", fhirUserRef);
                     
                     // Add patient claim if user is a Patient resource
-                    if (user.getFhirUser().startsWith("Patient/")) {
-                        context.getClaims().claim("patient", user.getFhirUser());
-                        logger.debug("✅ Added patient claim: {}", user.getFhirUser());
+                    // SMART spec: patient claim should be just the ID, not the full reference
+                    if (fhirUserRef.startsWith("Patient/")) {
+                        String patientId = fhirUserRef.substring(8); // Extract "example" from "Patient/example"
+                        context.getClaims().claim("patient", patientId);
+                        logger.debug("✅ Added patient claim: {} (extracted from {})", patientId, fhirUserRef);
                     }
                 } else {
                     logger.debug("ℹ️ No fhirUser reference for user: {}", username);
