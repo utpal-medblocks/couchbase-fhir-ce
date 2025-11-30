@@ -15,6 +15,7 @@ services:
     environment:
       SPRING_PROFILES_ACTIVE: prod
       DEPLOYED_ENV: container
+      APP_BASE_URL: "https://dev.cbfhir.com/fhir"
       # Tomcat thread pool tuning (tune for your load)
       SERVER_TOMCAT_THREADS_MAX: 100 # Max threads (was 50, increase for higher concurrency)
       SERVER_TOMCAT_THREADS_MIN_SPARE: 20 # Minimum idle threads
