@@ -312,13 +312,13 @@ const Users: React.FC = () => {
                             >
                               {user.id}
                             </Typography>
-                            {user.fhirUserRef && (
+                            {user.fhirUser && (
                               <Typography
                                 variant="caption"
                                 color="primary"
                                 sx={{ display: "block", mt: 0.5 }}
                               >
-                                → {user.fhirUserRef}
+                                → {user.fhirUser}
                               </Typography>
                             )}
                           </Box>

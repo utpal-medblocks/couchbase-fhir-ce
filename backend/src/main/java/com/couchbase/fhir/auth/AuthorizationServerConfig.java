@@ -298,37 +298,46 @@ public class AuthorizationServerConfig {
     @Bean
     public OAuth2TokenCustomizer<JwtEncodingContext> tokenCustomizer() {
         return context -> {
-            if (context.getTokenType().getValue().equals("access_token")) {
-                // Add token type for explicit identification (hardening)
-                context.getClaims().claim("token_type", "oauth");
+            if (context.getTokenType().getValue().equals("access_token") || 
+                context.getTokenType().getValue().equals("id_token")) {
                 
-                // Add SMART-specific claims
-                // Convert scopes to space-separated string (OAuth 2.0 standard)
-                String scopeString = String.join(" ", context.getAuthorizedScopes());
-                context.getClaims().claim("scope", scopeString);
+                String username = context.getPrincipal().getName();
                 
-                // Add fhirUser claim if scope includes fhirUser
-                if (context.getAuthorizedScopes().contains(SmartScopes.FHIRUSER)) {
-                    String username = context.getPrincipal().getName();
-                    context.getClaims().claim("fhirUser", "Practitioner/" + username);
+                // Fetch user from Couchbase to get fhirUser reference
+                com.couchbase.admin.users.model.User user = null;
+                try {
+                    Cluster cluster = connectionService.getConnection("default");
+                    if (cluster != null) {
+                        com.couchbase.client.java.Collection usersCollection = cluster.bucket("fhir")
+                            .scope("Admin")
+                            .collection("users");
+                        user = usersCollection.get(username).contentAs(com.couchbase.admin.users.model.User.class);
+                    }
+                } catch (Exception e) {
+                    logger.warn("⚠️ Could not fetch user {} from Couchbase: {}", username, e.getMessage());
                 }
                 
-                // Add patient context if patient scope is present
-                if (context.getAuthorizedScopes().stream().anyMatch(s -> s.startsWith("patient/"))) {
-                    String username = context.getPrincipal().getName();
-                    String authorizationId = context.getAuthorization() != null ? context.getAuthorization().getId() : null;
+                // Add token type for access tokens (hardening)
+                if (context.getTokenType().getValue().equals("access_token")) {
+                    context.getClaims().claim("token_type", "oauth");
                     
-                    // Resolve patient context using PatientContextService
-                    String patientId = patientContextService.resolvePatientContext(username, authorizationId);
+                    // Convert scopes to space-separated string (OAuth 2.0 standard)
+                    String scopeString = String.join(" ", context.getAuthorizedScopes());
+                    context.getClaims().claim("scope", scopeString);
+                }
+                
+                // Add fhirUser claim if user has a FHIR resource reference
+                if (user != null && user.getFhirUser() != null && !user.getFhirUser().isEmpty()) {
+                    context.getClaims().claim("fhirUser", user.getFhirUser());
+                    logger.debug("✅ Added fhirUser claim: {}", user.getFhirUser());
                     
-                    if (patientId != null) {
-                        logger.debug("✅ Adding patient claim: {}", patientId);
-                        context.getClaims().claim("patient", patientId);
-                    } else {
-                        logger.warn("⚠️ No patient context found for user: {}", username);
-                        // Don't add patient claim if none found
-                        // SMART apps should handle missing patient context gracefully
+                    // Add patient claim if user is a Patient resource
+                    if (user.getFhirUser().startsWith("Patient/")) {
+                        context.getClaims().claim("patient", user.getFhirUser());
+                        logger.debug("✅ Added patient claim: {}", user.getFhirUser());
                     }
+                } else {
+                    logger.debug("ℹ️ No fhirUser reference for user: {}", username);
                 }
             }
         };

@@ -135,13 +135,9 @@ public class CouchbaseUserDetailsService implements UserDetailsService {
             authorities.add(new SimpleGrantedAuthority("ROLE_" + role.toUpperCase()));
         }
         
-        // Add scope-based authorities (for fine-grained access control)
-        String[] allowedScopes = user.getAllowedScopes();
-        if (allowedScopes != null) {
-            for (String scope : allowedScopes) {
-                authorities.add(new SimpleGrantedAuthority("SCOPE_" + scope));
-            }
-        }
+        // Note: Scopes are NOT added as authorities here
+        // For OAuth flows, scopes come from the registered client and authorization request
+        // For Admin UI, scopes are determined by role (admin: system/user, developer: user only)
         
         return authorities;
     }

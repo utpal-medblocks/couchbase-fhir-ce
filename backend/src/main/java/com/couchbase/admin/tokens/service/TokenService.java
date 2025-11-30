@@ -127,16 +127,24 @@ public class TokenService {
     }
 
     /**
-     * Validate that requested scopes are allowed for the user
+     * Validate that requested scopes are allowed for the user based on role
      */
     private void validateScopes(String[] requestedScopes, User user) {
-        Set<String> allowedScopes = new HashSet<>(Arrays.asList(user.getAllowedScopes()));
+        // Determine allowed scopes based on role
+        Set<String> allowedScopes = new HashSet<>();
+        if ("admin".equals(user.getRole())) {
+            allowedScopes.add("user/*.*");
+            allowedScopes.add("system/*.*");
+        } else if ("developer".equals(user.getRole())) {
+            allowedScopes.add("user/*.*");
+        }
+        // patient/practitioner cannot generate tokens via Admin UI
         
         for (String scope : requestedScopes) {
             if (!allowedScopes.contains(scope)) {
                 throw new IllegalArgumentException(
-                    String.format("Scope '%s' not allowed for user '%s'. Allowed scopes: %s", 
-                        scope, user.getId(), String.join(", ", allowedScopes)));
+                    String.format("Scope '%s' not allowed for user '%s' (role: %s). Allowed scopes: %s", 
+                        scope, user.getId(), user.getRole(), String.join(", ", allowedScopes)));
             }
         }
     }

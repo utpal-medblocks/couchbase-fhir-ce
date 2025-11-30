@@ -11,7 +11,6 @@ public class UserResponse {
     private String username;
     private String email;
     private String role;
-    private String[] allowedScopes;
     private String authMethod;
     private String status;
     private String createdBy;
@@ -19,6 +18,7 @@ public class UserResponse {
     private Instant lastLogin;
     private String profilePicture;
     private String socialAuthId;
+    private String fhirUser; // FHIR resource reference for SMART users
 
     public static UserResponse from(User u) {
         if (u == null) return null;
@@ -27,7 +27,6 @@ public class UserResponse {
         r.username = u.getUsername();
         r.email = u.getEmail();
         r.role = u.getRole();
-        r.allowedScopes = u.getAllowedScopes();
         r.authMethod = u.getAuthMethod();
         r.status = u.getStatus();
         r.createdBy = u.getCreatedBy();
@@ -35,6 +34,7 @@ public class UserResponse {
         r.lastLogin = u.getLastLogin();
         r.profilePicture = u.getProfilePicture();
         r.socialAuthId = u.getSocialAuthId();
+        r.fhirUser = u.getFhirUser();
         return r;
     }
 
@@ -43,7 +43,6 @@ public class UserResponse {
     public String getUsername() { return username; }
     public String getEmail() { return email; }
     public String getRole() { return role; }
-    public String[] getAllowedScopes() { return allowedScopes; }
     public String getAuthMethod() { return authMethod; }
     public String getStatus() { return status; }
     public String getCreatedBy() { return createdBy; }
@@ -51,4 +50,5 @@ public class UserResponse {
     public Instant getLastLogin() { return lastLogin; }
     public String getProfilePicture() { return profilePicture; }
     public String getSocialAuthId() { return socialAuthId; }
+    public String getFhirUser() { return fhirUser; }
 }

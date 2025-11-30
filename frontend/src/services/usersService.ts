@@ -13,8 +13,7 @@ export interface User {
   lastLogin?: string;
   profilePicture?: string;
   socialAuthId?: string;
-  allowedScopes?: string[]; // Auto-assigned by backend based on role
-  fhirUserRef?: string; // Optional FHIR resource reference (e.g., "Patient/example")
+  fhirUser?: string; // Optional FHIR resource reference (e.g., "Patient/example", "Practitioner/123")
 }
 
 export interface CreateUserRequest {
@@ -22,9 +21,8 @@ export interface CreateUserRequest {
   username: string;
   email: string;
   passwordHash?: string;
-  role: "admin" | "developer" | "smart_user";
-  authMethod: "local" | "social";
-  allowedScopes?: string[];
+  role: "admin" | "developer";
+  authMethod: "local";
 }
 
 export interface UpdateUserRequest {

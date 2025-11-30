@@ -637,7 +637,7 @@ public class SampleDataService {
             patientUser.setAuthMethod("local");
             patientUser.setStatus("active");
             patientUser.setPasswordHash("password123"); // Will be hashed by UserService
-            patientUser.setFhirUserRef("Patient/example");
+            patientUser.setFhirUser("Patient/example");
             
             // Create Practitioner user: Ronald Bone
             User practitionerUser = new User();
@@ -648,7 +648,7 @@ public class SampleDataService {
             practitionerUser.setAuthMethod("local");
             practitionerUser.setStatus("active");
             practitionerUser.setPasswordHash("password123"); // Will be hashed by UserService
-            practitionerUser.setFhirUserRef("Practitioner/practitioner-1");
+            practitionerUser.setFhirUser("Practitioner/practitioner-1");
             
             // Try to create users - if they already exist, log and continue
             try {

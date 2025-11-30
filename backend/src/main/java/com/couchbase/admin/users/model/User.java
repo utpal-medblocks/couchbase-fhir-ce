@@ -47,13 +47,9 @@ public class User {
      */
     private String role;
 
-    /**
-     * Allowed scopes for this user - automatically assigned based on role
-     * - admin: ["user/*.*", "system/*.*"]
-     * - developer: ["user/*.*"]
-     * - patient/practitioner: minimal scopes for testing
-     */
-    private String[] allowedScopes;
+    // Note: Scopes are NOT stored in user document
+    // Scopes come from the OAuth client registration, not the user
+    // Admin/Developer users access tokens via /api/admin/tokens endpoint
     
     /**
      * Authentication method: always "local"
@@ -99,12 +95,12 @@ public class User {
     private String defaultPatientId;
     
     /**
-     * Optional FHIR resource reference for this user
+     * Optional FHIR resource reference for SMART on FHIR users
      * Links the user account to their FHIR resource (Patient/Practitioner)
      * Format: "ResourceType/resource-id" (e.g., "Patient/example", "Practitioner/practitioner-1")
-     * Used for test users created during sample data load
+     * This value is added to JWT tokens as the "fhirUser" claim and "patient" claim (if Patient resource)
      */
-    private String fhirUserRef;
+    private String fhirUser;
 
     // Constructors
     
@@ -161,36 +157,9 @@ public class User {
 
     public void setRole(String role) {
         this.role = role;
-        // Auto-assign scopes based on role if not already set
-        if (this.allowedScopes == null || this.allowedScopes.length == 0) {
-            if ("admin".equals(role)) {
-                this.allowedScopes = new String[]{"user/*.*", "system/*.*"};
-            } else if ("developer".equals(role)) {
-                this.allowedScopes = new String[]{"user/*.*"};
-            } else if ("patient".equals(role) || "practitioner".equals(role)) {
-                // Minimal scopes for testing only - these users cannot login to UI
-                this.allowedScopes = new String[]{"openid", "profile", "launch/patient", "patient/*.read", "offline_access"};
-            }
-        }
     }
 
-    public String[] getAllowedScopes() {
-        if (allowedScopes == null || allowedScopes.length == 0) {
-            if ("admin".equals(role)) {
-                return new String[]{"user/*.*", "system/*.*"};
-            } else if ("developer".equals(role)) {
-                return new String[]{"user/*.*"};
-            } else if ("patient".equals(role) || "practitioner".equals(role)) {
-                // Minimal scopes for testing only - these users cannot login to UI
-                return new String[]{"openid", "profile", "launch/patient", "patient/*.read", "offline_access"};
-            }
-        }
-        return allowedScopes;
-    }
-
-    public void setAllowedScopes(String[] allowedScopes) {
-        this.allowedScopes = allowedScopes;
-    }
+    // Scopes removed - they come from OAuth client registration, not user profile
 
     public String getAuthMethod() {
         return authMethod;
@@ -256,12 +225,12 @@ public class User {
         this.defaultPatientId = defaultPatientId;
     }
 
-    public String getFhirUserRef() {
-        return fhirUserRef;
+    public String getFhirUser() {
+        return fhirUser;
     }
 
-    public void setFhirUserRef(String fhirUserRef) {
-        this.fhirUserRef = fhirUserRef;
+    public void setFhirUser(String fhirUser) {
+        this.fhirUser = fhirUser;
     }
 
     // Utility methods

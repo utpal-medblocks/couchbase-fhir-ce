@@ -132,10 +132,19 @@ public class AuthController {
                             long elapsedMs = (System.nanoTime() - startNs) / 1_000_000L;
                             logger.debug("✅ [LOGIN] Authenticated via Admin.users (doc lookup) email='{}' role='{}' in {} ms", email, user.getRole(), elapsedMs);
                             String displayName = user.getUsername() != null ? user.getUsername() : user.getEmail();
-                String[] scopes = user.getAllowedScopes() != null && user.getAllowedScopes().length > 0
-                    ? user.getAllowedScopes() : new String[]{"system/*.*","user/*.*"};
-                String token = issueAdminAccessToken(user.getEmail(), scopes);
-                            UserInfo userInfo = new UserInfo(user.getEmail(), displayName, user.getRole(), user.getAllowedScopes());
+                            
+                            // Determine scopes based on role (scopes are no longer stored in user document)
+                            String[] scopes;
+                            if ("admin".equals(user.getRole())) {
+                                scopes = new String[]{"user/*.*", "system/*.*"};
+                            } else if ("developer".equals(user.getRole())) {
+                                scopes = new String[]{"user/*.*"};
+                            } else {
+                                scopes = new String[]{}; // patient/practitioner shouldn't reach here
+                            }
+                            
+                            String token = issueAdminAccessToken(user.getEmail(), scopes);
+                            UserInfo userInfo = new UserInfo(user.getEmail(), displayName, user.getRole(), scopes);
                             return ResponseEntity.ok(new LoginResponse(token, userInfo));
                         }
 
