@@ -97,6 +97,33 @@ public class SmartConfigurationController {
             "patient/Immunization.read",
             "patient/DocumentReference.read",
             
+            // US Core resource scopes (SMART v2 granular - .rs suffix)
+            "patient/Medication.rs",
+            "patient/AllergyIntolerance.rs",
+            "patient/CarePlan.rs",
+            "patient/CareTeam.rs",
+            "patient/Condition.rs",
+            "patient/Coverage.rs",
+            "patient/Device.rs",
+            "patient/DiagnosticReport.rs",
+            "patient/DocumentReference.rs",
+            "patient/Encounter.rs",
+            "patient/Goal.rs",
+            "patient/Immunization.rs",
+            "patient/Location.rs",
+            "patient/MedicationDispense.rs",
+            "patient/MedicationRequest.rs",
+            "patient/Observation.rs",
+            "patient/Organization.rs",
+            "patient/Patient.rs",
+            "patient/Practitioner.rs",
+            "patient/PractitionerRole.rs",
+            "patient/Procedure.rs",
+            "patient/Provenance.rs",
+            "patient/RelatedPerson.rs",
+            "patient/ServiceRequest.rs",
+            "patient/Specimen.rs",
+            
             // User scopes
             SmartScopes.USER_ALL_READ,
             SmartScopes.USER_ALL_WRITE,
@@ -142,6 +169,10 @@ public class SmartConfigurationController {
             // Client capabilities
             "client-public",           // Support for public clients (no client secret)
             "client-confidential-symmetric", // Support for confidential clients with shared secret
+            "client-confidential-asymmetric", // Support for JWT-based client authentication (private_key_jwt)
+            
+            // Authorization methods
+            "authorize-post",          // Support for POST to authorization endpoint
             
             // Single sign-on
             "sso-openid-connect",      // OpenID Connect for SSO
@@ -155,6 +186,7 @@ public class SmartConfigurationController {
             "permission-offline",      // Offline access (refresh tokens)
             "permission-patient",      // Patient-specific scopes
             "permission-user",         // User-specific scopes
+            "permission-v1",           // SMART v1 scopes (backward compatibility)
             "permission-v2"            // SMART v2 scopes (granular permissions)
         ));
         

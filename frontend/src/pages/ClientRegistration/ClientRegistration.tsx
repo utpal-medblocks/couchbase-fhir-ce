@@ -92,13 +92,14 @@ const MANDATORY_SCOPES = [
   },
 ];
 
-// US Core resource scopes for ONC certification (21 resources)
+// US Core resource scopes for ONC certification (25 resources)
 const US_CORE_RESOURCE_SCOPES = [
   "patient/Medication.rs",
   "patient/AllergyIntolerance.rs",
   "patient/CarePlan.rs",
   "patient/CareTeam.rs",
   "patient/Condition.rs",
+  "patient/Coverage.rs",
   "patient/Device.rs",
   "patient/DiagnosticReport.rs",
   "patient/DocumentReference.rs",
@@ -106,15 +107,18 @@ const US_CORE_RESOURCE_SCOPES = [
   "patient/Goal.rs",
   "patient/Immunization.rs",
   "patient/Location.rs",
+  "patient/MedicationDispense.rs",
   "patient/MedicationRequest.rs",
   "patient/Observation.rs",
   "patient/Organization.rs",
   "patient/Patient.rs",
   "patient/Practitioner.rs",
+  "patient/PractitionerRole.rs",
   "patient/Procedure.rs",
   "patient/Provenance.rs",
-  "patient/PractitionerRole.rs",
   "patient/RelatedPerson.rs",
+  "patient/ServiceRequest.rs",
+  "patient/Specimen.rs",
 ];
 
 // Additional optional scopes
