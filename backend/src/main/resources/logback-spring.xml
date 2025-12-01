@@ -42,7 +42,9 @@
     <!-- Package-specific loggers - start conservatively -->
     <logger name="com.couchbase.admin" level="ERROR"/>
     <logger name="com.couchbase.fhir" level="ERROR"/>
-    <logger name="com.couchbase.fhir.auth" level="ERROR"/>
+    <!-- Enable SMART auth logs at INFO so customizer/filter messages appear -->
+    <logger name="com.couchbase.fhir.auth" level="INFO"/>
+    <logger name="com.couchbase.fhir.auth.filter" level="INFO"/>
     <logger name="com.couchbase.common" level="ERROR"/>
     
     <!-- Spring Security and OAuth2 logging (set to ERROR for production, DEBUG for troubleshooting) -->
