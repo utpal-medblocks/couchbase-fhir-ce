@@ -31,13 +31,17 @@ public class TokenResponseLoggingFilter implements Filter {
         HttpServletRequest httpRequest = (HttpServletRequest) request;
         HttpServletResponse httpResponse = (HttpServletResponse) response;
 
-        // Only log token endpoint responses
-        if (!httpRequest.getRequestURI().equals("/oauth2/token")) {
+        // Only log token endpoint responses; handle possible context paths (e.g., "/fhir/oauth2/token")
+        String uri = httpRequest.getRequestURI();
+        String servletPath = httpRequest.getServletPath();
+        boolean isTokenEndpoint = (uri != null && uri.endsWith("/oauth2/token")) ||
+                                  (servletPath != null && servletPath.endsWith("/oauth2/token"));
+        if (!isTokenEndpoint) {
             chain.doFilter(request, response);
             return;
         }
 
-        logger.info("🎫 [TOKEN-ENDPOINT] Request received: {} {}", httpRequest.getMethod(), httpRequest.getRequestURI());
+        logger.info("🎫 [TOKEN-ENDPOINT] Request received: {} {} (servletPath={})", httpRequest.getMethod(), uri, servletPath);
         
         // Wrap response to capture the content
         ContentCachingResponseWrapper responseWrapper = new ContentCachingResponseWrapper(httpResponse);
