@@ -26,7 +26,7 @@ public class TokenResponseLoggingFilter implements Filter {
 
     @Override
     public void init(FilterConfig filterConfig) throws ServletException {
-        logger.info("🔧 [TOKEN-FILTER] TokenResponseLoggingFilter initialized");
+        logger.info("🔧 [TOKEN-FILTER] ========== TokenResponseLoggingFilter INITIALIZED ==========");
     }
 
     @Override
@@ -40,7 +40,8 @@ public class TokenResponseLoggingFilter implements Filter {
         String servletPath = httpRequest.getServletPath();
         String contextPath = httpRequest.getContextPath();
         
-        logger.debug("🔍 [TOKEN-FILTER] Request: URI={}, ServletPath={}, ContextPath={}", uri, servletPath, contextPath);
+        logger.info("🔍 [TOKEN-FILTER] ========== EVERY REQUEST: URI={}, ServletPath={}, ContextPath={} ==========", 
+            uri, servletPath, contextPath);
 
         // Only log token endpoint responses; handle possible context paths (e.g., "/fhir/oauth2/token")
         boolean isTokenEndpoint = (uri != null && uri.endsWith("/oauth2/token")) ||

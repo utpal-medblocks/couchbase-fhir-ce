@@ -25,8 +25,15 @@ public class SmartTokenResponseAdvice implements ResponseBodyAdvice<Object> {
     private static final Logger logger = LoggerFactory.getLogger(SmartTokenResponseAdvice.class);
     private static final ObjectMapper objectMapper = new ObjectMapper();
 
+    public SmartTokenResponseAdvice() {
+        logger.info("🔧 [SMART-TOKEN-ADVICE] ========== SmartTokenResponseAdvice CONSTRUCTED ==========");
+    }
+
     @Override
     public boolean supports(MethodParameter returnType, Class<? extends HttpMessageConverter<?>> converterType) {
+        // Log every time this is called
+        logger.info("🔍 [SMART-TOKEN-ADVICE] supports() called for returnType: {}, converterType: {}", 
+            returnType.getParameterType().getName(), converterType.getName());
         // Only intercept responses that might be from token endpoint
         return true;
     }
