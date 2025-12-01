@@ -70,6 +70,7 @@ lerna-debug.log*
 config.yaml
 config*.yaml
 *.config.yaml
+.token.env
 
 # Python
 __pycache__/
@@ -95,6 +96,4 @@ coverage.xml
 # Copilot Instructions
 copilot-instructions.md
 k8s-deployment-plan.md
-
-# auth/
 load-tests/requirements.txt

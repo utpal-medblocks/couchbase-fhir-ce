@@ -1,16 +1,13 @@
 package com.couchbase.admin.dashboard.controller;
 
-import com.couchbase.admin.dashboard.model.DashboardMetrics;
 import com.couchbase.admin.connections.service.ClusterMetricsService;
 import com.couchbase.admin.connections.service.ConnectionService;
 import com.couchbase.admin.connections.model.ClusterMetrics;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.cache.annotation.Cacheable;
 import org.springframework.core.env.Environment;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.*;
 
 import java.io.BufferedReader;
@@ -141,8 +138,9 @@ public class DashboardMetricsController {
     public ResponseEntity<Map<String, Object>> getHaproxyMetrics() {
         try {
             // Check if running in containerized environment
+            // Use internal stats port (8404) to avoid HTTPS redirects
             String haproxyUrl = isRunningInContainer() 
-                ? "http://haproxy/haproxy?stats;csv"  // Internal container network
+                ? "http://haproxy:8404/stats;csv"  // Internal container network on stats port
                 : "http://localhost/haproxy?stats;csv"; // Development mode
             
             Map<String, Object> haproxyStats = fetchHaproxyStats(haproxyUrl);

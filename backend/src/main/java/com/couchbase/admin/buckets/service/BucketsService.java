@@ -443,23 +443,26 @@ public class BucketsService {
      */
     public boolean isFhirBucket(String bucketName, String connectionName) {
         try {
+            log.info("🔍 Checking if bucket '{}' is FHIR-enabled...", bucketName);
             // Get connection details from connection service
             String hostname = connectionService.getHostname(connectionName);
             int port = connectionService.getPort(connectionName);
             var connectionDetails = connectionService.getConnectionDetails(connectionName);
             
             if (hostname == null || connectionDetails == null) {
-                log.warn("Could not get connection details for REST call");
+                log.warn("❌ Could not get connection details for REST call");
                 return false;
             }
             
             // Use REST API to check if fhir-config document exists
-            return checkFhirConfigViaRest(hostname, port, bucketName, connectionName,
+            boolean isFhir = checkFhirConfigViaRest(hostname, port, bucketName, connectionName,
                                         connectionDetails.getUsername(), 
                                         connectionDetails.getPassword());
+            log.info("📋 Bucket '{}' is {}FHIR-enabled", bucketName, isFhir ? "" : "NOT ");
+            return isFhir;
             
         } catch (Exception e) {
-            log.warn("Failed to check if bucket {} is FHIR-enabled: {}", bucketName, e.getMessage());
+            log.warn("❌ Failed to check if bucket {} is FHIR-enabled: {}", bucketName, e.getMessage());
             return false;
         }
     }
@@ -490,9 +493,11 @@ public class BucketsService {
             );
             
             int statusCode = httpResponse.statusCode();
+            log.info("🌐 REST API check for bucket '{}': HTTP {}", bucketName, statusCode);
             
             // If we get a 200, the document exists (FHIR-enabled)
             if (statusCode == 200) {
+                log.info("✅ Bucket '{}' has fhir-config document", bucketName);
                 return true;
             }
             

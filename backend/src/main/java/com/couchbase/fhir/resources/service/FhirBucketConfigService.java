@@ -1,6 +1,5 @@
 package com.couchbase.fhir.resources.service;
 
-import com.couchbase.client.java.Cluster;
 import com.couchbase.client.java.json.JsonObject;
 import com.couchbase.client.java.query.QueryResult;
 import org.slf4j.Logger;
@@ -87,6 +86,8 @@ public class FhirBucketConfigService {
         private String validationMode = "lenient";      // "strict" | "lenient" | "disabled"
         private String validationProfile = "none";      // "none" | "us-core"
         private LogsConfig logs = new LogsConfig();
+        private String version;                         // Configuration version (e.g., "1")
+        private String createdAt;                       // Human-readable creation timestamp
         
         // Getters and setters
         public String getValidationMode() { return validationMode; }
@@ -100,6 +101,12 @@ public class FhirBucketConfigService {
         
         public LogsConfig getLogs() { return logs; }
         public void setLogs(LogsConfig logs) { this.logs = logs; }
+        
+        public String getVersion() { return version; }
+        public void setVersion(String version) { this.version = version; }
+        
+        public String getCreatedAt() { return createdAt; }
+        public void setCreatedAt(String createdAt) { this.createdAt = createdAt; }
         
         // Convenience methods for backward compatibility and validation logic
         public boolean isEnforceUSCore() { return "us-core".equals(validationProfile); }
@@ -160,14 +167,15 @@ public class FhirBucketConfigService {
             return config;
             
         } catch (Exception e) {
-            logger.error("Failed to retrieve FHIR config for bucket: {}, error: {}", bucketName, e.getMessage());
-            
             // Fast fail - don't return default config, throw exception
             if (e.getMessage() != null && e.getMessage().contains("Keyspace not found")) {
+                logger.debug("Bucket '{}' does not exist", bucketName);
                 throw new RuntimeException("Bucket '" + bucketName + "' does not exist");
             } else if (e.getMessage() != null && e.getMessage().contains("Scope not found")) {
+                logger.debug("Bucket '{}' is not FHIR-enabled (scope not found)", bucketName);
                 throw new RuntimeException("Bucket '" + bucketName + "' is not FHIR-enabled");
             } else {
+                logger.error("Failed to retrieve FHIR config for bucket: {}, error: {}", bucketName, e.getMessage());
                 throw new RuntimeException("Failed to access FHIR configuration for bucket '" + bucketName + "'");
             }
         }
@@ -184,6 +192,17 @@ public class FhirBucketConfigService {
             String fhirRelease = configDoc.getString("fhirRelease");
             if (fhirRelease != null) {
                 config.setFhirRelease(fhirRelease);
+            }
+            
+            // Parse version and createdAt
+            String version = configDoc.getString("version");
+            if (version != null) {
+                config.setVersion(version);
+            }
+            
+            String createdAt = configDoc.getString("createdAt");
+            if (createdAt != null) {
+                config.setCreatedAt(createdAt);
             }
             
             // Skip profiles parsing - now handled by simplified validation.profile setting
@@ -208,8 +227,9 @@ public class FhirBucketConfigService {
                 config.setLogs(logsConfig);
             }
             
-            logger.debug("Loaded FHIR config: release={}, validation mode={}, profile={}", 
-                config.getFhirRelease(), config.getValidationMode(), config.getValidationProfile());
+            logger.debug("Loaded FHIR config: release={}, validation mode={}, profile={}, version={}, createdAt={}", 
+                config.getFhirRelease(), config.getValidationMode(), config.getValidationProfile(), 
+                config.getVersion(), config.getCreatedAt());
                 
         } catch (Exception e) {
             logger.warn("Failed to parse FHIR config document, using defaults: {}", e.getMessage());

@@ -31,6 +31,9 @@ services:
     environment:
       SPRING_PROFILES_ACTIVE: prod
       DEPLOYED_ENV: container
+      # Base URL for OAuth/SMART on FHIR (override for production)
+      # Set to your public-facing URL (e.g., https://yourdomain.com/fhir)
+      # APP_BASE_URL: "https://cbfhir.com/fhir"
       # Tomcat thread pool tuning (tune for your load)
       SERVER_TOMCAT_THREADS_MAX: 100 # Max threads (was 50, increase for higher concurrency)
       SERVER_TOMCAT_THREADS_MIN_SPARE: 20 # Minimum idle threads

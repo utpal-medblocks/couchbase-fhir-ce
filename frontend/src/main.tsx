@@ -1,6 +1,7 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import "./index.css";
+import "./config/axiosConfig"; // Configure axios interceptors
 import App from "./App.tsx";
 
 //console.log("🚀 main.tsx: Starting application initialization");

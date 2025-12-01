@@ -44,12 +44,10 @@ public class BucketAwareValidationInterceptor {
     // Early validation - before request is processed
     @Hook(Pointcut.SERVER_INCOMING_REQUEST_PRE_PROCESSED)
     public boolean validateBucketEnabled(RequestDetails theRequestDetails, HttpServletRequest theRequest, HttpServletResponse theResponse) throws IOException {
-        // Extract bucket name directly from URL path since TenantContextHolder isn't populated yet
-        String bucketName = extractBucketFromPath(theRequest.getRequestURI());
+        // Single-tenant mode: always use "fhir" as the bucket name
+        String bucketName = TenantContextHolder.getTenantId();
         
-        try {
-            logger.debug("🔍 Validating bucket is FHIR-enabled: {}", bucketName);
-            
+        try {            
             // This will throw FhirBucketValidationException if bucket is not FHIR-enabled
             FhirBucketConfigService.FhirBucketConfig config = configService.getFhirBucketConfig(bucketName);
             
@@ -94,14 +92,12 @@ public class BucketAwareValidationInterceptor {
 
         // Get bucket config (this should work now since we validated bucket earlier)
         try {
-            logger.debug("🔍 Getting bucket config for strict validation: {}", bucketName);
             FhirBucketConfigService.FhirBucketConfig config = configService.getFhirBucketConfig(bucketName);
             logger.debug("🔍 Bucket config - mode: {}, profile: {}", config.getValidationMode(), config.getValidationProfile());
             
             if ("strict".equals(config.getValidationMode())) {
-                logger.debug("🔍 APPLYING STRICT VALIDATION for bucket: {}", bucketName);
                 byte[] requestBody = (byte[]) theRequestDetails.getUserData().get(UD_REQ_BODY);
-                logger.debug("🔍 Request body size: {} bytes", requestBody != null ? requestBody.length : 0);
+                logger.debug("🔍 STRICT Request body size: {} bytes", requestBody != null ? requestBody.length : 0);
                 
                 if (requestBody != null && requestBody.length > 0) {
                     String jsonContent = new String(requestBody, java.nio.charset.StandardCharsets.UTF_8);
@@ -153,7 +149,7 @@ public class BucketAwareValidationInterceptor {
             long tookMs = (System.nanoTime() - start) / 1_000_000;
             var op = rd.getRestOperationType();
             var rt = rd.getResourceName();
-            logger.info("✅ op={}, resource={}, took={}ms, params={}",
+            logger.debug("✅ op={}, resource={}, took={}ms, params={}",
                 (op != null ? op.name() : "UNKNOWN"),
                 (rt != null ? rt : "UNKNOWN"),
                 tookMs,
@@ -204,37 +200,6 @@ public class BucketAwareValidationInterceptor {
             logger.info("🌐 INCOMING REQUEST: {} {} | reqId={}", method, completeUrl, perfBag.getRequestId());
         } catch (Exception e) {
             logger.warn("🌐 Failed to log incoming request details: {}", e.getMessage());
-        }
-    }
-    
-    /**
-     * Extracts bucket name from FHIR URL path
-     * Expected format: /fhir/{bucketName}/ResourceType/...
-     */
-    private String extractBucketFromPath(String requestURI) {
-        if (requestURI == null || requestURI.isEmpty()) {
-            return null;
-        }
-        
-        try {
-            // Split path and find bucket name after /fhir/
-            String[] pathParts = requestURI.split("/");
-            
-            // Look for pattern: /fhir/{bucketName}/...
-            for (int i = 0; i < pathParts.length - 1; i++) {
-                if ("fhir".equals(pathParts[i]) && i + 1 < pathParts.length) {
-                    String bucketName = pathParts[i + 1];
-                    logger.debug("🔍 Extracted bucket name '{}' from path: {}", bucketName, requestURI);
-                    return bucketName;
-                }
-            }
-            
-            logger.warn("🔍 Could not extract bucket name from path: {}", requestURI);
-            return null;
-            
-        } catch (Exception e) {
-            logger.error("🔍 Error extracting bucket name from path {}: {}", requestURI, e.getMessage());
-            return null;
         }
     }
     

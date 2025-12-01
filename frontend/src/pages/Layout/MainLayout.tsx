@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useState } from "react";
 import { styled, useTheme } from "@mui/material/styles";
 import type { Theme, CSSObject } from "@mui/material/styles";
 import { useNavigate, useLocation } from "react-router-dom";
@@ -17,6 +17,16 @@ import {
   ListItemIcon,
   ListItemText,
   Tooltip,
+  Avatar,
+  Menu,
+  MenuItem,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  TextField,
+  InputAdornment,
+  Button,
 } from "@mui/material";
 import MenuIcon from "@mui/icons-material/Menu";
 import { LightMode, DarkMode } from "@mui/icons-material";
@@ -33,20 +43,26 @@ import {
   BsTools,
   BsJournalMedical,
   BsBucket,
+  BsPeople,
+  BsKey,
+  BsShieldLock,
 } from "react-icons/bs";
-import { FaUserFriends } from "react-icons/fa";
 import { TbApiApp } from "react-icons/tb";
 import { VscFlame } from "react-icons/vsc";
 
 import CouchbaseLogo from "../../assets/icons/couchbase.png"; // Uncomment when you add the icon
 import ConnectionStatus from "./ConnectionStatus";
+import InitializationDialog from "../../components/InitializationDialog";
 import { useThemeContext } from "../../contexts/ThemeContext";
-import Popover from "@mui/material/Popover";
-import {Logout} from "@mui/icons-material"
-import { useAuthStore } from '../../store/authStore';
-import { createAuthClient } from "better-auth/react";
-// import { adminClient } from "better-auth/client/plugins";
-import { decodeJWT } from '../../utils/jwt-utils'
+import { useAuthStore } from "../../store/authStore";
+import { useBucketStore } from "../../store/bucketStore";
+import { useConnectionStore } from "../../store/connectionStore";
+import { BsBoxArrowRight } from "react-icons/bs";
+import { updateUser } from "../../services/usersService";
+import {
+  Visibility as VisibilityIcon,
+  VisibilityOff as VisibilityOffIcon,
+} from "@mui/icons-material";
 
 const drawerWidth = 200;
 
@@ -109,21 +125,49 @@ const Drawer = styled(MuiDrawer, {
 }));
 
 const menuItems = [
-  { id: "dashboard", label: "Dashboard", icon: BsHouse, path: "/dashboard" },
-  { id: "buckets", label: "Buckets", icon: BsBucket, path: "/buckets" },
+  {
+    id: "dashboard",
+    label: "Dashboard",
+    icon: BsHouse,
+    path: "/dashboard",
+    adminOnly: false,
+  },
+  {
+    id: "buckets",
+    label: "Buckets",
+    icon: BsBucket,
+    path: "/buckets",
+    adminOnly: false,
+  },
   {
     id: "fhir-resources",
     label: "FHIR Resources",
     icon: VscFlame,
     path: "/fhir-resources",
+    adminOnly: false,
   },
   {
-    id: "user-management",
-    label: "User Management",
-    icon: FaUserFriends,
-    path: "/user-management"
-  }
-] as const;
+    id: "users",
+    label: "Users",
+    icon: BsPeople,
+    path: "/users",
+    adminOnly: true,
+  },
+  {
+    id: "tokens",
+    label: "API Tokens",
+    icon: BsKey,
+    path: "/tokens",
+    adminOnly: false,
+  },
+  {
+    id: "clients",
+    label: "Client Registration",
+    icon: TbApiApp,
+    path: "/clients",
+    adminOnly: false,
+  },
+];
 
 const bottomMenuItems = [
   {
@@ -144,41 +188,145 @@ interface MainLayoutProps {
   children: React.ReactNode;
 }
 
-const authBaseURL = import.meta.env.VITE_AUTH_SERVER_BASE_URL ? import.meta.env.VITE_AUTH_SERVER_BASE_URL : ''
-
-const authClient = createAuthClient({
-    baseURL: authBaseURL,
-    basePath: "/auth",
-    // plugins: [
-    //     adminClient()
-    // ]
-});
-
 export default function MainLayout({ children }: MainLayoutProps) {
   const theme = useTheme();
   const navigate = useNavigate();
   const location = useLocation();
   const { themeMode, toggleTheme } = useThemeContext();
-  const authStore = useAuthStore()
+  const { logout, user } = useAuthStore();
 
-  const tokenResult = decodeJWT(authStore.accessToken)
+  // Avatar menu state
+  const [userMenuAnchor, setUserMenuAnchor] = useState<null | HTMLElement>(
+    null
+  );
+  const userMenuOpen = Boolean(userMenuAnchor);
+  const handleOpenUserMenu = (event: React.MouseEvent<HTMLElement>) => {
+    setUserMenuAnchor(event.currentTarget);
+  };
+  const handleCloseUserMenu = () => setUserMenuAnchor(null);
+
+  // Change password dialog state
+  const [changePwdOpen, setChangePwdOpen] = useState(false);
+  const [newPassword, setNewPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [pwdError, setPwdError] = useState<string | null>(null);
+  const [pwdSubmitting, setPwdSubmitting] = useState(false);
+  const handleOpenChangePwd = () => {
+    setNewPassword("");
+    setPwdError(null);
+    setShowPassword(false);
+    setChangePwdOpen(true);
+  };
+  const handleCloseChangePwd = () => {
+    if (!pwdSubmitting) setChangePwdOpen(false);
+  };
+  const handleSubmitPassword = async () => {
+    if (!user) return;
+    if (!newPassword || newPassword.length < 8) {
+      setPwdError("Password must be at least 8 characters");
+      return;
+    }
+    try {
+      setPwdSubmitting(true);
+      setPwdError(null);
+      // Using email as ID (created that way in user creation flow)
+      await updateUser(user.email, { passwordHash: newPassword });
+      setChangePwdOpen(false);
+    } catch (e: any) {
+      setPwdError(e?.response?.data?.error || "Failed to update password");
+    } finally {
+      setPwdSubmitting(false);
+    }
+  };
+
+  // Derive initials from user name or email
+  const getInitials = (): string => {
+    if (user?.name) {
+      const parts = user.name.trim().split(/\s+/);
+      const initials = parts
+        .slice(0, 2)
+        .map((p) => p[0]?.toUpperCase())
+        .join("");
+      return initials || "?";
+    }
+    if (user?.email) {
+      return user.email[0]?.toUpperCase() || "?";
+    }
+    return "?";
+  };
 
   // Local state for UI controls
   const [drawerOpen, setDrawerOpen] = useState(true);
+  const [initDialogOpen, setInitDialogOpen] = useState(false);
+
+  const { connection } = useConnectionStore();
+  const {
+    initializationStatus,
+    fetchInitializationStatus,
+    fetchBucketData,
+    bucket,
+  } = useBucketStore();
+
+  // Check initialization status when connected
+  React.useEffect(() => {
+    if (connection.isConnected) {
+      fetchInitializationStatus();
+    }
+  }, [connection.isConnected, fetchInitializationStatus]);
+
+  // When initialization transitions to READY and bucket data not yet loaded, fetch bucket details
+  React.useEffect(() => {
+    if (
+      initializationStatus?.status === "READY" &&
+      connection.isConnected &&
+      !bucket
+    ) {
+      // When status becomes READY, attempt aggressive short polling (fast warm-up) until bucket appears or timeout
+      let attempts = 0;
+      const maxAttempts = 30; // ~60s total at 2s interval
+      const interval = setInterval(() => {
+        attempts++;
+        fetchBucketData()
+          .then((b) => {
+            if (b) {
+              clearInterval(interval);
+              // optional: console.log("Bucket became available after", attempts, "attempts");
+            }
+          })
+          .catch((e) => {
+            // Non-fatal: keep trying
+            if (attempts % 5 === 0) {
+              console.warn(
+                "Retry fetchBucketData attempt",
+                attempts,
+                e?.message || e
+              );
+            }
+          });
+        if (attempts >= maxAttempts) {
+          clearInterval(interval);
+        }
+      }, 2000);
+      return () => clearInterval(interval);
+    }
+  }, [
+    initializationStatus?.status,
+    connection.isConnected,
+    bucket,
+    fetchBucketData,
+  ]);
+
+  // Show initialization dialog when bucket missing or not initialized
+  React.useEffect(() => {
+    if (
+      initializationStatus?.status === "BUCKET_MISSING" ||
+      initializationStatus?.status === "BUCKET_NOT_INITIALIZED"
+    ) {
+      setInitDialogOpen(true);
+    }
+  }, [initializationStatus]);
+
   const toggleDrawer = () => setDrawerOpen(!drawerOpen);
-  
-  const [popoverAnchorEl, setPopoverAnchorEl] = useState<HTMLButtonElement | null>(null);
-
-  const handleUserIconClick = (event: React.MouseEvent<HTMLButtonElement>) => {
-    setPopoverAnchorEl(event.currentTarget)
-  }
-
-  const handleClose = () => {
-    setPopoverAnchorEl(null);
-  }
-
-  const popoverOpen = Boolean(popoverAnchorEl)
-  const popoverId = popoverOpen ? 'user-popover' : undefined;
 
   const listItemButtonStyles = {
     minHeight: 48,
@@ -202,13 +350,6 @@ export default function MainLayout({ children }: MainLayoutProps) {
     if (path !== "/" && location.pathname.startsWith(path)) return true;
     return false;
   };
-
-  // useEffect(() => {
-  //   (async () => {
-  //     const users = await authClient.admin.listUsers({ query: { offset: 0, limit: 100}})
-  //     console.log("users ",users)
-  //   })();
-  // },[])
 
   return (
     <Box sx={{ display: "flex", width: "100vw", minHeight: "100vh" }}>
@@ -319,52 +460,109 @@ export default function MainLayout({ children }: MainLayoutProps) {
                 <BsChatLeftText />
               </IconButton>
             </Tooltip>
-            <IconButton
-              disableRipple
-              sx={{
-                fontSize: "20px",
-                "&:focus": {
-                  outline: "none",
-                },
-              }}
-              onClick={handleUserIconClick}
+            {/* User Avatar & Menu */}
+            <Tooltip
+              title={user?.name || user?.email || "Account"}
+              placement="bottom"
             >
-              <BsPersonGear />
-            </IconButton>
-            <Popover
-              id={popoverId}
-              open={popoverOpen}
-              anchorEl={popoverAnchorEl}
-              onClose={handleClose}
-              anchorOrigin={{
-                vertical: 'bottom',
-                horizontal: 'right'
-              }}
+              <IconButton
+                onClick={handleOpenUserMenu}
+                disableRipple
+                sx={{
+                  p: 0,
+                  width: 36,
+                  height: 36,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  "&:focus": { outline: "none" },
+                }}
+              >
+                <Avatar
+                  sx={{
+                    bgcolor:
+                      theme.palette.mode === "dark"
+                        ? theme.palette.primary.dark
+                        : theme.palette.primary.main,
+                    width: 28,
+                    height: 28,
+                    fontSize: 14,
+                  }}
+                >
+                  {getInitials()}
+                </Avatar>
+              </IconButton>
+            </Tooltip>
+            <Menu
+              anchorEl={userMenuAnchor}
+              open={userMenuOpen}
+              onClose={handleCloseUserMenu}
+              anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
+              transformOrigin={{ vertical: "top", horizontal: "right" }}
+              slotProps={{ paper: { sx: { minWidth: 180, py: 0.5 } } }}
             >
-              <List>
-                <ListItem disablePadding>
-                  <ListItemText sx={{ px: 2}} primary={`${authStore.name} (${authStore.email})`}/>
-                </ListItem>
-                <ListItem disablePadding>
-                  <ListItemButton onClick={async (e) => {
-                    authClient.signOut({
-                      fetchOptions: {
-                        onSuccess: () => {
-                          authStore.setAuthInfo(false,'','')
-                          navigate("/login")
-                        }
-                      }
-                    })
-                  }}>
-                    <ListItemIcon>
-                      <Logout/>
-                    </ListItemIcon>
-                    <ListItemText sx={{ ml: -3}} primary="Sign Out"/>
-                  </ListItemButton>
-                </ListItem>
-              </List>
-              {/* <Typography sx={{ p: 2 }}>{authStore.name} ({authStore.email})</Typography> */}
-            </Popover>
+              {/* Header section inside menu */}
+              <Box sx={{ px: 2, py: 1 }}>
+                <Box display="flex" alignItems="center" gap={1}>
+                  <Avatar
+                    sx={{
+                      bgcolor:
+                        theme.palette.mode === "dark"
+                          ? theme.palette.primary.dark
+                          : theme.palette.primary.main,
+                      width: 32,
+                      height: 32,
+                      fontSize: 14,
+                    }}
+                  >
+                    {getInitials()}
+                  </Avatar>
+                  <Box>
+                    <Typography
+                      variant="body2"
+                      sx={{ lineHeight: 1.2, fontWeight: 600 }}
+                    >
+                      {user?.name || user?.email || "Anonymous"}
+                    </Typography>
+                    {user?.email && (
+                      <Typography
+                        variant="caption"
+                        color="text.secondary"
+                        sx={{ lineHeight: 1.2 }}
+                      >
+                        {user.email}
+                      </Typography>
+                    )}
+                  </Box>
+                </Box>
+              </Box>
+              <Divider sx={{ my: 0.5 }} />
+              <MenuItem
+                onClick={() => {
+                  handleCloseUserMenu();
+                  handleOpenChangePwd();
+                }}
+                sx={{ fontSize: 14 }}
+              >
+                <Box display="flex" alignItems="center" gap={1}>
+                  <BsShieldLock style={{ fontSize: 16 }} />
+                  Change Password
+                </Box>
+              </MenuItem>
+              <MenuItem
+                onClick={() => {
+                  handleCloseUserMenu();
+                  logout();
+                  navigate("/login");
+                }}
+                sx={{ fontSize: 14 }}
+              >
+                <Box display="flex" alignItems="center" gap={1}>
+                  <BsBoxArrowRight style={{ fontSize: 16 }} />
+                  Logout
+                </Box>
+              </MenuItem>
+            </Menu>
           </Box>
         </Toolbar>
       </AppBar>
@@ -374,17 +572,20 @@ export default function MainLayout({ children }: MainLayoutProps) {
         <DrawerHeader />
         <Box display="flex" flexDirection="column" height="100%">
           <List sx={{ paddingTop: 0, paddingBottom: 0 }}>
-            {menuItems.filter(v => {
-              if(v.path !== "/user-management") return true;
-              if(tokenResult) {
-                const {payload} = tokenResult
-                const role = payload.role
-                if(role === "admin") return true
-              }
-
-              return false
-            }).map((item) => {
+            {menuItems.map((item) => {
               const IconComponent = item.icon;
+              // Disable admin-only menu items for non-admin users
+              const isDisabled = item.adminOnly && user?.role !== "admin";
+              // Hide certain pages completely from developers
+              const isDeveloper = user?.role === "developer";
+              const shouldHide =
+                isDeveloper &&
+                (item.id === "dashboard" ||
+                  item.id === "buckets" ||
+                  item.id === "fhir-resources");
+
+              if (shouldHide) return null;
+
               return (
                 <ListItem
                   key={item.id}
@@ -394,16 +595,23 @@ export default function MainLayout({ children }: MainLayoutProps) {
                     backgroundColor: isActive(item.path)
                       ? theme.palette.action.selected
                       : undefined,
+                    opacity: isDisabled ? 0.5 : 1,
                   }}
-                  onClick={() => handleMenuClick(item.path)}
+                  onClick={() => !isDisabled && handleMenuClick(item.path)}
                 >
                   <Tooltip
-                    title={item.label}
+                    title={isDisabled ? "Admin access required" : item.label}
                     placement="right"
-                    disableHoverListener={drawerOpen}
+                    disableHoverListener={drawerOpen && !isDisabled}
                     arrow
                   >
-                    <ListItemButton sx={listItemButtonStyles}>
+                    <ListItemButton
+                      sx={{
+                        ...listItemButtonStyles,
+                        cursor: isDisabled ? "not-allowed" : "pointer",
+                      }}
+                      disabled={isDisabled}
+                    >
                       <ListItemIcon sx={listItemIconStyles}>
                         <IconComponent
                           style={{
@@ -430,6 +638,10 @@ export default function MainLayout({ children }: MainLayoutProps) {
             <Divider />
             {bottomMenuItems.map((item) => {
               const IconComponent = item.icon;
+              // Hide logs from developers
+              const isDeveloper = user?.role === "developer";
+              if (isDeveloper) return null;
+
               return (
                 <ListItem
                   key={item.id}
@@ -495,6 +707,62 @@ export default function MainLayout({ children }: MainLayoutProps) {
       >
         {children}
       </Box>
+
+      {/* Initialization Dialog */}
+      <InitializationDialog
+        open={initDialogOpen}
+        onClose={() => setInitDialogOpen(false)}
+      />
+
+      {/* Change Password Dialog */}
+      <Dialog
+        open={changePwdOpen}
+        onClose={handleCloseChangePwd}
+        maxWidth="xs"
+        fullWidth
+      >
+        <DialogTitle>Change Password</DialogTitle>
+        <DialogContent>
+          <Typography variant="body2" sx={{ mb: 2 }}>
+            Set a new password for your account ({user?.email}).
+          </Typography>
+          <TextField
+            label="New Password"
+            type={showPassword ? "text" : "password"}
+            value={newPassword}
+            fullWidth
+            onChange={(e) => setNewPassword(e.target.value)}
+            error={!!pwdError}
+            helperText={pwdError || "Minimum 8 characters"}
+            InputProps={{
+              endAdornment: (
+                <InputAdornment position="end">
+                  <IconButton
+                    aria-label="toggle password visibility"
+                    onClick={() => setShowPassword((p) => !p)}
+                    edge="end"
+                    size="small"
+                  >
+                    {showPassword ? <VisibilityOffIcon /> : <VisibilityIcon />}
+                  </IconButton>
+                </InputAdornment>
+              ),
+            }}
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleCloseChangePwd} disabled={pwdSubmitting}>
+            Cancel
+          </Button>
+          <Button
+            onClick={handleSubmitPassword}
+            variant="contained"
+            disabled={pwdSubmitting}
+          >
+            {pwdSubmitting ? "Updating..." : "Update Password"}
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 }

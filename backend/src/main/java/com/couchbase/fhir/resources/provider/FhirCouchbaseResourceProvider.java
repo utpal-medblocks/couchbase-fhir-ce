@@ -868,12 +868,12 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
     private String extractBaseUrl(RequestDetails requestDetails, String bucketName) {
         if (requestDetails != null) {
             String serverBase = requestDetails.getFhirServerBase();
-            if (serverBase != null) {
+            if (serverBase != null && !serverBase.isBlank()) {
                 return serverBase;
             }
         }
-        // Fallback to constructed URL
-        return "http://localhost:8080/fhir/" + bucketName;
+        // Deliberately no localhost fallback: configuration must supply base URL
+        throw new IllegalStateException("Missing FHIR server base URL (configure app.baseUrl / server base)");
     }
     
     /**

@@ -14,16 +14,25 @@ fhir:
       collections:
         - name: "config"
           description: "Tenant configuration, feature flags"
-          indexes:
 
         - name: "users"
           description: "User management, authentication"
-          indexes:
 
         - name: "cache"
           description: "Pagination state cache"
           maxTtlSeconds: 300 # 5 minutes - automatic document expiry
-          indexes:
+
+        - name: "clients"
+          description: "Client management, authentication"
+
+        - name: "tokens"
+          description: "Token management, authentication"
+
+        - name: "authorizations"
+          description: "Authorization codes, authentication"
+
+        - name: "consents"
+          description: "Consent management, authentication"
 
     resources:
       name: "Resources"
@@ -31,55 +40,42 @@ fhir:
       collections:
         - name: "Patient"
           description: "Patient - 1 resource"
-          indexes:
 
         - name: "Observation"
           description: "Observation - 1 resource"
-          indexes:
 
         - name: "Encounter"
           description: "Encounter - 1 resource"
-          indexes:
 
         - name: "Condition"
           description: "Condition - 1 resource"
-          indexes:
 
         - name: "Procedure"
           description: "Procedure - 1 resource"
-          indexes:
 
         - name: "MedicationRequest"
           description: "MedicationRequest - 1 resource"
-          indexes:
 
         - name: "DiagnosticReport"
           description: "DiagnosticReport - 1 resource"
-          indexes:
 
         - name: "DocumentReference"
           description: "DocumentReference - 1 resource"
-          indexes:
 
         - name: "Immunization"
           description: "Immunization - 1 resource"
-          indexes:
 
         - name: "ServiceRequest"
           description: "ServiceRequest - 1 resource"
-          indexes:
 
         - name: "General"
           description: "All other resources"
-          indexes:
 
         - name: "Versions"
           description: "FHIR Versions resources"
-          indexes:
 
         - name: "Tombstones"
           description: "FHIR Tombstones resources"
-          indexes:
 
 # FHIR Resource to Collection Mapping Configuration
 mapping:

@@ -1,4 +1,4 @@
-import { Route, BrowserRouter as Router, Routes } from "react-router-dom";
+import { BrowserRouter as Router } from "react-router-dom";
 import {
   ThemeProvider as MuiThemeProvider,
   createTheme,
@@ -13,8 +13,6 @@ import "@fontsource/roboto/300.css";
 import "@fontsource/roboto/400.css";
 import "@fontsource/roboto/500.css";
 import "@fontsource/roboto/700.css";
-import Login from "./pages/Login";
-import OIDC from "./pages/OIDC";
 
 function AppContent() {
   const { themeMode } = useThemeContext();
@@ -151,24 +149,13 @@ function AppContent() {
   return (
     <MuiThemeProvider theme={theme}>
       <CssBaseline />
-      <ConnectionProvider>
-        <ErrorBoundary>
-        <Router>
-          <Routes>
-            <Route path="/login" element={<Login/>} />
-            <Route path="/authorize" element={<OIDC/>} />
-            <Route path="/*" element={
-              <MainLayout>
-                <AppRoutes />
-              </MainLayout>
-            } />
-            {/* <MainLayout>
-              <AppRoutes />
-            </MainLayout> */}
-          </Routes>
-        </Router>
-        </ErrorBoundary>
-      </ConnectionProvider>
+      <Router>
+        <ConnectionProvider>
+          <ErrorBoundary>
+            <AppRoutes />
+          </ErrorBoundary>
+        </ConnectionProvider>
+      </Router>
     </MuiThemeProvider>
   );
 }

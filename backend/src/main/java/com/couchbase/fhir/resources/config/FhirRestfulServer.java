@@ -1,26 +1,14 @@
 package com.couchbase.fhir.resources.config;
 
 import ca.uhn.fhir.context.FhirContext;
-import ca.uhn.fhir.parser.IParser;
-import ca.uhn.fhir.parser.StrictErrorHandler;
-import ca.uhn.fhir.parser.LenientErrorHandler;
-import ca.uhn.fhir.rest.api.RestOperationTypeEnum;
-import ca.uhn.fhir.rest.api.server.RequestDetails;
 import ca.uhn.fhir.rest.server.IResourceProvider;
 import ca.uhn.fhir.rest.server.RestfulServer;
-import ca.uhn.fhir.rest.server.tenant.UrlBaseTenantIdentificationStrategy;
-
-import com.couchbase.common.config.FhirConfig;
 
 import com.couchbase.fhir.resources.provider.BulkImportProvider;
 import com.couchbase.fhir.resources.provider.USCoreCapabilityProvider;
 import com.couchbase.fhir.resources.interceptor.BucketAwareValidationInterceptor;
 import com.couchbase.fhir.resources.service.FhirBucketConfigService;
 import lombok.RequiredArgsConstructor;
-import net.sf.saxon.lib.Logger;
-
-import org.slf4j.LoggerFactory;
-
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
@@ -70,8 +58,17 @@ public class FhirRestfulServer extends RestfulServer {
     @Autowired
     private com.couchbase.fhir.resources.interceptor.FastpathResponseInterceptor fastpathResponseInterceptor;
     
+    @Autowired
+    private com.couchbase.fhir.auth.SmartAuthorizationInterceptor smartAuthorizationInterceptor;
+    
+    @Autowired
+    private com.couchbase.fhir.rest.interceptors.JwtValidationInterceptor jwtValidationInterceptor;
+    
     @Autowired(required = false)
     private org.springframework.boot.info.BuildProperties buildProperties;
+    
+    @Autowired
+    private com.couchbase.common.config.FhirServerConfig fhirServerConfig;
 
     @Override
     protected void initialize() {
@@ -103,14 +100,24 @@ public class FhirRestfulServer extends RestfulServer {
             // }
             
             setFhirContext(fhirContext); // Use the injected context
-            setTenantIdentificationStrategy(new UrlBaseTenantIdentificationStrategy());
             
+            // Single-tenant mode: Use base URL from config.yaml (app.baseUrl)
+            // This handles HAProxy SSL termination, reverse proxies, and SMART on FHIR correctly
+            String configuredBaseUrl = fhirServerConfig.getNormalizedBaseUrl();
+            logger.info("🌐 Server base URL configured from config.yaml: {}", configuredBaseUrl);
             
-            registerInterceptor(new MultiTenantInterceptor());
+            setServerAddressStrategy(new ca.uhn.fhir.rest.server.HardcodedServerAddressStrategy(configuredBaseUrl));
+            setPagingProvider(new ca.uhn.fhir.rest.server.FifoMemoryPagingProvider(100));
+            
+            // Single-tenant mode: TenantContextHolder always returns "fhir"
+            // No interceptor needed for tenant identification
+            
             registerInterceptor(bucketValidationInterceptor);
+            registerInterceptor(smartAuthorizationInterceptor); // 🔐 SMART on FHIR authorization
+            registerInterceptor(jwtValidationInterceptor); // 🔒 JWT token revocation check
             registerInterceptor(cleanExceptionInterceptor);
             registerInterceptor(fastpathResponseInterceptor); // 🚀 Fastpath JSON bypass (10× memory reduction)
-            USCoreCapabilityProvider capabilityProvider = new USCoreCapabilityProvider(this, buildProperties);
+            USCoreCapabilityProvider capabilityProvider = new USCoreCapabilityProvider(this, buildProperties, configuredBaseUrl);
             setServerConformanceProvider(capabilityProvider);
             registerProviders(allProviders); // Register all providers
             registerProvider(new BulkImportProvider(fhirContext));
@@ -120,14 +127,23 @@ public class FhirRestfulServer extends RestfulServer {
             logger.error("❌ Failed to get dynamic providers, falling back to autowired only: {}", e.getMessage());
             // Fallback to original behavior
             setFhirContext(fhirContext);
-            setTenantIdentificationStrategy(new UrlBaseTenantIdentificationStrategy());
             
+            // Single-tenant mode: Use base URL from config.yaml
+            String configuredBaseUrl = fhirServerConfig.getNormalizedBaseUrl();
+            logger.info("🌐 Server base URL configured from config.yaml: {} (fallback)", configuredBaseUrl);
             
-            registerInterceptor(new MultiTenantInterceptor());
+            setServerAddressStrategy(new ca.uhn.fhir.rest.server.HardcodedServerAddressStrategy(configuredBaseUrl));
+            setPagingProvider(new ca.uhn.fhir.rest.server.FifoMemoryPagingProvider(100));
+            
+            // Single-tenant mode: TenantContextHolder always returns "fhir"
+            // No interceptor needed for tenant identification
+            
             registerInterceptor(bucketValidationInterceptor);
+            registerInterceptor(smartAuthorizationInterceptor); // 🔐 SMART on FHIR authorization
+            registerInterceptor(jwtValidationInterceptor); // 🔒 JWT token revocation check
             registerInterceptor(cleanExceptionInterceptor);
             registerInterceptor(fastpathResponseInterceptor); // 🚀 Fastpath JSON bypass (10× memory reduction)
-            USCoreCapabilityProvider capabilityProvider = new USCoreCapabilityProvider(this, buildProperties);
+            USCoreCapabilityProvider capabilityProvider = new USCoreCapabilityProvider(this, buildProperties, configuredBaseUrl);
             setServerConformanceProvider(capabilityProvider);
             registerProviders(providers);
         }

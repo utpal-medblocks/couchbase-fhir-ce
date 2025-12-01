@@ -1,6 +1,5 @@
 package com.couchbase.common.fhir;
 
-import com.couchbase.fhir.resources.service.AuditOp;
 import com.couchbase.fhir.resources.service.FhirAuditService;
 import com.couchbase.fhir.resources.service.MetaRequest;
 import org.hl7.fhir.r4.model.Meta;

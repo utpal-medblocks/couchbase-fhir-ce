@@ -3,6 +3,9 @@ package com.couchbase.admin.config.service;
 import com.couchbase.admin.connections.model.ConnectionRequest;
 import com.couchbase.admin.connections.model.ConnectionResponse;
 import com.couchbase.admin.connections.service.ConnectionService;
+import com.couchbase.admin.initialization.model.InitializationStatus;
+import com.couchbase.admin.initialization.service.InitializationService;
+import com.couchbase.admin.tokens.service.JwtTokenCacheService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -37,6 +40,15 @@ public class ConfigurationStartupService {
 
     @Autowired
     private ConnectionService connectionService;
+    
+    @Autowired
+    private InitializationService initializationService;
+    
+    @Autowired
+    private JwtTokenCacheService jwtTokenCacheService;
+    
+    @Autowired
+    private com.couchbase.fhir.auth.AuthorizationServerConfig authorizationServerConfig;
 
     /**
      * Load configuration and establish connection after application is fully started
@@ -162,6 +174,33 @@ public class ConfigurationStartupService {
             logger.info("📋 autoConnect explicitly disabled (app.autoConnect=false) - skipping auto-connection");
             return false;
         }
+        
+        // Extract app.baseUrl and set as system property for FhirServerConfig to use
+        if (appConfig != null && appConfig.get("baseUrl") != null) {
+            String baseUrl = String.valueOf(appConfig.get("baseUrl"));
+            System.setProperty("app.baseUrl", baseUrl);
+            logger.info("📋 FHIR Server base URL: {}", baseUrl);
+        }
+
+        // Extract admin credentials and set as system properties for AdminConfig to use
+        @SuppressWarnings("unchecked")
+        Map<String, Object> adminConfig = (Map<String, Object>) yamlData.get("admin");
+        if (adminConfig != null) {
+            if (adminConfig.get("email") != null) {
+                System.setProperty("admin.email", String.valueOf(adminConfig.get("email")));
+            }
+            if (adminConfig.get("password") != null) {
+                System.setProperty("admin.password", String.valueOf(adminConfig.get("password")));
+            }
+            if (adminConfig.get("name") != null) {
+                System.setProperty("admin.name", String.valueOf(adminConfig.get("name")));
+            }
+            logger.info("🔐 Admin UI credentials loaded from config.yaml");
+        }
+
+        // CORS configuration is now in application.yml (not config.yaml)
+        // See backend/src/main/resources/application.yml for CORS settings
+        logger.info("ℹ️  CORS configuration is managed in application.yml (default: allow all origins)");
 
         // Create connection request from YAML data
         ConnectionRequest request = createConnectionRequest(connectionConfig);
@@ -173,9 +212,17 @@ public class ConfigurationStartupService {
         ConnectionResponse response = connectionService.createConnection(request);
         
         if (response.isSuccess()) {
-            logger.info("✅ Auto-connection successful! FHIR Server is ready for API requests");
-            logger.info("🚀 Backend startup complete - FHIR APIs are now available");
-            logger.info("💡 Collections will be warmed up automatically on first access to each FHIR bucket");
+            logger.info("✅ Auto-connection successful!");
+            
+            // Initialize OAuth signing key after connection is established
+            initializeOAuthSigningKey();
+            
+            // Initialize JWT token cache after connection is established
+            initializeTokenCache();
+            
+            // Check initialization status for single-tenant "fhir" bucket
+            checkAndReportInitializationStatus();
+            
         } else {
             String errorMsg = response.getMessage();
             logger.error("❌ Auto-connection failed: {}", errorMsg);
@@ -195,6 +242,57 @@ public class ConfigurationStartupService {
         return true;
     }
 
+    /**
+     * Check and report FHIR bucket initialization status
+     * Single-tenant mode: expects exactly one bucket named "fhir"
+     */
+    private void checkAndReportInitializationStatus() {
+        try {
+            InitializationStatus status = initializationService.checkStatus(DEFAULT_CONNECTION_NAME);
+            
+            logger.info("╔══════════════════════════════════════════════════════════════╗");
+            logger.info("║         FHIR SYSTEM INITIALIZATION STATUS                    ║");
+            logger.info("╚══════════════════════════════════════════════════════════════╝");
+            logger.info("📊 Status: {}", status.getStatus());
+            logger.info("📦 Bucket: {}", status.getBucketName());
+            logger.info("🔗 Connection: {}", status.isHasConnection() ? "✅ Connected" : "❌ Not Connected");
+            logger.info("🪣 Bucket Exists: {}", status.isBucketExists() ? "✅ Yes" : "❌ No");
+            logger.info("⚙️  FHIR Initialized: {}", status.isFhirInitialized() ? "✅ Yes" : "❌ No");
+            logger.info("─────────────────────────────────────────────────────────────");
+            
+            switch (status.getStatus()) {
+                case READY:
+                    logger.info("✅ {}", status.getMessage());
+                    logger.info("🚀 Backend startup complete - FHIR APIs are now available");
+                    logger.info("💡 Collections will be warmed up automatically on first access");
+                    break;
+                    
+                case BUCKET_MISSING:
+                    logger.warn("⚠️  {}", status.getMessage());
+                    logger.warn("📋 NEXT STEPS:");
+                    logger.warn("   1. Create bucket '{}' in Couchbase UI or CLI", status.getBucketName());
+                    logger.warn("   2. Use Admin UI to initialize FHIR configuration");
+                    break;
+                    
+                case BUCKET_NOT_INITIALIZED:
+                    logger.warn("⚠️  {}", status.getMessage());
+                    logger.warn("📋 NEXT STEPS:");
+                    logger.warn("   1. Open Admin UI in your browser");
+                    logger.warn("   2. Click 'Initialize FHIR Bucket' to set up scopes/collections/indexes");
+                    break;
+                    
+                case NOT_CONNECTED:
+                    logger.error("❌ {}", status.getMessage());
+                    break;
+            }
+            
+            logger.info("╚══════════════════════════════════════════════════════════════╝");
+            
+        } catch (Exception e) {
+            logger.error("❌ Failed to check initialization status: {}", e.getMessage());
+        }
+    }
+    
     /**
      * Apply logging levels supplied in config.yaml under logging.levels
      */
@@ -293,6 +391,42 @@ public class ConfigurationStartupService {
             logger.info("🔒 Transaction durability: {} (suitable for development/single-node)", durability);
         } else {
             logger.info("🔒 Transaction durability: {} (production setting - requires replicas)", durability);
+        }
+    }
+    
+    /**
+     * Initialize the OAuth signing key after Couchbase connection is established
+     * This must run AFTER the connection is established, before any login attempts
+     */
+    private void initializeOAuthSigningKey() {
+        try {
+            logger.info("🔐 Initializing OAuth signing key...");
+            authorizationServerConfig.initializeSigningKey();
+        } catch (Exception e) {
+            logger.error("❌ Failed to initialize OAuth signing key: {}", e.getMessage());
+            throw new IllegalStateException("Cannot start without OAuth signing key", e);
+        }
+    }
+    
+    /**
+     * Initialize the JWT token cache after Couchbase connection is established
+     */
+    private void initializeTokenCache() {
+        try {
+            logger.info("🔐 Loading active JWT tokens into cache...");
+            jwtTokenCacheService.loadActiveTokens();
+            
+            if (jwtTokenCacheService.isInitialized()) {
+                int cacheSize = jwtTokenCacheService.getCacheSize();
+                logger.info("✅ Token cache initialized with {} active tokens", cacheSize);
+            } else {
+                logger.warn("⏭️ Token cache not initialized (FHIR bucket may not be initialized yet)");
+            }
+            
+        } catch (Exception e) {
+            logger.warn("⚠️ Failed to initialize token cache: {}", e.getMessage());
+            logger.debug("Token cache initialization error:", e);
+            // Don't fail startup if cache initialization fails
         }
     }
 }

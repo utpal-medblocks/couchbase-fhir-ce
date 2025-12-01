@@ -5,16 +5,13 @@ import ca.uhn.fhir.rest.server.RestfulServer;
 import ca.uhn.fhir.rest.server.provider.ServerCapabilityStatementProvider;
 import com.couchbase.fhir.resources.constants.USCoreProfiles;
 import jakarta.servlet.http.HttpServletRequest;
-import org.hl7.fhir.r4.model.CapabilityStatement;
-import org.hl7.fhir.r4.model.Enumerations;
+import org.hl7.fhir.r4.model.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.info.BuildProperties;
 
 import java.util.List;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.Map;
 
 import static com.couchbase.fhir.resources.constants.USCoreProfiles.US_CORE_BASE_URL;
 
@@ -35,28 +32,20 @@ public class USCoreCapabilityProvider extends ServerCapabilityStatementProvider 
 
     private static final Logger logger = LoggerFactory.getLogger(USCoreCapabilityProvider.class);
     private final String appVersion;
-    
-    // Simple cache: tenant -> capability statement
-    // Cache for 1 hour (3600000 ms)
-    private final Map<String, CachedStatement> cache = new ConcurrentHashMap<>();
+    private final String configuredBaseUrl; // Injected base URL (expected to include /fhir)
+    private volatile CachedStatement cachedStatement; // Single cached statement (no tenants)
     private static final long CACHE_TTL_MS = 3600000L; // 1 hour
-    
+
     private static class CachedStatement {
         final CapabilityStatement statement;
         final long timestamp;
-        
-        CachedStatement(CapabilityStatement statement) {
-            this.statement = statement;
-            this.timestamp = System.currentTimeMillis();
-        }
-        
-        boolean isExpired() {
-            return System.currentTimeMillis() - timestamp > CACHE_TTL_MS;
-        }
+        CachedStatement(CapabilityStatement statement) { this.statement = statement; this.timestamp = System.currentTimeMillis(); }
+        boolean isExpired() { return System.currentTimeMillis() - timestamp > CACHE_TTL_MS; }
     }
 
-    public USCoreCapabilityProvider(RestfulServer restfulServer, 
-                                    @Autowired(required = false) BuildProperties buildProperties) {
+    public USCoreCapabilityProvider(RestfulServer restfulServer,
+                                    @Autowired(required = false) BuildProperties buildProperties,
+                                    @org.springframework.beans.factory.annotation.Value("${app.baseUrl}") String baseUrl) {
         super(restfulServer);
         
         // Determine version: prefer build-info, then JAR manifest, else dev
@@ -70,29 +59,22 @@ public class USCoreCapabilityProvider extends ServerCapabilityStatementProvider 
             v = getClass().getPackage().getImplementationVersion();
         }
         this.appVersion = v != null ? v : "dev";
-        
-        logger.info("✅ USCoreCapabilityProvider initialized with explicit caching (1 hour TTL), version: {}", appVersion);
+        // Normalize configured base URL to ensure it ends with /fhir
+        this.configuredBaseUrl = baseUrl.endsWith("/fhir") ? baseUrl : (baseUrl + "/fhir");
+        logger.info("✅ USCoreCapabilityProvider initialized (no tenant mode) version={} baseUrl={}", appVersion, this.configuredBaseUrl);
     }
 
     @Override
     public CapabilityStatement getServerConformance(HttpServletRequest request, RequestDetails requestDetails) {
         long startTime = System.currentTimeMillis();
         
-        // Get tenant/bucket identifier for cache key
-        String tenant = "default";
-        if (requestDetails != null && requestDetails.getTenantId() != null) {
-            tenant = requestDetails.getTenantId();
-        }
-        
-        // Check cache first
-        CachedStatement cached = cache.get(tenant);
+        // Check single cache (no multi-tenant)
+        CachedStatement cached = cachedStatement;
         if (cached != null && !cached.isExpired()) {
-            logger.debug("📋 Using cached CapabilityStatement for tenant: {} (cached {} ms ago)", 
-                        tenant, System.currentTimeMillis() - cached.timestamp);
-            return cached.statement.copy(); // Return a copy to avoid mutations
+            logger.debug("📋 Using cached CapabilityStatement (cached {} ms ago)", System.currentTimeMillis() - cached.timestamp);
+            return cached.statement.copy();
         }
-        
-        logger.info("📋 Generating new CapabilityStatement for tenant: {}...", tenant);
+        logger.info("📋 Generating new CapabilityStatement (cache miss or expired)...");
         
         CapabilityStatement statement = (CapabilityStatement) super.getServerConformance(request, requestDetails);
 
@@ -119,15 +101,18 @@ public class USCoreCapabilityProvider extends ServerCapabilityStatementProvider 
                 .setVersion(appVersion));
         }
         
-        // Implementation block (per tenant/bucket)
-        String fhirBase = requestDetails != null ? requestDetails.getFhirServerBase() : "http://localhost:8080/fhir";
+        // Implementation base URL (prefer requestDetails server base if provided, else configured)
+        String fhirBase = (requestDetails != null && requestDetails.getFhirServerBase() != null && !requestDetails.getFhirServerBase().isBlank())
+                ? requestDetails.getFhirServerBase()
+                : this.configuredBaseUrl;
+        if (fhirBase == null || fhirBase.isBlank()) {
+            throw new IllegalStateException("Base FHIR server URL missing (app.baseUrl must be configured)");
+        }
         if (statement.hasImplementation()) {
-            statement.getImplementation()
-                .setDescription("Couchbase FHIR CE (" + tenant + ")")
-                .setUrl(fhirBase);
+            statement.getImplementation().setDescription("Couchbase FHIR CE").setUrl(fhirBase);
         } else {
             statement.setImplementation(new CapabilityStatement.CapabilityStatementImplementationComponent()
-                .setDescription("Couchbase FHIR CE (" + tenant + ")")
+                .setDescription("Couchbase FHIR CE")
                 .setUrl(fhirBase));
         }
 
@@ -154,13 +139,85 @@ public class USCoreCapabilityProvider extends ServerCapabilityStatementProvider 
             }
         }
 
+        // ============================================
+        // SMART ON FHIR SECURITY
+        // ============================================
+        addSmartSecurityExtension(statement, fhirBase);
+
         long elapsed = System.currentTimeMillis() - startTime;
-        logger.info("✅ CapabilityStatement generated in {} ms for tenant: {}", elapsed, tenant);
-        
-        // Cache the statement
-        cache.put(tenant, new CachedStatement(statement.copy()));
+        logger.info("✅ CapabilityStatement generated in {} ms", elapsed);
+        cachedStatement = new CachedStatement(statement.copy());
         
         return statement;
+    }
+
+    /**
+     * Add SMART on FHIR security extension to CapabilityStatement
+     * This advertises OAuth 2.0 endpoints and supported capabilities
+     * 
+     * Reference: http://hl7.org/fhir/smart-app-launch/conformance.html
+     */
+    private void addSmartSecurityExtension(CapabilityStatement statement, String fhirBase) {
+        // Get or create the REST component
+        CapabilityStatement.CapabilityStatementRestComponent rest = statement.getRestFirstRep();
+        
+        // Get or create security component
+        CapabilityStatement.CapabilityStatementRestSecurityComponent security;
+        if (rest.hasSecurity()) {
+            security = rest.getSecurity();
+        } else {
+            security = new CapabilityStatement.CapabilityStatementRestSecurityComponent();
+            rest.setSecurity(security);
+        }
+        
+        // Add OAuth2 service type
+        CodeableConcept oauthService = new CodeableConcept();
+        oauthService.addCoding()
+            .setSystem("http://terminology.hl7.org/CodeSystem/restful-security-service")
+            .setCode("SMART-on-FHIR")
+            .setDisplay("SMART-on-FHIR");
+        security.addService(oauthService);
+        
+        // Add SMART extension with OAuth endpoints
+        // Extract base URL (remove /fhir if present)
+        String baseUrl = fhirBase.endsWith("/fhir") 
+            ? fhirBase.substring(0, fhirBase.length() - 5) 
+            : fhirBase;
+        
+        Extension smartExtension = new Extension();
+        smartExtension.setUrl("http://fhir-registry.smarthealthit.org/StructureDefinition/oauth-uris");
+        
+        // Token endpoint
+        Extension tokenExtension = new Extension();
+        tokenExtension.setUrl("token");
+        tokenExtension.setValue(new UriType(baseUrl + "/oauth2/token"));
+        smartExtension.addExtension(tokenExtension);
+        
+        // Authorize endpoint
+        Extension authorizeExtension = new Extension();
+        authorizeExtension.setUrl("authorize");
+        authorizeExtension.setValue(new UriType(baseUrl + "/oauth2/authorize"));
+        smartExtension.addExtension(authorizeExtension);
+        
+        // Introspect endpoint
+        Extension introspectExtension = new Extension();
+        introspectExtension.setUrl("introspect");
+        introspectExtension.setValue(new UriType(baseUrl + "/oauth2/introspect"));
+        smartExtension.addExtension(introspectExtension);
+        
+        // Revoke endpoint
+        Extension revokeExtension = new Extension();
+        revokeExtension.setUrl("revoke");
+        revokeExtension.setValue(new UriType(baseUrl + "/oauth2/revoke"));
+        smartExtension.addExtension(revokeExtension);
+        
+        security.addExtension(smartExtension);
+        
+        // Add description
+        security.setDescription("This server supports SMART on FHIR authorization using OAuth 2.0. " +
+                               "Supported scopes include patient/*, user/*, and system/* for granular access control.");
+        
+        logger.debug("Added SMART on FHIR security extension to CapabilityStatement with base URL: {}", baseUrl);
     }
 
 }

@@ -1,35 +1,97 @@
-import { create } from 'zustand';
+import { create } from "zustand";
+import { persist } from "zustand/middleware";
 
-interface AuthState {
-  isAuthenticated: boolean;
-  accessToken: string;
-  refreshToken: string;
-  name: string;
+/**
+ * User information interface
+ */
+export interface UserInfo {
   email: string;
-  setAuthInfo: (isAuthenticated: boolean, accessToken: string, refreshToken: string) => void;
-  setIsAuthenticated: (isAuthenticated: boolean) => void;
-  setAccessToken: (accessToken: string) => void;
-  setRefreshToken: (refreshToken: string) => void;
-  clearAuth: () => void;
-  setNameAndEmail: (name: string, email: string) => void;
+  name: string;
+  role: string;
+  allowedScopes: string[];
 }
 
-export const useAuthStore = create<AuthState>((set) => ({
-  isAuthenticated: false,
-  accessToken: '',
-  refreshToken: '',
-  name: '',
-  email: '',
-  setAuthInfo: (isAuthenticated, accessToken, refreshToken) =>
-    set({ isAuthenticated, accessToken, refreshToken }),
-  setIsAuthenticated: (isAuthenticated) =>
-    set((state) => ({ ...state, isAuthenticated })),
-  setAccessToken: (accessToken) =>
-    set((state) => ({ ...state, accessToken })),
-  setRefreshToken: (refreshToken) =>
-    set((state) => ({ ...state, refreshToken })),
-  clearAuth: () =>
-    set({ isAuthenticated: false, accessToken: '', refreshToken: '', name: '', email: '' }),
-  setNameAndEmail: (name: string, email: string) =>
-    set((state) => ({ ...state, name, email }))
-}));
+/**
+ * Authentication state interface
+ */
+interface AuthState {
+  // State
+  token: string | null;
+  user: UserInfo | null;
+  isAuthenticated: boolean;
+  _hasHydrated: boolean;
+
+  // Actions
+  login: (token: string, user: UserInfo) => void;
+  logout: () => void;
+  setToken: (token: string) => void;
+  setHasHydrated: (state: boolean) => void;
+}
+
+/**
+ * Authentication store using Zustand
+ * Persists token and user info to localStorage
+ */
+export const useAuthStore = create<AuthState>()(
+  persist(
+    (set) => ({
+      // Initial state
+      token: null,
+      user: null,
+      isAuthenticated: false,
+      _hasHydrated: false,
+
+      // Login action
+      login: (token: string, user: UserInfo) => {
+        console.log("💾 Storing auth in Zustand", {
+          user,
+          tokenLength: token.length,
+        });
+        set({
+          token,
+          user,
+          isAuthenticated: true,
+        });
+        console.log("💾 Auth stored, will persist to localStorage");
+      },
+
+      // Logout action
+      logout: () => {
+        set({
+          token: null,
+          user: null,
+          isAuthenticated: false,
+        });
+      },
+
+      // Set token action
+      setToken: (token: string) => {
+        set({ token });
+      },
+
+      // Set hydration state
+      setHasHydrated: (state: boolean) => {
+        set({ _hasHydrated: state });
+      },
+    }),
+    {
+      name: "auth-storage", // localStorage key
+      partialize: (state) => ({
+        token: state.token,
+        user: state.user,
+        isAuthenticated: state.isAuthenticated,
+      }),
+      onRehydrateStorage: () => (state) => {
+        console.log("♻️ Zustand rehydrating from localStorage...");
+        if (state) {
+          console.log("♻️ Rehydrated state:", {
+            isAuthenticated: state.isAuthenticated,
+            hasUser: !!state.user,
+            hasToken: !!state.token,
+          });
+          state.setHasHydrated(true);
+        }
+      },
+    }
+  )
+);

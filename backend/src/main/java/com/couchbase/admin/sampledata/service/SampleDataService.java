@@ -4,6 +4,8 @@ import com.couchbase.admin.connections.service.ConnectionService;
 import com.couchbase.admin.sampledata.model.SampleDataRequest;
 import com.couchbase.admin.sampledata.model.SampleDataResponse;
 import com.couchbase.admin.sampledata.model.SampleDataProgress;
+import com.couchbase.admin.users.service.UserService;
+import com.couchbase.admin.users.model.User;
 import com.couchbase.fhir.resources.service.FhirBundleProcessingService;
 import com.couchbase.fhir.resources.service.FhirResourceStorageHelper;
 import com.couchbase.client.java.Cluster;
@@ -52,6 +54,9 @@ public class SampleDataService {
     
     @Autowired
     private FhirResourceStorageHelper storageHelper;
+    
+    @Autowired
+    private UserService userService;
     
     private final ObjectMapper objectMapper = new ObjectMapper();
     
@@ -571,6 +576,12 @@ public class SampleDataService {
                 callback.onProgress(progress);
             }
             
+            // Create test users if US-Core sample was loaded
+            if ("uscore".equalsIgnoreCase(request.getSampleType()) || "us-core".equalsIgnoreCase(request.getSampleType())) {
+                log.info("Creating test users for US-Core sample data");
+                createTestUsersForUSCore(callback);
+            }
+            
             SampleDataResponse response = new SampleDataResponse(
                 true, 
                 "Sample data loaded successfully", 
@@ -597,6 +608,84 @@ public class SampleDataService {
             }
             
             return new SampleDataResponse(false, "Failed to load sample data: " + e.getMessage());
+        }
+    }
+    
+    /**
+     * Create test users for US-Core sample data
+     * Creates a Patient user (Amy Shaw) and a Practitioner user (Ronald Bone)
+     * Both users are for testing only and cannot login to the UI
+     */
+    private void createTestUsersForUSCore(ProgressCallback callback) {
+        try {
+            log.info("Creating test users for US-Core sample data...");
+            
+            // Notify progress
+            if (callback != null) {
+                SampleDataProgress progress = new SampleDataProgress();
+                progress.setStatus("IN_PROGRESS");
+                progress.setMessage("Creating test users (Patient & Practitioner)...");
+                callback.onProgress(progress);
+            }
+            
+            // Create Patient user: Amy Shaw
+            User patientUser = new User();
+            patientUser.setId("amy.shaw@example.com");
+            patientUser.setEmail("amy.shaw@example.com");
+            patientUser.setUsername("Amy Shaw");
+            patientUser.setRole("patient");
+            patientUser.setAuthMethod("local");
+            patientUser.setStatus("active");
+            patientUser.setPasswordHash("password123"); // Will be hashed by UserService
+            patientUser.setFhirUser("Patient/example");
+            
+            // Create Practitioner user: Ronald Bone
+            User practitionerUser = new User();
+            practitionerUser.setId("ronald.bone@example.org");
+            practitionerUser.setEmail("ronald.bone@example.org");
+            practitionerUser.setUsername("Ronald Bone");
+            practitionerUser.setRole("practitioner");
+            practitionerUser.setAuthMethod("local");
+            practitionerUser.setStatus("active");
+            practitionerUser.setPasswordHash("password123"); // Will be hashed by UserService
+            practitionerUser.setFhirUser("Practitioner/practitioner-1");
+            
+            // Try to create users - if they already exist, log and continue
+            try {
+                userService.createUser(patientUser, "system");
+                log.info("✅ Created test patient user: amy.shaw@example.com");
+            } catch (IllegalArgumentException e) {
+                if (e.getMessage().contains("already exists")) {
+                    log.info("ℹ️  Patient user already exists, skipping: amy.shaw@example.com");
+                } else {
+                    throw e;
+                }
+            }
+            
+            try {
+                userService.createUser(practitionerUser, "system");
+                log.info("✅ Created test practitioner user: ronald.bone@example.org");
+            } catch (IllegalArgumentException e) {
+                if (e.getMessage().contains("already exists")) {
+                    log.info("ℹ️  Practitioner user already exists, skipping: ronald.bone@example.org");
+                } else {
+                    throw e;
+                }
+            }
+            
+            // Notify completion
+            if (callback != null) {
+                SampleDataProgress progress = new SampleDataProgress();
+                progress.setStatus("COMPLETED");
+                progress.setMessage("Test users created successfully");
+                callback.onProgress(progress);
+            }
+            
+            log.info("✅ Test users created for US-Core sample data");
+            
+        } catch (Exception e) {
+            log.error("⚠️  Failed to create test users (non-fatal): {}", e.getMessage(), e);
+            // Don't fail the entire sample load if user creation fails
         }
     }
     

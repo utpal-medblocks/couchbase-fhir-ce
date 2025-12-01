@@ -1,17 +1,26 @@
 package com.couchbase.admin.fhirBucket.service;
 
 import com.couchbase.admin.fhirBucket.model.*;
+import com.couchbase.admin.users.model.User;
+import com.couchbase.admin.users.service.UserService;
+import com.couchbase.common.config.AdminConfig;
 import com.couchbase.admin.fhirBucket.config.FhirBucketProperties;
 import com.couchbase.admin.connections.service.ConnectionService;
 import com.couchbase.admin.fts.config.FtsIndexCreator;
+import com.couchbase.admin.gsi.service.GsiIndexService;
 import com.couchbase.client.java.Cluster;
+import com.couchbase.client.java.Collection;
+import com.couchbase.client.java.json.JsonObject;
 import com.couchbase.fhir.resources.service.FhirBucketConfigService;
 import com.couchbase.fhir.resources.validation.FhirBucketValidator;
 import com.couchbase.client.java.manager.collection.CollectionManager;
 import com.couchbase.client.java.manager.collection.CollectionSpec;
+import com.nimbusds.jose.jwk.JWKSet;
+import com.nimbusds.jose.jwk.RSAKey;
 
 import com.couchbase.client.java.query.QueryOptions;
 import java.time.Duration;
+import java.time.Instant;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -43,6 +52,21 @@ public class FhirBucketService {
     
     @Autowired
     private FtsIndexCreator ftsIndexCreator;
+    
+    @Autowired
+    private GsiIndexService gsiIndexService;
+
+    @Autowired
+    private UserService userService;
+
+    @Autowired
+    private AdminConfig adminConfig;
+    
+    @Autowired(required = false)
+    private com.couchbase.fhir.auth.AuthorizationServerConfig authorizationServerConfig;
+    
+    @Autowired
+    private com.couchbase.admin.tokens.service.JwtTokenCacheService jwtTokenCacheService;
     
     // Store operation status
     private final Map<String, FhirConversionStatusDetail> operationStatus = new ConcurrentHashMap<>();
@@ -138,10 +162,41 @@ public class FhirBucketService {
             createFtsIndexes(connectionName, bucketName);
             status.setCompletedSteps(7);
             
-            // Step 8: Mark as FHIR bucket with custom configuration
+            // Step 8: Create GSI indexes (for Auth collections)
+            updateStatus(status, "create_gsi_indexes", "Creating GSI indexes from gsi-indexes.sql");
+            createGsiIndexes(cluster, bucketName);
+            status.setCompletedSteps(8);
+            
+            // Step 9: Mark as FHIR bucket with custom configuration
             updateStatus(status, "mark_as_fhir", "Marking bucket as FHIR-enabled");
             markAsFhirBucketWithConfig(bucketName, connectionName, request);
-            status.setCompletedSteps(8);
+            status.setCompletedSteps(9);
+
+            // Step 10: Seed initial Admin user from config.yaml (if not already present)
+            updateStatus(status, "create_admin_user", "Creating initial Admin user");
+            createInitialAdminUserIfNeeded();
+            status.setCompletedSteps(10);
+            
+            // Step 11: Persist OAuth signing key (same key used since startup)
+            updateStatus(status, "persist_oauth_key", "Persisting OAuth signing key");
+            createOAuthSigningKey(cluster, bucketName);
+            status.setCompletedSteps(11);
+            
+            // Reload JWT token cache after initialization completes
+            // This ensures the cache is ready for token validation
+            logger.info("🔐 Reloading JWT token cache after initialization...");
+            try {
+                jwtTokenCacheService.loadActiveTokens();
+                if (jwtTokenCacheService.isInitialized()) {
+                    int cacheSize = jwtTokenCacheService.getCacheSize();
+                    logger.info("✅ Token cache reloaded with {} active tokens", cacheSize);
+                } else {
+                    logger.info("✅ Token cache initialized (no tokens yet)");
+                }
+            } catch (Exception e) {
+                logger.warn("⚠️ Failed to reload token cache after initialization: {}", e.getMessage());
+                // Don't fail the initialization if cache reload fails
+            }
             
             // Completion
             status.setStatus(FhirConversionStatus.COMPLETED);
@@ -153,6 +208,43 @@ public class FhirBucketService {
             status.setStatus(FhirConversionStatus.FAILED);
             status.setErrorMessage(e.getMessage());
             status.setCurrentStepDescription("Conversion failed: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Create the initial Admin user based on config.yaml credentials, if it does not already exist.
+     * Uses local authentication so the Admin can later change their password via the Users UI.
+     */
+    private void createInitialAdminUserIfNeeded() {
+        try {
+            String email = adminConfig.getEmail();
+            String password = adminConfig.getPassword();
+            String name = adminConfig.getName();
+
+            if (email == null || email.isEmpty()) {
+                logger.warn("⚠️ Skipping initial Admin user creation: admin.email is not configured");
+                return;
+            }
+
+            // Check if user already exists
+            if (userService.getUserById(email).isPresent()) {
+                logger.info("👤 Initial Admin user '{}' already exists - skipping creation", email);
+                return;
+            }
+
+            User adminUser = new User();
+            adminUser.setId(email);               // Use email as ID (consistent with Admin UI)
+            adminUser.setUsername(name != null ? name : "Administrator");
+            adminUser.setEmail(email);
+            adminUser.setRole("admin");
+            adminUser.setAuthMethod("local");
+            adminUser.setPasswordHash(password);  // Will be hashed by UserService.createUser
+
+            userService.createUser(adminUser, "system");
+            logger.info("✅ Initial Admin user '{}' created successfully in Admin.users collection", email);
+        } catch (Exception e) {
+            // Do not fail bucket initialization if seeding the Admin user fails
+            logger.error("❌ Failed to create initial Admin user from config.yaml: {}", e.getMessage());
         }
     }
     
@@ -214,6 +306,11 @@ public class FhirBucketService {
             FhirBucketProperties.ScopeConfiguration scopeConfig = scopeEntry.getValue();
             
             for (FhirBucketProperties.CollectionConfiguration collection : scopeConfig.getCollections()) {
+                // Skip if collection has no indexes defined
+                if (collection.getIndexes() == null || collection.getIndexes().isEmpty()) {
+                    continue;
+                }
+                
                 for (FhirBucketProperties.IndexConfiguration index : collection.getIndexes()) {
                     try {
                         // Add null check and debug logging
@@ -287,6 +384,18 @@ public class FhirBucketService {
         }
     }
     
+    private void createGsiIndexes(Cluster cluster, String bucketName) throws Exception {
+        try {
+            // Use the GsiIndexService to create GSI indexes from gsi-indexes.sql
+            gsiIndexService.createGsiIndexes(cluster, bucketName);
+        } catch (Exception e) {
+            logger.error("❌ Failed to create GSI indexes for bucket: {}", bucketName, e);
+            // Don't throw the exception - continue with bucket creation
+            // Some GSI indexes might be critical but we'll let the system continue
+            logger.warn("⚠️ Continuing bucket creation - some GSI indexes may be missing");
+        }
+    }
+    
     private void markAsFhirBucketWithConfig(String bucketName, String connectionName, FhirConversionRequest request) throws Exception {
         // Get connection to insert the FHIR configuration document
         Cluster cluster = connectionService.getConnection(connectionName);
@@ -349,10 +458,15 @@ public class FhirBucketService {
         }
         
         // Create the comprehensive FHIR configuration document
+        // Format createdAt as human-readable: "November 14, 2025 at 10:30:45 PM PST"
+        java.time.ZonedDateTime now = java.time.ZonedDateTime.now();
+        java.time.format.DateTimeFormatter formatter = java.time.format.DateTimeFormatter.ofPattern("MMMM dd, yyyy 'at' hh:mm:ss a z");
+        String createdAtFormatted = now.format(formatter);
+        
         var fhirConfig = com.couchbase.client.java.json.JsonObject.create()
             .put("isFHIR", true)
-            .put("createdAt", java.time.Instant.now().toString())
-            .put("version", "1.0")
+            .put("createdAt", createdAtFormatted)
+            .put("version", "1")
             .put("description", "FHIR-enabled bucket configuration")
             .put("fhirRelease", customConfig != null && customConfig.getFhirRelease() != null ? 
                  customConfig.getFhirRelease() : "Release 4")
@@ -484,6 +598,94 @@ public class FhirBucketService {
             // Log the error but don't fail the check
             logger.error("REST check for FHIR config failed: {}", e.getMessage());
             return false;
+        }
+    }
+    
+    /**
+     * Persist the current in-memory OAuth signing key to fhir.Admin.config collection
+     * Called during FHIR bucket initialization (Step 11)
+     * Uses the SAME key that was generated on startup for authentication
+     */
+    private void createOAuthSigningKey(Cluster cluster, String bucketName) {
+        try {
+            Collection configCollection = cluster.bucket(bucketName).scope("Admin").collection("config");
+            
+            // Check if key already exists
+            try {
+                configCollection.get("oauth-signing-key");
+                logger.info("🔐 OAuth signing key already exists in fhir.Admin.config");
+                return;
+            } catch (com.couchbase.client.core.error.DocumentNotFoundException e) {
+                // Key doesn't exist, persist it
+            }
+            
+            // Get the CURRENT in-memory key from AuthorizationServerConfig
+            // This is the same key used for all JWTs issued since startup
+            RSAKey rsaKey = authorizationServerConfig.getCurrentKey();
+            if (rsaKey == null) {
+                throw new IllegalStateException("No OAuth signing key available to persist");
+            }
+            
+            String keyId = rsaKey.getKeyID();
+            logger.info("🔐 [STEP-11] Persisting in-memory OAuth signing key - hasPrivateKey: {}, kid: {}", rsaKey.isPrivate(), keyId);
+            
+            // Serialize the RSAKey directly (not via JWKSet) to ensure private parts are included
+            String jwkJson = rsaKey.toJSONString();
+            logger.info("🔐 [STEP-11] Serialized RSAKey JSON length: {} chars", jwkJson.length());
+            logger.debug("🔐 [STEP-11] RSAKey JSON (first 200 chars): {}", 
+                jwkJson.length() > 200 ? jwkJson.substring(0, 200) + "..." : jwkJson);
+            
+            // Wrap in JWKSet format
+            String jwkSetJson = String.format("{\"keys\":[%s]}", jwkJson);
+            logger.info("🔐 [STEP-11] Complete JWKSet JSON length: {} chars", jwkSetJson.length());
+            
+            // Verify it can be parsed back with private key
+            JWKSet testParse = JWKSet.parse(jwkSetJson);
+            RSAKey testKey = (RSAKey) testParse.getKeys().get(0);
+            logger.info("🔐 [STEP-11] Verification after parse - hasPrivateKey: {}", testKey.isPrivate());
+            
+            if (!testKey.isPrivate()) {
+                logger.error("❌ [STEP-11] BUG: Serialization lost private key! This should never happen.");
+                throw new IllegalStateException("JWKSet serialization lost private key");
+            }
+            
+            // Create document
+            // IMPORTANT: Store jwkSet as raw string to preserve private key parts
+            // JsonObject.fromJson() can strip private fields during re-serialization
+            JsonObject doc = JsonObject.create()
+                    .put("id", "oauth-signing-key")
+                    .put("type", "jwk")
+                    .put("jwkSetString", jwkSetJson)  // Store as string
+                    .put("createdAt", Instant.now().toString())
+                    .put("updatedAt", Instant.now().toString());
+            
+            configCollection.upsert("oauth-signing-key", doc);
+            logger.info("✅ Persisted OAuth signing key to fhir.Admin.config (kid: {})", keyId);
+            logger.info("🔐 All JWTs issued since startup remain valid - same key now persisted");
+            
+            // Verify what was actually saved by reading it back
+            try {
+                var savedDoc = configCollection.get("oauth-signing-key").contentAsObject();
+                String savedJwkStr = savedDoc.getString("jwkSetString");
+                JWKSet verifySet = JWKSet.parse(savedJwkStr);
+                RSAKey verifyKey = (RSAKey) verifySet.getKeys().get(0);
+                logger.info("🔐 [STEP-11] Verification after save - hasPrivateKey: {}", verifyKey.isPrivate());
+                if (!verifyKey.isPrivate()) {
+                    logger.error("❌ [STEP-11] Saved document lost private key!");
+                }
+            } catch (Exception e) {
+                logger.warn("⚠️ [STEP-11] Could not verify saved key: {}", e.getMessage());
+            }
+            
+            // Invalidate the cached key in AuthorizationServerConfig so it reloads from Couchbase
+            if (authorizationServerConfig != null) {
+                authorizationServerConfig.invalidateKeyCache();
+            }
+            
+        } catch (Exception e) {
+            // Don't fail initialization if key creation fails
+            logger.error("❌ Failed to create OAuth signing key: {}", e.getMessage(), e);
+            logger.warn("⚠️ OAuth tokens will use ephemeral key (won't survive restarts)");
         }
     }
 }

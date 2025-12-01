@@ -1,0 +1,72 @@
+import axios from "../config/axiosConfig";
+
+export interface Token {
+  id: string;
+  userId: string;
+  appName: string;
+  tokenHash: string;
+  clientId?: string;
+  status: "active" | "revoked" | "expired";
+  createdAt: string;
+  expiresAt: string;
+  lastUsedAt?: string;
+  createdBy: string;
+  scopes: string[];
+  type?: "pat" | "client";
+}
+
+export interface GenerateTokenRequest {
+  appName: string;
+  scopes: string[];
+  type?: "pat" | "client";
+}
+
+export interface GenerateTokenResponse {
+  token?: string; // The actual JWT token (for PATs)
+  clientId?: string; // For SMART Apps
+  clientSecret?: string; // For SMART Apps
+  tokenMetadata: Token;
+}
+
+/**
+ * Generate a new API token
+ */
+export const generateToken = async (
+  request: GenerateTokenRequest
+): Promise<GenerateTokenResponse> => {
+  const response = await axios.post<GenerateTokenResponse>(
+    "/api/admin/tokens",
+    request
+  );
+  return response.data;
+};
+
+/**
+ * Get tokens - returns all tokens for admin, user's tokens for others
+ */
+export const getMyTokens = async (): Promise<Token[]> => {
+  const response = await axios.get<Token[]>("/api/admin/tokens");
+  return response.data;
+};
+
+/**
+ * Get token by ID
+ */
+export const getTokenById = async (id: string): Promise<Token> => {
+  const response = await axios.get<Token>(`/api/admin/tokens/${id}`);
+  return response.data;
+};
+
+/**
+ * Revoke a token (marks as revoked)
+ */
+export const revokeToken = async (id: string): Promise<void> => {
+  await axios.put(`/api/admin/tokens/${id}/revoke`);
+};
+
+/**
+ * Permanently delete a token
+ */
+export const deleteToken = async (id: string): Promise<void> => {
+  await axios.delete(`/api/admin/tokens/${id}`);
+};

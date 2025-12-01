@@ -73,10 +73,10 @@ const FTSIndexes = React.memo(function FTSIndexes() {
     null
   );
 
-  // Derived state
+  // Derived state (single-tenant mode)
   const connectionId = connection?.connectionName;
-  const activeBucket = bucketStore.getActiveBucket(connectionId);
-  const selectedBucket = activeBucket?.bucketName || "";
+  const bucket = bucketStore.bucket;
+  const selectedBucket = bucket?.bucketName || "";
   const { indexes, loading, error, progressLoading } = ftsIndexStore;
 
   // Remove this console.log to prevent unnecessary re-renders

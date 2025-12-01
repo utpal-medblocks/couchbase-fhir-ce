@@ -44,11 +44,15 @@ public class BucketsController {
     @GetMapping("/fhir/details")
     public ResponseEntity<List<BucketDetails>> getFhirBucketDetails(@RequestParam String connectionName) {
         try {
-            // logger.info("Getting FHIR bucket details for connection: {}", connectionName);
+            logger.info("📦 Getting FHIR bucket details for connection: {}", connectionName);
             List<BucketDetails> bucketDetails = bucketsService.getFhirBucketDetails(connectionName);
+            logger.info("📊 Found {} FHIR bucket(s)", bucketDetails.size());
+            if (!bucketDetails.isEmpty()) {
+                bucketDetails.forEach(b -> logger.info("  - Bucket: {}", b.getBucketName()));
+            }
             return ResponseEntity.ok(bucketDetails);
         } catch (Exception e) {
-            logger.error("Failed to get FHIR bucket details: {}", e.getMessage());
+            logger.error("❌ Failed to get FHIR bucket details: {}", e.getMessage(), e);
             return ResponseEntity.internalServerError().build();
         }
     }

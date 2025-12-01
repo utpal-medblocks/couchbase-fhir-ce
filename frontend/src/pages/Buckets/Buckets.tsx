@@ -1,15 +1,5 @@
 import React, { useEffect } from "react";
-import {
-  Tabs,
-  Tab,
-  Box,
-  Alert,
-  AlertTitle,
-  Typography,
-  FormControl,
-  Select,
-  MenuItem,
-} from "@mui/material";
+import { Tabs, Tab, Box, Alert, AlertTitle, Typography } from "@mui/material";
 import BucketsMain from "./BucketsMain";
 import FtsIndexes from "./FtsIndexes";
 import Samples from "./Samples";
@@ -25,35 +15,26 @@ const Buckets = () => {
 
   // Get connection info from the new connection store
   const connection = useConnectionStore((state) => state.connection);
-  const connectionId = connection.connectionName;
 
-  // Get bucket store data
-  const bucketStore = useBucketStore();
-  const fhirBuckets = bucketStore.getFhirBuckets(connectionId);
-  const activeBucket = bucketStore.getActiveBucket(connectionId);
-
-  // Handle bucket selection
-  const handleBucketChange = (bucketName: string) => {
-    bucketStore.setActiveBucket(connectionId, bucketName);
-  };
+  // Get bucket store data (single-tenant mode)
+  const bucket = useBucketStore((state) => state.bucket);
+  const fetchBucketData = useBucketStore((state) => state.fetchBucketData);
 
   // Load initial bucket data only (no refresh interval)
+  // BucketsMain will handle its own refresh logic
   useEffect(() => {
     if (!connection.isConnected) {
       return;
     }
 
-    // Load initial data only once
-    const loadInitialData = async () => {
-      try {
-        await bucketStore.fetchBucketData(connectionId);
-      } catch (error) {
+    // Only fetch if we don't have bucket data yet
+    if (!bucket) {
+      console.log("📦 Buckets.tsx: Fetching initial bucket data");
+      fetchBucketData().catch((error) => {
         console.error("Failed to load initial bucket data:", error);
-      }
-    };
-
-    loadInitialData();
-  }, [connection.isConnected, connectionId]);
+      });
+    }
+  }, [connection.isConnected, bucket, fetchBucketData]);
 
   // Check if we have a valid connection
   if (!connection.isConnected) {
@@ -92,35 +73,9 @@ const Buckets = () => {
       >
         <Tabs value={selectedTab} onChange={handleChange} sx={{ flexGrow: 1 }}>
           <Tab label="Collections" />
-          <Tab disabled={!activeBucket} label="Samples" />
-          <Tab disabled={!activeBucket} label="FTS Indexes" />
+          <Tab disabled={!bucket} label="Samples" />
+          <Tab disabled={!bucket} label="FTS Indexes" />
         </Tabs>
-
-        {/* Bucket and Scope selectors on the right */}
-        <Box sx={{ display: "flex", alignItems: "center", gap: 2, pr: 2 }}>
-          <Typography variant="body2" sx={{ color: "primary.main" }}>
-            FHIR Bucket
-          </Typography>
-          <FormControl
-            variant="standard"
-            sx={{
-              minWidth: 150,
-              color: "GrayText",
-            }}
-            size="small"
-          >
-            <Select
-              value={activeBucket?.bucketName || ""}
-              onChange={(e) => handleBucketChange(e.target.value)}
-            >
-              {fhirBuckets.map((bucket) => (
-                <MenuItem key={bucket.bucketName} value={bucket.bucketName}>
-                  {bucket.bucketName}
-                </MenuItem>
-              ))}
-            </Select>
-          </FormControl>
-        </Box>
       </Box>
 
       {/* Tab Content */}

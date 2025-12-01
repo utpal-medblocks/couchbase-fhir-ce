@@ -39,7 +39,9 @@ import type { VersionHistoryItem } from "../../components/TimelineComponent";
 export default function FhirResources() {
   // Get stores and theme
   const connection = useConnectionStore((state) => state.connection);
-  const bucketStore = useBucketStore();
+  const bucket = useBucketStore((state) => state.bucket);
+  const collections = useBucketStore((state) => state.collections);
+  const fetchBucketData = useBucketStore((state) => state.fetchBucketData);
   const { themeMode } = useThemeContext();
 
   const connectionId = connection.connectionName;
@@ -84,55 +86,38 @@ export default function FhirResources() {
   const [selectedGeneralResourceType, setSelectedGeneralResourceType] =
     useState<string | null>(null);
 
-  // Get available buckets for FHIR (you might want to filter these)
-  const availableBuckets = bucketStore.buckets[connectionId] || [];
+  // Filter collections for "Resources" scope
+  const filteredCollections = collections
+    .filter(
+      (col) => col.scopeName === "Resources" && col.collectionName !== "General" // Filter out General collection
+    )
+    .sort((a, b) => {
+      // Always put "Patient" first
+      if (a.collectionName === "Patient") return -1;
+      if (b.collectionName === "Patient") return 1;
 
-  // Get collections for selected bucket and "Resources" scope
-  const collections = bucketStore.collections[connectionId] || [];
-  const filteredCollections = selectedBucket
-    ? collections
-        .filter(
-          (col) =>
-            col.bucketName === selectedBucket &&
-            col.scopeName === "Resources" &&
-            col.collectionName !== "General" // Filter out General collection
-        )
-        .sort((a, b) => {
-          // Always put "Patient" first
-          if (a.collectionName === "Patient") return -1;
-          if (b.collectionName === "Patient") return 1;
+      // Sort rest alphabetically
+      return a.collectionName.localeCompare(b.collectionName);
+    });
 
-          // Sort rest alphabetically
-          return a.collectionName.localeCompare(b.collectionName);
-        })
-    : [];
-
-  // Set default bucket if none selected and buckets are available
+  // Set default bucket (single-tenant: always "fhir")
   useEffect(() => {
-    if (!selectedBucket && availableBuckets.length > 0) {
-      // You might want to filter for FHIR buckets here
-      const fhirBucket =
-        availableBuckets.find(
-          (bucket) =>
-            bucket.bucketName.toLowerCase().includes("fhir") ||
-            bucket.bucketName.toLowerCase().includes("health")
-        ) || availableBuckets[0];
-      setSelectedBucket(fhirBucket.bucketName);
+    if (!selectedBucket && bucket) {
+      setSelectedBucket(bucket.bucketName);
     }
-  }, [availableBuckets, selectedBucket]);
+  }, [bucket, selectedBucket]);
 
   // Fetch bucket data on component mount and set up auto-refresh for collection counts
   useEffect(() => {
-    if (!connectionId) return;
+    if (!connection.isConnected) return;
 
     const refreshCollectionCounts = () => {
       console.log("🔄 Refreshing collection counts...");
-      return bucketStore.fetchBucketData(connectionId);
+      return fetchBucketData();
     };
 
     // Initial fetch
-    const buckets = bucketStore.buckets[connectionId] || [];
-    if (buckets.length === 0) {
+    if (!bucket) {
       console.log("🔄 Initial fetch of bucket data for collection counts...");
       refreshCollectionCounts();
     }
@@ -141,7 +126,7 @@ export default function FhirResources() {
     const interval = setInterval(refreshCollectionCounts, 20000);
 
     return () => clearInterval(interval);
-  }, [connectionId]);
+  }, [connection.isConnected, bucket, fetchBucketData]);
 
   // Fetch General resourceTypes on component mount
   useEffect(() => {
@@ -404,34 +389,6 @@ export default function FhirResources() {
         }}
       >
         <Typography variant="h6">FHIR Resources</Typography>
-        <Box sx={{ display: "flex", alignItems: "center", gap: 2, pr: 2 }}>
-          <Typography variant="body2" sx={{ color: "primary.main" }}>
-            FHIR Bucket
-          </Typography>
-          <FormControl
-            variant="standard"
-            sx={{
-              minWidth: 150,
-              color: "GrayText",
-            }}
-            size="small"
-          >
-            <Select
-              value={selectedBucket}
-              onChange={(e) => setSelectedBucket(e.target.value)}
-              displayEmpty
-            >
-              <MenuItem value="" disabled>
-                Select FHIR Bucket
-              </MenuItem>
-              {availableBuckets.map((bucket) => (
-                <MenuItem key={bucket.bucketName} value={bucket.bucketName}>
-                  {bucket.bucketName}
-                </MenuItem>
-              ))}
-            </Select>
-          </FormControl>
-        </Box>
       </Box>
 
       {/* Patient ID Search Box */}

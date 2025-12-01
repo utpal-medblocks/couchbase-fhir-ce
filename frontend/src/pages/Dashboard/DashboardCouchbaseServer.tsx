@@ -10,6 +10,9 @@ import {
   Typography,
   Button,
   Alert,
+  Card,
+  CardContent,
+  Divider,
 } from "@mui/material";
 
 // Hooks and services
@@ -36,7 +39,8 @@ const DashboardCouchbaseServer: React.FC = () => {
     error,
     backendReady,
   } = useConnectionStore();
-  const { fetchFhirConfig, getFhirConfig } = useBucketStore();
+  const { fetchFhirConfig, getFhirConfig, bucket, fetchBucketData } =
+    useBucketStore();
 
   // Local helper component for retry button with immediate polling
   const RetryAutoConnectButton: React.FC = () => {
@@ -106,6 +110,13 @@ const DashboardCouchbaseServer: React.FC = () => {
     theme.palette.mode === "dark" ? blueGrey[800] : blueGrey[50];
   const borderStyle = `1px solid ${borderColor}`;
 
+  // Fetch bucket data when connected
+  useEffect(() => {
+    if (connection.isConnected && !bucket) {
+      fetchBucketData();
+    }
+  }, [connection.isConnected, bucket, fetchBucketData]);
+
   // Poll metrics every 30 seconds when connected
   useEffect(() => {
     if (!connection.isConnected) {
@@ -162,13 +173,11 @@ const DashboardCouchbaseServer: React.FC = () => {
       if (!connection.connectionName || !buckets.length) return;
       setLoadingConfigs(true);
       try {
-        const fhirBuckets = buckets.filter((b: any) => b.isFhirBucket);
+        // Single-tenant mode: only one bucket named "fhir"
+        const fhirBuckets = buckets.filter((b: any) => b.name === "fhir");
         const results = await Promise.all(
           fhirBuckets.map(async (b: any) => {
-            const cfg = await fetchFhirConfig(
-              connection.connectionName!,
-              b.name
-            );
+            const cfg = await fetchFhirConfig();
             return { name: b.name, cfg };
           })
         );
@@ -483,162 +492,304 @@ const DashboardCouchbaseServer: React.FC = () => {
         </Table>
       </TableContainer>
 
-      {/* Buckets Table */}
-      <Typography variant="subtitle1" gutterBottom>
-        Buckets
+      {/* FHIR Bucket Information - 3 Panels */}
+      <Typography variant="subtitle1" gutterBottom sx={{ mt: 2 }}>
+        FHIR Bucket
       </Typography>
-      <TableContainer>
-        <Table size="small" sx={{ border: borderStyle }}>
-          <TableHead>
-            <TableRow>
-              <TableCell sx={tableHeaderStyle}>Name</TableCell>
-              <TableCell sx={tableHeaderStyle}>RAM Used</TableCell>
-              <TableCell sx={tableHeaderStyle}>Disk Used</TableCell>
-              <TableCell sx={tableHeaderStyle}>Items</TableCell>
-              <TableCell sx={tableHeaderStyle}>Status</TableCell>
-              <TableCell sx={tableHeaderStyle}>FHIR</TableCell>
-              <TableCell sx={tableHeaderStyle}>Profile</TableCell>
-            </TableRow>
-          </TableHead>
-          <TableBody>
-            {buckets.length > 0 ? (
-              buckets.map((bucket, index) => (
-                <TableRow key={index}>
-                  <TableCell sx={tableCellStyle}>{bucket.name}</TableCell>
-                  <TableCell sx={tableCellStyle}>
-                    {bucket.ramUsed} MB / {bucket.ramQuota} MB
-                  </TableCell>
-                  <TableCell sx={tableCellStyle}>
-                    {(bucket.diskUsed / 1024 / 1024).toFixed(0)} MB
-                  </TableCell>
-                  <TableCell sx={tableCellStyle}>
-                    {bucket.itemCount.toLocaleString()}
-                  </TableCell>
-                  <TableCell sx={tableCellStyle}>
-                    <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-                      <Box
-                        sx={{
-                          width: 8,
-                          height: 8,
-                          borderRadius: "50%",
-                          backgroundColor:
-                            bucket.status === "Ready"
-                              ? "success.main"
-                              : "warning.main",
-                        }}
-                      />
-                      {bucket.status || "Ready"}
-                    </Box>
-                  </TableCell>
-                  <TableCell sx={tableCellStyle}>
-                    {bucket.isFhirBucket ? (
-                      <Typography
-                        variant="body2"
-                        sx={{
-                          padding: "4px 12px",
-                          backgroundColor: "success.main",
-                          color: "success.contrastText",
-                          borderRadius: 1,
-                          display: "inline-block",
-                          fontSize: "0.75rem",
-                          fontWeight: "medium",
-                        }}
-                      >
-                        FHIR
+      {(() => {
+        // Use bucket from bucketStore (single-tenant: name === "fhir")
+        // Also get metrics from the metrics buckets array
+        const metricsData = buckets.find((b: any) => b.name === "fhir");
+        const fhirConfig = bucket ? getFhirConfig() : null;
+
+        // If no FHIR-enabled bucket found, the bucket might exist but not be initialized
+        // The initialization dialog will be shown by the InitializationProvider
+        if (!bucket) {
+          return (
+            <Alert severity="info">
+              FHIR bucket not yet initialized. Please complete initialization to see bucket details.
+            </Alert>
+          );
+        }
+
+        return (
+          <Box
+            sx={{
+              display: "flex",
+              flexDirection: { xs: "column", md: "row" },
+              gap: 1,
+            }}
+          >
+            {/* Panel 1: FHIR Configuration */}
+            <Box sx={{ flex: 1 }}>
+              <Box sx={tableHeaderStyle}>
+                <Typography
+                  variant="subtitle2"
+                  sx={{ m: 0, p: 0, lineHeight: 1, textAlign: "center" }}
+                >
+                  FHIR Configuration
+                </Typography>
+              </Box>
+              <Card
+                sx={{
+                  height: "90%",
+                  border: borderStyle,
+                }}
+              >
+                <CardContent>
+                  {fhirConfig ? (
+                    <Box
+                      sx={{
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: 0.5,
+                      }}
+                    >
+                      <Typography variant="body2" sx={{ lineHeight: 1.8 }}>
+                        <Box
+                          component="span"
+                          sx={{ color: "text.secondary", mr: 1 }}
+                        >
+                          Release:
+                        </Box>
+                        <Box component="span">
+                          {fhirConfig.fhirRelease || "N/A"}
+                        </Box>
                       </Typography>
-                    ) : (
-                      <Button
-                        size="small"
-                        sx={{
-                          textTransform: "none !important",
-                          padding: "0px 10px !important",
-                          marginX: "2px !important",
-                        }}
-                        onClick={(e) => {
-                          e.stopPropagation(); // Prevent row click
-                          handleToggleFhir(bucket.name);
-                        }}
+                      <Typography variant="body2" sx={{ lineHeight: 1.8 }}>
+                        <Box
+                          component="span"
+                          sx={{ color: "text.secondary", mr: 1 }}
+                        >
+                          Validation:
+                        </Box>
+                        <Box component="span">
+                          {fhirConfig.validation?.mode || "N/A"}
+                        </Box>
+                      </Typography>
+                      <Typography variant="body2" sx={{ lineHeight: 1.8 }}>
+                        <Box
+                          component="span"
+                          sx={{ color: "text.secondary", mr: 1 }}
+                        >
+                          Profile:
+                        </Box>
+                        <Box component="span">
+                          {fhirConfig.validation?.profile === "us-core" ? (
+                            <>
+                              <span role="img" aria-label="US Flag">
+                                🇺🇸
+                              </span>{" "}
+                              us-core
+                            </>
+                          ) : (
+                            fhirConfig.validation?.profile || "none"
+                          )}
+                        </Box>
+                      </Typography>
+                      <Typography variant="body2" sx={{ lineHeight: 1.8 }}>
+                        <Box
+                          component="span"
+                          sx={{ color: "text.secondary", mr: 1 }}
+                        >
+                          Version:
+                        </Box>
+                        <Box component="span">
+                          {fhirConfig.version || "N/A"}
+                        </Box>
+                      </Typography>
+                      <Typography variant="body2" sx={{ lineHeight: 1.8 }}>
+                        <Box
+                          component="span"
+                          sx={{ color: "text.secondary", mr: 1 }}
+                        >
+                          Created:
+                        </Box>
+                        <Box component="span">
+                          {fhirConfig.createdAt || "N/A"}
+                        </Box>
+                      </Typography>
+                    </Box>
+                  ) : (
+                    <Typography variant="body2" color="text.secondary">
+                      {loadingConfigs
+                        ? "Loading configuration..."
+                        : "FHIR configuration not available"}
+                    </Typography>
+                  )}
+                </CardContent>
+              </Card>
+            </Box>
+
+            {/* Panel 2: Bucket Configuration */}
+            <Box sx={{ flex: 1 }}>
+              <Box sx={tableHeaderStyle}>
+                <Typography
+                  variant="subtitle2"
+                  sx={{ m: 0, p: 0, lineHeight: 1, textAlign: "center" }}
+                >
+                  Bucket Configuration
+                </Typography>
+              </Box>
+
+              <Card
+                sx={{
+                  height: "90%",
+                  border: borderStyle,
+                }}
+              >
+                <CardContent>
+                  <Box
+                    sx={{ display: "flex", flexDirection: "column", gap: 0.5 }}
+                  >
+                    <Typography variant="body2" sx={{ lineHeight: 1.8 }}>
+                      <Box
+                        component="span"
+                        sx={{ color: "text.secondary", mr: 1 }}
                       >
-                        Add FHIR
-                      </Button>
-                    )}
-                  </TableCell>
-                  <TableCell sx={tableCellStyle}>
-                    {bucket.isFhirBucket ? (
-                      (() => {
-                        // Prefer local cache; fallback to store if not yet cached
-                        const cfg =
-                          bucketConfigs[bucket.name] !== undefined
-                            ? bucketConfigs[bucket.name]
-                            : connection.connectionName
-                            ? getFhirConfig(
-                                connection.connectionName,
-                                bucket.name
-                              )
-                            : null;
-                        if (cfg) {
-                          const profile = cfg.validation.profile;
-                          const mode = cfg.validation.mode;
-                          if (profile === "us-core") {
-                            return (
-                              <Typography
-                                variant="body2"
-                                sx={{
-                                  display: "flex",
-                                  alignItems: "center",
-                                  gap: 0.5,
-                                }}
-                              >
-                                <span role="img" aria-label="US Flag">
-                                  🇺🇸
-                                </span>{" "}
-                                us-core: {mode}
-                              </Typography>
-                            );
-                          }
-                          return (
-                            <Typography variant="body2">
-                              basic: {mode}
-                            </Typography>
-                          );
-                        }
-                        // Distinguish between not yet loaded vs loaded null config
-                        if (
-                          loadingConfigs &&
-                          bucketConfigs[bucket.name] === undefined
-                        ) {
-                          return (
-                            <Typography variant="body2" color="text.secondary">
-                              (loading)
-                            </Typography>
-                          );
-                        }
-                        return (
-                          <Typography
-                            variant="body2"
-                            color="text.secondary"
-                          ></Typography>
-                        );
-                      })()
-                    ) : (
-                      <Typography
-                        variant="body2"
-                        color="text.secondary"
-                      ></Typography>
-                    )}
-                  </TableCell>
-                </TableRow>
-              ))
-            ) : (
-              <TableRow>
-                <TableCell colSpan={7} sx={tableCellStyle} align="center">
-                  No buckets available
-                </TableCell>
-              </TableRow>
-            )}
-          </TableBody>
-        </Table>
-      </TableContainer>
+                        Type:
+                      </Box>
+                      <Box component="span">{bucket.bucketType || "N/A"}</Box>
+                    </Typography>
+                    <Typography variant="body2" sx={{ lineHeight: 1.8 }}>
+                      <Box
+                        component="span"
+                        sx={{ color: "text.secondary", mr: 1 }}
+                      >
+                        Storage:
+                      </Box>
+                      <Box component="span">
+                        {bucket.storageBackend || "N/A"}
+                      </Box>
+                    </Typography>
+                    <Typography variant="body2" sx={{ lineHeight: 1.8 }}>
+                      <Box
+                        component="span"
+                        sx={{ color: "text.secondary", mr: 1 }}
+                      >
+                        Replicas:
+                      </Box>
+                      <Box component="span">
+                        {bucket.replicaNumber ?? "N/A"}
+                      </Box>
+                    </Typography>
+                    <Typography variant="body2" sx={{ lineHeight: 1.8 }}>
+                      <Box
+                        component="span"
+                        sx={{ color: "text.secondary", mr: 1 }}
+                      >
+                        RAM Quota:
+                      </Box>
+                      <Box component="span">
+                        {bucket.ram
+                          ? `${(bucket.ram / 1024 / 1024).toFixed(0)} MB`
+                          : "N/A"}
+                      </Box>
+                    </Typography>
+                    <Typography variant="body2" sx={{ lineHeight: 1.8 }}>
+                      <Box
+                        component="span"
+                        sx={{ color: "text.secondary", mr: 1 }}
+                      >
+                        Durability:
+                      </Box>
+                      <Box component="span">
+                        {bucket.durabilityMinLevel || "none"}
+                      </Box>
+                    </Typography>
+                  </Box>
+                </CardContent>
+              </Card>
+            </Box>
+
+            {/* Panel 3: Metrics */}
+            <Box sx={{ flex: 1 }}>
+              <Box sx={tableHeaderStyle}>
+                <Typography
+                  variant="subtitle2"
+                  sx={{ m: 0, p: 0, lineHeight: 1, textAlign: "center" }}
+                >
+                  Metrics
+                </Typography>
+              </Box>
+              <Card
+                sx={{
+                  height: "90%",
+                  border: borderStyle,
+                }}
+              >
+                <CardContent>
+                  <Box
+                    sx={{ display: "flex", flexDirection: "column", gap: 0.5 }}
+                  >
+                    <Typography variant="body2" sx={{ lineHeight: 1.8 }}>
+                      <Box
+                        component="span"
+                        sx={{ color: "text.secondary", mr: 1 }}
+                      >
+                        Items:
+                      </Box>
+                      <Box component="span">
+                        {bucket.itemCount?.toLocaleString() || "0"}
+                      </Box>
+                    </Typography>
+                    <Typography variant="body2" sx={{ lineHeight: 1.8 }}>
+                      <Box
+                        component="span"
+                        sx={{ color: "text.secondary", mr: 1 }}
+                      >
+                        Ops/sec:
+                      </Box>
+                      <Box component="span">
+                        {bucket.opsPerSec?.toFixed(2) || "0"}
+                      </Box>
+                    </Typography>
+                    <Typography variant="body2" sx={{ lineHeight: 1.8 }}>
+                      <Box
+                        component="span"
+                        sx={{ color: "text.secondary", mr: 1 }}
+                      >
+                        Disk Used:
+                      </Box>
+                      <Box component="span">
+                        {bucket.diskUsed
+                          ? `${(bucket.diskUsed / 1024 / 1024).toFixed(2)} MB`
+                          : "0 MB"}
+                      </Box>
+                    </Typography>
+                    <Typography variant="body2" sx={{ lineHeight: 1.8 }}>
+                      <Box
+                        component="span"
+                        sx={{ color: "text.secondary", mr: 1 }}
+                      >
+                        Quota Used:
+                      </Box>
+                      <Box component="span">
+                        {bucket.quotaPercentUsed
+                          ? `${bucket.quotaPercentUsed.toFixed(1)}%`
+                          : "0%"}
+                      </Box>
+                    </Typography>
+                    <Typography variant="body2" sx={{ lineHeight: 1.8 }}>
+                      <Box
+                        component="span"
+                        sx={{ color: "text.secondary", mr: 1 }}
+                      >
+                        Resident %:
+                      </Box>
+                      <Box component="span">
+                        {bucket.residentRatio
+                          ? `${bucket.residentRatio.toFixed(1)}%`
+                          : "0%"}
+                      </Box>
+                    </Typography>
+                  </Box>
+                </CardContent>
+              </Card>
+            </Box>
+          </Box>
+        );
+      })()}
 
       {/* Detailed FHIR configuration panel removed per requirements */}
 
