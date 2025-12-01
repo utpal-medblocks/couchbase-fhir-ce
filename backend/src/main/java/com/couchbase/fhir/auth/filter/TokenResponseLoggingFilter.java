@@ -101,8 +101,44 @@ public class TokenResponseLoggingFilter implements Filter {
                     if (json.containsKey("patient")) {
                         logger.info("✅ [PATIENT-CLAIM] Found 'patient' in top-level response: {}", json.get("patient"));
                     } else {
-                        logger.warn("⚠️ [PATIENT-CLAIM] 'patient' NOT found in top-level response!");
-                        logger.warn("⚠️ Available keys: {}", json.keySet());
+                        logger.warn("⚠️ [PATIENT-CLAIM] 'patient' NOT found in top-level response (will attempt injection from JWT)...");
+                        logger.debug("⚠️ Available keys before injection: {}", json.keySet());
+                        // Attempt injection from access_token JWT payload
+                        Object atVal = json.get("access_token");
+                        if (atVal instanceof String atStr && atStr.contains(".")) {
+                            try {
+                                String[] parts = atStr.split("\\.");
+                                if (parts.length >= 2) {
+                                    String payload = new String(java.util.Base64.getUrlDecoder().decode(parts[1]));
+                                    Map<String, Object> claims = (Map<String, Object>) objectMapper.readValue(payload, Map.class);
+                                    Object patientClaim = claims.get("patient");
+                                    if (patientClaim != null) {
+                                        json.put("patient", patientClaim);
+                                        logger.info("✅ [PATIENT-INJECT] Injected top-level 'patient' from JWT claims: {}", patientClaim);
+                                    } else {
+                                        logger.warn("⚠️ [PATIENT-INJECT] JWT contains no 'patient' claim. Claims keys: {}", claims.keySet());
+                                    }
+                                }
+                            } catch (Exception e) {
+                                logger.warn("⚠️ [PATIENT-INJECT] Failed to decode access_token for patient extraction: {}", e.getMessage());
+                            }
+                        } else {
+                            logger.warn("⚠️ [PATIENT-INJECT] access_token missing or not JWT formatted; cannot inject 'patient'.");
+                        }
+                        // If we injected, rewrite response body
+                        if (json.containsKey("patient") && !responseBody.contains("\"patient\"")) {
+                            try {
+                                String rewritten = objectMapper.writeValueAsString(json);
+                                responseWrapper.resetBuffer();
+                                responseWrapper.setContentType("application/json");
+                                responseWrapper.getOutputStream().write(rewritten.getBytes(StandardCharsets.UTF_8));
+                                logger.info("🛠️ [PATIENT-INJECT] Response body rewritten with top-level 'patient'.");
+                                // Update reference body for trailing separator logging
+                                responseBody = rewritten;
+                            } catch (Exception e) {
+                                logger.error("❌ [PATIENT-INJECT] Failed to rewrite response with injected patient: {}", e.getMessage());
+                            }
+                        }
                     }
                     
                 } catch (Exception e) {
