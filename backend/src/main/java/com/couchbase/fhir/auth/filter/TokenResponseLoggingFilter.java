@@ -25,15 +25,24 @@ public class TokenResponseLoggingFilter implements Filter {
     private static final ObjectMapper objectMapper = new ObjectMapper();
 
     @Override
+    public void init(FilterConfig filterConfig) throws ServletException {
+        logger.info("🔧 [TOKEN-FILTER] TokenResponseLoggingFilter initialized");
+    }
+
+    @Override
     public void doFilter(ServletRequest request, ServletResponse response, FilterChain chain)
             throws IOException, ServletException {
         
         HttpServletRequest httpRequest = (HttpServletRequest) request;
         HttpServletResponse httpResponse = (HttpServletResponse) response;
 
-        // Only log token endpoint responses; handle possible context paths (e.g., "/fhir/oauth2/token")
         String uri = httpRequest.getRequestURI();
         String servletPath = httpRequest.getServletPath();
+        String contextPath = httpRequest.getContextPath();
+        
+        logger.debug("🔍 [TOKEN-FILTER] Request: URI={}, ServletPath={}, ContextPath={}", uri, servletPath, contextPath);
+
+        // Only log token endpoint responses; handle possible context paths (e.g., "/fhir/oauth2/token")
         boolean isTokenEndpoint = (uri != null && uri.endsWith("/oauth2/token")) ||
                                   (servletPath != null && servletPath.endsWith("/oauth2/token"));
         if (!isTokenEndpoint) {
@@ -41,7 +50,8 @@ public class TokenResponseLoggingFilter implements Filter {
             return;
         }
 
-        logger.info("🎫 [TOKEN-ENDPOINT] Request received: {} {} (servletPath={})", httpRequest.getMethod(), uri, servletPath);
+        logger.info("🎫 [TOKEN-ENDPOINT] ✅ Token request intercepted: {} {} (servletPath={}, contextPath={})", 
+            httpRequest.getMethod(), uri, servletPath, contextPath);
         
         // Wrap response to capture the content
         ContentCachingResponseWrapper responseWrapper = new ContentCachingResponseWrapper(httpResponse);
