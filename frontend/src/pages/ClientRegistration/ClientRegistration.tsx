@@ -32,6 +32,7 @@ import {
   Collapse,
   Divider,
   CircularProgress,
+  Snackbar,
 } from "@mui/material";
 import {
   Add as AddIcon,
@@ -44,6 +45,7 @@ import {
   ExpandLess as ExpandLessIcon,
   CheckCircle as CheckCircleIcon,
   Refresh as RefreshIcon,
+  Block as BlockIcon,
 } from "@mui/icons-material";
 import { BsKey } from "react-icons/bs";
 import type { OAuthClient } from "../../services/oauthClientService";
@@ -51,6 +53,7 @@ import {
   getAllClients,
   createClient as createClientAPI,
   revokeClient as revokeClientAPI,
+  deleteClient as deleteClientAPI,
 } from "../../services/oauthClientService";
 
 // OAuth Client interface (will be shared with backend later)
@@ -197,6 +200,12 @@ const ClientRegistration: React.FC = () => {
   const [redirectUriInput, setRedirectUriInput] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [copySnackbar, setCopySnackbar] = useState(false);
+  const [revokeDialogOpen, setRevokeDialogOpen] = useState(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [selectedClient, setSelectedClient] = useState<OAuthClient | null>(
+    null
+  );
   // New scopes UI state
   const [scopeMode, setScopeMode] = useState<"custom" | "all-read" | "us-core">(
     "custom"
@@ -352,7 +361,7 @@ const ClientRegistration: React.FC = () => {
 
   const handleCopyToClipboard = (text: string) => {
     navigator.clipboard.writeText(text);
-    // Could add a toast notification here
+    setCopySnackbar(true);
   };
 
   const handleRevokeClient = async (clientId: string) => {
@@ -360,9 +369,20 @@ const ClientRegistration: React.FC = () => {
       setError(null);
       await revokeClientAPI(clientId);
       setSuccess("Client revoked successfully");
-      loadClients(); // Reload list
+      loadClients();
     } catch (err: any) {
       setError(err.response?.data?.error || "Failed to revoke OAuth client");
+    }
+  };
+
+  const handleDeleteClient = async (clientId: string) => {
+    try {
+      setError(null);
+      await deleteClientAPI(clientId);
+      setSuccess("Client permanently deleted");
+      loadClients();
+    } catch (err: any) {
+      setError(err.response?.data?.error || "Failed to delete OAuth client");
     }
   };
 
@@ -375,6 +395,7 @@ const ClientRegistration: React.FC = () => {
           justifyContent: "space-between",
           alignItems: "center",
           mb: 2,
+          gap: 2,
         }}
       >
         <Box>
@@ -392,7 +413,7 @@ const ClientRegistration: React.FC = () => {
         </Button>
       </Box>
       {/* Registered Clients Table */}
-      <Card>
+      <Card sx={{ width: "100%", minHeight: 200 }}>
         <CardContent>
           {loading ? (
             <Box sx={{ display: "flex", justifyContent: "center", p: 4 }}>
@@ -409,7 +430,7 @@ const ClientRegistration: React.FC = () => {
               </Typography>
             </Box>
           ) : (
-            <TableContainer component={Paper} elevation={0}>
+            <TableContainer component={Paper}>
               <Table>
                 <TableHead>
                   <TableRow>
@@ -425,7 +446,7 @@ const ClientRegistration: React.FC = () => {
                 </TableHead>
                 <TableBody>
                   {clients.map((client) => (
-                    <TableRow key={client.clientId}>
+                    <TableRow key={client.clientId} hover>
                       <TableCell>
                         <Typography variant="body2" fontWeight="medium">
                           {client.clientName}
@@ -480,15 +501,38 @@ const ClientRegistration: React.FC = () => {
                         </Typography>
                       </TableCell>
                       <TableCell align="right">
-                        {client.status === "active" && (
-                          <Button
+                        <Tooltip
+                          title={
+                            client.status === "revoked"
+                              ? "Already revoked"
+                              : "Revoke client"
+                          }
+                        >
+                          <span>
+                            <IconButton
+                              size="small"
+                              onClick={() => {
+                                setSelectedClient(client);
+                                setRevokeDialogOpen(true);
+                              }}
+                              disabled={client.status === "revoked"}
+                              color="warning"
+                            >
+                              <BlockIcon fontSize="small" />
+                            </IconButton>
+                          </span>
+                        </Tooltip>
+                        <Tooltip title="Permanently delete">
+                          <IconButton
                             size="small"
-                            color="error"
-                            onClick={() => handleRevokeClient(client.clientId)}
+                            onClick={() => {
+                              setSelectedClient(client);
+                              setDeleteDialogOpen(true);
+                            }}
                           >
-                            Revoke
-                          </Button>
-                        )}
+                            <DeleteIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
                       </TableCell>
                     </TableRow>
                   ))}
@@ -1010,6 +1054,81 @@ const ClientRegistration: React.FC = () => {
           </Button>
         </DialogActions>
       </Dialog>
+
+      {/* Revoke Client Dialog */}
+      <Dialog
+        open={revokeDialogOpen}
+        onClose={() => setRevokeDialogOpen(false)}
+      >
+        <DialogTitle>Revoke Client?</DialogTitle>
+        <DialogContent>
+          <Typography>
+            Are you sure you want to revoke{" "}
+            <strong>{selectedClient?.clientName}</strong>? This will immediately
+            disable the client but keep it in the database. Revoked clients
+            cannot be reactivated.
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setRevokeDialogOpen(false)}>Cancel</Button>
+          <Button
+            onClick={async () => {
+              if (selectedClient) {
+                await handleRevokeClient(selectedClient.clientId);
+                setRevokeDialogOpen(false);
+                setSelectedClient(null);
+              }
+            }}
+            color="warning"
+            variant="contained"
+          >
+            Revoke
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Delete Client Dialog */}
+      <Dialog
+        open={deleteDialogOpen}
+        onClose={() => setDeleteDialogOpen(false)}
+      >
+        <DialogTitle>Permanently Delete Client</DialogTitle>
+        <DialogContent>
+          <Typography color="error" sx={{ mb: 1 }}>
+            ⚠️ <strong>WARNING: This action cannot be undone!</strong>
+          </Typography>
+          <Typography>
+            Are you sure you want to permanently delete{" "}
+            <strong>{selectedClient?.clientName}</strong>? This will remove all
+            client data from the system.
+          </Typography>
+          <Typography sx={{ mt: 2 }} color="text.secondary">
+            Consider using "Revoke" instead to keep the client record.
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setDeleteDialogOpen(false)}>Cancel</Button>
+          <Button
+            onClick={async () => {
+              if (selectedClient) {
+                await handleDeleteClient(selectedClient.clientId);
+                setDeleteDialogOpen(false);
+                setSelectedClient(null);
+              }
+            }}
+            variant="contained"
+          >
+            Permanently Delete
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Snackbar
+        open={copySnackbar}
+        autoHideDuration={2000}
+        onClose={() => setCopySnackbar(false)}
+        message="Copied to clipboard!"
+      />
     </Box>
   );
 };

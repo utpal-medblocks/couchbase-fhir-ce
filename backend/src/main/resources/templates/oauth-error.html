@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>OAuth Authorization Error</title>
+    <style>
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+          Oxygen, Ubuntu, Cantarell, sans-serif;
+        background: #fafafa;
+        margin: 0;
+        padding: 24px;
+      }
+      .card {
+        max-width: 560px;
+        margin: 40px auto;
+        background: #fff;
+        border: 1px solid #e0e0e0;
+        border-radius: 8px;
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.06);
+      }
+      .header {
+        padding: 16px 20px;
+        border-bottom: 1px solid #eee;
+      }
+      .header h1 {
+        font-size: 18px;
+        margin: 0;
+      }
+      .content {
+        padding: 20px;
+      }
+      .error {
+        color: #b00020;
+        font-weight: 600;
+      }
+      .mono {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+          "Liberation Mono", "Courier New", monospace;
+      }
+      .footer {
+        padding: 16px 20px;
+        border-top: 1px solid #eee;
+        font-size: 12px;
+        color: #666;
+      }
+      .hint {
+        background: #fff3cd;
+        border: 1px solid #ffe69c;
+        border-radius: 6px;
+        padding: 12px;
+        margin-top: 16px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <div class="header">
+        <h1>Authorization Request Error</h1>
+      </div>
+      <div class="content">
+        <p class="error">
+          An error occurred while processing the authorization request.
+        </p>
+        <p>
+          <strong>Error:</strong>
+          <span class="mono" th:text="${errorCode}">invalid_request</span>
+        </p>
+        <p>
+          <strong>Description:</strong>
+          <span th:text="${errorDescription}">Invalid redirect_uri</span>
+        </p>
+        <div class="hint">
+          <p><strong>How to fix:</strong></p>
+          <ul>
+            <li>
+              Ensure the <span class="mono">redirect_uri</span> exactly matches
+              one of the URIs registered for this client.
+            </li>
+            <li>
+              Verify the <span class="mono">client_id</span>,
+              <span class="mono">response_type</span>, and
+              <span class="mono">scope</span> parameters are correct.
+            </li>
+            <li>Try the request again from your client application.</li>
+          </ul>
+        </div>
+      </div>
+      <div class="footer">
+        <p>If this persists, contact your administrator.</p>
+      </div>
+    </div>
+  </body>
+</html>
