@@ -101,11 +101,28 @@ public class SmartTokenEnhancerFilter implements Filter {
                                 
                                 logger.info("📦 [SMART-ENHANCER] Modified response length: {} bytes", modifiedData.length);
                                 logger.info("📦 [SMART-ENHANCER] Modified keys: {}", tokenResponse.keySet());
+                                logger.info("📄 [SMART-ENHANCER] FINAL JSON RESPONSE:");
+                                logger.info("════════════════════════════════════════════════════════════");
+                                logger.info("{");
+                                logger.info("  \"access_token\": \"{}...\",", ((String) tokenResponse.get("access_token")).substring(0, 50));
+                                logger.info("  \"refresh_token\": \"{}...\",", tokenResponse.get("refresh_token") != null ? 
+                                    ((String) tokenResponse.get("refresh_token")).substring(0, 20) : "null");
+                                logger.info("  \"scope\": \"{}\",", tokenResponse.get("scope"));
+                                logger.info("  \"id_token\": \"{}...\",", ((String) tokenResponse.get("id_token")).substring(0, 50));
+                                logger.info("  \"token_type\": \"{}\",", tokenResponse.get("token_type"));
+                                logger.info("  \"expires_in\": {},", tokenResponse.get("expires_in"));
+                                logger.info("  \"patient\": \"{}\"  👈 INJECTED FOR INFERNO!", tokenResponse.get("patient"));
+                                logger.info("}");
                                 logger.info("════════════════════════════════════════════════════════════");
                                 
-                                // Write modified response
+                                // Write modified response with proper headers
+                                httpResponse.reset(); // Clear any existing data
+                                httpResponse.setStatus(HttpServletResponse.SC_OK);
+                                httpResponse.setContentType("application/json");
+                                httpResponse.setCharacterEncoding("UTF-8");
                                 httpResponse.setContentLength(modifiedData.length);
                                 httpResponse.getOutputStream().write(modifiedData);
+                                httpResponse.getOutputStream().flush();
                                 return;
                             } else {
                                 logger.warn("⚠️ [SMART-ENHANCER] No patient claim in JWT. Claims: {}", claims.keySet());
@@ -121,7 +138,13 @@ public class SmartTokenEnhancerFilter implements Filter {
             }
             
             // Write original response if no modification was made
+            logger.info("📝 [SMART-ENHANCER] Writing original response ({} bytes)", responseData.length);
+            httpResponse.setStatus(HttpServletResponse.SC_OK);
+            httpResponse.setContentType("application/json");
+            httpResponse.setCharacterEncoding("UTF-8");
+            httpResponse.setContentLength(responseData.length);
             httpResponse.getOutputStream().write(responseData);
+            httpResponse.getOutputStream().flush();
             
         } else {
             // Not a token endpoint request, pass through
@@ -130,7 +153,7 @@ public class SmartTokenEnhancerFilter implements Filter {
     }
 
     /**
-     * Response wrapper that captures the response data
+     * Response wrapper that ONLY captures the response data without writing through
      */
     private static class ResponseCaptureWrapper extends HttpServletResponseWrapper {
         private final ByteArrayOutputStream capture = new ByteArrayOutputStream();
@@ -159,14 +182,12 @@ public class SmartTokenEnhancerFilter implements Filter {
 
                     @Override
                     public void write(int b) throws IOException {
-                        capture.write(b);
-                        ResponseCaptureWrapper.super.getOutputStream().write(b);
+                        capture.write(b); // Only capture, don't write through
                     }
 
                     @Override
                     public void write(byte[] b, int off, int len) throws IOException {
-                        capture.write(b, off, len);
-                        ResponseCaptureWrapper.super.getOutputStream().write(b, off, len);
+                        capture.write(b, off, len); // Only capture, don't write through
                     }
                 };
             }
