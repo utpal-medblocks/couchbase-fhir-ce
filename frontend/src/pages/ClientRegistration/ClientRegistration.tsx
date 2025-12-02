@@ -72,25 +72,39 @@ interface OAuthClientForm {
   lastUsed?: string;
 }
 
-// Mandatory SMART scopes (cannot be removed)
-const MANDATORY_SCOPES = [
-  {
-    value: "launch/patient",
-    label: "launch/patient",
-    description: "Patient context at launch",
-  },
-  {
-    value: "openid",
-    label: "openid",
-    description: "OpenID Connect authentication",
-  },
-  { value: "fhirUser", label: "fhirUser", description: "User identity claim" },
-  {
-    value: "offline_access",
-    label: "offline_access",
-    description: "Refresh tokens for offline access",
-  },
-];
+// Mandatory SMART scopes factory (cannot be removed)
+const getMandatoryScopes = (clientType: "patient" | "provider" | "system") => {
+  const base = [
+    {
+      value: "openid",
+      label: "openid",
+      description: "OpenID Connect authentication",
+    },
+    {
+      value: "fhirUser",
+      label: "fhirUser",
+      description: "User identity claim",
+    },
+    {
+      value: "offline_access",
+      label: "offline_access",
+      description: "Refresh tokens for offline access",
+    },
+  ];
+  const launchScope =
+    clientType === "patient"
+      ? {
+          value: "launch/patient",
+          label: "launch/patient",
+          description: "Patient context at launch",
+        }
+      : {
+          value: "launch",
+          label: "launch",
+          description: "App launched with user or system context",
+        };
+  return [launchScope, ...base];
+};
 
 // US Core resource scopes for ONC certification (25 resources)
 const US_CORE_RESOURCE_SCOPES = [
@@ -183,11 +197,11 @@ const ClientRegistration: React.FC = () => {
   const [redirectUriInput, setRedirectUriInput] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
-  const [usCoreExpanded, setUsCoreExpanded] = useState(false);
-  const [usCoreEnabled, setUsCoreEnabled] = useState(true);
-  const [selectedUsCoreScopes, setSelectedUsCoreScopes] = useState<string[]>(
-    US_CORE_RESOURCE_SCOPES
+  // New scopes UI state
+  const [scopeMode, setScopeMode] = useState<"custom" | "all-read" | "us-core">(
+    "custom"
   );
+  const [scopesText, setScopesText] = useState<string>("");
 
   // Load clients on mount
   useEffect(() => {
@@ -220,18 +234,15 @@ const ClientRegistration: React.FC = () => {
       authenticationType: "public",
       launchType: "standalone",
       redirectUris: [],
-      scopes: [
-        ...MANDATORY_SCOPES.map((s) => s.value),
-        ...US_CORE_RESOURCE_SCOPES,
-      ],
+      scopes: getMandatoryScopes("patient").map((s) => s.value),
       pkceEnabled: true,
       pkceMethod: "S256",
     });
     setRedirectUriInput("");
     setError(null);
-    setUsCoreEnabled(true);
-    setUsCoreExpanded(false);
-    setSelectedUsCoreScopes(US_CORE_RESOURCE_SCOPES);
+    // Reset new scopes UI
+    setScopeMode("custom");
+    setScopesText("");
   };
 
   const handleAddRedirectUri = () => {
@@ -265,66 +276,25 @@ const ClientRegistration: React.FC = () => {
     });
   };
 
-  const handleOptionalScopeToggle = (scope: string) => {
-    const currentScopes = formData.scopes;
-    if (currentScopes.includes(scope)) {
-      setFormData({
-        ...formData,
-        scopes: currentScopes.filter((s) => s !== scope),
-      });
-    } else {
-      setFormData({
-        ...formData,
-        scopes: [...currentScopes, scope],
-      });
+  // Scopes preset handler
+  const applyScopePreset = (mode: "custom" | "all-read" | "us-core") => {
+    setScopeMode(mode);
+    if (mode === "custom") {
+      setScopesText("");
+    } else if (mode === "all-read") {
+      // Single-patient: prefer read-only
+      setScopesText("patient/*.read");
+    } else if (mode === "us-core") {
+      setScopesText(US_CORE_RESOURCE_SCOPES.join(" "));
     }
   };
 
-  const handleUsCoreToggle = () => {
-    const newUsCoreEnabled = !usCoreEnabled;
-    setUsCoreEnabled(newUsCoreEnabled);
-
-    if (newUsCoreEnabled) {
-      // Add all selected US Core scopes
-      const mandatoryScopes = MANDATORY_SCOPES.map((s) => s.value);
-      const otherScopes = formData.scopes.filter(
-        (s) =>
-          !US_CORE_RESOURCE_SCOPES.includes(s) && !mandatoryScopes.includes(s)
-      );
-      setFormData({
-        ...formData,
-        scopes: [...mandatoryScopes, ...otherScopes, ...selectedUsCoreScopes],
-      });
-    } else {
-      // Remove all US Core scopes
-      setFormData({
-        ...formData,
-        scopes: formData.scopes.filter(
-          (s) => !US_CORE_RESOURCE_SCOPES.includes(s)
-        ),
-      });
-    }
-  };
-
-  const handleUsCoreResourceToggle = (resource: string) => {
-    const newSelected = selectedUsCoreScopes.includes(resource)
-      ? selectedUsCoreScopes.filter((s) => s !== resource)
-      : [...selectedUsCoreScopes, resource];
-
-    setSelectedUsCoreScopes(newSelected);
-
-    // Update formData if US Core is enabled
-    if (usCoreEnabled) {
-      const mandatoryScopes = MANDATORY_SCOPES.map((s) => s.value);
-      const otherScopes = formData.scopes.filter(
-        (s) =>
-          !US_CORE_RESOURCE_SCOPES.includes(s) && !mandatoryScopes.includes(s)
-      );
-      setFormData({
-        ...formData,
-        scopes: [...mandatoryScopes, ...otherScopes, ...newSelected],
-      });
-    }
+  // Parse scopesText into array (space-delimited)
+  const parsedOptionalScopes = (text: string) => {
+    return text
+      .split(/\s+/)
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0);
   };
 
   const handleRegisterClient = async () => {
@@ -337,7 +307,16 @@ const ClientRegistration: React.FC = () => {
       setError("At least one redirect URI is required");
       return;
     }
-    if (formData.scopes.length === 0) {
+    // Build final scopes: mandatory + parsed from textarea
+    const mandatoryScopes = getMandatoryScopes(formData.clientType).map(
+      (s) => s.value
+    );
+    const optionalScopes = parsedOptionalScopes(scopesText);
+    const finalScopes = Array.from(
+      new Set([...mandatoryScopes, ...optionalScopes])
+    );
+
+    if (finalScopes.length === 0) {
       setError("At least one scope is required");
       return;
     }
@@ -353,7 +332,7 @@ const ClientRegistration: React.FC = () => {
         authenticationType: formData.authenticationType,
         launchType: formData.launchType,
         redirectUris: formData.redirectUris,
-        scopes: formData.scopes,
+        scopes: finalScopes,
         pkceEnabled: formData.pkceEnabled,
         pkceMethod: formData.pkceMethod,
       });
@@ -796,7 +775,7 @@ const ClientRegistration: React.FC = () => {
                 <Box
                   sx={{ display: "flex", flexWrap: "wrap", gap: 0.5, mt: 1 }}
                 >
-                  {MANDATORY_SCOPES.map((scope) => (
+                  {getMandatoryScopes(formData.clientType).map((scope) => (
                     <Chip
                       key={scope.value}
                       label={scope.value}
@@ -810,164 +789,71 @@ const ClientRegistration: React.FC = () => {
 
               <Divider sx={{ my: 2 }} />
 
-              {/* US Core Resources - Expandable Mega Chip */}
-              {formData.clientType === "patient" && (
-                <Box sx={{ mb: 2 }}>
-                  <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
-                    <FormControlLabel
-                      sx={{ m: 0 }}
-                      control={
-                        <Checkbox
-                          size="small"
-                          checked={usCoreEnabled}
-                          onChange={handleUsCoreToggle}
-                        />
+              {/* New scopes preset toggle + textarea */}
+              <Box>
+                <Box
+                  sx={{ display: "flex", alignItems: "center", gap: 2, mb: 1 }}
+                >
+                  <FormLabel component="legend" sx={{ mb: 0 }}>
+                    Add
+                  </FormLabel>
+                  <ToggleButtonGroup
+                    exclusive
+                    size="small"
+                    color="primary"
+                    value={scopeMode}
+                    onChange={(_, newValue) => {
+                      if (newValue) {
+                        applyScopePreset(newValue);
                       }
-                      label={
-                        <Box
-                          sx={{ display: "flex", alignItems: "center", gap: 1 }}
-                        >
-                          <Typography variant="body2" fontWeight="medium">
-                            US Core Resources
-                          </Typography>
-                          <Chip
-                            label={`${selectedUsCoreScopes.length}/${US_CORE_RESOURCE_SCOPES.length} resources`}
-                            size="small"
-                            variant="outlined"
-                            color="info"
-                          />
-                        </Box>
-                      }
-                    />
-                    {usCoreEnabled && (
-                      <Button
-                        size="small"
-                        onClick={() => setUsCoreExpanded(!usCoreExpanded)}
-                        endIcon={
-                          usCoreExpanded ? (
-                            <ExpandLessIcon />
-                          ) : (
-                            <ExpandMoreIcon />
-                          )
-                        }
-                      >
-                        {usCoreExpanded ? "Hide" : "Show"} Resources
-                      </Button>
-                    )}
-                  </Box>
-                  <Typography
-                    variant="caption"
-                    color="text.secondary"
-                    sx={{ ml: 4, display: "block", mb: 1 }}
+                    }}
                   >
-                    ONC-required FHIR resources for patient access
-                  </Typography>
-                  {usCoreEnabled && (
-                    <Collapse in={usCoreExpanded}>
-                      <Paper
-                        variant="outlined"
-                        sx={{
-                          p: 2,
-                          mt: 1,
-                          maxHeight: 200,
-                          overflow: "auto",
-                          ml: 4,
-                        }}
-                      >
-                        <FormGroup>
-                          {US_CORE_RESOURCE_SCOPES.map((resource) => (
-                            <FormControlLabel
-                              key={resource}
-                              control={
-                                <Checkbox
-                                  size="small"
-                                  checked={selectedUsCoreScopes.includes(
-                                    resource
-                                  )}
-                                  onChange={() =>
-                                    handleUsCoreResourceToggle(resource)
-                                  }
-                                />
-                              }
-                              label={
-                                <Typography
-                                  variant="body2"
-                                  sx={{
-                                    fontFamily: "monospace",
-                                    fontSize: "0.8rem",
-                                  }}
-                                >
-                                  {resource}
-                                </Typography>
-                              }
-                              sx={{ my: 0 }}
-                            />
-                          ))}
-                        </FormGroup>
-                      </Paper>
-                    </Collapse>
-                  )}
+                    <ToggleButton value="custom" sx={{ textTransform: "none" }}>
+                      Custom
+                    </ToggleButton>
+                    <ToggleButton
+                      value="all-read"
+                      sx={{ textTransform: "none" }}
+                    >
+                      All Read
+                    </ToggleButton>
+                    <ToggleButton
+                      value="us-core"
+                      sx={{ textTransform: "none" }}
+                    >
+                      US-Core
+                    </ToggleButton>
+                  </ToggleButtonGroup>
                 </Box>
-              )}
-
-              {/* Optional Additional Scopes */}
-              {(formData.clientType === "provider" ||
-                formData.clientType === "system") && (
-                <Box>
-                  <Typography
-                    variant="caption"
-                    color="text.secondary"
-                    gutterBottom
-                    display="block"
-                  >
-                    Additional Scopes:
-                  </Typography>
-                  <FormGroup>
-                    {OPTIONAL_SCOPES.map((scope) => (
-                      <FormControlLabel
-                        key={scope.value}
-                        control={
-                          <Checkbox
-                            size="small"
-                            checked={formData.scopes.includes(scope.value)}
-                            onChange={() =>
-                              handleOptionalScopeToggle(scope.value)
-                            }
-                          />
-                        }
-                        label={
-                          <Box>
-                            <Typography
-                              variant="body2"
-                              component="span"
-                              sx={{
-                                fontFamily: "monospace",
-                                fontSize: "0.85rem",
-                              }}
-                            >
-                              {scope.label}
-                            </Typography>
-                            <Typography
-                              variant="caption"
-                              color="text.secondary"
-                              sx={{ ml: 1 }}
-                            >
-                              - {scope.description}
-                            </Typography>
-                          </Box>
-                        }
-                        sx={{ my: 0 }}
-                      />
-                    ))}
-                  </FormGroup>
-                </Box>
-              )}
+                <Typography
+                  variant="caption"
+                  color="text.secondary"
+                  display="block"
+                  sx={{ mb: 0.5 }}
+                >
+                  Enter space-delimited list of scopes
+                </Typography>
+                <TextField
+                  multiline
+                  minRows={3}
+                  fullWidth
+                  placeholder="e.g. patient/*.read"
+                  value={scopesText}
+                  onChange={(e) => setScopesText(e.target.value)}
+                />
+              </Box>
             </Box>
           </Box>
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setRegisterDialogOpen(false)}>Cancel</Button>
-          <Button variant="contained" onClick={handleRegisterClient}>
+          <Button
+            variant="contained"
+            onClick={handleRegisterClient}
+            disabled={
+              formData.redirectUris.length === 0 || !formData.clientName.trim()
+            }
+          >
             Register Client
           </Button>
         </DialogActions>

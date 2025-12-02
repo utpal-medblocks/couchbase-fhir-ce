@@ -46,7 +46,7 @@ public class SmartTokenEnhancerFilter implements Filter {
 
         // Only intercept POST requests to /oauth2/token
         if ("POST".equalsIgnoreCase(method) && uri.endsWith("/oauth2/token")) {
-            logger.info("🎫 [SMART-ENHANCER] Intercepting token endpoint: {} {}", method, uri);
+            logger.debug("🎫 [SMART-ENHANCER] Intercepting token endpoint: {} {}", method, uri);
             
             // Wrap response to capture output
             ResponseCaptureWrapper responseWrapper = new ResponseCaptureWrapper(httpResponse);
@@ -73,7 +73,7 @@ public class SmartTokenEnhancerFilter implements Filter {
                         errorStatus = HttpServletResponse.SC_UNAUTHORIZED; // 401
                     }
                     
-                    logger.info("⚠️ [SMART-ENHANCER] Token error '{}', returning status {}", error, errorStatus);
+                    logger.debug("⚠️ [SMART-ENHANCER] Token error '{}', returning status {}", error, errorStatus);
                     httpResponse.reset();
                     httpResponse.setStatus(errorStatus);
                     httpResponse.setContentType("application/json");
@@ -106,7 +106,7 @@ public class SmartTokenEnhancerFilter implements Filter {
                                 String modifiedResponse = objectMapper.writeValueAsString(tokenResponse);
                                 byte[] modifiedData = modifiedResponse.getBytes(StandardCharsets.UTF_8);
                                 
-                                logger.info("✅ [SMART-ENHANCER] Token response enhanced with patient: '{}' (scope: {})", 
+                                logger.debug("✅ [SMART-ENHANCER] Token response enhanced with patient: '{}' (scope: {})", 
                                     patientClaim, tokenResponse.get("scope"));
                                 
                                 // Write modified response with proper headers (including OAuth security headers)
