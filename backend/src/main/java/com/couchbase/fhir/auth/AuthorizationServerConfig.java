@@ -172,9 +172,12 @@ public class AuthorizationServerConfig {
         // - /.well-known/oauth-authorization-server
         OAuth2AuthorizationServerConfiguration.applyDefaultSecurity(http);
 
-        // Enable OpenID Connect 1.0 (get the configurer from http after applyDefaultSecurity)
+        // Enable OpenID Connect and set custom consent page
         http.getConfigurer(OAuth2AuthorizationServerConfigurer.class)
-                .oidc(Customizer.withDefaults());
+            .oidc(Customizer.withDefaults())
+            .authorizationEndpoint(authorization -> authorization
+                .consentPage("/consent")
+            );
 
         // Redirect to login page when not authenticated for HTML requests
         http.exceptionHandling((exceptions) -> exceptions
