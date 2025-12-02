@@ -33,9 +33,9 @@ public class ConsentController {
     
     /**
      * Show consent page
-     * GET /oauth2/consent
+     * GET /consent - Custom consent page for SMART on FHIR authorization
      */
-    @GetMapping("/oauth2/consent")
+    @GetMapping("/consent")
     public String consent(
             Principal principal,
             Model model,
