@@ -31,9 +31,7 @@ public class SmartTokenEnhancerFilter implements Filter {
 
     @Override
     public void init(FilterConfig filterConfig) throws ServletException {
-        logger.info("════════════════════════════════════════════════════════════");
-        logger.info("🔧 [SMART-ENHANCER] SmartTokenEnhancerFilter INITIALIZED (Order: HIGHEST_PRECEDENCE)");
-        logger.info("════════════════════════════════════════════════════════════");
+        logger.info("🔧 [SMART-ENHANCER] Initialized - OAuth token responses will be enhanced with patient context");
     }
 
     @Override
@@ -45,14 +43,10 @@ public class SmartTokenEnhancerFilter implements Filter {
 
         String uri = httpRequest.getRequestURI();
         String method = httpRequest.getMethod();
-        
-        logger.info("🔍 [SMART-ENHANCER] Request: {} {}", method, uri);
 
         // Only intercept POST requests to /oauth2/token
         if ("POST".equalsIgnoreCase(method) && uri.endsWith("/oauth2/token")) {
-            logger.info("════════════════════════════════════════════════════════════");
             logger.info("🎫 [SMART-ENHANCER] Intercepting token endpoint: {} {}", method, uri);
-            logger.info("════════════════════════════════════════════════════════════");
             
             // Wrap response to capture output
             ResponseCaptureWrapper responseWrapper = new ResponseCaptureWrapper(httpResponse);
@@ -64,20 +58,36 @@ public class SmartTokenEnhancerFilter implements Filter {
             byte[] responseData = responseWrapper.getCapturedData();
             String responseBody = new String(responseData, StandardCharsets.UTF_8);
             
-            logger.info("📦 [SMART-ENHANCER] Original response length: {} bytes", responseData.length);
-            logger.info("📦 [SMART-ENHANCER] Original response: {}", responseBody.substring(0, Math.min(200, responseBody.length())));
-            
             try {
                 // Parse JSON response
                 @SuppressWarnings("unchecked")
                 Map<String, Object> tokenResponse = objectMapper.readValue(responseBody, Map.class);
                 
-                logger.info("📋 [SMART-ENHANCER] Original keys: {}", tokenResponse.keySet());
+                // Check if this is an error response
+                if (tokenResponse.containsKey("error")) {
+                    String error = (String) tokenResponse.get("error");
+                    
+                    // OAuth 2.0 spec: invalid_grant and other errors should return 400 Bad Request
+                    int errorStatus = HttpServletResponse.SC_BAD_REQUEST; // 400
+                    if ("invalid_client".equals(error)) {
+                        errorStatus = HttpServletResponse.SC_UNAUTHORIZED; // 401
+                    }
+                    
+                    logger.info("⚠️ [SMART-ENHANCER] Token error '{}', returning status {}", error, errorStatus);
+                    httpResponse.reset();
+                    httpResponse.setStatus(errorStatus);
+                    httpResponse.setContentType("application/json");
+                    httpResponse.setCharacterEncoding("UTF-8");
+                    httpResponse.setContentLength(responseData.length);
+                    httpResponse.setHeader("Cache-Control", "no-store");
+                    httpResponse.setHeader("Pragma", "no-cache");
+                    httpResponse.getOutputStream().write(responseData);
+                    httpResponse.getOutputStream().flush();
+                    return;
+                }
                 
-                // Check if patient claim already exists
-                if (tokenResponse.containsKey("patient")) {
-                    logger.info("✅ [SMART-ENHANCER] Patient claim already present: {}", tokenResponse.get("patient"));
-                } else {
+                // Check if patient claim already exists (shouldn't happen, but handle it)
+                if (!tokenResponse.containsKey("patient")) {
                     // Extract from access_token JWT
                     String accessToken = (String) tokenResponse.get("access_token");
                     if (accessToken != null && accessToken.contains(".")) {
@@ -87,62 +97,46 @@ public class SmartTokenEnhancerFilter implements Filter {
                             @SuppressWarnings("unchecked")
                             Map<String, Object> claims = objectMapper.readValue(payload, Map.class);
                             
-                            logger.info("🔐 [SMART-ENHANCER] JWT claims: {}", claims.keySet());
-                            
                             Object patientClaim = claims.get("patient");
                             if (patientClaim != null) {
                                 // Add patient to top-level response
                                 tokenResponse.put("patient", patientClaim);
-                                logger.info("✅ [SMART-ENHANCER] Injected patient claim: {}", patientClaim);
                                 
                                 // Rewrite response
                                 String modifiedResponse = objectMapper.writeValueAsString(tokenResponse);
                                 byte[] modifiedData = modifiedResponse.getBytes(StandardCharsets.UTF_8);
                                 
-                                logger.info("📦 [SMART-ENHANCER] Modified response length: {} bytes", modifiedData.length);
-                                logger.info("📦 [SMART-ENHANCER] Modified keys: {}", tokenResponse.keySet());
-                                logger.info("📄 [SMART-ENHANCER] FINAL JSON RESPONSE:");
-                                logger.info("════════════════════════════════════════════════════════════");
-                                logger.info("{");
-                                logger.info("  \"access_token\": \"{}...\",", ((String) tokenResponse.get("access_token")).substring(0, 50));
-                                logger.info("  \"refresh_token\": \"{}...\",", tokenResponse.get("refresh_token") != null ? 
-                                    ((String) tokenResponse.get("refresh_token")).substring(0, 20) : "null");
-                                logger.info("  \"scope\": \"{}\",", tokenResponse.get("scope"));
-                                logger.info("  \"id_token\": \"{}...\",", ((String) tokenResponse.get("id_token")).substring(0, 50));
-                                logger.info("  \"token_type\": \"{}\",", tokenResponse.get("token_type"));
-                                logger.info("  \"expires_in\": {},", tokenResponse.get("expires_in"));
-                                logger.info("  \"patient\": \"{}\"  👈 INJECTED FOR INFERNO!", tokenResponse.get("patient"));
-                                logger.info("}");
-                                logger.info("════════════════════════════════════════════════════════════");
+                                logger.info("✅ [SMART-ENHANCER] Token response enhanced with patient: '{}' (scope: {})", 
+                                    patientClaim, tokenResponse.get("scope"));
                                 
-                                // Write modified response with proper headers
+                                // Write modified response with proper headers (including OAuth security headers)
                                 httpResponse.reset(); // Clear any existing data
                                 httpResponse.setStatus(HttpServletResponse.SC_OK);
                                 httpResponse.setContentType("application/json");
                                 httpResponse.setCharacterEncoding("UTF-8");
                                 httpResponse.setContentLength(modifiedData.length);
+                                // OAuth 2.0 Security: Token responses must not be cached
+                                httpResponse.setHeader("Cache-Control", "no-store");
+                                httpResponse.setHeader("Pragma", "no-cache");
                                 httpResponse.getOutputStream().write(modifiedData);
                                 httpResponse.getOutputStream().flush();
                                 return;
-                            } else {
-                                logger.warn("⚠️ [SMART-ENHANCER] No patient claim in JWT. Claims: {}", claims.keySet());
                             }
                         }
                     }
                 }
-                
-                logger.info("════════════════════════════════════════════════════════════");
                 
             } catch (Exception e) {
                 logger.error("❌ [SMART-ENHANCER] Error processing token response: {}", e.getMessage(), e);
             }
             
             // Write original response if no modification was made
-            logger.info("📝 [SMART-ENHANCER] Writing original response ({} bytes)", responseData.length);
-            httpResponse.setStatus(HttpServletResponse.SC_OK);
             httpResponse.setContentType("application/json");
             httpResponse.setCharacterEncoding("UTF-8");
             httpResponse.setContentLength(responseData.length);
+            // OAuth 2.0 Security: Token responses must not be cached
+            httpResponse.setHeader("Cache-Control", "no-store");
+            httpResponse.setHeader("Pragma", "no-cache");
             httpResponse.getOutputStream().write(responseData);
             httpResponse.getOutputStream().flush();
             
