@@ -19,10 +19,12 @@ import java.util.*;
  * 
  * Efficiently extracts references from primary resources using server-side N1QL queries
  * instead of fetching full documents twice. Handles both simple fields and array fields.
+ * Automatically filters out contained references (starting with '#') at the database level.
  * 
  * Example:
  * - Simple: resource.subject.reference
  * - Array:  ARRAY loc.location.reference FOR loc IN resource.location END
+ * - Filtering: Excludes "#med123" (contained), includes "Medication/med123" (external)
  */
 @Service
 public class IncludeReferenceExtractor {
@@ -41,13 +43,15 @@ public class IncludeReferenceExtractor {
     /**
      * Extract all references from primary resources for given _include parameters using N1QL.
      * Uses CTE-based approach with global de-duplication and limiting.
+     * Automatically filters out contained references (starting with '#') at the database level.
      * 
      * @param primaryKeys List of primary resource keys (e.g., ["Encounter/123", "Encounter/456"])
      * @param includes List of Include parameters (e.g., Encounter:subject, Encounter:participant)
      * @param primaryResourceType Primary resource type (e.g., "Encounter")
      * @param bucketName Couchbase bucket name
      * @param maxIncludeCount Maximum number of include resources to return (for bundle size limiting)
-     * @return Globally deduplicated and limited list of reference keys (e.g., ["Patient/abc", "Practitioner/def"])
+     * @return Globally deduplicated and limited list of reference keys (e.g., ["Patient/abc", "Practitioner/def"]), 
+     *         excluding contained references like "#med123"
      */
     public List<String> extractReferences(List<String> primaryKeys, List<Include> includes, 
                                          String primaryResourceType, String bucketName, int maxIncludeCount) {
@@ -105,6 +109,7 @@ public class IncludeReferenceExtractor {
     /**
      * Build N1QL query to extract references from primary resources using CTE-based approach.
      * This provides global de-duplication across all primary documents.
+     * Filters out contained references (starting with '#') at the database level.
      * Limiting is done in Java after retrieval.
      * 
      * Uses CollectionRoutingService to get the actual collection name (e.g., QuestionnaireResponse → General)
@@ -122,6 +127,7 @@ public class IncludeReferenceExtractor {
      * SELECT ARRAY_AGG(DISTINCT r) AS references
      * FROM per
      * UNNEST per.refs AS r
+     * WHERE r NOT LIKE '#%'
      */
     private String buildReferenceExtractionQuery(List<String> primaryKeys, List<Include> includes,
                                                  String primaryResourceType, String bucketName, int maxIncludeCount) {
@@ -184,10 +190,12 @@ public class IncludeReferenceExtractor {
         query.append("]\n");
         query.append(")\n");
         
-        // Global de-duplication (limiting done in Java after retrieval)
+        // Global de-duplication with filtering (limiting done in Java after retrieval)
+        // Filter out contained references (starting with '#') - these don't need to be fetched
         query.append("SELECT ARRAY_AGG(DISTINCT r) AS references\n");
         query.append("FROM per\n");
-        query.append("UNNEST per.refs AS r");
+        query.append("UNNEST per.refs AS r\n");
+        query.append("WHERE r NOT LIKE '#%'");
         
         return query.toString();
     }

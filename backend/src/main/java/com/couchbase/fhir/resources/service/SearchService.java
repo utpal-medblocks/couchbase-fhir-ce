@@ -907,7 +907,9 @@ public class SearchService {
         String searchType = paginationState.getSearchType();
         if ("revinclude".equals(searchType) || "include".equals(searchType)) {
             // Group keys by resource type and retrieve from appropriate collections
+            // Filter out any invalid keys (defensive programming)
             Map<String, List<String>> keysByResourceType = currentPageKeys.stream()
+                .filter(key -> key != null && key.contains("/"))
                 .collect(Collectors.groupingBy(key -> key.substring(0, key.indexOf("/"))));
             
             // Fetch resources grouped by type for efficiency
@@ -1133,24 +1135,30 @@ public class SearchService {
                 }
                 
                 if (!includeKeys.isEmpty()) {
-                    // Limit to maxBundleSize
+                    // Filter out contained references and limit to maxBundleSize
                     int maxIncludes = state.getMaxBundleSize() - primaryKeys.size();
                     List<String> limitedKeys = includeKeys.stream()
+                        .filter(ref -> ref != null && ref.contains("/"))
                         .limit(maxIncludes)
                         .collect(Collectors.toList());
                     
-                    // Group by type and fetch
-                    Map<String, List<String>> includeKeysByType = limitedKeys.stream()
-                        .collect(Collectors.groupingBy(key -> key.substring(0, key.indexOf("/"))));
-                    
-                    for (Map.Entry<String, List<String>> entry : includeKeysByType.entrySet()) {
-                        String includeType = entry.getKey();
-                        List<String> keysForType = entry.getValue();
-                        List<Resource> includeResources = ftsKvSearchService.getDocumentsFromKeys(keysForType, includeType);
-                        allResources.addAll(includeResources);
+                    if (!limitedKeys.isEmpty()) {
+                        // Group by type and fetch
+                        Map<String, List<String>> includeKeysByType = limitedKeys.stream()
+                            .collect(Collectors.groupingBy(key -> key.substring(0, key.indexOf("/"))));
+                        
+                        for (Map.Entry<String, List<String>> entry : includeKeysByType.entrySet()) {
+                            String includeType = entry.getKey();
+                            List<String> keysForType = entry.getValue();
+                            List<Resource> includeResources = ftsKvSearchService.getDocumentsFromKeys(keysForType, includeType);
+                            allResources.addAll(includeResources);
+                        }
+                        
+                        logger.debug("🚀 Fetched {} included resources ({} contained refs skipped)", 
+                                   allResources.size() - primaryResources.size(), includeKeys.size() - limitedKeys.size());
+                    } else {
+                        logger.debug("🚀 All {} references are contained (skipped)", includeKeys.size());
                     }
-                    
-                    logger.debug("🚀 Fetched {} included resources", allResources.size() - primaryResources.size());
                 }
             }
             
@@ -1183,19 +1191,25 @@ public class SearchService {
                 }
                 
                 if (!includeKeys.isEmpty()) {
+                    // Filter out contained references and limit to maxBundleSize
                     int maxIncludes = state.getMaxBundleSize() - primaryKeys.size();
                     List<String> limitedKeys = includeKeys.stream()
+                        .filter(ref -> ref != null && ref.contains("/"))
                         .limit(maxIncludes)
                         .collect(Collectors.toList());
                     
-                    Map<String, List<String>> includeKeysByType = limitedKeys.stream()
-                        .collect(Collectors.groupingBy(key -> key.substring(0, key.indexOf("/"))));
-                    
-                    for (Map.Entry<String, List<String>> entry : includeKeysByType.entrySet()) {
-                        String includeType = entry.getKey();
-                        List<String> keysForType = entry.getValue();
-                        List<Resource> includeResources = ftsKvSearchService.getDocumentsFromKeys(keysForType, includeType);
-                        allResources.addAll(includeResources);
+                    if (!limitedKeys.isEmpty()) {
+                        Map<String, List<String>> includeKeysByType = limitedKeys.stream()
+                            .collect(Collectors.groupingBy(key -> key.substring(0, key.indexOf("/"))));
+                        
+                        for (Map.Entry<String, List<String>> entry : includeKeysByType.entrySet()) {
+                            String includeType = entry.getKey();
+                            List<String> keysForType = entry.getValue();
+                            List<Resource> includeResources = ftsKvSearchService.getDocumentsFromKeys(keysForType, includeType);
+                            allResources.addAll(includeResources);
+                        }
+                    } else {
+                        logger.debug("🚀 All {} references are contained (skipped)", includeKeys.size());
                     }
                     
                     logger.debug("🚀 Fetched {} included resources for chain continuation", allResources.size() - primaryResources.size());
@@ -1369,7 +1383,9 @@ public class SearchService {
         firstPageKeys.addAll(firstPagePrimaryKeys);
         firstPageKeys.addAll(allSecondaryKeys);
         
+        // Filter out any invalid keys (defensive programming)
         Map<String, List<String>> keysByResourceType = firstPageKeys.stream()
+            .filter(key -> key != null && key.contains("/"))
             .collect(Collectors.groupingBy(key -> key.substring(0, key.indexOf("/"))));
         
         Map<String, Resource> resourcesByKey = new java.util.HashMap<>();
@@ -1563,7 +1579,9 @@ public class SearchService {
                    firstPagePrimaryKeys.size(), secondaryKeys.size(), firstPageKeys.size());
         
         // Step 6: KV Batch fetch for all resources on this page (grouped by resource type for efficiency)
+        // Filter out any invalid keys (defensive programming)
         Map<String, List<String>> keysByResourceType = firstPageKeys.stream()
+            .filter(key -> key != null && key.contains("/"))
             .collect(Collectors.groupingBy(key -> key.substring(0, key.indexOf("/"))));
         
         Map<String, Resource> resourcesByKey = new java.util.HashMap<>();
@@ -1757,22 +1775,30 @@ public class SearchService {
             includeKeys = includeKeys.subList(0, maxIncludes);
         }
 
-        logger.debug("🔍 _include extraction complete: {} unique include keys (limit={})", 
-                   includeKeys.size(), maxIncludes);
+        // Filter out contained references (e.g., #medXYZ) - they don't need to be fetched
+        List<String> fetchableKeys = includeKeys.stream()
+                .filter(ref -> ref != null && ref.contains("/"))
+                .collect(Collectors.toList());
+        
+        logger.debug("🔍 _include extraction complete: {} unique include keys ({} contained refs skipped, limit={})", 
+                   fetchableKeys.size(), includeKeys.size() - fetchableKeys.size(), maxIncludes);
         
         // Step 5: Fetch include resources (grouped by resource type)
-        Map<String, List<String>> includeKeysByType = includeKeys.stream()
-                .collect(Collectors.groupingBy(k -> k.substring(0, k.indexOf('/'))));
-        
         Map<String, Resource> includeResourcesByKey = new java.util.HashMap<>();
-        for (Map.Entry<String, List<String>> entry : includeKeysByType.entrySet()) {
-            String includeType = entry.getKey();
-            List<String> keysForType = entry.getValue();
-            logger.debug("🔍 KV Batch fetching {} {} includes", keysForType.size(), includeType);
-            List<Resource> fetched = ftsKvSearchService.getDocumentsFromKeys(keysForType, includeType);
-            for (Resource r : fetched) {
-                String k = r.getResourceType().name() + "/" + r.getIdElement().getIdPart();
-                includeResourcesByKey.put(k, r);
+        
+        if (!fetchableKeys.isEmpty()) {
+            Map<String, List<String>> includeKeysByType = fetchableKeys.stream()
+                    .collect(Collectors.groupingBy(k -> k.substring(0, k.indexOf('/'))));
+            
+            for (Map.Entry<String, List<String>> entry : includeKeysByType.entrySet()) {
+                String includeType = entry.getKey();
+                List<String> keysForType = entry.getValue();
+                logger.debug("🔍 KV Batch fetching {} {} includes", keysForType.size(), includeType);
+                List<Resource> fetched = ftsKvSearchService.getDocumentsFromKeys(keysForType, includeType);
+                for (Resource r : fetched) {
+                    String k = r.getResourceType().name() + "/" + r.getIdElement().getIdPart();
+                    includeResourcesByKey.put(k, r);
+                }
             }
         }
         
@@ -1912,24 +1938,31 @@ public class SearchService {
         List<String> includeReferences = includeReferenceExtractor.extractReferences(
             firstPagePrimaryKeys, includes, primaryResourceType, bucketName, maxIncludes);
         
-        List<String> includeKeys = new ArrayList<>(includeReferences);
+        // Filter out contained references (e.g., #medXYZ) - they don't need to be fetched
+        List<String> includeKeys = includeReferences.stream()
+                .filter(ref -> ref != null && ref.contains("/"))
+                .collect(Collectors.toList());
 
-        logger.debug("🚀 FASTPATH: _include extraction complete: {} unique include keys", includeKeys.size());
+        logger.debug("🚀 FASTPATH: _include extraction complete: {} unique include keys ({} contained refs skipped)", 
+                   includeKeys.size(), includeReferences.size() - includeKeys.size());
         
         // Step 5: Fetch include resources as RAW BYTES (ZERO-COPY from Couchbase!)
-        Map<String, List<String>> includeKeysByType = includeKeys.stream()
-                .collect(Collectors.groupingBy(k -> k.substring(0, k.indexOf('/'))));
-        
         Map<String, byte[]> includedKeyToBytesMap = new java.util.LinkedHashMap<>();
-        for (Map.Entry<String, List<String>> entry : includeKeysByType.entrySet()) {
-            String includeType = entry.getKey();
-            List<String> keysForType = entry.getValue();
-            logger.debug("🚀 FASTPATH: KV Batch fetching {} {} includes as raw bytes with keys", keysForType.size(), includeType);
-            Map<String, byte[]> fetchedMap = batchKvService.getDocumentsAsBytesWithKeys(keysForType, includeType);
-            includedKeyToBytesMap.putAll(fetchedMap);
-        }
         
-        logger.debug("🚀 FASTPATH: Fetched {} include resources as raw bytes with keys", includedKeyToBytesMap.size());
+        if (!includeKeys.isEmpty()) {
+            Map<String, List<String>> includeKeysByType = includeKeys.stream()
+                    .collect(Collectors.groupingBy(k -> k.substring(0, k.indexOf('/'))));
+            
+            for (Map.Entry<String, List<String>> entry : includeKeysByType.entrySet()) {
+                String includeType = entry.getKey();
+                List<String> keysForType = entry.getValue();
+                logger.debug("🚀 FASTPATH: KV Batch fetching {} {} includes as raw bytes with keys", keysForType.size(), includeType);
+                Map<String, byte[]> fetchedMap = batchKvService.getDocumentsAsBytesWithKeys(keysForType, includeType);
+                includedKeyToBytesMap.putAll(fetchedMap);
+            }
+            
+            logger.debug("🚀 FASTPATH: Fetched {} include resources as raw bytes with keys", includedKeyToBytesMap.size());
+        }
         
         // Step 6: Build Bundle JSON directly (no HAPI parsing!)
         String baseUrl = extractBaseUrl(requestDetails, bucketName);
@@ -2194,20 +2227,28 @@ public class SearchService {
             
             // Fetch included resources as JSON with keys
             if (!refs.isEmpty()) {
-                List<String> limitedKeys = refs;
+                // Filter out contained references (e.g., #medXYZ) - they don't need to be fetched
+                List<String> limitedKeys = refs.stream()
+                    .filter(ref -> ref != null && ref.contains("/"))
+                    .collect(Collectors.toList());
                 
-                Map<String, List<String>> includeKeysByType = limitedKeys.stream()
-                    .collect(Collectors.groupingBy(k -> k.substring(0, k.indexOf('/'))));
-                
-                for (Map.Entry<String, List<String>> entry : includeKeysByType.entrySet()) {
-                    String includeType = entry.getKey();
-                    List<String> keysForType = entry.getValue();
-                    Map<String, byte[]> fetchedMap = batchKvService.getDocumentsAsBytesWithKeys(
-                        keysForType, includeType);
-                    includedKeyToBytesMap.putAll(fetchedMap);
+                if (!limitedKeys.isEmpty()) {
+                    Map<String, List<String>> includeKeysByType = limitedKeys.stream()
+                        .collect(Collectors.groupingBy(k -> k.substring(0, k.indexOf('/'))));
+                    
+                    for (Map.Entry<String, List<String>> entry : includeKeysByType.entrySet()) {
+                        String includeType = entry.getKey();
+                        List<String> keysForType = entry.getValue();
+                        Map<String, byte[]> fetchedMap = batchKvService.getDocumentsAsBytesWithKeys(
+                            keysForType, includeType);
+                        includedKeyToBytesMap.putAll(fetchedMap);
+                    }
+                    
+                    logger.debug("🚀 FASTPATH: Fetched {} included resources as raw bytes with keys ({} contained refs skipped)", 
+                               includedKeyToBytesMap.size(), refs.size() - limitedKeys.size());
+                } else {
+                    logger.debug("🚀 FASTPATH: All {} references are contained (skipped)", refs.size());
                 }
-                
-                logger.debug("🚀 FASTPATH: Fetched {} included resources as raw bytes with keys", includedKeyToBytesMap.size());
             }
         }
         
@@ -2513,18 +2554,28 @@ public class SearchService {
             
             // Fetch included resources
             if (!includeKeys.isEmpty()) {
-                logger.debug("🔗 KV Batch fetching {} includes", includeKeys.size());
-                Map<String, List<String>> includeKeysByType = includeKeys.stream()
-                    .collect(Collectors.groupingBy(key -> key.substring(0, key.indexOf("/"))));
+                // Filter out contained references (e.g., #medXYZ) - they don't need to be fetched
+                List<String> fetchableKeys = includeKeys.stream()
+                    .filter(ref -> ref != null && ref.contains("/"))
+                    .collect(Collectors.toList());
                 
-                for (Map.Entry<String, List<String>> entry : includeKeysByType.entrySet()) {
-                    String includeResourceType = entry.getKey();
-                    List<String> keysForType = entry.getValue();
-                    List<Resource> resourcesForType = ftsKvSearchService.getDocumentsFromKeys(keysForType, includeResourceType);
-                    includedResources.addAll(resourcesForType);
+                if (!fetchableKeys.isEmpty()) {
+                    logger.debug("🔗 KV Batch fetching {} includes ({} contained refs skipped)", 
+                               fetchableKeys.size(), includeKeys.size() - fetchableKeys.size());
+                    Map<String, List<String>> includeKeysByType = fetchableKeys.stream()
+                        .collect(Collectors.groupingBy(key -> key.substring(0, key.indexOf("/"))));
+                    
+                    for (Map.Entry<String, List<String>> entry : includeKeysByType.entrySet()) {
+                        String includeResourceType = entry.getKey();
+                        List<String> keysForType = entry.getValue();
+                        List<Resource> resourcesForType = ftsKvSearchService.getDocumentsFromKeys(keysForType, includeResourceType);
+                        includedResources.addAll(resourcesForType);
+                    }
+                    
+                    logger.debug("🔗 Fetched {} included resources", includedResources.size());
+                } else {
+                    logger.debug("🔗 All {} references are contained (skipped)", includeKeys.size());
                 }
-                
-                logger.debug("🔗 Fetched {} included resources", includedResources.size());
             }
         }
         
@@ -2665,20 +2716,29 @@ public class SearchService {
             
             // Fetch included resources as JSON with keys
             if (!refs.isEmpty()) {
-                List<String> includeKeys = refs;
-                logger.debug("🚀 FASTPATH: KV Batch fetching {} includes as JSON", includeKeys.size());
-                Map<String, List<String>> includeKeysByType = includeKeys.stream()
-                    .collect(Collectors.groupingBy(k -> k.substring(0, k.indexOf('/'))));
+                // Filter out contained references (e.g., #medXYZ) - they don't need to be fetched
+                List<String> includeKeys = refs.stream()
+                    .filter(ref -> ref != null && ref.contains("/"))
+                    .collect(Collectors.toList());
                 
-                for (Map.Entry<String, List<String>> entry : includeKeysByType.entrySet()) {
-                    String includeResourceType = entry.getKey();
-                    List<String> keysForType = entry.getValue();
-                    Map<String, byte[]> fetchedMap = batchKvService.getDocumentsAsBytesWithKeys(
-                        keysForType, includeResourceType);
-                    includedKeyToBytesMap.putAll(fetchedMap);
+                if (!includeKeys.isEmpty()) {
+                    logger.debug("🚀 FASTPATH: KV Batch fetching {} includes as JSON ({} contained refs skipped)", 
+                               includeKeys.size(), refs.size() - includeKeys.size());
+                    Map<String, List<String>> includeKeysByType = includeKeys.stream()
+                        .collect(Collectors.groupingBy(k -> k.substring(0, k.indexOf('/'))));
+                    
+                    for (Map.Entry<String, List<String>> entry : includeKeysByType.entrySet()) {
+                        String includeResourceType = entry.getKey();
+                        List<String> keysForType = entry.getValue();
+                        Map<String, byte[]> fetchedMap = batchKvService.getDocumentsAsBytesWithKeys(
+                            keysForType, includeResourceType);
+                        includedKeyToBytesMap.putAll(fetchedMap);
+                    }
+                    
+                    logger.debug("🚀 FASTPATH: Fetched {} included resources as raw bytes with keys", includedKeyToBytesMap.size());
+                } else {
+                    logger.debug("🚀 FASTPATH: All {} references are contained (skipped)", refs.size());
                 }
-                
-                logger.debug("🚀 FASTPATH: Fetched {} included resources as raw bytes with keys", includedKeyToBytesMap.size());
             }
         }
         
@@ -2831,10 +2891,21 @@ public class SearchService {
     
     /**
      * Extract base URL from RequestDetails for pagination links
-     * Format: http://hostname:port/fhir/bucketName
+     * Format: https://hostname:port/fhir (protocol and host from config.yaml)
+     * 
+     * IMPORTANT: Always use the configured base URL from config.yaml to ensure
+     * the correct protocol (https vs http) is preserved, especially when behind
+     * a reverse proxy that terminates SSL.
      */
     private String extractBaseUrl(RequestDetails requestDetails, String bucketName) {
-        // Try to derive from request first
+        // Always use configured base URL to preserve protocol (https vs http)
+        // This is critical when behind HAProxy or other reverse proxies that terminate SSL
+        String configuredBaseUrl = fhirServerConfig.getNormalizedBaseUrl();
+        if (configuredBaseUrl != null && !configuredBaseUrl.equals("http://localhost/fhir")) {
+            return configuredBaseUrl;
+        }
+        
+        // Only fall back to request URL if no base URL is configured (development mode)
         if (requestDetails != null) {
             try {
                 String completeUrl = requestDetails.getCompleteUrl();
@@ -2855,8 +2926,9 @@ public class SearchService {
                 logger.warn("Failed to extract base URL from request details: {}", e.getMessage());
             }
         }
-        // Fallback to configured normalized base URL (never hardcode host)
-        return fhirServerConfig.getNormalizedBaseUrl();
+        
+        // Final fallback
+        return configuredBaseUrl != null ? configuredBaseUrl : "http://localhost/fhir";
     }
     
     private String buildNextPageUrl(String continuationToken, int offset, String resourceType, String bucketName, int count, String baseUrl) {

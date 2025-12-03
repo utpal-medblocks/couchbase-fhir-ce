@@ -13,8 +13,6 @@ import org.springframework.boot.info.BuildProperties;
 
 import java.util.List;
 
-import static com.couchbase.fhir.resources.constants.USCoreProfiles.US_CORE_BASE_URL;
-
 
 /**
  * Custom CapabilityStatementProvider that overrides the default HAPI FHIR CapabilityStatement
@@ -131,11 +129,16 @@ public class USCoreCapabilityProvider extends ServerCapabilityStatementProvider 
 
         for (CapabilityStatement.CapabilityStatementRestResourceComponent resource : resources) {
             String resourceType = resource.getType();
-            String supportedProfileUrl = US_CORE_BASE_URL + resourceType.toLowerCase();
-
-            // Add the US Core supportedProfile if not already present
-            if (resource.getSupportedProfile().stream().noneMatch(profile -> profile.getValue().equals(supportedProfileUrl))) {
-                resource.addSupportedProfile(supportedProfileUrl);
+            
+            // Get all US Core profiles for this resource type
+            List<String> profiles = USCoreProfiles.getProfilesForResourceType(resourceType);
+            
+            // Add each profile if not already present
+            for (String profileUrl : profiles) {
+                if (resource.getSupportedProfile().stream().noneMatch(profile -> profile.getValue().equals(profileUrl))) {
+                    resource.addSupportedProfile(profileUrl);
+                    logger.debug("Added profile: {} for resource {}", profileUrl, resourceType);
+                }
             }
         }
 
