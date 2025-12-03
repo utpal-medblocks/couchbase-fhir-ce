@@ -31,6 +31,12 @@ server:
     enabled: true
     mime-types: application/json,application/fhir+json,text/html,text/xml,text/plain,application/xml
     min-response-size: 1024 # Compress responses > 1KB
+  # Session cookie configuration for OAuth cross-site flows
+  servlet:
+    session:
+      cookie:
+        same-site: none # Required for cross-site OAuth (Inferno -> cbfhir.com)
+        secure: true # Required when same-site=none (HTTPS)
 
 # Basic Actuator Configuration
 management:
