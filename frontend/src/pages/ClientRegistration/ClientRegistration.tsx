@@ -291,8 +291,8 @@ const ClientRegistration: React.FC = () => {
     if (mode === "custom") {
       setScopesText("");
     } else if (mode === "all-read") {
-      // Single-patient: prefer read-only
-      setScopesText("patient/*.read");
+      // Single-patient: prefer read-only (SMART v2 format: .rs = read+search)
+      setScopesText("patient/*.rs");
     } else if (mode === "us-core") {
       setScopesText(US_CORE_RESOURCE_SCOPES.join(" "));
     }
@@ -881,7 +881,7 @@ const ClientRegistration: React.FC = () => {
                   multiline
                   minRows={3}
                   fullWidth
-                  placeholder="e.g. patient/*.read"
+                  placeholder="e.g. patient/*.rs (SMART v2: rs=read+search)"
                   value={scopesText}
                   onChange={(e) => setScopesText(e.target.value)}
                 />
