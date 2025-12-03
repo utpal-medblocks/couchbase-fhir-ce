@@ -98,6 +98,10 @@ public class ConsentController {
         descriptions.put("launch/patient", "Know which patient record to access");
         descriptions.put("offline_access", "Access your data when you're not using the app");
         descriptions.put("online_access", "Access your data only when you're using the app");
+        descriptions.put("patient/*.rs", "Read and search all your health data");
+        descriptions.put("patient/*.cud", "Create, update, and delete your health data");
+        descriptions.put("patient/*.cruds", "Full access to your health data");
+        // Legacy v1 format support
         descriptions.put("patient/*.read", "Read all your health data");
         descriptions.put("patient/*.write", "Create and update your health data");
         descriptions.put("patient/*.*", "Full access to your health data");
