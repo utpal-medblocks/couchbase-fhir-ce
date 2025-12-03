@@ -6,15 +6,26 @@ from typing import Any, Dict, Optional
 
 
 class FHIRClient:
-    def __init__(self, http_client, base_url: str = "/", headers: Optional[Dict[str, str]] = None) -> None:
+    def __init__(self, http_client, base_url: str = "/", headers: Optional[Dict[str, str]] = None, header_supplier: Optional[callable] = None) -> None:
         # http_client is Locust's client: self.client
         self.http = http_client
         self.base_url = base_url.rstrip("/") or ""
         self.enable_log = True
 
         self._logger = logging.getLogger("fhir")
-        # Use exactly the headers provided by caller (e.g., from Locust file), or none
+        # Static headers provided by caller (e.g., from Locust file)
         self._headers = headers or None
+        # Optional callable that returns headers dynamically (e.g., fresh Bearer token)
+        self._header_supplier = header_supplier
+
+    def _headers_current(self) -> Optional[Dict[str, str]]:
+        # Prefer supplier if available, otherwise static headers
+        if self._header_supplier:
+            try:
+                return self._header_supplier() or self._headers
+            except Exception:
+                return self._headers
+        return self._headers
 
     def _url(self, path: str) -> str:
         if not path.startswith("/"):
@@ -26,28 +37,28 @@ class FHIRClient:
         self._log_request("GET", path, params=params)
         # Ignore custom per-call names to keep aggregation stable
         canonical = self._canonical_name("GET", path)
-        with self.http.get(self._url(path), params=params or {}, headers=self._headers, name=canonical, catch_response=True) as response:
+        with self.http.get(self._url(path), params=params or {}, headers=self._headers_current(), name=canonical, catch_response=True) as response:
             self._inspect_response(response, method="GET", path=path, request_params=params)
             return response
 
     def post(self, path: str, json: Dict[str, Any], **_: Any) -> Any:
         self._log_request("POST", path, body=json)
         canonical = self._canonical_name("POST", path, body=json)
-        with self.http.post(self._url(path), json=json, headers=self._headers, name=canonical, catch_response=True) as response:
+        with self.http.post(self._url(path), json=json, headers=self._headers_current(), name=canonical, catch_response=True) as response:
             self._inspect_response(response, method="POST", path=path, request_body=json)
             return response
 
     def put(self, path: str, json: Dict[str, Any], **_: Any) -> Any:
         self._log_request("PUT", path, body=json)
         canonical = self._canonical_name("PUT", path, body=json)
-        with self.http.put(self._url(path), json=json, headers=self._headers, name=canonical, catch_response=True) as response:
+        with self.http.put(self._url(path), json=json, headers=self._headers_current(), name=canonical, catch_response=True) as response:
             self._inspect_response(response, method="PUT", path=path, request_body=json)
             return response
 
     def patch(self, path: str, json: Dict[str, Any], **_: Any) -> Any:
         self._log_request("PATCH", path, body=json)
         canonical = self._canonical_name("PATCH", path, body=json)
-        with self.http.patch(self._url(path), json=json, headers=self._headers, name=canonical, catch_response=True) as response:
+        with self.http.patch(self._url(path), json=json, headers=self._headers_current(), name=canonical, catch_response=True) as response:
             self._inspect_response(response, method="PATCH", path=path, request_body=json)
             return response
 
@@ -101,6 +112,29 @@ class FHIRClient:
         self._log_error(method, path, status, detail, request_body=request_body, request_params=request_params)
         params_text = f" params={self._safe_dump(request_params)}" if request_params is not None else ""
         body_text = f" body={self._safe_dump(request_body)}" if request_body is not None else ""
+        # If we got unauthorized, try once with refreshed headers (for expiring Bearer tokens)
+        if status == 401 and self._header_supplier:
+            try:
+                refreshed_headers = self._headers_current()
+                # Retry once (same method) with refreshed headers
+                if method == "GET":
+                    retry = self.http.get(self._url(path), params=request_params or {}, headers=refreshed_headers, name=self._canonical_name(method, path), catch_response=True)
+                elif method == "POST":
+                    retry = self.http.post(self._url(path), json=request_body or {}, headers=refreshed_headers, name=self._canonical_name(method, path, body=request_body), catch_response=True)
+                elif method == "PUT":
+                    retry = self.http.put(self._url(path), json=request_body or {}, headers=refreshed_headers, name=self._canonical_name(method, path, body=request_body), catch_response=True)
+                elif method == "PATCH":
+                    retry = self.http.patch(self._url(path), json=request_body or {}, headers=refreshed_headers, name=self._canonical_name(method, path, body=request_body), catch_response=True)
+                else:
+                    retry = None
+
+                if retry and getattr(retry, "ok", False):
+                    retry.success()
+                    return
+                # Fall through to failure if retry didn't succeed
+            except Exception:
+                pass
+
         response.failure(f"{method} {path} -> {status}: {detail}{params_text}{body_text}")
 
     def _extract_error_detail(self, response) -> str:
