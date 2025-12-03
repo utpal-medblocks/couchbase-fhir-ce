@@ -68,12 +68,14 @@ public class USCoreProfiles {
         RESOURCE_PROFILES.put("AllergyIntolerance", Arrays.asList(US_CORE_BASE_URL + "us-core-allergyintolerance"));
         RESOURCE_PROFILES.put("CarePlan", Arrays.asList(US_CORE_BASE_URL + "us-core-careplan"));
         RESOURCE_PROFILES.put("CareTeam", Arrays.asList(US_CORE_BASE_URL + "us-core-careteam"));
+        RESOURCE_PROFILES.put("Coverage", Arrays.asList(US_CORE_BASE_URL + "us-core-coverage"));
         RESOURCE_PROFILES.put("DocumentReference", Arrays.asList(US_CORE_BASE_URL + "us-core-documentreference"));
         RESOURCE_PROFILES.put("Encounter", Arrays.asList(US_CORE_BASE_URL + "us-core-encounter"));
         RESOURCE_PROFILES.put("Goal", Arrays.asList(US_CORE_BASE_URL + "us-core-goal"));
         RESOURCE_PROFILES.put("Immunization", Arrays.asList(US_CORE_BASE_URL + "us-core-immunization"));
         RESOURCE_PROFILES.put("Location", Arrays.asList(US_CORE_BASE_URL + "us-core-location"));
         RESOURCE_PROFILES.put("Medication", Arrays.asList(US_CORE_BASE_URL + "us-core-medication"));
+        RESOURCE_PROFILES.put("MedicationDispense", Arrays.asList(US_CORE_BASE_URL + "us-core-medicationdispense"));
         RESOURCE_PROFILES.put("MedicationRequest", Arrays.asList(US_CORE_BASE_URL + "us-core-medicationrequest"));
         RESOURCE_PROFILES.put("Organization", Arrays.asList(US_CORE_BASE_URL + "us-core-organization"));
         RESOURCE_PROFILES.put("Patient", Arrays.asList(US_CORE_BASE_URL + "us-core-patient"));
