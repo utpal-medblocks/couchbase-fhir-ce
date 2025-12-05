@@ -342,56 +342,36 @@ public class ConfigurationStartupService {
 
     /**
      * Apply Couchbase SDK configuration from config.yaml to Spring Boot system properties
-     * This ensures @Value annotations in ConnectionService can read the configured values
+     * ONLY sets properties that are explicitly configured in config.yaml
+     * All other parameters delegate to Couchbase Java SDK's built-in defaults
      */
     private void applyCouchbaseSdkConfiguration(Map<String, Object> sdkConfig) {
-        logger.info("🔧 Effective Couchbase SDK configuration:");
-        
-        // Define default values and their Spring property mappings
-        Map<String, String> defaults = Map.of(
-            "transaction-durability", "NONE",
-            "query-timeout-seconds", "30",
-            "search-timeout-seconds", "30", 
-            "kv-timeout-seconds", "10",
-            "connect-timeout-seconds", "10",
-            "disconnect-timeout-seconds", "10",
-            "enable-mutation-tokens", "true",
-            "max-http-connections", "128",
-            "num-kv-connections", "8"
-        );
-        
-        // Apply configuration (from YAML or defaults) and show what's being used
-        defaults.forEach((yamlKey, defaultValue) -> {
-            String value = sdkConfig.containsKey(yamlKey) ? String.valueOf(sdkConfig.get(yamlKey)) : defaultValue;
-            String source = sdkConfig.containsKey(yamlKey) ? "config.yaml" : "default";
-            
-            String springProperty = "couchbase.sdk." + yamlKey;
-            System.setProperty(springProperty, value);
-            
-            if (sdkConfig.containsKey(yamlKey)) {
-                logger.info("   ✅ {}: {} (from {})", yamlKey, value, source);
-            } else {
-                logger.info("   🔧 {}: {} ({})", yamlKey, value, source);
-            }
-        });
-        
-        // Log any extra properties from YAML that aren't in our defaults
-        sdkConfig.forEach((yamlKey, value) -> {
-            if (!defaults.containsKey(yamlKey)) {
-                String springProperty = "couchbase.sdk." + yamlKey;
-                String stringValue = String.valueOf(value);
-                System.setProperty(springProperty, stringValue);
-                logger.info("   ⚙️  {}: {} (custom from config.yaml)", yamlKey, stringValue);
-            }
-        });
-        
-        // Highlight critical transaction durability setting
-        String durability = System.getProperty("couchbase.sdk.transaction-durability");
-        if ("NONE".equals(durability)) {
-            logger.info("🔒 Transaction durability: {} (suitable for development/single-node)", durability);
-        } else {
-            logger.info("🔒 Transaction durability: {} (production setting - requires replicas)", durability);
+        if (sdkConfig.isEmpty()) {
+            logger.info("🔧 Couchbase SDK configuration: Using SDK defaults (no overrides in config.yaml)");
+            return;
         }
+        
+        logger.info("🔧 Couchbase SDK configuration overrides from config.yaml:");
+        
+        // Only set system properties for explicitly configured values
+        sdkConfig.forEach((yamlKey, value) -> {
+            String springProperty = "couchbase.sdk." + yamlKey;
+            String stringValue = String.valueOf(value);
+            System.setProperty(springProperty, stringValue);
+            logger.info("   ✅ {}: {} (from config.yaml)", yamlKey, stringValue);
+        });
+        
+        // Highlight critical transaction durability setting if configured
+        String durability = System.getProperty("couchbase.sdk.transaction-durability");
+        if (durability != null) {
+            if ("NONE".equals(durability)) {
+                logger.info("🔒 Transaction durability: {} (suitable for development/single-node)", durability);
+            } else {
+                logger.info("🔒 Transaction durability: {} (production setting - requires replicas)", durability);
+            }
+        }
+        
+        logger.info("ℹ️  Unconfigured SDK parameters will use Couchbase Java SDK defaults");
     }
     
     /**
