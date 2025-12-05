@@ -71,13 +71,15 @@ server:
   tomcat:
     accesslog:
       enabled: false
+    # Tomcat thread pool configuration - only applies if env vars are set
+    # If not set, delegates to Spring Boot defaults (200 max threads, 10 min-spare, etc.)
     threads:
-      max: ${SERVER_TOMCAT_THREADS_MAX:50} # Override with env var (default 50 for low memory)
-      min-spare: ${SERVER_TOMCAT_THREADS_MIN_SPARE:10} # Minimum idle threads
-    accept-count: ${SERVER_TOMCAT_ACCEPT_COUNT:100} # Queue size when all threads busy
-    max-connections: ${SERVER_TOMCAT_MAX_CONNECTIONS:200} # Max simultaneous connections
-    connection-timeout: ${SERVER_TOMCAT_CONNECTION_TIMEOUT:20s}
-    max-keep-alive-requests: ${SERVER_TOMCAT_MAX_KEEP_ALIVE_REQUESTS:1000}
+      max: ${SERVER_TOMCAT_THREADS_MAX:#{null}}
+      min-spare: ${SERVER_TOMCAT_THREADS_MIN_SPARE:#{null}}
+    accept-count: ${SERVER_TOMCAT_ACCEPT_COUNT:#{null}}
+    max-connections: ${SERVER_TOMCAT_MAX_CONNECTIONS:#{null}}
+    connection-timeout: ${SERVER_TOMCAT_CONNECTION_TIMEOUT:#{null}}
+    max-keep-alive-requests: ${SERVER_TOMCAT_MAX_KEEP_ALIVE_REQUESTS:#{null}}
 
 # Logging configuration for containers
 logging:
