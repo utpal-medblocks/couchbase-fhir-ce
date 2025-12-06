@@ -140,6 +140,13 @@ public class BucketAwareValidationInterceptor {
         RequestPerfBag perfBag = (RequestPerfBag) rd.getUserData().get(UD_PERF_BAG);
         if (perfBag != null) {
             perfBag.setStatus("success");
+            
+            // INFO: Structured log line for performance analysis (Loki/grep friendly)
+            String method = rd.getRequestType() != null ? rd.getRequestType().name() : "UNKNOWN";
+            String path = extractPath(rd.getCompleteUrl());
+            logger.info("COMPLETED: {}", perfBag.getStructuredLogLine(method, path));
+            
+            // DEBUG: Detailed metrics for troubleshooting
             logger.debug("✅ op={} | {}", 
                 perfBag.getOperation(),
                 perfBag.getSummary());
@@ -149,6 +156,11 @@ public class BucketAwareValidationInterceptor {
             long tookMs = (System.nanoTime() - start) / 1_000_000;
             var op = rd.getRestOperationType();
             var rt = rd.getResourceName();
+            String path = extractPath(rd.getCompleteUrl());
+            logger.info("COMPLETED: reqId=unknown method={} path=\"{}\" duration_ms={} status=success",
+                (op != null ? op.name() : "UNKNOWN"),
+                path,
+                tookMs);
             logger.debug("✅ op={}, resource={}, took={}ms, params={}",
                 (op != null ? op.name() : "UNKNOWN"),
                 (rt != null ? rt : "UNKNOWN"),
@@ -169,7 +181,17 @@ public class BucketAwareValidationInterceptor {
         RequestPerfBag perfBag = (RequestPerfBag) rd.getUserData().get(UD_PERF_BAG);
         if (perfBag != null) {
             perfBag.setStatus("error");
-            logger.error("❌ op={}, error={}: {} | {}",
+            
+            // INFO: Structured log line for performance analysis (Loki/grep friendly)
+            String method = rd.getRequestType() != null ? rd.getRequestType().name() : "UNKNOWN";
+            String path = extractPath(rd.getCompleteUrl());
+            logger.error("FAILED: {} error={} message=\"{}\"", 
+                perfBag.getStructuredLogLine(method, path),
+                e.getClass().getSimpleName(),
+                e.getMessage());
+            
+            // DEBUG: Detailed metrics for troubleshooting
+            logger.debug("❌ op={}, error={}: {} | {}",
                 perfBag.getOperation(),
                 e.getClass().getSimpleName(),
                 e.getMessage(),
@@ -179,10 +201,10 @@ public class BucketAwareValidationInterceptor {
             long start = (long) rd.getUserData().getOrDefault(UD_REQ_START_NS, System.nanoTime());
             long tookMs = (System.nanoTime() - start) / 1_000_000;
             var op = rd.getRestOperationType();
-            var rt = rd.getResourceName();
-            logger.error("❌ op={}, resource={}, took={}ms, error={}: {}",
+            String path = extractPath(rd.getCompleteUrl());
+            logger.error("FAILED: reqId=unknown method={} path=\"{}\" duration_ms={} status=error error={} message=\"{}\"",
                 (op != null ? op.name() : "UNKNOWN"),
-                (rt != null ? rt : "UNKNOWN"),
+                path,
                 tookMs,
                 e.getClass().getSimpleName(),
                 e.getMessage());
@@ -197,9 +219,39 @@ public class BucketAwareValidationInterceptor {
         try {
             String method = theRequestDetails.getRequestType() != null ? theRequestDetails.getRequestType().name() : "UNKNOWN";
             String completeUrl = theRequestDetails.getCompleteUrl();
-            logger.info("🌐 INCOMING REQUEST: {} {} | reqId={}", method, completeUrl, perfBag.getRequestId());
+            logger.debug("🌐 INCOMING REQUEST: {} {} | reqId={}", method, completeUrl, perfBag.getRequestId());
         } catch (Exception e) {
             logger.warn("🌐 Failed to log incoming request details: {}", e.getMessage());
+        }
+    }
+    
+    /**
+     * Extract just the path portion from complete URL
+     * Example: "http://localhost:8080/fhir/Patient/123" -> "/Patient/123"
+     */
+    private String extractPath(String completeUrl) {
+        if (completeUrl == null) {
+            return "";
+        }
+        try {
+            // Find "/fhir/" and extract everything after it
+            int fhirIndex = completeUrl.indexOf("/fhir/");
+            if (fhirIndex >= 0) {
+                return completeUrl.substring(fhirIndex + 5); // Skip "/fhir" part, keep "/" + rest
+            }
+            // Fallback: try to extract path after third slash
+            int count = 0;
+            for (int i = 0; i < completeUrl.length(); i++) {
+                if (completeUrl.charAt(i) == '/') {
+                    count++;
+                    if (count == 3) { // After "http://" we want the path
+                        return completeUrl.substring(i);
+                    }
+                }
+            }
+            return completeUrl; // Return as-is if we can't parse
+        } catch (Exception e) {
+            return completeUrl;
         }
     }
     

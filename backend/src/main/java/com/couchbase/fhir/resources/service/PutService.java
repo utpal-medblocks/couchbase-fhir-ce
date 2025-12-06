@@ -58,7 +58,7 @@ public class PutService {
         }
         
         String documentKey = resourceType + "/" + clientId;
-        logger.info("🔄 PUT {}: Using client-supplied ID {}", resourceType, clientId);
+        logger.debug("🔄 PUT {}: Using client-supplied ID {}", resourceType, clientId);
         
         // ✅ Get cluster through gateway for circuit breaker protection
         Cluster cluster = couchbaseGateway.getClusterForTransaction("default");
@@ -89,7 +89,7 @@ public class PutService {
             handleVersioningAndUpdate(resource, documentKey, context.getTransactionContext(), 
                                     cluster, bucketName);
             
-            logger.info("✅ PUT {} (in transaction): Updated resource {}", resourceType, documentKey);
+            logger.debug("✅ PUT {} (in transaction): Updated resource {}", resourceType, documentKey);
             return resource;
             
         } catch (Exception e) {
@@ -107,14 +107,14 @@ public class PutService {
         
         try {
             // Create standalone transaction for this PUT operation
-            logger.info("🔄 PUT {}: Starting standalone transaction for {}", resourceType, documentKey);
+            logger.debug("🔄 PUT {}: Starting standalone transaction for {}", resourceType, documentKey);
             cluster.transactions().run(txContext -> {
                 logger.debug("🔄 PUT {}: Inside transaction context", resourceType);
                 handleVersioningAndUpdate(resource, documentKey, txContext, cluster, bucketName);
                 logger.debug("✅ PUT {}: Transaction operations completed", resourceType);
             });
             
-            logger.info("✅ PUT {}: Updated resource {} (standalone transaction committed)", resourceType, documentKey);
+            logger.debug("✅ PUT {}: Updated resource {} (standalone transaction committed)", resourceType, documentKey);
             return resource;
             
         } catch (Exception e) {

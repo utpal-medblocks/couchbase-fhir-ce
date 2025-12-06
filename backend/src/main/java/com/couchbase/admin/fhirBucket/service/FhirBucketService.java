@@ -184,14 +184,14 @@ public class FhirBucketService {
             
             // Reload JWT token cache after initialization completes
             // This ensures the cache is ready for token validation
-            logger.info("🔐 Reloading JWT token cache after initialization...");
+            logger.debug("🔐 Reloading JWT token cache after initialization...");
             try {
                 jwtTokenCacheService.loadActiveTokens();
                 if (jwtTokenCacheService.isInitialized()) {
                     int cacheSize = jwtTokenCacheService.getCacheSize();
-                    logger.info("✅ Token cache reloaded with {} active tokens", cacheSize);
+                    logger.debug("✅ Token cache reloaded with {} active tokens", cacheSize);
                 } else {
-                    logger.info("✅ Token cache initialized (no tokens yet)");
+                    logger.debug("✅ Token cache initialized (no tokens yet)");
                 }
             } catch (Exception e) {
                 logger.warn("⚠️ Failed to reload token cache after initialization: {}", e.getMessage());
@@ -228,7 +228,7 @@ public class FhirBucketService {
 
             // Check if user already exists
             if (userService.getUserById(email).isPresent()) {
-                logger.info("👤 Initial Admin user '{}' already exists - skipping creation", email);
+                logger.debug("👤 Initial Admin user '{}' already exists - skipping creation", email);
                 return;
             }
 
@@ -241,7 +241,7 @@ public class FhirBucketService {
             adminUser.setPasswordHash(password);  // Will be hashed by UserService.createUser
 
             userService.createUser(adminUser, "system");
-            logger.info("✅ Initial Admin user '{}' created successfully in Admin.users collection", email);
+            logger.debug("✅ Initial Admin user '{}' created successfully in Admin.users collection", email);
         } catch (Exception e) {
             // Do not fail bucket initialization if seeding the Admin user fails
             logger.error("❌ Failed to create initial Admin user from config.yaml: {}", e.getMessage());
@@ -280,7 +280,7 @@ public class FhirBucketService {
                     Duration maxTtl = Duration.ofSeconds(collection.getMaxTtlSeconds());
                     CollectionSpec spec = CollectionSpec.create(collection.getName(), scopeName, maxTtl);
                     manager.createCollection(spec);
-                    logger.info("✅ Created collection {}.{} with maxTTL: {}s", 
+                    logger.debug("✅ Created collection {}.{} with maxTTL: {}s", 
                                scopeName, collection.getName(), collection.getMaxTtlSeconds());
                 } else {
                     // Create collection without maxTTL (simple API)
@@ -613,7 +613,7 @@ public class FhirBucketService {
             // Check if key already exists
             try {
                 configCollection.get("oauth-signing-key");
-                logger.info("🔐 OAuth signing key already exists in fhir.Admin.config");
+                logger.debug("🔐 OAuth signing key already exists in fhir.Admin.config");
                 return;
             } catch (com.couchbase.client.core.error.DocumentNotFoundException e) {
                 // Key doesn't exist, persist it
@@ -627,22 +627,22 @@ public class FhirBucketService {
             }
             
             String keyId = rsaKey.getKeyID();
-            logger.info("🔐 [STEP-11] Persisting in-memory OAuth signing key - hasPrivateKey: {}, kid: {}", rsaKey.isPrivate(), keyId);
+            logger.debug("🔐 [STEP-11] Persisting in-memory OAuth signing key - hasPrivateKey: {}, kid: {}", rsaKey.isPrivate(), keyId);
             
             // Serialize the RSAKey directly (not via JWKSet) to ensure private parts are included
             String jwkJson = rsaKey.toJSONString();
-            logger.info("🔐 [STEP-11] Serialized RSAKey JSON length: {} chars", jwkJson.length());
+            logger.debug("🔐 [STEP-11] Serialized RSAKey JSON length: {} chars", jwkJson.length());
             logger.debug("🔐 [STEP-11] RSAKey JSON (first 200 chars): {}", 
                 jwkJson.length() > 200 ? jwkJson.substring(0, 200) + "..." : jwkJson);
             
             // Wrap in JWKSet format
             String jwkSetJson = String.format("{\"keys\":[%s]}", jwkJson);
-            logger.info("🔐 [STEP-11] Complete JWKSet JSON length: {} chars", jwkSetJson.length());
+            logger.debug("🔐 [STEP-11] Complete JWKSet JSON length: {} chars", jwkSetJson.length());
             
             // Verify it can be parsed back with private key
             JWKSet testParse = JWKSet.parse(jwkSetJson);
             RSAKey testKey = (RSAKey) testParse.getKeys().get(0);
-            logger.info("🔐 [STEP-11] Verification after parse - hasPrivateKey: {}", testKey.isPrivate());
+            logger.debug("🔐 [STEP-11] Verification after parse - hasPrivateKey: {}", testKey.isPrivate());
             
             if (!testKey.isPrivate()) {
                 logger.error("❌ [STEP-11] BUG: Serialization lost private key! This should never happen.");
@@ -660,8 +660,8 @@ public class FhirBucketService {
                     .put("updatedAt", Instant.now().toString());
             
             configCollection.upsert("oauth-signing-key", doc);
-            logger.info("✅ Persisted OAuth signing key to fhir.Admin.config (kid: {})", keyId);
-            logger.info("🔐 All JWTs issued since startup remain valid - same key now persisted");
+            logger.debug("✅ Persisted OAuth signing key to fhir.Admin.config (kid: {})", keyId);
+            logger.debug("🔐 All JWTs issued since startup remain valid - same key now persisted");
             
             // Verify what was actually saved by reading it back
             try {
@@ -669,7 +669,7 @@ public class FhirBucketService {
                 String savedJwkStr = savedDoc.getString("jwkSetString");
                 JWKSet verifySet = JWKSet.parse(savedJwkStr);
                 RSAKey verifyKey = (RSAKey) verifySet.getKeys().get(0);
-                logger.info("🔐 [STEP-11] Verification after save - hasPrivateKey: {}", verifyKey.isPrivate());
+                logger.debug("🔐 [STEP-11] Verification after save - hasPrivateKey: {}", verifyKey.isPrivate());
                 if (!verifyKey.isPrivate()) {
                     logger.error("❌ [STEP-11] Saved document lost private key!");
                 }

@@ -16,7 +16,7 @@
     <!-- ============================================================= -->
 
     <!-- Central reusable pattern (NO %ex tokens!) -->
-    <property name="NO_STACK_PATTERN" value="%d{HH:mm:ss.SSS} %-5level %logger{36} - %msg%n"/>
+    <property name="NO_STACK_PATTERN" value="%d{yyyy-MM-dd'T'HH:mm:ss.SSS'Z', UTC} %-5level %msg%n"/>
 
     <!-- Container-friendly logging: STDOUT only (12-factor). -->
     <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">

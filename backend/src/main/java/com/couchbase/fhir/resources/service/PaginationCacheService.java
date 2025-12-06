@@ -99,7 +99,7 @@ public class PaginationCacheService {
                 
                 // Success - exit loop
                 if (attempt > 1) {
-                    logger.info("✅ Pagination state storage succeeded on retry attempt {}", attempt);
+                    logger.debug("✅ Pagination state storage succeeded on retry attempt {}", attempt);
                 }
                 return;
                 
@@ -214,7 +214,7 @@ public class PaginationCacheService {
         String cacheKey = bucketName + ":" + ADMIN_SCOPE + ":" + CACHE_COLLECTION;
         
         return cacheCollectionCache.computeIfAbsent(cacheKey, key -> {
-            logger.info("🔧 Initializing Admin.cache collection reference: bucket={}", bucketName);
+            logger.debug("🔧 Initializing Admin.cache collection reference: bucket={}", bucketName);
             return couchbaseGateway.getCollection("default", bucketName, ADMIN_SCOPE, CACHE_COLLECTION);
         });
     }
@@ -309,7 +309,7 @@ public class PaginationCacheService {
      */
     public void clearCollectionCache() {
         cacheCollectionCache.clear();
-        logger.info("🔧 Cleared pagination cache collection references");
+        logger.debug("🔧 Cleared pagination cache collection references");
     }
 }
 

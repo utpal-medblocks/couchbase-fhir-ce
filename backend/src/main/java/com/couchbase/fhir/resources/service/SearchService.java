@@ -1911,7 +1911,13 @@ public class SearchService {
             logger.debug("🚀 FASTPATH: No primary resources found, returning empty bundle");
             String baseUrl = extractBaseUrl(requestDetails, bucketName);
             String selfUrl = baseUrl + "/" + primaryResourceType;
-            return fastJsonBundleBuilder.buildEmptySearchsetBundle(selfUrl, Instant.now());
+            byte[] emptyBundle = fastJsonBundleBuilder.buildEmptySearchsetBundle(selfUrl, Instant.now());
+            
+            // Track response metrics in perfBag
+            RequestPerfBagUtils.addCount(requestDetails, "entries", 0);
+            RequestPerfBagUtils.addCount(requestDetails, "response_bytes", emptyBundle.length);
+            
+            return emptyBundle;
         }
         
         logger.debug("🚀 FASTPATH: PRIMARY FTS returned {} keys (requested count+1={}, total={})", 
@@ -2023,6 +2029,11 @@ public class SearchService {
                    includedKeyToBytesMap.size(),
                    totalPrimaryCount);
 
+        // Track response metrics in perfBag
+        int totalEntries = primaryKeyToBytesMap.size() + includedKeyToBytesMap.size();
+        RequestPerfBagUtils.addCount(requestDetails, "entries", totalEntries);
+        RequestPerfBagUtils.addCount(requestDetails, "response_bytes", bundleBytes.length);
+
         return bundleBytes;
     }
     
@@ -2113,6 +2124,10 @@ public class SearchService {
         
         logger.debug("🚀 FASTPATH: Regular search COMPLETE: Bundle={} resources, total={}", 
                    primaryKeyToBytesMap.size(), actualTotalCount);
+        
+        // Track response metrics in perfBag
+        RequestPerfBagUtils.addCount(requestDetails, "entries", primaryKeyToBytesMap.size());
+        RequestPerfBagUtils.addCount(requestDetails, "response_bytes", bundleBytes.length);
         
         return bundleBytes;
     }
@@ -2324,7 +2339,13 @@ public class SearchService {
             logger.debug("🚀 FASTPATH: No primary resources found, returning empty bundle");
             String baseUrl = extractBaseUrl(requestDetails, bucketName);
             String selfUrl = baseUrl + "/" + primaryResourceType;
-            return fastJsonBundleBuilder.buildEmptySearchsetBundle(selfUrl, Instant.now());
+            byte[] emptyBundle = fastJsonBundleBuilder.buildEmptySearchsetBundle(selfUrl, Instant.now());
+            
+            // Track response metrics in perfBag
+            RequestPerfBagUtils.addCount(requestDetails, "entries", 0);
+            RequestPerfBagUtils.addCount(requestDetails, "response_bytes", emptyBundle.length);
+            
+            return emptyBundle;
         }
         
         logger.debug("🚀 FASTPATH: PRIMARY FTS returned {} keys (requested count+1={}, total={})", 
@@ -2454,6 +2475,11 @@ public class SearchService {
                    primaryKeyToBytesMap.size(), 
                    allSecondaryKeyToBytesMap.size(),
                    totalPrimaryCount);
+        
+        // Track response metrics in perfBag
+        int totalEntries = primaryKeyToBytesMap.size() + allSecondaryKeyToBytesMap.size();
+        RequestPerfBagUtils.addCount(requestDetails, "entries", totalEntries);
+        RequestPerfBagUtils.addCount(requestDetails, "response_bytes", bundleBytes.length);
         
         return bundleBytes;
     }
@@ -2802,6 +2828,11 @@ public class SearchService {
                    includedKeyToBytesMap.size(),
                    totalCount,
                    needsPagination ? "YES" : "NO");
+        
+        // Track response metrics in perfBag
+        int totalEntries = primaryKeyToBytesMap.size() + includedKeyToBytesMap.size();
+        RequestPerfBagUtils.addCount(requestDetails, "entries", totalEntries);
+        RequestPerfBagUtils.addCount(requestDetails, "response_bytes", bundleBytes.length);
         
         return bundleBytes;
     }

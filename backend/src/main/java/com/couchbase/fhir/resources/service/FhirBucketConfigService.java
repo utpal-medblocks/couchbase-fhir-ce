@@ -292,7 +292,7 @@ public class FhirBucketConfigService {
     public void clearAllConfigCache() {
         int size = configCache.size();
         configCache.clear();
-        logger.info("🗑️ Cleared all cached FHIR configurations ({} entries)", size);
+        logger.debug("🗑️ Cleared all cached FHIR configurations ({} entries)", size);
     }
     
     /**

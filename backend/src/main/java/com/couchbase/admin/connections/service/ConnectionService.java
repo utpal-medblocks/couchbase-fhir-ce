@@ -15,6 +15,7 @@ import org.springframework.stereotype.Service;
 
 import java.time.Duration;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -325,7 +326,7 @@ public class ConnectionService {
             // Store connection details including SSL status and server type
             connectionDetails.put(request.getName(), new ConnectionDetails(request.isSslEnabled(), request.getConnectionString(), request.getUsername(), request.getPassword(), request.getServerType()));
             
-            logger.info("Successfully created and stored connection: {}", request.getName());
+            logger.debug("Successfully created and stored connection: {}", request.getName());
             
             // Clear any previous connection error on success
             this.lastConnectionError = null;
@@ -410,14 +411,26 @@ public class ConnectionService {
      */
     private void lazyWarmupBucket(String connectionName, String bucketName, String scopeName) {
         try {
+            // Skip warmup for Admin scope - not performance critical
+            // Admin collections (Versions, Tombstones) are accessed infrequently
+            // and can tolerate the first-request penalty
+            if ("Admin".equals(scopeName)) {
+                logger.debug("⏭️ Skipping warmup for Admin scope (not performance critical)");
+                String bucketKey = connectionName + ":" + bucketName + ":" + scopeName;
+                bucketWarmupStatus.put(bucketKey, true); // Mark as complete (skipped)
+                return;
+            }
+            
             logger.info("🔥 Lazy warmup triggered for bucket: {}.{}", bucketName, scopeName);
             
-            // Standard FHIR collections
-            List<String> collections = Arrays.asList(
-                "Patient", "Observation", "Encounter", "Condition", 
-                "Procedure", "MedicationRequest", "DiagnosticReport", "DocumentReference", 
-                "Immunization", "ServiceRequest", "General", "Versions", "Tombstones"
-            );
+            // Get scope-specific collections
+            List<String> collections = getCollectionsForScope(scopeName);
+            if (collections.isEmpty()) {
+                logger.debug("⏭️ No collections to warm up for scope: {}", scopeName);
+                String bucketKey = connectionName + ":" + bucketName + ":" + scopeName;
+                bucketWarmupStatus.put(bucketKey, true);
+                return;
+            }
             
             long startTime = System.currentTimeMillis();
             warmupCollections(connectionName, bucketName, scopeName, collections);
@@ -430,6 +443,27 @@ public class ConnectionService {
             
         } catch (Exception e) {
             logger.warn("⚠️ Lazy warmup failed for {}.{}: {}", bucketName, scopeName, e.getMessage());
+        }
+    }
+    
+    /**
+     * Get collections to warm up based on scope name
+     */
+    private List<String> getCollectionsForScope(String scopeName) {
+        if ("Resources".equals(scopeName)) {
+            // FHIR resource collections (performance critical - in hot path)
+            return Arrays.asList(
+                "Patient", "Observation", "Encounter", "Condition", 
+                "Procedure", "MedicationRequest", "DiagnosticReport", "DocumentReference", 
+                "Immunization", "ServiceRequest", "General"
+            );
+        } else if ("Admin".equals(scopeName)) {
+            // Admin collections (NOT performance critical - rarely accessed)
+            // Warmup is disabled for Admin scope by default
+            return Collections.emptyList();
+        } else {
+            logger.debug("⚠️ Unknown scope: {} - no collections to warm up", scopeName);
+            return Collections.emptyList();
         }
     }
     

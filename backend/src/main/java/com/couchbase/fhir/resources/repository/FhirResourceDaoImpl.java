@@ -117,7 +117,7 @@ public class FhirResourceDaoImpl<T extends IBaseResource> implements  FhirResour
                 }
             }
             
-            logger.info("Successfully parsed {}/{} {} resources", resources.size(), ids.size(), resourceType);
+            logger.debug("Successfully parsed {}/{} {} resources", resources.size(), ids.size(), resourceType);
             return resources;
 
         } catch (Exception e) {
@@ -151,7 +151,7 @@ public class FhirResourceDaoImpl<T extends IBaseResource> implements  FhirResour
                     .collection(targetCollection);
             
             collection.insert(documentKey, JsonObject.fromJson(resourceJson));
-            logger.info("Successfully created {} with ID: {}", resourceType, documentKey);
+            logger.debug("Successfully created {} with ID: {}", resourceType, documentKey);
             return Optional.of(resource);
 
         }catch (Exception e){
@@ -174,7 +174,7 @@ public class FhirResourceDaoImpl<T extends IBaseResource> implements  FhirResour
             QueryResult result = cluster.query(query);
 
             long queryTimeMs = stopwatch.elapsed(TimeUnit.MILLISECONDS);
-            logger.info("Query execution time : " + queryTimeMs + " ms");
+            logger.debug("Query execution time : " + queryTimeMs + " ms");
             DAOTimingContext.recordQueryTime(queryTimeMs);
 
             List<JsonObject> rows = result.rowsAs(JsonObject.class);
@@ -214,7 +214,7 @@ public class FhirResourceDaoImpl<T extends IBaseResource> implements  FhirResour
             }
 
             QueryResult result = cluster.query(countQuery);
-            logger.info("Count query execution time: " + stopwatch.elapsed(TimeUnit.MILLISECONDS) + " ms");
+            logger.debug("Count query execution time: " + stopwatch.elapsed(TimeUnit.MILLISECONDS) + " ms");
 
             List<JsonObject> rows = result.rowsAs(JsonObject.class);
             if (rows.isEmpty()) {

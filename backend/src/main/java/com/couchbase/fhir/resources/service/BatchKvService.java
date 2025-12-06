@@ -56,7 +56,7 @@ public class BatchKvService {
         
         String bucketName = TenantContextHolder.getTenantId();
         
-        logger.info("🔑 Batch KV retrieval: {} documents for {}", documentKeys.size(), resourceType);
+        logger.debug("🔑 Batch KV retrieval: {} documents for {}", documentKeys.size(), resourceType);
         
         Stopwatch stopwatch = Stopwatch.createStarted();
         
@@ -79,7 +79,7 @@ public class BatchKvService {
                 .get(30, TimeUnit.SECONDS); // Overall timeout
             
             long kvTimeMs = stopwatch.elapsed(TimeUnit.MILLISECONDS);
-            logger.info("🔑 Async KV operations completed in {} ms ({} docs)", kvTimeMs, documentKeys.size());
+            logger.debug("🔑 Async KV operations completed in {} ms ({} docs)", kvTimeMs, documentKeys.size());
             DAOTimingContext.recordQueryTime(kvTimeMs);
             
             // Parse results into FHIR resources
@@ -108,7 +108,7 @@ public class BatchKvService {
             long totalTimeMs = stopwatch.elapsed(TimeUnit.MILLISECONDS);
             long parsingTimeMs = totalTimeMs - kvTimeMs;
             
-            logger.info("🔑 Batch KV completed: {}/{} documents retrieved in {} ms (KV: {} ms, parsing: {} ms)", 
+            logger.debug("🔑 Batch KV completed: {}/{} documents retrieved in {} ms (KV: {} ms, parsing: {} ms)", 
                        resources.size(), documentKeys.size(), totalTimeMs, kvTimeMs, parsingTimeMs);
             
             DAOTimingContext.recordParsingTime(parsingTimeMs);

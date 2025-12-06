@@ -60,7 +60,7 @@ public class IncludeReferenceExtractor {
             return Collections.emptyList();
         }
         
-        logger.info("🔍 N1QL: Extracting references for {} primaries with {} includes (limit={})", 
+        logger.debug("🔍 N1QL: Extracting references for {} primaries with {} includes (limit={})", 
                    primaryKeys.size(), includes.size(), maxIncludeCount);
         
         try {
@@ -92,7 +92,7 @@ public class IncludeReferenceExtractor {
             
             // Limit results in Java (array slicing in N1QL had compatibility issues)
             if (references.size() > maxIncludeCount) {
-                logger.info("🔍 N1QL: Limiting references from {} to {} (bundle size cap)", 
+                logger.debug("🔍 N1QL: Limiting references from {} to {} (bundle size cap)", 
                            references.size(), maxIncludeCount);
                 return references.subList(0, maxIncludeCount);
             }

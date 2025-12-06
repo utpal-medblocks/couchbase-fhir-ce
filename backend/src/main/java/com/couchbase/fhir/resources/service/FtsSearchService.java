@@ -74,7 +74,7 @@ public class FtsSearchService {
                 try {
                     String queryJson = combinedQuery.export().toString();
                     String optionsJson = exportOptions(searchOptions, from, size, sortFields);
-                    logger.info("🔍 FTS Request Payload:\n  query={}\n  options={}, Index={}", queryJson, optionsJson, ftsIndex);
+                    logger.debug("🔍 FTS Request Payload:\n  query={}\n  options={}, Index={}", queryJson, optionsJson, ftsIndex);
                 } catch (Exception e) {
                     logger.error("🔍 Failed to export FTS request payload: {}", e.getMessage());
                 }
@@ -105,7 +105,7 @@ public class FtsSearchService {
             long roundTripTime = afterQueryTime - ftsStartTime;
             long networkOverhead = roundTripTime - serverExecutionTime;
             
-            logger.info("🔍 FTS search returned {} document keys for {} in {} ms (roundTrip: {} ms, serverExec: {} ms, networkOverhead: {} ms, processing: {} ms)", 
+            logger.debug("🔍 FTS search returned {} document keys for {} in {} ms (roundTrip: {} ms, serverExec: {} ms, networkOverhead: {} ms, processing: {} ms)", 
                        documentKeys.size(), resourceType, ftsElapsedTime, 
                        roundTripTime, serverExecutionTime, networkOverhead, processingTime);
             
@@ -162,7 +162,7 @@ public class FtsSearchService {
             long ftsElapsedTime = System.currentTimeMillis() - ftsStartTime;
             long serverExecutionTime = searchResult.metaData().metrics().took().toMillis();
             long networkOverhead = ftsElapsedTime - serverExecutionTime;
-            logger.info("🔍 FTS count query returned {} total results for {} in {} ms (serverExec: {} ms, networkOverhead: {} ms)", 
+            logger.debug("🔍 FTS count query returned {} total results for {} in {} ms (serverExec: {} ms, networkOverhead: {} ms)", 
                        totalCount, resourceType, ftsElapsedTime, serverExecutionTime, networkOverhead);
             
             return totalCount;
@@ -273,7 +273,7 @@ public class FtsSearchService {
             // Build search options
             SearchOptions searchOptions = buildOptions(0, 1000, sortFields);
             
-            logger.info("🔍 FTS search on custom index: {} with {} queries", fullIndexName, ftsQueries.size());
+            logger.debug("🔍 FTS search on custom index: {} with {} queries", fullIndexName, ftsQueries.size());
             
             long ftsStartTime = System.currentTimeMillis();
             SearchResult searchResult = couchbaseGateway.searchQuery("default", fullIndexName, combinedQuery, searchOptions);
@@ -294,7 +294,7 @@ public class FtsSearchService {
             long ftsElapsedTime = System.currentTimeMillis() - ftsStartTime;
             long serverExecutionTime = searchResult.metaData().metrics().took().toMillis();
             long networkOverhead = ftsElapsedTime - serverExecutionTime;
-            logger.info("🔍 FTS search on {} returned {} document keys in {} ms (serverExec: {} ms, networkOverhead: {} ms)", 
+            logger.debug("🔍 FTS search on {} returned {} document keys in {} ms (serverExec: {} ms, networkOverhead: {} ms)", 
                        fullIndexName, documentKeys.size(), ftsElapsedTime, serverExecutionTime, networkOverhead);
             
             return new FtsSearchResult(
