@@ -15,6 +15,7 @@ services:
     environment:
       SPRING_PROFILES_ACTIVE: prod
       DEPLOYED_ENV: container
+      LOGGING_FILE_NAME: /app/logs/fhir.log
       APP_BASE_URL: "https://dev.cbfhir.com/fhir"
       # Tomcat thread pool tuning (optional - defaults to Spring Boot defaults)
       # Uncomment and tune these for your specific workload during performance testing

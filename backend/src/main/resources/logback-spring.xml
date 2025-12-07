@@ -17,16 +17,36 @@
 
     <!-- Central reusable pattern (NO %ex tokens!) -->
     <property name="NO_STACK_PATTERN" value="%d{yyyy-MM-dd'T'HH:mm:ss.SSS'Z', UTC} %-5level %msg%n"/>
+    
+    <!-- Log file location from environment variable -->
+    <property name="LOG_FILE" value="${LOGGING_FILE_NAME:-/app/logs/fhir.log}"/>
 
-    <!-- Container-friendly logging: STDOUT only (12-factor). -->
+    <!-- Console appender (12-factor for containers) -->
     <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
         <encoder>
             <pattern>${NO_STACK_PATTERN}</pattern>
         </encoder>
     </appender>
+    
+    <!-- File appender for persistent logs -->
+    <appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${LOG_FILE}</file>
+        <encoder>
+            <pattern>${NO_STACK_PATTERN}</pattern>
+        </encoder>
+        <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
+            <!-- Daily rollover -->
+            <fileNamePattern>${LOG_FILE}.%d{yyyy-MM-dd}.gz</fileNamePattern>
+            <!-- Keep 7 days of history -->
+            <maxHistory>7</maxHistory>
+            <!-- Cap total log size at 1GB -->
+            <totalSizeCap>1GB</totalSizeCap>
+        </rollingPolicy>
+    </appender>
 
     <root level="INFO">
         <appender-ref ref="STDOUT"/>
+        <appender-ref ref="FILE"/>
     </root>
 
     <!-- Your Couchbase loggers -->
