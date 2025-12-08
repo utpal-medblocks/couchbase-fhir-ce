@@ -205,6 +205,8 @@ public class ConnectionService {
             
             ClusterEnvironment env = envBuilder.build();
             
+            logger.info("🔍 ClusterEnvironment details: {}", env.toString());
+            
             ClusterOptions options = ClusterOptions.clusterOptions(request.getUsername(), request.getPassword())
                     .environment(env);
                     
