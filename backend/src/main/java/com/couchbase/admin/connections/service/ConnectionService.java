@@ -193,7 +193,10 @@ public class ConnectionService {
             
             ClusterEnvironment env = envBuilder.build();
             
-            logger.info("🔍 ClusterEnvironment details: {}", env.toString());
+            // Verbose environment details at DEBUG level (useful for troubleshooting config issues)
+            if (logger.isDebugEnabled()) {
+                logger.debug("🔍 ClusterEnvironment details: {}", env.toString());
+            }
             
             ClusterOptions options = ClusterOptions.clusterOptions(request.getUsername(), request.getPassword())
                     .environment(env);
