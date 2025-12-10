@@ -14,9 +14,6 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.stream.Collectors;
 
 /**
  * Service to create GSI indexes from gsi-indexes.sql file
@@ -29,15 +26,18 @@ public class GsiIndexService {
     private static final String GSI_INDEXES_FILE = "gsi-indexes.sql";
     
     /**
-     * Create all GSI indexes from gsi-indexes.sql file
+     * Create all GSI indexes from gsi-indexes.sql file synchronously
      * Replaces placeholder bucket names with actual bucket name
+     * 
+     * CREATE PRIMARY INDEX is synchronous - it blocks until the index is built and online.
+     * This ensures indexes are ready before token generation can happen.
      * 
      * @param cluster Couchbase cluster connection
      * @param bucketName Target bucket name (e.g., "fhir")
      * @throws Exception if index creation fails
      */
     public void createGsiIndexes(Cluster cluster, String bucketName) throws Exception {
-        logger.info("📊 Creating GSI indexes from {} for bucket: {}", GSI_INDEXES_FILE, bucketName);
+        logger.info("📊 Creating GSI indexes synchronously from {} for bucket: {}", GSI_INDEXES_FILE, bucketName);
         
         // Read SQL statements from file
         List<String> sqlStatements = readGsiIndexFile();
@@ -48,51 +48,49 @@ public class GsiIndexService {
         }
         
         logger.info("📋 Found {} GSI index statements", sqlStatements.size());
-        logger.info("🚀 Creating GSI indexes in parallel for faster initialization...");
+        logger.info("🔨 Creating GSI indexes synchronously (will wait for indexes to be built and online)...");
         
-        AtomicInteger successCount = new AtomicInteger(0);
-        AtomicInteger skipCount = new AtomicInteger(0);
-        AtomicInteger failCount = new AtomicInteger(0);
+        int successCount = 0;
+        int skipCount = 0;
+        int failCount = 0;
         
-        // Fire-and-forget creation: run in parallel but do NOT block overall bucket initialization.
-        // We attach a completion stage that logs a summary when all have finished.
-        List<CompletableFuture<Void>> indexCreationFutures = sqlStatements.stream()
-            .filter(sql -> !sql.trim().isEmpty())
-            .map(sql -> CompletableFuture.runAsync(() -> {
-                String processedSql = sql.replace("`fhir`", "`" + bucketName + "`");
-                try {
-                    cluster.query(processedSql, QueryOptions.queryOptions().timeout(Duration.ofMinutes(5)));
-                    successCount.incrementAndGet();
-                    logger.info("✅ (async) GSI create accepted: {}", extractIndexName(processedSql));
-                } catch (Exception e) {
-                    String idxName = extractIndexName(processedSql);
-                    if (e.getMessage() != null && e.getMessage().contains("already exists")) {
-                        skipCount.incrementAndGet();
-                        logger.debug("⏭️ (async) GSI exists: {}", idxName);
-                    } else if (e.getMessage() != null && e.getMessage().contains("Build Already In Progress")) {
-                        successCount.incrementAndGet();
-                        logger.info("⏳ (async) GSI building in background: {}", idxName);
-                    } else {
-                        failCount.incrementAndGet();
-                        logger.error("❌ (async) GSI create failed: {} - {}", idxName, e.getMessage());
-                    }
+        // Create indexes synchronously - CREATE PRIMARY INDEX blocks until built
+        for (String sql : sqlStatements) {
+            if (sql.trim().isEmpty()) {
+                continue;
+            }
+            
+            String processedSql = sql.replace("`fhir`", "`" + bucketName + "`");
+            String indexName = extractIndexName(processedSql);
+            
+            try {
+                logger.info("⏳ Creating index: {}", indexName);
+                cluster.query(processedSql, QueryOptions.queryOptions().timeout(Duration.ofMinutes(5)));
+                successCount++;
+                logger.info("✅ Index created and online: {}", indexName);
+            } catch (Exception e) {
+                if (e.getMessage() != null && e.getMessage().contains("already exists")) {
+                    skipCount++;
+                    logger.debug("⏭️ Index already exists: {}", indexName);
+                } else if (e.getMessage() != null && e.getMessage().contains("Build Already In Progress")) {
+                    successCount++;
+                    logger.info("✅ Index building in progress: {}", indexName);
+                } else {
+                    failCount++;
+                    logger.error("❌ Failed to create index {}: {}", indexName, e.getMessage());
+                    // Don't throw - continue with other indexes
                 }
-            }))
-            .collect(Collectors.toList());
-
-        CompletableFuture.allOf(indexCreationFutures.toArray(new CompletableFuture[0]))
-            .whenComplete((v, ex) -> {
-                if (ex != null) {
-                    logger.error("❌ Error during async GSI index creation batch: {}", ex.getMessage());
-                }
-                logger.info("📊 (async) GSI Index Creation Summary: {} created, {} skipped, {} failed", 
-                    successCount.get(), skipCount.get(), failCount.get());
-                if (failCount.get() > 0) {
-                    logger.warn("⚠️ Some GSI indexes failed to create. Check logs for details.");
-                }
-            });
-
-        logger.info("🚀 Proceeding without waiting for GSI indexes to finish building (they will build in background)." );
+            }
+        }
+        
+        logger.info("📊 GSI Index Creation Summary: {} created, {} skipped, {} failed", 
+            successCount, skipCount, failCount);
+        
+        if (failCount > 0) {
+            logger.warn("⚠️ {} GSI indexes failed to create. Check logs for details.", failCount);
+        } else {
+            logger.info("✅ All GSI indexes are online and ready to serve queries");
+        }
     }
     
     /**
