@@ -70,6 +70,10 @@ public class FhirRestfulServer extends RestfulServer {
     @Autowired
     private com.couchbase.common.config.FhirServerConfig fhirServerConfig;
 
+    @Autowired
+    private com.couchbase.admin.connections.service.ConnectionService connectionService;
+
+
     @Override
     protected void initialize() {
         logger.info("🚀 Initializing FhirRestfulServer");
@@ -120,7 +124,7 @@ public class FhirRestfulServer extends RestfulServer {
             USCoreCapabilityProvider capabilityProvider = new USCoreCapabilityProvider(this, buildProperties, configuredBaseUrl);
             setServerConformanceProvider(capabilityProvider);
             registerProviders(allProviders); // Register all providers
-            registerProvider(new BulkImportProvider(fhirContext));
+            registerProvider(new BulkImportProvider(fhirContext  , connectionService));
 
 
         } catch (Exception e) {
