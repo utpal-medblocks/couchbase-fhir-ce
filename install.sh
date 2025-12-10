@@ -95,8 +95,8 @@ chmod 0775 logs 2>/dev/null || chmod 0777 logs 2>/dev/null || true
 echo "🔐 Verifying file integrity..."
 if command -v sha256sum &> /dev/null; then
     # Create temporary checksums for downloaded files only (auto-generated values)
-    echo "1f4bb8b94012586a07f4a094a8db8f991a2317395ff951619d912dd2e9f79731  docker-compose.yml" > temp_checksums.txt
-    echo "549bf3dc6b04006bf8df94b55be1b6e552f75eb8a9149a07fc974367cef1a21f  haproxy.cfg" >> temp_checksums.txt
+    echo "a6623dc15b2b1cb2504e0f393d2c605b77e00a751a6712978ddccc11f2b508ec  docker-compose.yml" > temp_checksums.txt
+    echo "75436ec98b8f55133edb9faff48264f88274e88c73c2e0f1d908b68cdc62098b  haproxy.cfg" >> temp_checksums.txt
     
     if ! sha256sum -c temp_checksums.txt --quiet 2>/dev/null; then
         echo "❌ Warning: File integrity verification failed. Files may have been tampered with."
@@ -107,8 +107,8 @@ if command -v sha256sum &> /dev/null; then
     rm -f temp_checksums.txt
 elif command -v shasum &> /dev/null; then
     # macOS fallback (same hashes as above)
-    echo "1f4bb8b94012586a07f4a094a8db8f991a2317395ff951619d912dd2e9f79731  docker-compose.yml" > temp_checksums.txt
-    echo "549bf3dc6b04006bf8df94b55be1b6e552f75eb8a9149a07fc974367cef1a21f  haproxy.cfg" >> temp_checksums.txt
+    echo "a6623dc15b2b1cb2504e0f393d2c605b77e00a751a6712978ddccc11f2b508ec  docker-compose.yml" > temp_checksums.txt
+    echo "75436ec98b8f55133edb9faff48264f88274e88c73c2e0f1d908b68cdc62098b  haproxy.cfg" >> temp_checksums.txt
     
     if ! shasum -a 256 -c temp_checksums.txt --quiet 2>/dev/null; then
         echo "❌ Warning: File integrity verification failed. Files may have been tampered with."
