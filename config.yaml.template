@@ -48,6 +48,19 @@ admin:
   password: "Admin123!"
   name: "Admin"
 
+# Optional Keycloak integration. When enabled the server will
+# delegate OAuth2 and user-management to an external Keycloak instance.
+keycloak:
+  enabled: false
+  # URL should point to HAProxy route (recommended) or direct Keycloak URL
+  url: "http://localhost/auth"
+  realm: "fhir"
+  # These values should be provided via environment variables in production
+  adminUsername: "${KEYCLOAK_ADMIN_USERNAME:}"
+  adminPassword: "${KEYCLOAK_ADMIN_PASSWORD:}"
+  clientId: "fhir-server"
+  clientSecret: "${KEYCLOAK_CLIENT_SECRET:}"
+
 logging:
   levels:
     com.couchbase.admin: ERROR # ERROR, WARN, INFO, DEBUG
