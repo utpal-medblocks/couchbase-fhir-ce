@@ -32,6 +32,7 @@ import {
   Collapse,
   Divider,
   CircularProgress,
+  Snackbar,
 } from "@mui/material";
 import {
   Add as AddIcon,
@@ -44,6 +45,7 @@ import {
   ExpandLess as ExpandLessIcon,
   CheckCircle as CheckCircleIcon,
   Refresh as RefreshIcon,
+  Block as BlockIcon,
 } from "@mui/icons-material";
 import { BsKey } from "react-icons/bs";
 import type { OAuthClient } from "../../services/oauthClientService";
@@ -51,6 +53,7 @@ import {
   getAllClients,
   createClient as createClientAPI,
   revokeClient as revokeClientAPI,
+  deleteClient as deleteClientAPI,
 } from "../../services/oauthClientService";
 
 // OAuth Client interface (will be shared with backend later)
@@ -72,25 +75,39 @@ interface OAuthClientForm {
   lastUsed?: string;
 }
 
-// Mandatory SMART scopes (cannot be removed)
-const MANDATORY_SCOPES = [
-  {
-    value: "launch/patient",
-    label: "launch/patient",
-    description: "Patient context at launch",
-  },
-  {
-    value: "openid",
-    label: "openid",
-    description: "OpenID Connect authentication",
-  },
-  { value: "fhirUser", label: "fhirUser", description: "User identity claim" },
-  {
-    value: "offline_access",
-    label: "offline_access",
-    description: "Refresh tokens for offline access",
-  },
-];
+// Mandatory SMART scopes factory (cannot be removed)
+const getMandatoryScopes = (clientType: "patient" | "provider" | "system") => {
+  const base = [
+    {
+      value: "openid",
+      label: "openid",
+      description: "OpenID Connect authentication",
+    },
+    {
+      value: "fhirUser",
+      label: "fhirUser",
+      description: "User identity claim",
+    },
+    {
+      value: "offline_access",
+      label: "offline_access",
+      description: "Refresh tokens for offline access",
+    },
+  ];
+  const launchScope =
+    clientType === "patient"
+      ? {
+          value: "launch/patient",
+          label: "launch/patient",
+          description: "Patient context at launch",
+        }
+      : {
+          value: "launch",
+          label: "launch",
+          description: "App launched with user or system context",
+        };
+  return [launchScope, ...base];
+};
 
 // US Core resource scopes for ONC certification (25 resources)
 const US_CORE_RESOURCE_SCOPES = [
@@ -183,11 +200,17 @@ const ClientRegistration: React.FC = () => {
   const [redirectUriInput, setRedirectUriInput] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
-  const [usCoreExpanded, setUsCoreExpanded] = useState(false);
-  const [usCoreEnabled, setUsCoreEnabled] = useState(true);
-  const [selectedUsCoreScopes, setSelectedUsCoreScopes] = useState<string[]>(
-    US_CORE_RESOURCE_SCOPES
+  const [copySnackbar, setCopySnackbar] = useState(false);
+  const [revokeDialogOpen, setRevokeDialogOpen] = useState(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [selectedClient, setSelectedClient] = useState<OAuthClient | null>(
+    null
   );
+  // New scopes UI state
+  const [scopeMode, setScopeMode] = useState<"custom" | "all-read" | "us-core">(
+    "custom"
+  );
+  const [scopesText, setScopesText] = useState<string>("");
 
   // Load clients on mount
   useEffect(() => {
@@ -220,18 +243,15 @@ const ClientRegistration: React.FC = () => {
       authenticationType: "public",
       launchType: "standalone",
       redirectUris: [],
-      scopes: [
-        ...MANDATORY_SCOPES.map((s) => s.value),
-        ...US_CORE_RESOURCE_SCOPES,
-      ],
+      scopes: getMandatoryScopes("patient").map((s) => s.value),
       pkceEnabled: true,
       pkceMethod: "S256",
     });
     setRedirectUriInput("");
     setError(null);
-    setUsCoreEnabled(true);
-    setUsCoreExpanded(false);
-    setSelectedUsCoreScopes(US_CORE_RESOURCE_SCOPES);
+    // Reset new scopes UI
+    setScopeMode("custom");
+    setScopesText("");
   };
 
   const handleAddRedirectUri = () => {
@@ -265,66 +285,25 @@ const ClientRegistration: React.FC = () => {
     });
   };
 
-  const handleOptionalScopeToggle = (scope: string) => {
-    const currentScopes = formData.scopes;
-    if (currentScopes.includes(scope)) {
-      setFormData({
-        ...formData,
-        scopes: currentScopes.filter((s) => s !== scope),
-      });
-    } else {
-      setFormData({
-        ...formData,
-        scopes: [...currentScopes, scope],
-      });
+  // Scopes preset handler
+  const applyScopePreset = (mode: "custom" | "all-read" | "us-core") => {
+    setScopeMode(mode);
+    if (mode === "custom") {
+      setScopesText("");
+    } else if (mode === "all-read") {
+      // Single-patient: prefer read-only (SMART v2 format: .rs = read+search)
+      setScopesText("patient/*.rs");
+    } else if (mode === "us-core") {
+      setScopesText(US_CORE_RESOURCE_SCOPES.join(" "));
     }
   };
 
-  const handleUsCoreToggle = () => {
-    const newUsCoreEnabled = !usCoreEnabled;
-    setUsCoreEnabled(newUsCoreEnabled);
-
-    if (newUsCoreEnabled) {
-      // Add all selected US Core scopes
-      const mandatoryScopes = MANDATORY_SCOPES.map((s) => s.value);
-      const otherScopes = formData.scopes.filter(
-        (s) =>
-          !US_CORE_RESOURCE_SCOPES.includes(s) && !mandatoryScopes.includes(s)
-      );
-      setFormData({
-        ...formData,
-        scopes: [...mandatoryScopes, ...otherScopes, ...selectedUsCoreScopes],
-      });
-    } else {
-      // Remove all US Core scopes
-      setFormData({
-        ...formData,
-        scopes: formData.scopes.filter(
-          (s) => !US_CORE_RESOURCE_SCOPES.includes(s)
-        ),
-      });
-    }
-  };
-
-  const handleUsCoreResourceToggle = (resource: string) => {
-    const newSelected = selectedUsCoreScopes.includes(resource)
-      ? selectedUsCoreScopes.filter((s) => s !== resource)
-      : [...selectedUsCoreScopes, resource];
-
-    setSelectedUsCoreScopes(newSelected);
-
-    // Update formData if US Core is enabled
-    if (usCoreEnabled) {
-      const mandatoryScopes = MANDATORY_SCOPES.map((s) => s.value);
-      const otherScopes = formData.scopes.filter(
-        (s) =>
-          !US_CORE_RESOURCE_SCOPES.includes(s) && !mandatoryScopes.includes(s)
-      );
-      setFormData({
-        ...formData,
-        scopes: [...mandatoryScopes, ...otherScopes, ...newSelected],
-      });
-    }
+  // Parse scopesText into array (space-delimited)
+  const parsedOptionalScopes = (text: string) => {
+    return text
+      .split(/\s+/)
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0);
   };
 
   const handleRegisterClient = async () => {
@@ -337,7 +316,16 @@ const ClientRegistration: React.FC = () => {
       setError("At least one redirect URI is required");
       return;
     }
-    if (formData.scopes.length === 0) {
+    // Build final scopes: mandatory + parsed from textarea
+    const mandatoryScopes = getMandatoryScopes(formData.clientType).map(
+      (s) => s.value
+    );
+    const optionalScopes = parsedOptionalScopes(scopesText);
+    const finalScopes = Array.from(
+      new Set([...mandatoryScopes, ...optionalScopes])
+    );
+
+    if (finalScopes.length === 0) {
       setError("At least one scope is required");
       return;
     }
@@ -353,7 +341,7 @@ const ClientRegistration: React.FC = () => {
         authenticationType: formData.authenticationType,
         launchType: formData.launchType,
         redirectUris: formData.redirectUris,
-        scopes: formData.scopes,
+        scopes: finalScopes,
         pkceEnabled: formData.pkceEnabled,
         pkceMethod: formData.pkceMethod,
       });
@@ -373,7 +361,7 @@ const ClientRegistration: React.FC = () => {
 
   const handleCopyToClipboard = (text: string) => {
     navigator.clipboard.writeText(text);
-    // Could add a toast notification here
+    setCopySnackbar(true);
   };
 
   const handleRevokeClient = async (clientId: string) => {
@@ -381,9 +369,20 @@ const ClientRegistration: React.FC = () => {
       setError(null);
       await revokeClientAPI(clientId);
       setSuccess("Client revoked successfully");
-      loadClients(); // Reload list
+      loadClients();
     } catch (err: any) {
       setError(err.response?.data?.error || "Failed to revoke OAuth client");
+    }
+  };
+
+  const handleDeleteClient = async (clientId: string) => {
+    try {
+      setError(null);
+      await deleteClientAPI(clientId);
+      setSuccess("Client permanently deleted");
+      loadClients();
+    } catch (err: any) {
+      setError(err.response?.data?.error || "Failed to delete OAuth client");
     }
   };
 
@@ -396,6 +395,7 @@ const ClientRegistration: React.FC = () => {
           justifyContent: "space-between",
           alignItems: "center",
           mb: 2,
+          gap: 2,
         }}
       >
         <Box>
@@ -413,7 +413,7 @@ const ClientRegistration: React.FC = () => {
         </Button>
       </Box>
       {/* Registered Clients Table */}
-      <Card>
+      <Card sx={{ width: "100%", minHeight: 200 }}>
         <CardContent>
           {loading ? (
             <Box sx={{ display: "flex", justifyContent: "center", p: 4 }}>
@@ -430,7 +430,7 @@ const ClientRegistration: React.FC = () => {
               </Typography>
             </Box>
           ) : (
-            <TableContainer component={Paper} elevation={0}>
+            <TableContainer component={Paper}>
               <Table>
                 <TableHead>
                   <TableRow>
@@ -446,7 +446,7 @@ const ClientRegistration: React.FC = () => {
                 </TableHead>
                 <TableBody>
                   {clients.map((client) => (
-                    <TableRow key={client.clientId}>
+                    <TableRow key={client.clientId} hover>
                       <TableCell>
                         <Typography variant="body2" fontWeight="medium">
                           {client.clientName}
@@ -501,15 +501,38 @@ const ClientRegistration: React.FC = () => {
                         </Typography>
                       </TableCell>
                       <TableCell align="right">
-                        {client.status === "active" && (
-                          <Button
+                        <Tooltip
+                          title={
+                            client.status === "revoked"
+                              ? "Already revoked"
+                              : "Revoke client"
+                          }
+                        >
+                          <span>
+                            <IconButton
+                              size="small"
+                              onClick={() => {
+                                setSelectedClient(client);
+                                setRevokeDialogOpen(true);
+                              }}
+                              disabled={client.status === "revoked"}
+                              color="warning"
+                            >
+                              <BlockIcon fontSize="small" />
+                            </IconButton>
+                          </span>
+                        </Tooltip>
+                        <Tooltip title="Permanently delete">
+                          <IconButton
                             size="small"
-                            color="error"
-                            onClick={() => handleRevokeClient(client.clientId)}
+                            onClick={() => {
+                              setSelectedClient(client);
+                              setDeleteDialogOpen(true);
+                            }}
                           >
-                            Revoke
-                          </Button>
-                        )}
+                            <DeleteIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
                       </TableCell>
                     </TableRow>
                   ))}
@@ -796,7 +819,7 @@ const ClientRegistration: React.FC = () => {
                 <Box
                   sx={{ display: "flex", flexWrap: "wrap", gap: 0.5, mt: 1 }}
                 >
-                  {MANDATORY_SCOPES.map((scope) => (
+                  {getMandatoryScopes(formData.clientType).map((scope) => (
                     <Chip
                       key={scope.value}
                       label={scope.value}
@@ -810,164 +833,71 @@ const ClientRegistration: React.FC = () => {
 
               <Divider sx={{ my: 2 }} />
 
-              {/* US Core Resources - Expandable Mega Chip */}
-              {formData.clientType === "patient" && (
-                <Box sx={{ mb: 2 }}>
-                  <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
-                    <FormControlLabel
-                      sx={{ m: 0 }}
-                      control={
-                        <Checkbox
-                          size="small"
-                          checked={usCoreEnabled}
-                          onChange={handleUsCoreToggle}
-                        />
+              {/* New scopes preset toggle + textarea */}
+              <Box>
+                <Box
+                  sx={{ display: "flex", alignItems: "center", gap: 2, mb: 1 }}
+                >
+                  <FormLabel component="legend" sx={{ mb: 0 }}>
+                    Add
+                  </FormLabel>
+                  <ToggleButtonGroup
+                    exclusive
+                    size="small"
+                    color="primary"
+                    value={scopeMode}
+                    onChange={(_, newValue) => {
+                      if (newValue) {
+                        applyScopePreset(newValue);
                       }
-                      label={
-                        <Box
-                          sx={{ display: "flex", alignItems: "center", gap: 1 }}
-                        >
-                          <Typography variant="body2" fontWeight="medium">
-                            US Core Resources
-                          </Typography>
-                          <Chip
-                            label={`${selectedUsCoreScopes.length}/${US_CORE_RESOURCE_SCOPES.length} resources`}
-                            size="small"
-                            variant="outlined"
-                            color="info"
-                          />
-                        </Box>
-                      }
-                    />
-                    {usCoreEnabled && (
-                      <Button
-                        size="small"
-                        onClick={() => setUsCoreExpanded(!usCoreExpanded)}
-                        endIcon={
-                          usCoreExpanded ? (
-                            <ExpandLessIcon />
-                          ) : (
-                            <ExpandMoreIcon />
-                          )
-                        }
-                      >
-                        {usCoreExpanded ? "Hide" : "Show"} Resources
-                      </Button>
-                    )}
-                  </Box>
-                  <Typography
-                    variant="caption"
-                    color="text.secondary"
-                    sx={{ ml: 4, display: "block", mb: 1 }}
+                    }}
                   >
-                    ONC-required FHIR resources for patient access
-                  </Typography>
-                  {usCoreEnabled && (
-                    <Collapse in={usCoreExpanded}>
-                      <Paper
-                        variant="outlined"
-                        sx={{
-                          p: 2,
-                          mt: 1,
-                          maxHeight: 200,
-                          overflow: "auto",
-                          ml: 4,
-                        }}
-                      >
-                        <FormGroup>
-                          {US_CORE_RESOURCE_SCOPES.map((resource) => (
-                            <FormControlLabel
-                              key={resource}
-                              control={
-                                <Checkbox
-                                  size="small"
-                                  checked={selectedUsCoreScopes.includes(
-                                    resource
-                                  )}
-                                  onChange={() =>
-                                    handleUsCoreResourceToggle(resource)
-                                  }
-                                />
-                              }
-                              label={
-                                <Typography
-                                  variant="body2"
-                                  sx={{
-                                    fontFamily: "monospace",
-                                    fontSize: "0.8rem",
-                                  }}
-                                >
-                                  {resource}
-                                </Typography>
-                              }
-                              sx={{ my: 0 }}
-                            />
-                          ))}
-                        </FormGroup>
-                      </Paper>
-                    </Collapse>
-                  )}
+                    <ToggleButton value="custom" sx={{ textTransform: "none" }}>
+                      Custom
+                    </ToggleButton>
+                    <ToggleButton
+                      value="all-read"
+                      sx={{ textTransform: "none" }}
+                    >
+                      All Read
+                    </ToggleButton>
+                    <ToggleButton
+                      value="us-core"
+                      sx={{ textTransform: "none" }}
+                    >
+                      US-Core
+                    </ToggleButton>
+                  </ToggleButtonGroup>
                 </Box>
-              )}
-
-              {/* Optional Additional Scopes */}
-              {(formData.clientType === "provider" ||
-                formData.clientType === "system") && (
-                <Box>
-                  <Typography
-                    variant="caption"
-                    color="text.secondary"
-                    gutterBottom
-                    display="block"
-                  >
-                    Additional Scopes:
-                  </Typography>
-                  <FormGroup>
-                    {OPTIONAL_SCOPES.map((scope) => (
-                      <FormControlLabel
-                        key={scope.value}
-                        control={
-                          <Checkbox
-                            size="small"
-                            checked={formData.scopes.includes(scope.value)}
-                            onChange={() =>
-                              handleOptionalScopeToggle(scope.value)
-                            }
-                          />
-                        }
-                        label={
-                          <Box>
-                            <Typography
-                              variant="body2"
-                              component="span"
-                              sx={{
-                                fontFamily: "monospace",
-                                fontSize: "0.85rem",
-                              }}
-                            >
-                              {scope.label}
-                            </Typography>
-                            <Typography
-                              variant="caption"
-                              color="text.secondary"
-                              sx={{ ml: 1 }}
-                            >
-                              - {scope.description}
-                            </Typography>
-                          </Box>
-                        }
-                        sx={{ my: 0 }}
-                      />
-                    ))}
-                  </FormGroup>
-                </Box>
-              )}
+                <Typography
+                  variant="caption"
+                  color="text.secondary"
+                  display="block"
+                  sx={{ mb: 0.5 }}
+                >
+                  Enter space-delimited list of scopes
+                </Typography>
+                <TextField
+                  multiline
+                  minRows={3}
+                  fullWidth
+                  placeholder="e.g. patient/*.rs (SMART v2: rs=read+search)"
+                  value={scopesText}
+                  onChange={(e) => setScopesText(e.target.value)}
+                />
+              </Box>
             </Box>
           </Box>
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setRegisterDialogOpen(false)}>Cancel</Button>
-          <Button variant="contained" onClick={handleRegisterClient}>
+          <Button
+            variant="contained"
+            onClick={handleRegisterClient}
+            disabled={
+              formData.redirectUris.length === 0 || !formData.clientName.trim()
+            }
+          >
             Register Client
           </Button>
         </DialogActions>
@@ -1124,6 +1054,81 @@ const ClientRegistration: React.FC = () => {
           </Button>
         </DialogActions>
       </Dialog>
+
+      {/* Revoke Client Dialog */}
+      <Dialog
+        open={revokeDialogOpen}
+        onClose={() => setRevokeDialogOpen(false)}
+      >
+        <DialogTitle>Revoke Client?</DialogTitle>
+        <DialogContent>
+          <Typography>
+            Are you sure you want to revoke{" "}
+            <strong>{selectedClient?.clientName}</strong>? This will immediately
+            disable the client but keep it in the database. Revoked clients
+            cannot be reactivated.
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setRevokeDialogOpen(false)}>Cancel</Button>
+          <Button
+            onClick={async () => {
+              if (selectedClient) {
+                await handleRevokeClient(selectedClient.clientId);
+                setRevokeDialogOpen(false);
+                setSelectedClient(null);
+              }
+            }}
+            color="warning"
+            variant="contained"
+          >
+            Revoke
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Delete Client Dialog */}
+      <Dialog
+        open={deleteDialogOpen}
+        onClose={() => setDeleteDialogOpen(false)}
+      >
+        <DialogTitle>Permanently Delete Client</DialogTitle>
+        <DialogContent>
+          <Typography color="error" sx={{ mb: 1 }}>
+            ⚠️ <strong>WARNING: This action cannot be undone!</strong>
+          </Typography>
+          <Typography>
+            Are you sure you want to permanently delete{" "}
+            <strong>{selectedClient?.clientName}</strong>? This will remove all
+            client data from the system.
+          </Typography>
+          <Typography sx={{ mt: 2 }} color="text.secondary">
+            Consider using "Revoke" instead to keep the client record.
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setDeleteDialogOpen(false)}>Cancel</Button>
+          <Button
+            onClick={async () => {
+              if (selectedClient) {
+                await handleDeleteClient(selectedClient.clientId);
+                setDeleteDialogOpen(false);
+                setSelectedClient(null);
+              }
+            }}
+            variant="contained"
+          >
+            Permanently Delete
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Snackbar
+        open={copySnackbar}
+        autoHideDuration={2000}
+        onClose={() => setCopySnackbar(false)}
+        message="Copied to clipboard!"
+      />
     </Box>
   );
 };

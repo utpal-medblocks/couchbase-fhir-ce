@@ -43,7 +43,7 @@ public class FtsKvSearchService {
     public FtsSearchResult searchForAllKeys(List<SearchQuery> ftsQueries, String resourceType, 
                                           List<SearchSort> sortFields) {
         
-        logger.info("🚀 FTS/KV New Pagination: {} with {} queries, fetching up to 1000 keys", 
+        logger.debug("🚀 FTS/KV New Pagination: {} with {} queries, fetching up to 1000 keys", 
                    resourceType, ftsQueries.size());
         
         // Always fetch maximum keys (1000) with offset=0 for optimal pagination
@@ -60,7 +60,7 @@ public class FtsKvSearchService {
      */
     public List<Resource> getDocumentsFromKeys(List<String> documentKeys, String resourceType) {
         
-        logger.info("🔑 KV-Only Pagination: {} documents for {}", documentKeys.size(), resourceType);
+        logger.debug("🔑 KV-Only Pagination: {} documents for {}", documentKeys.size(), resourceType);
         
         if (documentKeys.isEmpty()) {
             return List.of();

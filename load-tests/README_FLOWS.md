@@ -1,3 +1,49 @@
+## Couchbase FHIR vs Medplum vs HAPI
+
+- Purpose: The load-tests support three targets: Couchbase FHIR (cb-fhir), Medplum, and HAPI.
+- Selection: Choose by which `.env.*` you populate; the code auto-loads these in order of preference for auth:
+  - `load-tests/.env.cbfhir` (preferred for Couchbase FHIR)
+  - `load-tests/.env.medplum` (fallback naming for OAuth variables)
+  - `load-tests/.env.hapi` (HAPI-specific settings, typically no auth)
+
+### Couchbase FHIR configuration
+
+- File: `load-tests/.env.cbfhir`
+- Options:
+  - Static token: set `CBFHIR_STATIC_BEARER` for non-expiring tokens
+  - Client credentials: set `CBFHIR_CLIENT_ID`, `CBFHIR_CLIENT_SECRET`, `CBFHIR_TOKEN_URL`, and optional `CBFHIR_SCOPE` (default `system/*.*`)
+  - Base URL: set `CBFHIR_FHIR_URL` (e.g., `http://localhost:8100/fhir/R4`)
+- Behavior:
+  - If `CBFHIR_STATIC_BEARER` is set, requests use that token and skip OAuth calls.
+  - Otherwise, the client credentials grant is used to obtain tokens.
+
+### Medplum configuration
+
+- File: `load-tests/.env.medplum`
+- Variables: `MEDPLUM_CLIENT_ID`, `MEDPLUM_CLIENT_SECRET`, `MEDPLUM_TOKEN_URL`, `MEDPLUM_FHIR_URL`
+- Notes: Even when testing Couchbase FHIR, these names remain supported as a fallback for compatibility.
+
+### HAPI configuration
+
+- File: `load-tests/.env.hapi`
+- Variables: `HAPI_FHIR_URL`
+- Notes: Typically runs without auth; use for local HAPI-based comparisons.
+
+### Running Locust
+
+```zsh
+cd load-tests
+pip install -r requirements.txt
+# Choose your target FHIR base
+export CBFHIR_FHIR_URL=http://localhost:8100/fhir/R4  # or use values from your env file
+locust -f locustfile.py --host "$CBFHIR_FHIR_URL"
+```
+
+### Token expiry handling
+
+- Static token path avoids expiry concerns.
+- Client-credentials path fetches a token per call and `FHIRClient` retries once on 401 with refreshed headers.
+
 ## Overview
 
 This document explains the FHIR flows exercised by the load tests, the sequence of API calls in each flow, and the resources created. All flows assume a current `Patient` and active `Encounter` already exist (created by Registration).

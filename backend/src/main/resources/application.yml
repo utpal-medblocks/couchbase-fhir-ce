@@ -31,6 +31,12 @@ server:
     enabled: true
     mime-types: application/json,application/fhir+json,text/html,text/xml,text/plain,application/xml
     min-response-size: 1024 # Compress responses > 1KB
+  # Session cookie configuration for OAuth cross-site flows
+  servlet:
+    session:
+      cookie:
+        same-site: none # Required for cross-site OAuth (Inferno -> cbfhir.com)
+        secure: true # Required when same-site=none (HTTPS)
 
 # Basic Actuator Configuration
 management:
@@ -65,13 +71,9 @@ server:
   tomcat:
     accesslog:
       enabled: false
-    threads:
-      max: ${SERVER_TOMCAT_THREADS_MAX:50} # Override with env var (default 50 for low memory)
-      min-spare: ${SERVER_TOMCAT_THREADS_MIN_SPARE:10} # Minimum idle threads
-    accept-count: ${SERVER_TOMCAT_ACCEPT_COUNT:100} # Queue size when all threads busy
-    max-connections: ${SERVER_TOMCAT_MAX_CONNECTIONS:200} # Max simultaneous connections
-    connection-timeout: ${SERVER_TOMCAT_CONNECTION_TIMEOUT:20s}
-    max-keep-alive-requests: ${SERVER_TOMCAT_MAX_KEEP_ALIVE_REQUESTS:1000}
+    # Tomcat thread pool configuration delegates to Spring Boot defaults
+    # Set environment variables (SERVER_TOMCAT_THREADS_MAX, etc.) to override
+    # Spring Boot defaults: 200 max threads, 10 min-spare, 100 accept-count, 10000 max-connections
 
 # Logging configuration for containers
 logging:

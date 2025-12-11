@@ -174,9 +174,12 @@ public class AuthorizationServerConfig {
         // - /.well-known/oauth-authorization-server
         OAuth2AuthorizationServerConfiguration.applyDefaultSecurity(http);
 
-        // Enable OpenID Connect 1.0 (get the configurer from http after applyDefaultSecurity)
+        // Enable OpenID Connect and set custom consent page
         http.getConfigurer(OAuth2AuthorizationServerConfigurer.class)
-                .oidc(Customizer.withDefaults());
+            .oidc(Customizer.withDefaults())
+            .authorizationEndpoint(authorization -> authorization
+                .consentPage("/consent")
+            );
 
         // Redirect to login page when not authenticated for HTML requests
         http.exceptionHandling((exceptions) -> exceptions
@@ -301,12 +304,10 @@ public class AuthorizationServerConfig {
     public OAuth2TokenCustomizer<JwtEncodingContext> tokenCustomizer() {
         return context -> {
             String tokenType = context.getTokenType().getValue();
-            logger.info("🔐 [TOKEN-CUSTOMIZER] Customizing {} for user: {}", tokenType, context.getPrincipal().getName());
             
             if (tokenType.equals("access_token") || tokenType.equals("id_token")) {
                 
                 String username = context.getPrincipal().getName();
-                logger.info("🔍 [TOKEN-CUSTOMIZER] Fetching user from Couchbase: {}", username);
                 
                 // Fetch user from Couchbase to get fhirUser reference
                 com.couchbase.admin.users.model.User user = null;
@@ -317,12 +318,9 @@ public class AuthorizationServerConfig {
                             .scope("Admin")
                             .collection("users");
                         user = usersCollection.get(username).contentAs(com.couchbase.admin.users.model.User.class);
-                        logger.info("✅ [TOKEN-CUSTOMIZER] User found: {}, fhirUser: {}", username, user.getFhirUser());
-                    } else {
-                        logger.error("❌ [TOKEN-CUSTOMIZER] No Couchbase connection available");
                     }
                 } catch (Exception e) {
-                    logger.error("❌ [TOKEN-CUSTOMIZER] Could not fetch user {} from Couchbase: {}", username, e.getMessage(), e);
+                    logger.warn("⚠️ Could not fetch user {} from Couchbase: {}", username, e.getMessage());
                 }
                 
                 // Add token type for access tokens (hardening)
@@ -332,30 +330,21 @@ public class AuthorizationServerConfig {
                     // Convert scopes to space-separated string (OAuth 2.0 standard)
                     String scopeString = String.join(" ", context.getAuthorizedScopes());
                     context.getClaims().claim("scope", scopeString);
-                    logger.info("📋 [TOKEN-CUSTOMIZER] Added scope claim: {}", scopeString);
                 }
                 
                 // Add fhirUser claim if user has a FHIR resource reference
                 if (user != null && user.getFhirUser() != null && !user.getFhirUser().isEmpty()) {
                     String fhirUserRef = user.getFhirUser();
                     context.getClaims().claim("fhirUser", fhirUserRef);
-                    logger.info("✅ [TOKEN-CUSTOMIZER] Added fhirUser claim: {}", fhirUserRef);
                     
                     // Add patient claim if user is a Patient resource
                     // SMART spec: patient claim should be just the ID, not the full reference
                     if (fhirUserRef.startsWith("Patient/")) {
                         String patientId = fhirUserRef.substring(8); // Extract "example" from "Patient/example"
                         context.getClaims().claim("patient", patientId);
-                        logger.info("✅ [TOKEN-CUSTOMIZER] Added patient claim: '{}' (extracted from '{}')", patientId, fhirUserRef);
-                    } else {
-                        logger.info("ℹ️ [TOKEN-CUSTOMIZER] fhirUser is not a Patient resource: {}", fhirUserRef);
+                        logger.debug("Added patient claim '{}' for user {}", patientId, username);
                     }
-                } else {
-                    logger.warn("⚠️ [TOKEN-CUSTOMIZER] No fhirUser reference for user: {} (user object: {})", username, user);
                 }
-                
-                // Log all claims being added
-                logger.info("📋 [TOKEN-CUSTOMIZER] Final claims for {}: {}", tokenType, context.getClaims().build().getClaims().keySet());
             }
         };
     }

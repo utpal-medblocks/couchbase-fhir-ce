@@ -128,10 +128,10 @@ public class FhirBundleProcessingService {
                 desc.append(" (").append(enforceUSCore ? "US Core 6.1.0" : "basic FHIR R4").append(")");
                 validationType = desc.toString();
             }
-            logger.info("🔄 Processing FHIR Bundle transaction with {} validation", validationType);
+            logger.debug("🔄 Processing FHIR Bundle transaction with {} validation", validationType);
             // Step 1: Parse Bundle
             Bundle bundle = (Bundle) jsonParser.parseResource(bundleJson);
-            logger.info("📦 Parsed Bundle with {} entries", bundle.getEntry().size());
+            logger.debug("📦 Parsed Bundle with {} entries", bundle.getEntry().size());
 
             // Step 2: Validate Bundle structure (skip if requested for performance)
             if (!skipValidation) {
@@ -143,26 +143,24 @@ public class FhirBundleProcessingService {
                     );
                     throw new RuntimeException("Bundle validation failed - see logs for details");
                 }
-                logger.info("✅ Bundle structure validation passed ({})", validationType);
+                logger.debug("✅ Bundle structure validation passed ({})", validationType);
             } else {
-                logger.info("⚡ Bundle structure validation SKIPPED for performance");
+                logger.debug("⚡ Bundle structure validation SKIPPED for performance");
             }
 
             // Step 3: Extract all resources from Bundle using HAPI utility
             // DISABLED: BundleUtil.toListOfResources() may pre-process references and create contained resources
             // List<IBaseResource> allResources = BundleUtil.toListOfResources(fhirContext, bundle);
-            // logger.info("📋 Extracted {} resources from Bundle", allResources.size());
-            // logger.info("📋 Skipping BundleUtil.toListOfResources() to avoid early reference processing");
 
             // Step 4: Process entries sequentially with proper UUID resolution and ACID transaction support
             List<ProcessedEntry> processedEntries;
             
             // Use Couchbase Server transactions for BUNDLE TRANSACTION types (not for BATCH)
             if (bundle.getType() == Bundle.BundleType.TRANSACTION) {
-                logger.info("🔒 Starting Couchbase Server TRANSACTION for Bundle processing");
+                logger.debug("🔒 Starting Couchbase Server TRANSACTION for Bundle processing");
                 processedEntries = processEntriesWithTransaction(bundle, connectionName, bucketName, bucketConfig);
             } else {
-                logger.info("📦 Processing Bundle as BATCH (no transaction wrapper)");
+                logger.debug("📦 Processing Bundle as BATCH (no transaction wrapper)");
                 processedEntries = processEntriesSequentially(bundle, connectionName, bucketName, bucketConfig);
             }
 
@@ -262,7 +260,7 @@ public class FhirBundleProcessingService {
     private List<ProcessedEntry> processEntriesInTransactionContext(com.couchbase.client.java.transactions.TransactionAttemptContext ctx, 
                                                    Bundle bundle, Cluster cluster, String bucketName, 
                                                    com.couchbase.fhir.resources.service.FhirBucketConfigService.FhirBucketConfig bucketConfig) {
-        logger.info("🔄 Processing {} Bundle entries within transaction using service orchestration", bundle.getEntry().size());
+        logger.debug("🔄 Processing {} Bundle entries within transaction using service orchestration", bundle.getEntry().size());
         
         // List to collect processed entries (including GET responses)
         List<ProcessedEntry> processedEntries = new ArrayList<>();
@@ -312,7 +310,7 @@ public class FhirBundleProcessingService {
                 switch (method) {
                     case POST:
                         postService.createResourceInTransaction(resource, ctx, cluster, bucketName);
-                        logger.info("✅ POST {}: Created with server-generated ID {}", resourceType, resource.getId());
+                        logger.debug("✅ POST {}: Created with server-generated ID {}", resourceType, resource.getId());
                         // Add to processed entries for response
                         Bundle.BundleEntryComponent responseEntry = createResponseEntry(resource, resourceType);
                         processedEntries.add(ProcessedEntry.success(resourceType, resource.getId(), 
@@ -322,7 +320,7 @@ public class FhirBundleProcessingService {
                     case PUT:
                         TransactionContext putContext = new TransactionContextImpl(cluster, bucketName, ctx);
                         putService.updateOrCreateResource(resource, putContext);
-                        logger.info("✅ PUT {}: Updated/created with ID {}", resourceType, resource.getId());
+                        logger.debug("✅ PUT {}: Updated/created with ID {}", resourceType, resource.getId());
                         // Add to processed entries for response
                         Bundle.BundleEntryComponent putResponseEntry = createResponseEntryForMethod(resource, resourceType, 
                             Bundle.HTTPVerb.PUT, "200 OK");
@@ -334,7 +332,7 @@ public class FhirBundleProcessingService {
                         String resourceId = extractResourceIdFromUrl(entry.getRequest().getUrl());
                         if (resourceId != null) {
                             deleteService.deleteResource(resourceType, resourceId, transactionContext);
-                            logger.info("✅ DELETE {}: Soft deleted ID {}", resourceType, resourceId);
+                            logger.debug("✅ DELETE {}: Soft deleted ID {}", resourceType, resourceId);
                             // Add to processed entries for response
                             Bundle.BundleEntryComponent deleteResponseEntry = new Bundle.BundleEntryComponent();
                             deleteResponseEntry.setResponse(new Bundle.BundleEntryResponseComponent().setStatus("204 No Content"));
@@ -359,7 +357,7 @@ public class FhirBundleProcessingService {
             }
         }
         
-        logger.info("✅ All {} Bundle entries processed successfully within transaction", processedEntries.size());
+        logger.debug("✅ All {} Bundle entries processed successfully within transaction", processedEntries.size());
         return processedEntries;
     }
     
@@ -380,7 +378,7 @@ public class FhirBundleProcessingService {
         // Step 3: Process each entry in order using service orchestration
         List<ProcessedEntry> processedEntries = new ArrayList<>();
         
-        logger.info("🔄 Starting to process {} Bundle entries sequentially (BATCH mode)", bundle.getEntry().size());
+        logger.debug("🔄 Starting to process {} Bundle entries sequentially (BATCH mode)", bundle.getEntry().size());
 
         for (int i = 0; i < bundle.getEntry().size(); i++) {
             Bundle.BundleEntryComponent entry = bundle.getEntry().get(i);
@@ -428,7 +426,7 @@ public class FhirBundleProcessingService {
                         
                         processedResource = postService.createResource(resource, bucketName);
                         responseStatus = "201 Created";
-                        logger.info("✅ POST {}: Created with server-generated ID {}", resourceType, processedResource.getId());
+                        logger.debug("✅ POST {}: Created with server-generated ID {}", resourceType, processedResource.getId());
                         break;
                         
                     case PUT:
@@ -440,7 +438,7 @@ public class FhirBundleProcessingService {
                         boolean wasCreated = !resourceExists(cluster, bucketName, resourceType, resource.getId());
                         processedResource = putService.updateOrCreateResource(resource, standaloneContext);
                         responseStatus = wasCreated ? "201 Created" : "200 OK";
-                        logger.info("✅ PUT {}: {} with ID {}", resourceType, wasCreated ? "Created" : "Updated", processedResource.getId());
+                        logger.debug("✅ PUT {}: {} with ID {}", resourceType, wasCreated ? "Created" : "Updated", processedResource.getId());
                         break;
                         
                     case DELETE:
@@ -448,7 +446,7 @@ public class FhirBundleProcessingService {
                         if (resourceId != null) {
                             deleteService.deleteResource(resourceType, resourceId, standaloneContext);
                             responseStatus = "204 No Content";
-                            logger.info("✅ DELETE {}: Soft deleted ID {}", resourceType, resourceId);
+                            logger.debug("✅ DELETE {}: Soft deleted ID {}", resourceType, resourceId);
                             // For DELETE, we don't have a resource to return
                             processedResource = null;
                         } else {
@@ -514,7 +512,6 @@ public class FhirBundleProcessingService {
                 String fullUrl = entry.getFullUrl();
                 String mappedReference = resourceType + "/" + actualResourceId; // "Patient/abc123-def456-..."
                 uuidToIdMapping.put(fullUrl, mappedReference);
-                // logger.info("🔗 FullUrl mapping: {} → {}", fullUrl, mappedReference);
             }
 
             // ✅ Always set the server-generated ID on the resource (overwrite any client ID)
@@ -660,11 +657,11 @@ public class FhirBundleProcessingService {
         
         if (useLenientValidation || !enforceUSCore) {
             validator = basicFhirValidator;
-            logger.info("Using basic FHIR R4 validator (mode: {}, profile: {})", 
+            logger.debug("Using basic FHIR R4 validator (mode: {}, profile: {})", 
                        bucketConfig.getValidationMode(), bucketConfig.getValidationProfile());
         } else {
             validator = fhirValidator;
-            logger.info("Using strict US Core 6.1.0 validator");
+            logger.debug("Using strict US Core 6.1.0 validator");
         }
 
         ValidationResult result = validator.validateWithResult(bundle);
@@ -722,7 +719,7 @@ public class FhirBundleProcessingService {
             }
         }
 
-        logger.info("📋 Created {} Bundle response with {} entries",
+        logger.debug("📋 Created {} Bundle response with {} entries",
                 responseBundle.getType().name(), responseBundle.getEntry().size());
 
         return responseBundle;
@@ -922,7 +919,7 @@ public class FhirBundleProcessingService {
             String resourceType = parts[0];
             String queryString = parts.length > 1 ? parts[1] : "";
             
-            logger.info("🔍 Executing search: {} with params: {}", resourceType, queryString);
+            logger.debug("🔍 Executing search: {} with params: {}", resourceType, queryString);
             
             // Parse query string using HAPI utility
             Map<String, String[]> params = ca.uhn.fhir.util.UrlUtil.parseQueryString(queryString);
@@ -935,7 +932,7 @@ public class FhirBundleProcessingService {
             responseEntry.setResource(searchResults);
             responseEntry.setResponse(new Bundle.BundleEntryResponseComponent().setStatus("200 OK"));
             
-            logger.info("✅ Search completed: {} results for {}", 
+            logger.debug("✅ Search completed: {} results for {}", 
                        searchResults.getEntry() != null ? searchResults.getEntry().size() : 0, resourceType);
             
             return responseEntry;

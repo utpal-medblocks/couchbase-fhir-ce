@@ -6,6 +6,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 /**
  * Login controller for OAuth 2.0 authorization flow
  * Provides a simple HTML login page for authenticating users
+ * Note: Consent page is handled by ConsentController
  */
 @Controller
 public class LoginController {

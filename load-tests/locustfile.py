@@ -12,15 +12,15 @@ from flows.refraction import refraction_flow
 from flows.subjective_refraction import subjective_refraction_flow
 from flows.prescription import prescription_flow
 
-# Optional auth headers
-HEADERS = build_optional_auth_headers()
+# Optional auth header supplier (fresh token per call)
+HEADER_SUPPLIER = build_optional_auth_headers()
 
 fake = Faker()
 class FHIRScenario(FastHttpUser):
     wait_time = between(1, 3)
 
     def on_start(self):
-        self.fhir = FHIRClient(self.client, base_url='/', headers=HEADERS)
+        self.fhir = FHIRClient(self.client, base_url='/', header_supplier=HEADER_SUPPLIER)
         self.identifier = uuid4().hex
         self.practitioner_id = choose_existing_practitioner(self.fhir)
 

@@ -27,8 +27,10 @@
         border-radius: 12px;
         box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
         padding: 40px;
-        max-width: 500px;
+        max-width: 800px;
         width: 100%;
+        max-height: 90vh;
+        overflow-y: auto;
       }
 
       .consent-header {
@@ -42,23 +44,16 @@
         margin-bottom: 8px;
       }
 
-      .app-info {
-        background: #f8f9fa;
-        border-radius: 8px;
-        padding: 16px;
-        margin-bottom: 24px;
-        border-left: 4px solid #667eea;
-      }
+      /* App info styles removed - now integrated into header */
 
-      .app-info h2 {
-        font-size: 18px;
-        color: #333;
-        margin-bottom: 8px;
-      }
-
-      .app-info p {
+      .user-info {
         font-size: 14px;
         color: #666;
+        margin-top: 8px;
+      }
+
+      .user-info strong {
+        color: #333;
       }
 
       .scopes-section {
@@ -68,48 +63,82 @@
       .scopes-section h3 {
         font-size: 16px;
         color: #333;
-        margin-bottom: 12px;
+        margin-bottom: 16px;
       }
 
-      .scope-list {
-        list-style: none;
+      .scopes-table {
+        border-collapse: collapse;
+        width: 100%;
+        background: white;
+        border-radius: 8px;
+        overflow: hidden;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
       }
 
-      .scope-item {
-        padding: 12px;
-        background: #f8f9fa;
-        border-radius: 6px;
-        margin-bottom: 8px;
-        display: flex;
-        align-items: flex-start;
-      }
-
-      .scope-item::before {
-        content: "✓";
-        display: inline-block;
-        width: 20px;
-        height: 20px;
+      .scopes-table th {
         background: #667eea;
         color: white;
-        border-radius: 50%;
+        padding: 16px 12px;
+        text-align: left;
+        font-weight: 600;
+        font-size: 14px;
+      }
+
+      .scopes-table th:first-child {
+        width: 60px;
         text-align: center;
-        line-height: 20px;
-        font-size: 12px;
-        margin-right: 12px;
-        flex-shrink: 0;
+      }
+
+      .scopes-table th:nth-child(2) {
+        width: 250px;
+      }
+
+      .scopes-table td {
+        padding: 12px;
+        border-bottom: 1px solid #eee;
+        vertical-align: top;
+      }
+
+      .scopes-table tr:last-child td {
+        border-bottom: none;
+      }
+
+      .scopes-table tr:hover {
+        background: #f8f9fa;
+      }
+
+      .scope-checkbox {
+        width: 18px;
+        height: 18px;
+        cursor: pointer;
+        accent-color: #667eea;
       }
 
       .scope-name {
         font-weight: 600;
         color: #333;
         font-size: 13px;
-        display: block;
-        margin-bottom: 2px;
+        font-family: "Courier New", monospace;
+        background: #f8f9fa;
+        padding: 2px 6px;
+        border-radius: 3px;
+        display: inline-block;
       }
 
       .scope-description {
-        font-size: 12px;
-        color: #666;
+        font-size: 13px;
+        color: #555;
+        line-height: 1.4;
+      }
+
+      .scope-note {
+        background: #e3f2fd;
+        border: 1px solid #2196f3;
+        border-radius: 6px;
+        padding: 12px;
+        margin-bottom: 16px;
+        font-size: 13px;
+        color: #1565c0;
       }
 
       .warning-box {
@@ -129,6 +158,10 @@
       .actions {
         display: flex;
         gap: 12px;
+        position: sticky;
+        bottom: 0;
+        background: white;
+        padding-top: 20px;
       }
 
       button {
@@ -165,102 +198,262 @@
         transform: translateY(0);
       }
 
-      .user-info {
-        text-align: center;
-        padding: 12px;
-        background: #e3f2fd;
-        border-radius: 6px;
-        margin-bottom: 20px;
-        font-size: 13px;
-        color: #1565c0;
-      }
+      @media (max-width: 768px) {
+        .consent-container {
+          padding: 20px;
+          margin: 10px;
+        }
 
-      .user-info strong {
-        color: #0d47a1;
+        .scopes-table th:nth-child(2) {
+          width: auto;
+        }
+
+        .actions {
+          flex-direction: column;
+        }
       }
     </style>
   </head>
   <body>
     <div class="consent-container">
       <div class="consent-header">
-        <h1>Authorize Application</h1>
-      </div>
-
-      <div class="user-info">
-        Logged in as:
-        <strong th:text="${principalName}">user@example.com</strong>
-      </div>
-
-      <div class="app-info">
-        <h2 th:text="${clientName}">Application Name</h2>
-        <p th:if="${clientUri}">
-          Publisher:
-          <a th:href="${clientUri}" th:text="${clientUri}" target="_blank"
-            >https://example.com</a
-          >
+        <h1>Authorize <span th:text="${clientName}">Application</span></h1>
+        <p class="user-info">
+          User: <strong th:text="${principalName}">user@example.com</strong>
         </p>
       </div>
 
       <div class="scopes-section">
-        <h3>This application is requesting access to:</h3>
-        <ul class="scope-list">
-          <li class="scope-item" th:each="scope : ${scopes}">
-            <div>
-              <span class="scope-name" th:text="${scope.scope}"
-                >patient/*.read</span
-              >
-              <span class="scope-description" th:text="${scope.description}"
-                >Read all patient data</span
-              >
-            </div>
-          </li>
-        </ul>
+        <h3>
+          This application is requesting access to your health information:
+        </h3>
+
+        <div class="scope-note">
+          <strong>Note:</strong> Scopes ending with ".rs" provide Read and
+          Search access to your health records.
+        </div>
+
+        <table class="scopes-table">
+          <thead>
+            <tr>
+              <th>Allow</th>
+              <th>Health Information Type</th>
+              <th>Description</th>
+            </tr>
+          </thead>
+          <tbody id="scopesTableBody">
+            <!-- Patient scopes will be populated here by JavaScript -->
+          </tbody>
+        </table>
       </div>
 
       <div class="warning-box">
         <p>
           <strong>Important:</strong> By authorizing, you give this application
-          access to your health information.
+          access to the selected health information.
         </p>
         <p>You can revoke access at any time from your account settings.</p>
       </div>
 
       <form method="post" th:action="@{/oauth2/authorize}">
-        <input type="hidden" name="client_id" th:value="${client_id}" />
-        <input type="hidden" name="state" th:value="${state}" />
-        <input type="hidden" name="scope" th:value="${scopeString}" />
-        <input type="hidden" name="redirect_uri" th:value="${redirect_uri}" />
-        <input type="hidden" name="response_type" th:value="${response_type}" />
+        <!-- CSRF token required by Spring Security -->
         <input
           type="hidden"
-          name="code_challenge"
-          th:value="${code_challenge}"
-        />
-        <input
-          type="hidden"
-          name="code_challenge_method"
-          th:value="${code_challenge_method}"
+          th:name="${_csrf.parameterName}"
+          th:value="${_csrf.token}"
         />
 
+        <!-- Required by Spring Authorization Server -->
+        <input type="hidden" name="client_id" th:value="${client_id}" />
+        <input type="hidden" name="state" th:value="${state}" />
+
+        <!-- Each scope needs to be a checkbox for Spring Authorization Server consent handling -->
+        <div th:each="scopeItem : ${scopes}" style="display: none">
+          <input
+            type="checkbox"
+            name="scope"
+            th:value="${scopeItem.scope}"
+            checked="checked"
+          />
+        </div>
+
         <div class="actions">
-          <button
-            type="submit"
-            name="consent_action"
-            value="deny"
-            class="btn-deny"
-          >
-            Deny
-          </button>
-          <button
-            type="submit"
-            name="consent_action"
-            value="approve"
-            class="btn-approve"
-          >
-            Approve
+          <button type="submit" name="cancel" class="btn-deny">Deny</button>
+          <button type="submit" class="btn-approve" id="approveBtn">
+            Approve Selected Permissions
           </button>
         </div>
       </form>
     </div>
+
+    <script th:inline="javascript">
+      // FHIR scope descriptions mapping
+      const scopeDescriptions = {
+        "patient/Patient.rs": {
+          description:
+            "Your basic demographic information, contact details, and identifiers",
+        },
+        "patient/AllergyIntolerance.rs": {
+          description:
+            "Known allergies, intolerances, past reactions, and related clinical notes",
+        },
+        "patient/Condition.rs": {
+          description:
+            "Medical conditions, diagnoses, problems, and health concerns",
+        },
+        "patient/Medication.rs": {
+          description:
+            "Information about medications you are taking or have taken",
+        },
+        "patient/MedicationRequest.rs": {
+          description:
+            "Prescription orders, dosages, and medication instructions from providers",
+        },
+        "patient/MedicationDispense.rs": {
+          description:
+            "Records of medications that have been dispensed to you by pharmacies",
+        },
+        "patient/Observation.rs": {
+          description:
+            "Lab results, vital signs, measurements, and clinical observations",
+        },
+        "patient/DiagnosticReport.rs": {
+          description:
+            "Diagnostic test results, imaging reports, and pathology findings",
+        },
+        "patient/Procedure.rs": {
+          description:
+            "Medical procedures, surgeries, and treatments you have received",
+        },
+        "patient/Immunization.rs": {
+          description: "Vaccination history and immunization records",
+        },
+        "patient/Encounter.rs": {
+          description:
+            "Healthcare visits, appointments, and interactions with providers",
+        },
+        "patient/CarePlan.rs": {
+          description:
+            "Treatment plans, care coordination, and healthcare goals",
+        },
+        "patient/CareTeam.rs": {
+          description:
+            "Information about your healthcare team and care coordinators",
+        },
+        "patient/Goal.rs": {
+          description: "Healthcare goals, targets, and outcome objectives",
+        },
+        "patient/Device.rs": {
+          description: "Medical devices, implants, and equipment you use",
+        },
+        "patient/DocumentReference.rs": {
+          description: "Clinical documents, reports, and attached files",
+        },
+        "patient/Practitioner.rs": {
+          description:
+            "Information about your healthcare providers and their credentials",
+        },
+        "patient/PractitionerRole.rs": {
+          description: "Roles and specializations of your healthcare providers",
+        },
+        "patient/Organization.rs": {
+          description:
+            "Healthcare organizations, hospitals, and clinics involved in your care",
+        },
+        "patient/Location.rs": {
+          description:
+            "Healthcare facilities and locations where you receive care",
+        },
+        "patient/Coverage.rs": {
+          description: "Insurance coverage, benefits, and payer information",
+        },
+        "patient/ServiceRequest.rs": {
+          description:
+            "Orders for services, referrals, and requested procedures",
+        },
+        "patient/Specimen.rs": {
+          description: "Laboratory specimens and sample collection information",
+        },
+        "patient/Provenance.rs": {
+          description:
+            "Information about who created or modified your health records",
+        },
+      };
+
+      // Parse scopes from Thymeleaf
+      /*[# th:if="${scopes}"]*/
+      const requestedScopes =
+        /*[[${scopeString}]]*/ "openid fhirUser patient/Patient.rs";
+      /*[/]*/
+      /*[# th:unless="${scopes}"]*/
+      // const requestedScopes = 'launch/patient openid fhirUser offline_access patient/Medication.rs patient/AllergyIntolerance.rs patient/CarePlan.rs patient/CareTeam.rs patient/Condition.rs patient/Device.rs patient/DiagnosticReport.rs patient/DocumentReference.rs patient/Encounter.rs patient/Goal.rs patient/Immunization.rs patient/Location.rs patient/MedicationRequest.rs patient/Observation.rs patient/Organization.rs patient/Patient.rs patient/Practitioner.rs patient/Procedure.rs patient/Provenance.rs patient/PractitionerRole.rs patient/ServiceRequest.rs patient/Coverage.rs patient/MedicationDispense.rs patient/Specimen.rs';
+      /*[/]*/
+
+      function populateScopes() {
+        const tbody = document.getElementById("scopesTableBody");
+        const allScopes = requestedScopes.split(" ").filter((s) => s.trim());
+
+        // Separate patient scopes from system scopes (openid, fhirUser, launch, etc.)
+        const patientScopes = allScopes.filter((scope) =>
+          scope.startsWith("patient/")
+        );
+        const systemScopes = allScopes.filter(
+          (scope) => !scope.startsWith("patient/")
+        );
+
+        tbody.innerHTML = "";
+
+        // Only show patient/ scopes in the table for user selection
+        patientScopes.forEach((scope, index) => {
+          const scopeInfo = scopeDescriptions[scope] || {
+            description: "Access to related health information",
+          };
+
+          const row = document.createElement("tr");
+          row.innerHTML = `
+            <td style="text-align: center;">
+              <input type="checkbox" class="scope-checkbox" 
+                     id="scope_${index}" 
+                     value="${scope}" 
+                     checked 
+                     onchange="updateSelectedScopes()">
+            </td>
+            <td>
+              <div class="scope-name">${scope}</div>
+            </td>
+            <td>
+              <div class="scope-description">${scopeInfo.description}</div>
+            </td>
+          `;
+          tbody.appendChild(row);
+        });
+
+        // Store system scopes separately (they'll always be included)
+        window.systemScopes = systemScopes;
+        updateSelectedScopes();
+      }
+
+      function updateSelectedScopes() {
+        const checkboxes = document.querySelectorAll(".scope-checkbox:checked");
+        const selectedPatientScopes = Array.from(checkboxes).map(
+          (cb) => cb.value
+        );
+
+        // Always include system scopes + selected patient scopes
+        const allSelectedScopes = [
+          ...(window.systemScopes || []),
+          ...selectedPatientScopes,
+        ];
+
+        // Update the hidden scope field with all selected scopes
+        document.getElementById("finalScope").value =
+          allSelectedScopes.join(" ");
+      }
+
+      // Initialize on page load
+      document.addEventListener("DOMContentLoaded", function () {
+        populateScopes();
+      });
+    </script>
   </body>
 </html>

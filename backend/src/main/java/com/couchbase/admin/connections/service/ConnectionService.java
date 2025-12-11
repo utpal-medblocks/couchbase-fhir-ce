@@ -10,11 +10,11 @@ import com.couchbase.client.java.codec.JacksonJsonSerializer;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -28,39 +28,9 @@ public class ConnectionService {
     // Inject Spring's auto-configured ObjectMapper (includes JavaTimeModule and all Spring Boot defaults)
     private final ObjectMapper springObjectMapper;
     
-    // SDK Configuration Parameters with sensible defaults for high-concurrency FHIR workloads
-    @Value("${couchbase.sdk.max-http-connections:128}")
-    private int maxHttpConnections;
-    
-    @Value("${couchbase.sdk.num-kv-connections:8}")
-    private int numKvConnections;
-    
-    @Value("${couchbase.sdk.query-timeout-seconds:30}")
-    private int queryTimeoutSeconds;
-    
-    @Value("${couchbase.sdk.search-timeout-seconds:30}")
-    private int searchTimeoutSeconds;
-    
-    @Value("${couchbase.sdk.kv-timeout-seconds:10}")
-    private int kvTimeoutSeconds;
-    
-    @Value("${couchbase.sdk.connect-timeout-seconds:10}")
-    private int connectTimeoutSeconds;
-    
-    @Value("${couchbase.sdk.disconnect-timeout-seconds:10}")
-    private int disconnectTimeoutSeconds;
-    
-    @Value("${couchbase.sdk.transaction-timeout-seconds:30}")
-    private int transactionTimeoutSeconds;
-    
-    @Value("${couchbase.sdk.enable-mutation-tokens:true}")
-    private boolean enableMutationTokens;
-    
-    // Transaction Configuration
-    // For single-node development, use NONE to avoid durability errors
-    // For production multi-node clusters, use MAJORITY or MAJORITY_AND_PERSIST_TO_ACTIVE
-    @Value("${couchbase.sdk.transaction-durability:NONE}")
-    private String transactionDurability;
+    // SDK Configuration Parameters - Read from System properties at connection time
+    // (ConfigurationStartupService sets these from config.yaml BEFORE createConnection is called)
+    // NOTE: Cannot use @Value because config.yaml is loaded AFTER bean creation but BEFORE createConnection
     
     // Store active connections
     private final Map<String, Cluster> activeConnections = new ConcurrentHashMap<>();
@@ -112,54 +82,108 @@ public class ConnectionService {
     public ConnectionResponse createConnection(ConnectionRequest request) {
         logger.info("Creating connection: {}", request.getName());
         
+        // Read SDK configuration from System properties (set by ConfigurationStartupService from config.yaml)
+        Integer maxHttpConnections = getIntProperty("couchbase.sdk.max-http-connections");
+        Integer numKvConnections = getIntProperty("couchbase.sdk.num-kv-connections");
+        Integer numIoThreads = getIntProperty("couchbase.sdk.num-io-threads");
+        Integer queryTimeoutSeconds = getIntProperty("couchbase.sdk.query-timeout-seconds");
+        Integer searchTimeoutSeconds = getIntProperty("couchbase.sdk.search-timeout-seconds");
+        Integer kvTimeoutSeconds = getIntProperty("couchbase.sdk.kv-timeout-seconds");
+        Integer connectTimeoutSeconds = getIntProperty("couchbase.sdk.connect-timeout-seconds");
+        Integer disconnectTimeoutSeconds = getIntProperty("couchbase.sdk.disconnect-timeout-seconds");
+        Integer transactionTimeoutSeconds = getIntProperty("couchbase.sdk.transaction-timeout-seconds");
+        Boolean enableMutationTokens = getBooleanProperty("couchbase.sdk.enable-mutation-tokens");
+        String transactionDurability = System.getProperty("couchbase.sdk.transaction-durability");
+        
         try {
             // Configure Jackson ObjectMapper with Java 8 date/time support
             // Use Spring's auto-configured ObjectMapper (already has JavaTimeModule and all Spring Boot defaults)
             // This ensures consistency with Spring's JSON serialization and avoids missing modules
             JacksonJsonSerializer jsonSerializer = JacksonJsonSerializer.create(springObjectMapper);
             
-            // Configure cluster environment with comprehensive SDK tuning for high-concurrency FHIR workloads
+            // Configure cluster environment - only override SDK defaults when explicitly configured
             ClusterEnvironment.Builder envBuilder = ClusterEnvironment.builder()
-                .jsonSerializer(jsonSerializer)  // Add custom JSON serializer
-                .timeoutConfig(timeoutConfig -> timeoutConfig
-                    .queryTimeout(Duration.ofSeconds(queryTimeoutSeconds))
-                    .searchTimeout(Duration.ofSeconds(searchTimeoutSeconds))
-                    .kvTimeout(Duration.ofSeconds(kvTimeoutSeconds))
-                    .connectTimeout(Duration.ofSeconds(connectTimeoutSeconds))
-                    .disconnectTimeout(Duration.ofSeconds(disconnectTimeoutSeconds)))
-                .ioConfig(io -> io
-                    .maxHttpConnections(maxHttpConnections)
-                    .numKvConnections(numKvConnections)
-                    .enableMutationTokens(enableMutationTokens))
-                .transactionsConfig(transactions -> {
-                    // Configure transaction durability based on cluster setup
-                    // NONE: Single-node development (no replicas needed)
-                    // MAJORITY: Production multi-node (recommended)
-                    // MAJORITY_AND_PERSIST_TO_ACTIVE: Highest durability
-                    DurabilityLevel durabilityLevel;
-                    switch (transactionDurability.toUpperCase()) {
-                        case "MAJORITY":
-                            durabilityLevel = DurabilityLevel.MAJORITY;
-                            logger.info("🔒 Transaction durability: MAJORITY (requires replicas)");
-                            break;
-                        case "MAJORITY_AND_PERSIST_TO_ACTIVE":
-                            durabilityLevel = DurabilityLevel.MAJORITY_AND_PERSIST_TO_ACTIVE;
-                            logger.info("🔒 Transaction durability: MAJORITY_AND_PERSIST_TO_ACTIVE (highest durability)");
-                            break;
-                        case "PERSIST_TO_MAJORITY":
-                            durabilityLevel = DurabilityLevel.PERSIST_TO_MAJORITY;
-                            logger.info("🔒 Transaction durability: PERSIST_TO_MAJORITY");
-                            break;
-                        case "NONE":
-                        default:
-                            durabilityLevel = DurabilityLevel.NONE;
-                            logger.info("⚠️  Transaction durability: NONE (suitable for single-node development only)");
-                            break;
+                .jsonSerializer(jsonSerializer);  // Always use custom JSON serializer
+            
+            // Only configure timeouts if explicitly provided in config.yaml
+            if (queryTimeoutSeconds != null || searchTimeoutSeconds != null || 
+                kvTimeoutSeconds != null || connectTimeoutSeconds != null || 
+                disconnectTimeoutSeconds != null) {
+                envBuilder.timeoutConfig(timeoutConfig -> {
+                    if (queryTimeoutSeconds != null) {
+                        timeoutConfig.queryTimeout(Duration.ofSeconds(queryTimeoutSeconds));
                     }
-                    transactions.durabilityLevel(durabilityLevel);
-                    // Configure transaction timeout
-                    transactions.timeout(Duration.ofSeconds(transactionTimeoutSeconds));
+                    if (searchTimeoutSeconds != null) {
+                        timeoutConfig.searchTimeout(Duration.ofSeconds(searchTimeoutSeconds));
+                    }
+                    if (kvTimeoutSeconds != null) {
+                        timeoutConfig.kvTimeout(Duration.ofSeconds(kvTimeoutSeconds));
+                    }
+                    if (connectTimeoutSeconds != null) {
+                        timeoutConfig.connectTimeout(Duration.ofSeconds(connectTimeoutSeconds));
+                    }
+                    if (disconnectTimeoutSeconds != null) {
+                        timeoutConfig.disconnectTimeout(Duration.ofSeconds(disconnectTimeoutSeconds));
+                    }
                 });
+            }
+            
+            // Configure I/O event loop threads if specified (separate from ioConfig)
+            if (numIoThreads != null) {
+                envBuilder.ioEnvironment(com.couchbase.client.core.env.IoEnvironment.eventLoopThreadCount(numIoThreads));
+                logger.info("   🔧 Setting I/O event loop threads to {}", numIoThreads);
+            }
+            
+            // Only configure IO settings if explicitly provided in config.yaml
+            if (maxHttpConnections != null || numKvConnections != null || enableMutationTokens != null) {
+                envBuilder.ioConfig(io -> {
+                    if (maxHttpConnections != null) {
+                        io.maxHttpConnections(maxHttpConnections);
+                    }
+                    if (numKvConnections != null) {
+                        io.numKvConnections(numKvConnections);
+                    }
+                    if (enableMutationTokens != null) {
+                        io.enableMutationTokens(enableMutationTokens);
+                    }
+                });
+            }
+            
+            // Only configure transactions if explicitly provided in config.yaml
+            if (transactionDurability != null || transactionTimeoutSeconds != null) {
+                envBuilder.transactionsConfig(transactions -> {
+                    if (transactionDurability != null) {
+                        // Configure transaction durability based on cluster setup
+                        // NONE: Single-node development (no replicas needed)
+                        // MAJORITY: Production multi-node (recommended)
+                        // MAJORITY_AND_PERSIST_TO_ACTIVE: Highest durability
+                        DurabilityLevel durabilityLevel;
+                        switch (transactionDurability.toUpperCase()) {
+                            case "MAJORITY":
+                                durabilityLevel = DurabilityLevel.MAJORITY;
+                                logger.info("🔒 Transaction durability: MAJORITY (requires replicas)");
+                                break;
+                            case "MAJORITY_AND_PERSIST_TO_ACTIVE":
+                                durabilityLevel = DurabilityLevel.MAJORITY_AND_PERSIST_TO_ACTIVE;
+                                logger.info("🔒 Transaction durability: MAJORITY_AND_PERSIST_TO_ACTIVE (highest durability)");
+                                break;
+                            case "PERSIST_TO_MAJORITY":
+                                durabilityLevel = DurabilityLevel.PERSIST_TO_MAJORITY;
+                                logger.info("🔒 Transaction durability: PERSIST_TO_MAJORITY");
+                                break;
+                            case "NONE":
+                            default:
+                                durabilityLevel = DurabilityLevel.NONE;
+                                logger.info("⚠️  Transaction durability: NONE (suitable for single-node development only)");
+                                break;
+                        }
+                        transactions.durabilityLevel(durabilityLevel);
+                    }
+                    if (transactionTimeoutSeconds != null) {
+                        transactions.timeout(Duration.ofSeconds(transactionTimeoutSeconds));
+                    }
+                });
+            }
             
             // Enable TLS/SSL if required (for Capella or secure connections)
             if (request.isSslEnabled() || request.getConnectionString().startsWith("couchbases://")) {
@@ -169,19 +193,63 @@ public class ConnectionService {
             
             ClusterEnvironment env = envBuilder.build();
             
+            // Verbose environment details at DEBUG level (useful for troubleshooting config issues)
+            if (logger.isDebugEnabled()) {
+                logger.debug("🔍 ClusterEnvironment details: {}", env.toString());
+            }
+            
             ClusterOptions options = ClusterOptions.clusterOptions(request.getUsername(), request.getPassword())
                     .environment(env);
                     
-            logger.info("🔧 SDK Configuration Applied:");
-            logger.info("   - maxHttpConnections: {} (couchbase.sdk.max-http-connections)", maxHttpConnections);
-            logger.info("   - numKvConnections: {} (couchbase.sdk.num-kv-connections)", numKvConnections);
-            logger.info("   - queryTimeout: {}s (couchbase.sdk.query-timeout-seconds)", queryTimeoutSeconds);
-            logger.info("   - searchTimeout: {}s (couchbase.sdk.search-timeout-seconds)", searchTimeoutSeconds);
-            logger.info("   - kvTimeout: {}s (couchbase.sdk.kv-timeout-seconds)", kvTimeoutSeconds);
-            logger.info("   - connectTimeout: {}s (couchbase.sdk.connect-timeout-seconds)", connectTimeoutSeconds);
-            logger.info("   - enableMutationTokens: {} (couchbase.sdk.enable-mutation-tokens)", enableMutationTokens);
-            logger.info("   - transactionDurability: {} (couchbase.sdk.transaction-durability)", transactionDurability);
-            logger.info("   - transactionTimeout: {}s (couchbase.sdk.transaction-timeout-seconds)", transactionTimeoutSeconds);
+            logger.info("🔧 SDK Configuration:");
+            // Log configured parameters
+            boolean hasConfiguredParams = false;
+            if (maxHttpConnections != null) {
+                logger.info("   ✅ maxHttpConnections: {} (from config.yaml)", maxHttpConnections);
+                hasConfiguredParams = true;
+            }
+            if (numKvConnections != null) {
+                logger.info("   ✅ numKvConnections: {} (from config.yaml)", numKvConnections);
+                hasConfiguredParams = true;
+            }
+            if (queryTimeoutSeconds != null) {
+                logger.info("   ✅ queryTimeout: {}s (from config.yaml)", queryTimeoutSeconds);
+                hasConfiguredParams = true;
+            }
+            if (searchTimeoutSeconds != null) {
+                logger.info("   ✅ searchTimeout: {}s (from config.yaml)", searchTimeoutSeconds);
+                hasConfiguredParams = true;
+            }
+            if (kvTimeoutSeconds != null) {
+                logger.info("   ✅ kvTimeout: {}s (from config.yaml)", kvTimeoutSeconds);
+                hasConfiguredParams = true;
+            }
+            if (connectTimeoutSeconds != null) {
+                logger.info("   ✅ connectTimeout: {}s (from config.yaml)", connectTimeoutSeconds);
+                hasConfiguredParams = true;
+            }
+            if (disconnectTimeoutSeconds != null) {
+                logger.info("   ✅ disconnectTimeout: {}s (from config.yaml)", disconnectTimeoutSeconds);
+                hasConfiguredParams = true;
+            }
+            if (enableMutationTokens != null) {
+                logger.info("   ✅ enableMutationTokens: {} (from config.yaml)", enableMutationTokens);
+                hasConfiguredParams = true;
+            }
+            if (transactionDurability != null) {
+                logger.info("   ✅ transactionDurability: {} (from config.yaml)", transactionDurability);
+                hasConfiguredParams = true;
+            }
+            if (transactionTimeoutSeconds != null) {
+                logger.info("   ✅ transactionTimeout: {}s (from config.yaml)", transactionTimeoutSeconds);
+                hasConfiguredParams = true;
+            }
+            
+            if (!hasConfiguredParams) {
+                logger.info("   ℹ️  Using Couchbase Java SDK defaults (no overrides configured)");
+            } else {
+                logger.info("   ℹ️  Other parameters using Couchbase Java SDK defaults");
+            }
             
             Cluster cluster = Cluster.connect(request.getConnectionString(), options);
             
@@ -251,7 +319,7 @@ public class ConnectionService {
             // Store connection details including SSL status and server type
             connectionDetails.put(request.getName(), new ConnectionDetails(request.isSslEnabled(), request.getConnectionString(), request.getUsername(), request.getPassword(), request.getServerType()));
             
-            logger.info("Successfully created and stored connection: {}", request.getName());
+            logger.debug("Successfully created and stored connection: {}", request.getName());
             
             // Clear any previous connection error on success
             this.lastConnectionError = null;
@@ -336,14 +404,26 @@ public class ConnectionService {
      */
     private void lazyWarmupBucket(String connectionName, String bucketName, String scopeName) {
         try {
+            // Skip warmup for Admin scope - not performance critical
+            // Admin collections (Versions, Tombstones) are accessed infrequently
+            // and can tolerate the first-request penalty
+            if ("Admin".equals(scopeName)) {
+                logger.debug("⏭️ Skipping warmup for Admin scope (not performance critical)");
+                String bucketKey = connectionName + ":" + bucketName + ":" + scopeName;
+                bucketWarmupStatus.put(bucketKey, true); // Mark as complete (skipped)
+                return;
+            }
+            
             logger.info("🔥 Lazy warmup triggered for bucket: {}.{}", bucketName, scopeName);
             
-            // Standard FHIR collections
-            List<String> collections = Arrays.asList(
-                "Patient", "Observation", "Encounter", "Condition", 
-                "Procedure", "MedicationRequest", "DiagnosticReport", "DocumentReference", 
-                "Immunization", "ServiceRequest", "General", "Versions", "Tombstones"
-            );
+            // Get scope-specific collections
+            List<String> collections = getCollectionsForScope(scopeName);
+            if (collections.isEmpty()) {
+                logger.debug("⏭️ No collections to warm up for scope: {}", scopeName);
+                String bucketKey = connectionName + ":" + bucketName + ":" + scopeName;
+                bucketWarmupStatus.put(bucketKey, true);
+                return;
+            }
             
             long startTime = System.currentTimeMillis();
             warmupCollections(connectionName, bucketName, scopeName, collections);
@@ -356,6 +436,27 @@ public class ConnectionService {
             
         } catch (Exception e) {
             logger.warn("⚠️ Lazy warmup failed for {}.{}: {}", bucketName, scopeName, e.getMessage());
+        }
+    }
+    
+    /**
+     * Get collections to warm up based on scope name
+     */
+    private List<String> getCollectionsForScope(String scopeName) {
+        if ("Resources".equals(scopeName)) {
+            // FHIR resource collections (performance critical - in hot path)
+            return Arrays.asList(
+                "Patient", "Observation", "Encounter", "Condition", 
+                "Procedure", "MedicationRequest", "DiagnosticReport", "DocumentReference", 
+                "Immunization", "ServiceRequest", "General"
+            );
+        } else if ("Admin".equals(scopeName)) {
+            // Admin collections (NOT performance critical - rarely accessed)
+            // Warmup is disabled for Admin scope by default
+            return Collections.emptyList();
+        } else {
+            logger.debug("⚠️ Unknown scope: {} - no collections to warm up", scopeName);
+            return Collections.emptyList();
         }
     }
     
@@ -596,5 +697,32 @@ public class ConnectionService {
         
         // Default to a generic but helpful message
         return "Unable to connect to Couchbase server - please check hostname, credentials, and server status";
+    }
+    
+    /**
+     * Helper method to read Integer property from System properties
+     */
+    private Integer getIntProperty(String key) {
+        String value = System.getProperty(key);
+        if (value != null && !value.isEmpty()) {
+            try {
+                return Integer.parseInt(value);
+            } catch (NumberFormatException e) {
+                logger.warn("⚠️ Invalid integer value for {}: {}", key, value);
+                return null;
+            }
+        }
+        return null;
+    }
+    
+    /**
+     * Helper method to read Boolean property from System properties
+     */
+    private Boolean getBooleanProperty(String key) {
+        String value = System.getProperty(key);
+        if (value != null && !value.isEmpty()) {
+            return Boolean.parseBoolean(value);
+        }
+        return null;
     }
 } 

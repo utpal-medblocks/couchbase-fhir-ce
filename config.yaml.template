@@ -3,28 +3,35 @@
 # DO NOT commit config.yaml to git - it contains sensitive credentials
 
 connection:
-  connectionString: "ec2-xxx-xxx-xxx-xxx.compute-1.amazonaws.com"
+  # Example conections strings
+  # connectionString: "ec2-xxx-xxx-xxx-xxx.compute-1.amazonaws.com"
   # connectionString: "localhost"
   # connectionString: "couchbases://cb.gaxsvcngnxyz.cloud.couchbase.com"
   # connectionString: "host.docker.internal" # Works on Docker Desktop for Mac
-  username: "Administrator" # The userid
-  password: "password" # The password
+  username: "Administrator" # The userid - Example
+  password: "password" # The password - Example
   serverType: "Server" # "Server" or "Capella"
   sslEnabled: false # true for Capella
 
 app:
-  baseUrl: "http://localhost:8080/fhir" # Base URL of the FHIR server (used for pagination URLs, SMART on FHIR, etc.)
+  baseUrl: "http://localhost/fhir" # Base URL of the FHIR server (used for pagination URLs, SMART on FHIR, etc.)
   autoConnect: true # has to be set to true
+
+# Super User Credentials - These are seeded into the auth db
+admin:
+  email: "admin@example.com" - Example
+  password: "Admin123!" - Example
+  name: "Admin" - Example
 
 # Couchbase SDK Performance Tuning (Optional - defaults optimized for high-concurrency FHIR workloads)
 couchbase:
   bucket:
     name: "fhir" # FHIR Bucket Name. Has to exist in the cluster.
-    fhirRelease: "R4" # FHIR Release Fixed for now
+    fhirRelease: "R4" # FHIR Release. Fixed for now
     validation:
-      mode: "lenient" # lenient, none
-      profile: "us-core" # FHIR Profile us-core, none
-    logs:
+      mode: "lenient" # [lenient, none]
+      profile: "us-core" # FHIR Profile [us-core, none]
+    logs: # Not implemented for Beta
       enableSystem: false # Enable System Logs
       enableCRUDAudit: false # Enable CRUD Audit Logs
       enableSearchAudit: false # Enable Search Audit Logs
@@ -32,15 +39,17 @@ couchbase:
       number: 30 # in GB or Days
       s3Endpoint: "" # Example: https://s3.amazonaws.com" # S3 Endpoint for Log Upload
   sdk:
-    transaction-durability: NONE # NONE, MAJORITY, MAJORITY_AND_PERSIST_TO_ACTIVE, PERSIST_TO_MAJORITY
-    max-http-connections: 128 # Max HTTP Connections
-    num-kv-connections: 8 # Max KV Connections
-    kv-timeout-seconds: 30 # KV Timeout
-    query-timeout-seconds: 30 # Query Timeout
-    search-timeout-seconds: 30 # Search Timeout
-    connect-timeout-seconds: 10 # Connect Timeout
-    disconnect-timeout-seconds: 10 # Disconnect Timeout
-    transaction-timeout-seconds: 30 # Transaction Timeout
+    # You can leave these commented out unless you know what you are doing
+    # All values below are the defaults
+    # transaction-durability: MAJORITY # NONE, MAJORITY, MAJORITY_AND_PERSIST_TO_ACTIVE, PERSIST_TO_MAJORITY
+    #  max-http-connections: 12 # Max HTTP Connections. 
+    # num-kv-connections: 1 # Max KV Connections. 
+    # kv-timeout-seconds: 75 # KV Timeout
+    # query-timeout-seconds: 75 # Query Timeout
+    # search-timeout-seconds: 75 # Search Timeout
+    # connect-timeout-seconds: 10 # Connect Timeout
+    # disconnect-timeout-seconds: 10 # Disconnect Timeout
+    # transaction-timeout-seconds: 30 # Transaction Timeout
 
 # Super User Credentials - These are seeded into the auth db
 admin:
@@ -63,9 +72,19 @@ keycloak:
 
 logging:
   levels:
-    com.couchbase.admin: ERROR # ERROR, WARN, INFO, DEBUG
-    com.couchbase.fhir: ERROR # ERROR, WARN, INFO, DEBUG
-    com.couchbase.common: ERROR # ERROR, WARN, INFO, DEBUG
-    com.couchbase.admin.config.service.ConfigurationStartupService: INFO # INFO, WARN, DEBUG, ERROR
-    org.springframework.security: ERROR
+    # Application loggers
+    # com.couchbase.admin: ERROR # ERROR, WARN, INFO, DEBUG
+    # com.couchbase.fhir: ERROR # ERROR, WARN, INFO, DEBUG
+    # com.couchbase.common: ERROR # ERROR, WARN, INFO, DEBUG
+    # com.couchbase.admin.config.service.ConfigurationStartupService: DEBUG # INFO, WARN, DEBUG, ERROR
+
+    # Couchbase SDK loggers
+    # Set to INFO for load testing, ERROR for production, DEBUG for deep diagnostics
+    # com.couchbase.core: ERROR # KV operations, timeouts, retries
+    # com.couchbase.client: ERROR # Collection maps, queries
+    # com.couchbase.transactions: ERROR # Transaction timing, conflicts
+    # com.couchbase.io: ERROR # Network I/O (very verbose at INFO)
+    # com.couchbase.endpoint: ERROR # Endpoint management
+    # com.couchbase.node: ERROR # Node health
+    # com.couchbase.tracing: ERROR # Threshold events (disable WARN messages)
 

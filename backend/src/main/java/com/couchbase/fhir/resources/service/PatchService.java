@@ -61,7 +61,7 @@ public class PatchService {
     public <T extends Resource> MethodOutcome patchResource(String resourceType, String resourceId, String patchBody, Class<T> resourceClass) {
         String bucketName = TenantContextHolder.getTenantId();
         
-        logger.info("🔧 PatchService: Processing JSON Patch for {}/{}", resourceType, resourceId);
+        logger.debug("🔧 PatchService: Processing JSON Patch for {}/{}", resourceType, resourceId);
         
         // Validate FHIR bucket
         try {
@@ -75,7 +75,7 @@ public class PatchService {
         T currentResource = dao.read(resourceType, resourceId, bucketName)
             .orElseThrow(() -> new ResourceNotFoundException(new IdType(resourceType, resourceId)));
         
-        logger.info("🔧 PatchService: Found existing resource with version {}", 
+        logger.debug("🔧 PatchService: Found existing resource with version {}", 
                    currentResource.getMeta().getVersionId());
         
         // 2. Apply JSON Patch
@@ -99,7 +99,7 @@ public class PatchService {
             // Ensure ID consistency (patch shouldn't change ID)
             patchedResource.setId(resourceId);
             
-            logger.info("🔧 PatchService: Successfully applied JSON Patch operations");
+            logger.debug("🔧 PatchService: Successfully applied JSON Patch operations");
             
         } catch (JsonPatchException e) {
             logger.error("❌ PatchService: Invalid JSON Patch operation: {}", e.getMessage());
@@ -123,7 +123,7 @@ public class PatchService {
             outcome.setId(new IdType(resourceType, updatedResource.getIdElement().getIdPart()));
             
             String newVersionId = updatedResource.getMeta().getVersionId();
-            logger.info("✅ PatchService: Successfully patched resource {}/{}, new version {}", 
+            logger.debug("✅ PatchService: Successfully patched resource {}/{}, new version {}", 
                        resourceType, resourceId, newVersionId);
             
             return outcome;
@@ -149,7 +149,7 @@ public class PatchService {
      * @return MethodOutcome with updated resource
      */
     public <T extends Resource> MethodOutcome patchResourceConditional(String resourceType, java.util.Map<String, List<String>> criteria, String patchBody, Class<T> resourceClass, SearchService searchService) {
-        logger.info("🔧 PatchService: Processing conditional JSON Patch for {} with criteria: {}", resourceType, criteria);
+        logger.debug("🔧 PatchService: Processing conditional JSON Patch for {} with criteria: {}", resourceType, criteria);
         
         // Resolve resource using SearchService
         ResolveResult result = searchService.resolveConditional(resourceType, criteria);
@@ -165,7 +165,7 @@ public class PatchService {
                 
             case ONE:
                 String resourceId = result.getResourceId();
-                logger.info("🔧 PatchService: Resolved conditional patch to resource ID: {}", resourceId);
+                logger.debug("🔧 PatchService: Resolved conditional patch to resource ID: {}", resourceId);
                 return patchResource(resourceType, resourceId, patchBody, resourceClass);
                 
             default:

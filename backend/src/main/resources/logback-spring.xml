@@ -16,34 +16,101 @@
     <!-- ============================================================= -->
 
     <!-- Central reusable pattern (NO %ex tokens!) -->
-    <property name="NO_STACK_PATTERN" value="%d{HH:mm:ss.SSS} %-5level %logger{36} - %msg%n"/>
+    <property name="NO_STACK_PATTERN" value="%d{yyyy-MM-dd'T'HH:mm:ss.SSS'Z', UTC} %-5level %msg%n"/>
+    
+    <!-- Log file locations from environment variables (works both in Docker and locally) -->
+    <property name="LOG_FILE" value="${LOGGING_FILE_NAME:-./logs/fhir.log}"/>
+    <property name="SDK_LOG_FILE" value="${SDK_LOGGING_FILE_NAME:-./logs/sdk.log}"/>
 
-    <!-- Container-friendly logging: STDOUT only (12-factor). -->
+    <!-- Console appender (12-factor for containers) -->
     <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
         <encoder>
             <pattern>${NO_STACK_PATTERN}</pattern>
         </encoder>
     </appender>
+    
+    <!-- File appender for persistent logs -->
+    <appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${LOG_FILE}</file>
+        <encoder>
+            <pattern>${NO_STACK_PATTERN}</pattern>
+        </encoder>
+        <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
+            <!-- Daily rollover -->
+            <fileNamePattern>${LOG_FILE}.%d{yyyy-MM-dd}.gz</fileNamePattern>
+            <!-- Keep 7 days of history -->
+            <maxHistory>7</maxHistory>
+            <!-- Cap total log size at 1GB -->
+            <totalSizeCap>1GB</totalSizeCap>
+        </rollingPolicy>
+    </appender>
+    
+    <!-- Separate file appender for Couchbase SDK logs -->
+    <appender name="SDK_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${SDK_LOG_FILE}</file>
+        <encoder>
+            <pattern>${NO_STACK_PATTERN}</pattern>
+        </encoder>
+        <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
+            <fileNamePattern>${SDK_LOG_FILE}.%d{yyyy-MM-dd}.gz</fileNamePattern>
+            <maxHistory>7</maxHistory>
+            <totalSizeCap>1GB</totalSizeCap>
+        </rollingPolicy>
+    </appender>
 
     <root level="INFO">
         <appender-ref ref="STDOUT"/>
+        <appender-ref ref="FILE"/>
     </root>
 
-    <!-- Your Couchbase loggers -->
-    <logger name="com.couchbase" level="ERROR"/>
-    <logger name="com.couchbase.client" level="ERROR"/>
-    <logger name="com.couchbase.core" level="ERROR"/>
-    <logger name="com.couchbase.io" level="ERROR"/>
-    <logger name="com.couchbase.endpoint" level="ERROR"/>
-    <logger name="com.couchbase.node" level="ERROR"/>
-    <logger name="com.couchbase.transactions" level="ERROR"/>
-    <logger name="com.couchbase.tracing" level="ERROR"/>
-
-    <!-- Package-specific loggers - start conservatively -->
-    <logger name="com.couchbase.admin" level="ERROR"/>
-    <logger name="com.couchbase.fhir" level="ERROR"/>
-    <logger name="com.couchbase.fhir.auth" level="ERROR"/>
-    <logger name="com.couchbase.common" level="ERROR"/>
+    <!-- Couchbase SDK loggers (performance diagnostics) -->
+    <!-- Levels are configured in config.yaml for easy adjustment -->
+    <!-- These loggers route SDK logs to separate file (sdk.log) -->
+    
+    <!-- SDK internal loggers → sdk.log -->
+    <logger name="com.couchbase.core" additivity="false">
+        <appender-ref ref="SDK_FILE"/>
+        <appender-ref ref="STDOUT"/>
+    </logger>
+    
+    <logger name="com.couchbase.client.core" additivity="false">
+        <appender-ref ref="SDK_FILE"/>
+        <appender-ref ref="STDOUT"/>
+    </logger>
+    
+    <logger name="com.couchbase.client.java" additivity="false">
+        <appender-ref ref="SDK_FILE"/>
+        <appender-ref ref="STDOUT"/>
+    </logger>
+    
+    <logger name="com.couchbase.io" additivity="false">
+        <appender-ref ref="SDK_FILE"/>
+        <appender-ref ref="STDOUT"/>
+    </logger>
+    
+    <logger name="com.couchbase.endpoint" additivity="false">
+        <appender-ref ref="SDK_FILE"/>
+        <appender-ref ref="STDOUT"/>
+    </logger>
+    
+    <logger name="com.couchbase.node" additivity="false">
+        <appender-ref ref="SDK_FILE"/>
+        <appender-ref ref="STDOUT"/>
+    </logger>
+    
+    <logger name="com.couchbase.transactions" additivity="false">
+        <appender-ref ref="SDK_FILE"/>
+        <appender-ref ref="STDOUT"/>
+    </logger>
+    
+    <logger name="com.couchbase.tracing" additivity="false">
+        <appender-ref ref="SDK_FILE"/>
+        <appender-ref ref="STDOUT"/>
+    </logger>
+    
+    <!-- Application loggers → fhir.log (uses root appenders) -->
+    <!-- Levels configured in config.yaml -->
+    <!-- These use default routing (FILE + STDOUT from root) -->
     
     <!-- Spring Security and OAuth2 logging (set to ERROR for production, DEBUG for troubleshooting) -->
     <logger name="org.springframework.security" level="ERROR"/>

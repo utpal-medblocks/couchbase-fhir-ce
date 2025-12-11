@@ -117,7 +117,7 @@ const DashboardCouchbaseServer: React.FC = () => {
     }
   }, [connection.isConnected, bucket, fetchBucketData]);
 
-  // Poll metrics every 30 seconds when connected
+  // Poll metrics and FHIR bucket data every 20 seconds when connected
   useEffect(() => {
     if (!connection.isConnected) {
       return;
@@ -125,17 +125,19 @@ const DashboardCouchbaseServer: React.FC = () => {
 
     // Fetch immediately
     fetchMetrics();
+    fetchBucketData(); // Also fetch FHIR bucket data
 
     // Set up polling interval
     const interval = setInterval(() => {
       fetchMetrics();
+      fetchBucketData(); // Refresh FHIR bucket data along with metrics
     }, 20000); // 20 seconds
 
     // Cleanup on unmount or connection change
     return () => {
       clearInterval(interval);
     };
-  }, [connection.isConnected]);
+  }, [connection.isConnected, fetchMetrics, fetchBucketData]);
 
   // Fetch config summary when backend is ready but not connected
   useEffect(() => {
@@ -507,7 +509,8 @@ const DashboardCouchbaseServer: React.FC = () => {
         if (!bucket) {
           return (
             <Alert severity="info">
-              FHIR bucket not yet initialized. Please complete initialization to see bucket details.
+              FHIR bucket not yet initialized. Please complete initialization to
+              see bucket details.
             </Alert>
           );
         }

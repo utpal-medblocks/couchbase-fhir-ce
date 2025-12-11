@@ -77,7 +77,7 @@ public class RequestPerfBag {
     }
     
     /**
-     * Get a summary string for logging
+     * Get a summary string for logging (DEBUG level)
      */
     public String getSummary() {
         StringBuilder sb = new StringBuilder();
@@ -94,6 +94,49 @@ public class RequestPerfBag {
             sb.append(", counts={");
             counts.forEach((key, value) -> sb.append(key).append("=").append(value).append(" "));
             sb.append("}");
+        }
+        
+        return sb.toString();
+    }
+    
+    /**
+     * Get structured log line for INFO level (Loki/grep friendly)
+     * Format: reqId=xxx method=GET path="..." duration_ms=123 status=success entries=10 bytes=1066
+     */
+    public String getStructuredLogLine(String method, String path) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("reqId=").append(requestId);
+        
+        if (method != null) {
+            sb.append(" method=").append(method);
+        }
+        
+        if (path != null) {
+            sb.append(" path=\"").append(path).append("\"");
+        }
+        
+        sb.append(" duration_ms=").append(getTotalDurationMs());
+        sb.append(" status=").append(status);
+        
+        // Add entries count if available (from search results or bundle)
+        Integer entries = counts.get("entries");
+        if (entries != null) {
+            sb.append(" entries=").append(entries);
+        }
+        
+        // Add bytes if available (response size)
+        Integer bytes = counts.get("response_bytes");
+        if (bytes != null) {
+            sb.append(" bytes=").append(bytes);
+        }
+        
+        // Add resource type and operation for context
+        if (resource != null) {
+            sb.append(" resource=").append(resource);
+        }
+        
+        if (operation != null) {
+            sb.append(" operation=").append(operation);
         }
         
         return sb.toString();

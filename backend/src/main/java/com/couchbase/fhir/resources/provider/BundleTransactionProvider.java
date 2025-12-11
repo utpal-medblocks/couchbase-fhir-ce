@@ -60,7 +60,7 @@ public class BundleTransactionProvider implements IResourceProvider {
         
         if (cachedBody != null && cachedBody.length > 0) {
             bundleJson = new String(cachedBody, java.nio.charset.StandardCharsets.UTF_8);
-            logger.info("🔧 Using raw JSON from interceptor cache to avoid HAPI reference preprocessing");
+            logger.debug("🔧 Using raw JSON from interceptor cache to avoid HAPI reference preprocessing");
         } else {
             // FAIL FAST - don't silently degrade to broken reference behavior
             throw new InvalidRequestException("Bundle processing requires raw request body - interceptor may not be configured properly");
@@ -89,7 +89,7 @@ public class BundleTransactionProvider implements IResourceProvider {
             String bucketName = TenantContextHolder.getTenantId();
             String connectionName = "default"; // Could be made configurable
             
-            logger.info("🚀 Processing Bundle {} for tenant: {}", 
+            logger.debug("🚀 Processing Bundle {} for tenant: {}", 
                        rawBundle.getType().toCode(), bucketName);
             
             // Get complete bucket-specific validation configuration
@@ -98,9 +98,9 @@ public class BundleTransactionProvider implements IResourceProvider {
             // Build validation description for logging
             String validationDescription = buildValidationDescription(bucketConfig);
             
-            logger.info("🔍 Bucket validation config - mode: {}, profile: {}", 
+            logger.debug("🔍 Bucket validation config - mode: {}, profile: {}", 
                        bucketConfig.getValidationMode(), bucketConfig.getValidationProfile());
-            logger.info("🔍 Using validation: {}", validationDescription);
+            logger.debug("🔍 Using validation: {}", validationDescription);
             
             // Process using complete bucket configuration
             Bundle responseBundle = bundleProcessingService.processBundleTransaction(
@@ -110,7 +110,7 @@ public class BundleTransactionProvider implements IResourceProvider {
                 bucketConfig  // Pass complete config object
             );
             
-            logger.info("✅ Bundle processing completed successfully for tenant: {}", bucketName);
+            logger.debug("✅ Bundle processing completed successfully for tenant: {}", bucketName);
             return responseBundle;
             
         } catch (Exception e) {

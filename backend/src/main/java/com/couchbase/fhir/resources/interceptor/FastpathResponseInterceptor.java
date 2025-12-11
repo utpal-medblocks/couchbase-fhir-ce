@@ -23,7 +23,7 @@ public class FastpathResponseInterceptor extends InterceptorAdapter {
         
         if (fastpathData instanceof byte[]) {
             byte[] jsonBytes = (byte[]) fastpathData;
-            logger.info("🚀 FASTPATH INTERCEPTOR: Detected fastpath bytes ({} bytes), bypassing HAPI serialization", jsonBytes.length);
+            logger.debug("🚀 FASTPATH INTERCEPTOR: Detected fastpath bytes ({} bytes), bypassing HAPI serialization", jsonBytes.length);
             
             try {
                 if (theRequestDetails instanceof ServletRequestDetails) {

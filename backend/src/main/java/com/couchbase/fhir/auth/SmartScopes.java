@@ -7,17 +7,21 @@ import java.util.List;
  * SMART on FHIR scope definitions
  * Reference: http://hl7.org/fhir/smart-app-launch/scopes-and-launch-context.html
  * 
- * Format: {category}/{resource-type}.{access-level}
+ * SMART v2 Format: {category}/{resource-type}.{interactions}
  * 
  * Categories:
  * - patient: Access limited to patient's compartment
  * - user: Access by authenticated user (practitioner, etc.)
  * - system: Backend service access (no user context)
  * 
- * Access levels:
- * - read: Read access
- * - write: Write access (create, update)
- * - *: All access (read + write)
+ * SMART v2 Interactions (granular):
+ * - c = create
+ * - r = read
+ * - u = update
+ * - d = delete
+ * - s = search
+ * - Combinations: rs (read+search), cud (create+update+delete), cruds (all)
+ * - Or * for all interactions
  */
 public class SmartScopes {
     
@@ -30,10 +34,10 @@ public class SmartScopes {
     public static final String FHIRUSER = "fhirUser";
     public static final String PROFILE = "profile";
     
-    // Patient scopes - access limited to patient compartment
-    public static final String PATIENT_ALL_READ = "patient/*.read";
-    public static final String PATIENT_ALL_WRITE = "patient/*.write";
-    public static final String PATIENT_ALL = "patient/*.*";
+    // Patient scopes - SMART v2 format (access limited to patient compartment)
+    public static final String PATIENT_ALL_READ = "patient/*.rs";      // read + search (v2)
+    public static final String PATIENT_ALL_WRITE = "patient/*.cud";    // create + update + delete (v2)
+    public static final String PATIENT_ALL = "patient/*.cruds";        // all operations (v2)
     
     // Common patient resource scopes
     public static final String PATIENT_PATIENT_READ = "patient/Patient.read";
@@ -42,10 +46,10 @@ public class SmartScopes {
     public static final String PATIENT_MEDICATION_READ = "patient/MedicationRequest.read";
     public static final String PATIENT_ALLERGY_READ = "patient/AllergyIntolerance.read";
     
-    // User scopes - access by authenticated user
-    public static final String USER_ALL_READ = "user/*.read";
-    public static final String USER_ALL_WRITE = "user/*.write";
-    public static final String USER_ALL = "user/*.*";
+    // User scopes - SMART v2 format (access by authenticated user)
+    public static final String USER_ALL_READ = "user/*.rs";        // read + search (v2)
+    public static final String USER_ALL_WRITE = "user/*.cud";      // create + update + delete (v2)
+    public static final String USER_ALL = "user/*.cruds";          // all operations (v2)
     
     // Common user resource scopes
     public static final String USER_PATIENT_READ = "user/Patient.read";
@@ -53,10 +57,10 @@ public class SmartScopes {
     public static final String USER_OBSERVATION_READ = "user/Observation.read";
     public static final String USER_OBSERVATION_WRITE = "user/Observation.write";
     
-    // System scopes - backend service access
-    public static final String SYSTEM_ALL_READ = "system/*.read";
-    public static final String SYSTEM_ALL_WRITE = "system/*.write";
-    public static final String SYSTEM_ALL = "system/*.*";
+    // System scopes - SMART v2 format (backend service access)
+    public static final String SYSTEM_ALL_READ = "system/*.rs";    // read + search (v2)
+    public static final String SYSTEM_ALL_WRITE = "system/*.cud";  // create + update + delete (v2)
+    public static final String SYSTEM_ALL = "system/*.cruds";      // all operations (v2)
     
     // All default scopes for testing
     public static final List<String> DEFAULT_TEST_SCOPES = Arrays.asList(

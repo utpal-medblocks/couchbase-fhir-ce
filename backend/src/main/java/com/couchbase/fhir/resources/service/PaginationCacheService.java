@@ -25,6 +25,7 @@ import java.util.Map;
  * - Pagination states expire based on collection-level maxTTL (default 180 seconds = 3 minutes)
  * - Document key = pagination token (UUID)
  * - Couchbase collection maxTTL handles expiry automatically (no per-document expiry needed)
+ * - Automatic retry: Storage operations retry once if they fail (helps with transient network/DB issues)
  * 
  * Benefits:
  * - Off-heap storage: Eliminates 171MB+ heap consumption
@@ -32,6 +33,7 @@ import java.util.Map;
  * - Simplified code: No per-document expiry specification (less overhead)
  * - Multi-tenant: Per-bucket isolation via Admin scope
  * - Scalable: Can handle thousands of concurrent pagination states
+ * - Resilient: Automatic retry on transient failures
  * 
  * Configuration:
  * - Admin.cache collection must be created with maxTTL setting (e.g., 180 seconds)
@@ -63,37 +65,67 @@ public class PaginationCacheService {
      * TTL is managed at collection level (maxTTL setting on Admin.cache collection).
      * No per-document expiry needed - all documents auto-expire based on collection maxTTL.
      * 
+     * Includes retry logic: If storage fails, retries once after a brief delay.
+     * 
      * @param bucketName FHIR bucket name
      * @param token Pagination token (UUID)
      * @param state PaginationState object to store
-     * @throws RuntimeException if storage fails
+     * @throws RuntimeException if storage fails after retry
      */
     public void storePaginationState(String bucketName, String token, PaginationState state) {
-        try {
-            Collection cacheCollection = getCacheCollection(bucketName);
-            
-            // Convert PaginationState to JSON
-            Map<String, Object> stateMap = paginationStateToMap(state);
-            JsonObject jsonObject = JsonObject.fromJson(objectMapper.writeValueAsString(stateMap));
-            
-            // Store without explicit expiry - collection-level maxTTL handles expiration
-            // Simpler, less overhead than per-document expiry
-            cacheCollection.upsert(token, jsonObject);
-            
-            // Log appropriate info based on pagination strategy
-            if (state.isUseLegacyKeyList() && state.getAllDocumentKeys() != null) {
-                logger.debug("📦 Stored pagination state (LEGACY): bucket={}, token={}, keys={} (collection maxTTL handles expiry)", 
-                            bucketName, token, state.getAllDocumentKeys().size());
-            } else {
-                logger.debug("📦 Stored pagination state (NEW): bucket={}, token={}, type={}, offset={}, pageSize={} (collection maxTTL handles expiry)", 
-                            bucketName, token, state.getSearchType(), state.getPrimaryOffset(), state.getPrimaryPageSize());
+        Exception lastException = null;
+        
+        // Try up to 2 times (initial attempt + 1 retry)
+        for (int attempt = 1; attempt <= 2; attempt++) {
+            try {
+                Collection cacheCollection = getCacheCollection(bucketName);
+                
+                // Convert PaginationState to JSON
+                Map<String, Object> stateMap = paginationStateToMap(state);
+                JsonObject jsonObject = JsonObject.fromJson(objectMapper.writeValueAsString(stateMap));
+                
+                // Store without explicit expiry - collection-level maxTTL handles expiration
+                // Simpler, less overhead than per-document expiry
+                cacheCollection.upsert(token, jsonObject);
+                
+                // Log appropriate info based on pagination strategy
+                if (state.isUseLegacyKeyList() && state.getAllDocumentKeys() != null) {
+                    logger.debug("📦 Stored pagination state (LEGACY): bucket={}, token={}, keys={} (attempt={}, collection maxTTL handles expiry)", 
+                                bucketName, token, state.getAllDocumentKeys().size(), attempt);
+                } else {
+                    logger.debug("📦 Stored pagination state (NEW): bucket={}, token={}, type={}, offset={}, pageSize={} (attempt={}, collection maxTTL handles expiry)", 
+                                bucketName, token, state.getSearchType(), state.getPrimaryOffset(), state.getPrimaryPageSize(), attempt);
+                }
+                
+                // Success - exit loop
+                if (attempt > 1) {
+                    logger.debug("✅ Pagination state storage succeeded on retry attempt {}", attempt);
+                }
+                return;
+                
+            } catch (Exception e) {
+                lastException = e;
+                
+                if (attempt < 2) {
+                    logger.warn("⚠️  Failed to store pagination state (attempt {}): bucket={}, token={}, error={} - retrying...", 
+                               attempt, bucketName, token, e.getMessage());
+                    
+                    // Brief delay before retry (50ms)
+                    try {
+                        Thread.sleep(50);
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        logger.warn("Retry sleep interrupted");
+                    }
+                } else {
+                    logger.error("❌ Failed to store pagination state after {} attempts: bucket={}, token={}, error={}", 
+                                attempt, bucketName, token, e.getMessage());
+                }
             }
-            
-        } catch (Exception e) {
-            logger.error("❌ Failed to store pagination state: bucket={}, token={}, error={}", 
-                        bucketName, token, e.getMessage());
-            throw new RuntimeException("Failed to store pagination state: " + e.getMessage(), e);
         }
+        
+        // If we got here, all attempts failed
+        throw new RuntimeException("Failed to store pagination state after 2 attempts: " + lastException.getMessage(), lastException);
     }
     
     /**
@@ -182,7 +214,7 @@ public class PaginationCacheService {
         String cacheKey = bucketName + ":" + ADMIN_SCOPE + ":" + CACHE_COLLECTION;
         
         return cacheCollectionCache.computeIfAbsent(cacheKey, key -> {
-            logger.info("🔧 Initializing Admin.cache collection reference: bucket={}", bucketName);
+            logger.debug("🔧 Initializing Admin.cache collection reference: bucket={}", bucketName);
             return couchbaseGateway.getCollection("default", bucketName, ADMIN_SCOPE, CACHE_COLLECTION);
         });
     }
@@ -277,7 +309,7 @@ public class PaginationCacheService {
      */
     public void clearCollectionCache() {
         cacheCollectionCache.clear();
-        logger.info("🔧 Cleared pagination cache collection references");
+        logger.debug("🔧 Cleared pagination cache collection references");
     }
 }
 
