@@ -64,46 +64,47 @@
     </root>
 
     <!-- Couchbase SDK loggers (performance diagnostics) -->
-    <!-- Levels are configured in config.yaml for easy adjustment -->
+    <!-- Default level: ERROR (minimal logging for production) -->
+    <!-- Override in config.yaml for debugging: logging.levels.com.couchbase.core: DEBUG -->
     <!-- These loggers route SDK logs to separate file (sdk.log) -->
     
     <!-- SDK internal loggers → sdk.log -->
-    <logger name="com.couchbase.core" additivity="false">
+    <logger name="com.couchbase.core" level="ERROR" additivity="false">
         <appender-ref ref="SDK_FILE"/>
         <appender-ref ref="STDOUT"/>
     </logger>
     
-    <logger name="com.couchbase.client.core" additivity="false">
+    <logger name="com.couchbase.client.core" level="ERROR" additivity="false">
         <appender-ref ref="SDK_FILE"/>
         <appender-ref ref="STDOUT"/>
     </logger>
     
-    <logger name="com.couchbase.client.java" additivity="false">
+    <logger name="com.couchbase.client.java" level="ERROR" additivity="false">
         <appender-ref ref="SDK_FILE"/>
         <appender-ref ref="STDOUT"/>
     </logger>
     
-    <logger name="com.couchbase.io" additivity="false">
+    <logger name="com.couchbase.io" level="ERROR" additivity="false">
         <appender-ref ref="SDK_FILE"/>
         <appender-ref ref="STDOUT"/>
     </logger>
     
-    <logger name="com.couchbase.endpoint" additivity="false">
+    <logger name="com.couchbase.endpoint" level="ERROR" additivity="false">
         <appender-ref ref="SDK_FILE"/>
         <appender-ref ref="STDOUT"/>
     </logger>
     
-    <logger name="com.couchbase.node" additivity="false">
+    <logger name="com.couchbase.node" level="ERROR" additivity="false">
         <appender-ref ref="SDK_FILE"/>
         <appender-ref ref="STDOUT"/>
     </logger>
     
-    <logger name="com.couchbase.transactions" additivity="false">
+    <logger name="com.couchbase.transactions" level="ERROR" additivity="false">
         <appender-ref ref="SDK_FILE"/>
         <appender-ref ref="STDOUT"/>
     </logger>
     
-    <logger name="com.couchbase.tracing" additivity="false">
+    <logger name="com.couchbase.tracing" level="ERROR" additivity="false">
         <appender-ref ref="SDK_FILE"/>
         <appender-ref ref="STDOUT"/>
     </logger>
