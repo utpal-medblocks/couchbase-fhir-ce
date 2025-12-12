@@ -1,5 +1,6 @@
 package com.couchbase.fhir.auth.controller;
 
+import jakarta.servlet.http.HttpServletResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.security.oauth2.core.endpoint.OAuth2ParameterNames;
@@ -39,6 +40,7 @@ public class ConsentController {
     public String consent(
             Principal principal,
             Model model,
+            HttpServletResponse response,
             @RequestParam(OAuth2ParameterNames.CLIENT_ID) String clientId,
             @RequestParam(OAuth2ParameterNames.SCOPE) String scope,
             @RequestParam(OAuth2ParameterNames.STATE) String state,
@@ -46,6 +48,11 @@ public class ConsentController {
             @RequestParam(value = OAuth2ParameterNames.RESPONSE_TYPE, required = false, defaultValue = "code") String responseType,
             @RequestParam(value = "code_challenge", required = false) String codeChallenge,
             @RequestParam(value = "code_challenge_method", required = false) String codeChallengeMethod) {
+        
+        // Prevent browser from caching the consent page HTML
+        response.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
+        response.setHeader("Pragma", "no-cache");
+        response.setHeader("Expires", "0");
         
         logger.info("🔐 Consent requested for client: {} by user: {}", clientId, principal.getName());
         
