@@ -1,0 +1,14 @@
+{
+  "realm": "fhir",
+  "enabled": true,
+  "clients": [
+    {
+      "clientId": "fhir-server",
+      "enabled": true,
+      "publicClient": false,
+      "protocol": "openid-connect",
+      "redirectUris": ["http://localhost:8080/authorized"],
+      "serviceAccountsEnabled": true
+    }
+  ]
+}
