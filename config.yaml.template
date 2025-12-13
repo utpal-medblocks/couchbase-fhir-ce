@@ -20,6 +20,8 @@ couchbase:
     # connectionString: "host.docker.internal"
     username: "Administrator"
     password: "password"
+    serverType: "Server" # [Server, Capella]
+    sslEnabled: false # [true, false]
 
   bucket:
     name: "fhir" # Fixed
