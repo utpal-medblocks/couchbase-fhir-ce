@@ -1,0 +1,18 @@
+# =============================================================================
+# Couchbase FHIR CE - Configuration Generator Image
+# =============================================================================
+# Lightweight Python image with PyYAML pre-installed
+# Used to generate docker-compose.yml and haproxy.cfg from config.yaml
+# =============================================================================
+
+FROM python:3.9-slim
+
+# Install PyYAML (only dependency)
+RUN pip install --no-cache-dir pyyaml
+
+# Set working directory
+WORKDIR /work
+
+# Default command: show usage
+CMD ["python", "--version"]
+

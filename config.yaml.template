@@ -1,78 +1,73 @@
-# Couchbase FHIR Configuration Template
-# Copy this file to 'config.yaml' and update with your actual connection details
-# DO NOT commit config.yaml to git - it contains sensitive credentials
-
-connection:
-  # Example conections strings
-  # connectionString: "ec2-xxx-xxx-xxx-xxx.compute-1.amazonaws.com"
-  # connectionString: "localhost"
-  # connectionString: "couchbases://cb.gaxsvcngnxyz.cloud.couchbase.com"
-  # connectionString: "host.docker.internal" # Works on Docker Desktop for Mac
-  username: "Administrator" # The userid - Example
-  password: "password" # The password - Example
-  serverType: "Server" # "Server" or "Capella"
-  sslEnabled: false # true for Capella
+# =============================================================================
+# Couchbase FHIR CE - Configuration File
+# =============================================================================
+# Edit this file, then run: ./scripts/apply-config.sh
+# =============================================================================
 
 app:
-  baseUrl: "http://localhost/fhir" # Base URL of the FHIR server (used for pagination URLs, SMART on FHIR, etc.)
-  autoConnect: true # has to be set to true
+  # Public URL for your FHIR server
+  # Examples:
+  #   Dev:   http://localhost:8080/fhir
+  #   Prod:  https://acme.com/fhir
+  baseUrl: "http://localhost:8080/fhir"
+  autoConnect: true
 
-# Super User Credentials - These are seeded into the auth db
-# Examples. You can use your own.
+couchbase:
+  connection:
+    connectionString: "localhost"
+    # connectionString: "ec2-xx-xx-xxx-xxx.us-west-2.compute.amazonaws.com"
+    # connectionString: "couchbases://cb.xxx-xxx.cloud.couchbase.com"
+    # connectionString: "host.docker.internal"
+    username: "Administrator"
+    password: "password"
+
+  bucket:
+    name: "fhir" # Fixed
+    fhirRelease: "R4" # Fixed
+    validation:
+      mode: "lenient"     # [lenient, none]
+      profile: "us-core"  # [us-core, none]
+
+  sdk:
+    overrides: {}
+    # overrides. Complete list of available overrides in docs. Example below.
+    # max-http-connections: 12 # Max HTTP Connections
+
 admin:
   email: "admin@example.com"
   password: "Admin123!"
   name: "Admin"
 
-# Couchbase SDK Performance Tuning (Optional - defaults optimized for high-concurrency FHIR workloads)
-couchbase:
-  bucket:
-    name: "fhir" # FHIR Bucket Name. Has to exist in the cluster.
-    fhirRelease: "R4" # FHIR Release. Fixed for now
-    validation:
-      mode: "lenient" # [lenient, none]
-      profile: "us-core" # FHIR Profile [us-core, none]
-    logs: # Not implemented for Beta
-      enableSystem: false # Enable System Logs
-      enableCRUDAudit: false # Enable CRUD Audit Logs
-      enableSearchAudit: false # Enable Search Audit Logs
-      rotationBy: "size" # size, days
-      number: 30 # in GB or Days
-      s3Endpoint: "" # Example: https://s3.amazonaws.com" # S3 Endpoint for Log Upload
-  sdk:
-    # You can leave these commented out unless you know what you are doing
-    # All values below are the defaults
-    # transaction-durability: MAJORITY # NONE, MAJORITY, MAJORITY_AND_PERSIST_TO_ACTIVE, PERSIST_TO_MAJORITY
-    # max-http-connections: 12 # Max HTTP Connections. 
-    # num-kv-connections: 1 # Max KV Connections. 
-    # kv-timeout-seconds: 75 # KV Timeout
-    # query-timeout-seconds: 75 # Query Timeout
-    # search-timeout-seconds: 75 # Search Timeout
-    # connect-timeout-seconds: 10 # Connect Timeout
-    # disconnect-timeout-seconds: 10 # Disconnect Timeout
-    # transaction-timeout-seconds: 30 # Transaction Timeout
+deploy:
+  container:
+    mem_limit: "2g"
+    mem_reservation: "1g"
 
-# Super User Credentials - These are seeded into the auth db
-admin:
-  email: "admin@cb-fhir.com"
-  password: "Admin123!"
-  name: "Admin"
+  jvm:
+    xms: "1g"
+    xmx: "2g"
+
+  environment:
+    overrides: {}
+    # overrides. Complete list of available overrides in docs. Example below.
+    # SERVER_TOMCAT_THREADS_MAX: 200
+
+  tls:
+    enabled: false
+    # When enabled, HAProxy needs combined cert+key in single PEM:
+    # pemPath: "./certs/<your-domain>.pem"
+    # 
+    # To create combined PEM: cat cert.pem privkey.pem > cbfhir.com.pem
 
 logging:
-  levels:
-    # Application loggers
-    # com.couchbase.admin: ERROR # ERROR, WARN, INFO, DEBUG
-    # com.couchbase.fhir: ERROR # ERROR, WARN, INFO, DEBUG
-    # com.couchbase.common: ERROR # ERROR, WARN, INFO, DEBUG
-    # com.couchbase.admin.config.service.ConfigurationStartupService: DEBUG # INFO, WARN, DEBUG, ERROR
+  default: "ERROR"
+  overrides: {}
+  # overrides. Complete list of available overrides in docs
+  com.couchbase.admin.config.service.ConfigurationStartupService: "INFO"
 
-    # Couchbase SDK loggers
-    # Set to INFO for load testing, ERROR for production, DEBUG for deep diagnostics
-    # com.couchbase.core: ERROR # KV operations, timeouts, retries
-    # com.couchbase.client: ERROR # Collection maps, queries
-    # com.couchbase.transactions: ERROR # Transaction timing, conflicts
-    # com.couchbase.io: ERROR # Network I/O (very verbose at INFO)
-    # com.couchbase.endpoint: ERROR # Endpoint management
-    # com.couchbase.node: ERROR # Node health
-    # com.couchbase.tracing: ERROR # Threshold events (disable WARN messages)
-
+# Optional (enabled via separate script)
+# keycloak:
+#   enabled: false
+#   realm: "fhir-realm"
+#   adminUser: "admin"
+#   adminPassword: "admin"
