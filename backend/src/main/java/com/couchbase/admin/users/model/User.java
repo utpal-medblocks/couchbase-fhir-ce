@@ -38,6 +38,15 @@ public class User {
     private String passwordHash;
     
     /**
+     * Transient plain-text password when creating/updating a user.
+     * This field is NOT persisted to Couchbase and is intended to carry
+     * the plain password during user creation flows (used only when
+     * delegating to Keycloak). Controllers should set this when
+     * creating/updating users that require a password.
+     */
+    private transient String passwordPlain;
+    
+    /**
      * User role: "admin", "developer", "patient", or "practitioner"
      * - admin: Full access to Admin UI (Dashboard, Tokens, Users, etc.) - scopes: user/*.*,  system/*.*
      * - developer: Limited Admin UI access (Tokens and Client Registration only) - scopes: user/*.*
@@ -149,6 +158,14 @@ public class User {
 
     public void setPasswordHash(String passwordHash) {
         this.passwordHash = passwordHash;
+    }
+
+    public String getPasswordPlain() {
+        return passwordPlain;
+    }
+
+    public void setPasswordPlain(String passwordPlain) {
+        this.passwordPlain = passwordPlain;
     }
 
     public String getRole() {

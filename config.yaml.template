@@ -52,6 +52,12 @@ couchbase:
     # disconnect-timeout-seconds: 10 # Disconnect Timeout
     # transaction-timeout-seconds: 30 # Transaction Timeout
 
+# Super User Credentials - These are seeded into the auth db
+admin:
+  email: "admin@cb-fhir.com"
+  password: "Admin123!"
+  name: "Admin"
+
 logging:
   levels:
     # Application loggers
