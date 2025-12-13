@@ -18,10 +18,11 @@ app:
   autoConnect: true # has to be set to true
 
 # Super User Credentials - These are seeded into the auth db
+# Examples. You can use your own.
 admin:
-  email: "admin@example.com" - Example
-  password: "Admin123!" - Example
-  name: "Admin" - Example
+  email: "admin@example.com"
+  password: "Admin123!"
+  name: "Admin"
 
 # Couchbase SDK Performance Tuning (Optional - defaults optimized for high-concurrency FHIR workloads)
 couchbase:
@@ -42,7 +43,7 @@ couchbase:
     # You can leave these commented out unless you know what you are doing
     # All values below are the defaults
     # transaction-durability: MAJORITY # NONE, MAJORITY, MAJORITY_AND_PERSIST_TO_ACTIVE, PERSIST_TO_MAJORITY
-    #  max-http-connections: 12 # Max HTTP Connections. 
+    # max-http-connections: 12 # Max HTTP Connections. 
     # num-kv-connections: 1 # Max KV Connections. 
     # kv-timeout-seconds: 75 # KV Timeout
     # query-timeout-seconds: 75 # Query Timeout
@@ -50,12 +51,6 @@ couchbase:
     # connect-timeout-seconds: 10 # Connect Timeout
     # disconnect-timeout-seconds: 10 # Disconnect Timeout
     # transaction-timeout-seconds: 30 # Transaction Timeout
-
-# Super User Credentials - These are seeded into the auth db
-admin:
-  email: "admin@cb-fhir.com"
-  password: "Admin123!"
-  name: "Admin"
 
 logging:
   levels:
