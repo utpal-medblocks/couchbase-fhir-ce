@@ -1,7 +1,19 @@
 FROM maven:3.9.7-eclipse-temurin-21 AS builder
 WORKDIR /app
-COPY . .
-RUN ./mvnw clean package -DskipTests
+
+# Copy only pom.xml first to cache dependencies
+COPY pom.xml .
+COPY .mvn .mvn
+COPY mvnw .
+
+# Download dependencies (this layer will be cached)
+RUN ./mvnw dependency:go-offline -B
+
+# Now copy source code
+COPY src ./src
+
+# Build application (source changes won't invalidate dependency cache)
+RUN ./mvnw clean package -DskipTests -o
 RUN ls target/*
 
 FROM eclipse-temurin:21-jre

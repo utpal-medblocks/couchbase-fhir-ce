@@ -64,9 +64,12 @@ def generate_docker_compose(config):
         env.update(deploy['environment']['overrides'])
     
     compose = {
-        'version': '3.8',
         'services': {
             'fhir-server': {
+                'build': {
+                    'context': './backend',
+                    'dockerfile': 'Dockerfile'
+                },
                 'image': 'couchbase/fhir-server:latest',
                 'container_name': 'fhir-server',
                 'environment': env,
@@ -91,6 +94,10 @@ def generate_docker_compose(config):
             },
             
             'fhir-admin': {
+                'build': {
+                    'context': './frontend',
+                    'dockerfile': 'Dockerfile'
+                },
                 'image': 'couchbase/fhir-admin:latest',
                 'container_name': 'fhir-admin',
                 'restart': 'unless-stopped',

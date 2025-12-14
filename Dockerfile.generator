@@ -10,9 +10,12 @@ FROM python:3.9-slim
 # Install PyYAML (only dependency)
 RUN pip install --no-cache-dir pyyaml
 
+# Copy generator script
+COPY scripts/generate.py /usr/local/bin/generate.py
+
 # Set working directory
 WORKDIR /work
 
-# Default command: show usage
-CMD ["python", "--version"]
+# Entrypoint runs the generator
+ENTRYPOINT ["python", "/usr/local/bin/generate.py"]
 

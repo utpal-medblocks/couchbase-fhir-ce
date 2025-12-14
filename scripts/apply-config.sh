@@ -50,14 +50,14 @@ echo "🐳 Applying changes to services..."
 
 # Check if services are running
 if docker-compose ps 2>/dev/null | grep -q "Up"; then
-    # Services running - restart them
+    # Services running - rebuild and restart them
     docker-compose down
-    docker-compose up -d
-    echo "✅ Services restarted with new configuration!"
+    docker-compose up -d --build
+    echo "✅ Services built and restarted with new configuration!"
 else
-    # Services not running - start them
-    docker-compose up -d
-    echo "✅ Services started with new configuration!"
+    # Services not running - build and start them
+    docker-compose up -d --build
+    echo "✅ Services built and started with new configuration!"
 fi
 
 echo ""

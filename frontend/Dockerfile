@@ -8,7 +8,8 @@ RUN chmod -R 777 /app
 COPY package.json package-lock.json ./
 
 # Install dependencies - this layer will be cached unless package files change
-RUN npm ci --silent && \
+# Increase memory and use legacy peer deps for compatibility
+RUN npm ci --maxsockets=1 --prefer-offline --no-audit && \
     npm cache clean --force
 
 # Copy source code - this layer changes most often

@@ -1,198 +1,220 @@
 #!/bin/bash
 
-# Couchbase FHIR CE Install Script
+# ============================================================================
+# Couchbase FHIR CE One-Line Installer
+# ============================================================================
 # 
-# This script ONLY downloads:
-# - docker-compose.yml (container definitions)
-# - haproxy.cfg (load balancer config)  
-# - checksums.txt (file integrity verification)
-# - Pre-built images from ghcr.io/couchbaselabs/*
-# No executable code is downloaded or run from external sources.
+# This script downloads and runs the Couchbase FHIR CE platform using Docker.
+# It requires a config.yaml file to customize the installation.
 #
-# Usage: curl -sSL https://raw.githubusercontent.com/couchbaselabs/couchbase-fhir-ce/master/install.sh | bash -s -- ./config.yaml
+# Usage:
+#   curl -sSL https://raw.githubusercontent.com/couchbaselabs/couchbase-fhir-ce/master/install.sh | bash -s -- ./config.yaml
+#
+# What this script does:
+#   1. Downloads config.yaml.template if no config provided
+#   2. Pulls couchbase/fhir-generator image (for config generation)
+#   3. Generates docker-compose.yml and haproxy.cfg from config.yaml
+#   4. Pulls pre-built FHIR server images from GitHub Container Registry
+#   5. Starts the services
+#
+# No executable code from external sources is run - only Docker images.
+# ============================================================================
 
 set -e
 
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
 CONFIG_FILE="$1"
+INSTALL_DIR="couchbase-fhir-ce"
+GENERATOR_IMAGE="ghcr.io/couchbaselabs/couchbase-fhir-generator:latest"
 
-echo "🚀 Installing/Upgrading Couchbase FHIR CE..."
+echo -e "${BLUE}🚀 Couchbase FHIR CE Installer${NC}"
+echo ""
 
-# Check if config file provided
-if [ -z "$CONFIG_FILE" ]; then
-    echo "❌ Error: Please provide a config file"
-    echo "Usage: curl -sSL https://raw.githubusercontent.com/couchbaselabs/couchbase-fhir-ce/master/install.sh | bash -s -- ./config.yaml"
-    exit 1
-fi
+# ============================================================================
+# Pre-flight Checks
+# ============================================================================
 
-# Check if config file exists
-if [ ! -f "$CONFIG_FILE" ]; then
-    echo "❌ Error: Config file '$CONFIG_FILE' not found"
-    exit 1
-fi
-
-# Check if docker and docker-compose are installed
+# Check Docker
 if ! command -v docker &> /dev/null; then
-    echo "❌ Error: Docker is not installed. Please install Docker first."
+    echo -e "${RED}❌ Error: Docker is not installed.${NC}"
+    echo "   Please install Docker first: https://docs.docker.com/get-docker/"
     exit 1
 fi
 
-# Detect which docker-compose version is available
+# Check Docker Compose
 if command -v docker-compose &> /dev/null; then
     DOCKER_COMPOSE="docker-compose"
 elif docker compose version &> /dev/null 2>&1; then
     DOCKER_COMPOSE="docker compose"
 else
-    echo "❌ Error: Docker Compose is not installed. Please install Docker Compose first."
+    echo -e "${RED}❌ Error: Docker Compose is not installed.${NC}"
+    echo "   Please install Docker Compose: https://docs.docker.com/compose/install/"
     exit 1
 fi
 
-echo "🔧 Using: $DOCKER_COMPOSE"
+echo -e "${GREEN}✅ Using: $DOCKER_COMPOSE${NC}"
 
-# Create installation directory
-INSTALL_DIR="couchbase-fhir-ce"
+# ============================================================================
+# Config File Handling
+# ============================================================================
+
+if [ -z "$CONFIG_FILE" ]; then
+    echo -e "${YELLOW}⚠️  No config file provided. Downloading template...${NC}"
+    CONFIG_FILE="config.yaml"
+    curl -sSL https://raw.githubusercontent.com/couchbaselabs/couchbase-fhir-ce/master/config.yaml.template -o "$CONFIG_FILE"
+    echo -e "${GREEN}✅ Downloaded: $CONFIG_FILE${NC}"
+    echo ""
+    echo -e "${YELLOW}📝 Please edit $CONFIG_FILE with your settings before continuing.${NC}"
+    echo "   Key settings to configure:"
+    echo "   - couchbase.connection (server, username, password)"
+    echo "   - admin.email and admin.password"
+    echo "   - app.baseUrl (if not localhost)"
+    echo ""
+    echo "After editing, run this command again:"
+    echo "  curl -sSL https://raw.githubusercontent.com/couchbaselabs/couchbase-fhir-ce/master/install.sh | bash -s -- $CONFIG_FILE"
+    exit 0
+fi
+
+if [ ! -f "$CONFIG_FILE" ]; then
+    echo -e "${RED}❌ Error: Config file '$CONFIG_FILE' not found${NC}"
+    echo "   Download template: curl -sSL https://raw.githubusercontent.com/couchbaselabs/couchbase-fhir-ce/master/config.yaml.template -o config.yaml"
+    exit 1
+fi
+
+echo -e "${GREEN}✅ Using config file: $CONFIG_FILE${NC}"
+
+# ============================================================================
+# Create Installation Directory
+# ============================================================================
+
 mkdir -p "$INSTALL_DIR"
 cd "$INSTALL_DIR"
+echo -e "${GREEN}📁 Installation directory: $(pwd)${NC}"
 
-echo "📁 Working in directory: $(pwd)"
+# Copy config file
+cp "../$CONFIG_FILE" config.yaml 2>/dev/null || cp "$CONFIG_FILE" config.yaml
 
-# Download files from GitHub
-echo "📥 Downloading installation files..."
-curl -sSL https://raw.githubusercontent.com/couchbaselabs/couchbase-fhir-ce/master/docker-compose.user.yml -o docker-compose.yml
-curl -sSL https://raw.githubusercontent.com/couchbaselabs/couchbase-fhir-ce/master/haproxy.cfg -o haproxy.cfg
-curl -sSL https://raw.githubusercontent.com/couchbaselabs/couchbase-fhir-ce/master/checksums.txt -o checksums.txt
-
-# ---------------------------------------------------------------------------
-# Ensure logs directory exists BEFORE starting containers.
-# If the host path does not exist when Docker creates the bind mount, Docker
-# (running as root) will create it owned by root:root with 755 perms. The
-# fhir-server image runs as an unprivileged user and then cannot write GC/JFR
-# logs -> JVM startup failure (permission denied on /app/logs/gc.log).
-# We proactively create it here with permissive write access so the container
-# user (unknown UID inside image) can write even if ownership differs.
-# ---------------------------------------------------------------------------
+# Create logs directory with proper permissions
 if [ ! -d logs ]; then
-    echo "📁 Creating logs directory (host bind mount target)..."
+    echo "📁 Creating logs directory..."
     mkdir -p logs
+    chmod 0777 logs 2>/dev/null || true
 fi
 
-# Attempt to adjust ownership if created previously by root and we know the
-# invoking user's original UID (sudo sets SUDO_UID / SUDO_GID). Even if this
-# fails, the chmod below will still allow writes.
-OWNER=$(ls -ld logs | awk '{print $3}') || OWNER="unknown"
-if [ "$OWNER" = "root" ]; then
-    if [ -n "$SUDO_UID" ] && [ -n "$SUDO_GID" ]; then
-        chown "$SUDO_UID":"$SUDO_GID" logs 2>/dev/null || true
-    fi
+# ============================================================================
+# Pull Generator Image
+# ============================================================================
+
+echo ""
+echo -e "${BLUE}📦 Pulling configuration generator...${NC}"
+docker pull "$GENERATOR_IMAGE"
+
+# ============================================================================
+# Generate Config Files
+# ============================================================================
+
+echo ""
+echo -e "${BLUE}🔧 Generating docker-compose.yml and haproxy.cfg...${NC}"
+docker run --rm \
+    -v "$(pwd):/work" \
+    -w /work \
+    "$GENERATOR_IMAGE" \
+    config.yaml
+
+if [ ! -f docker-compose.yml ]; then
+    echo -e "${RED}❌ Error: Failed to generate docker-compose.yml${NC}"
+    exit 1
 fi
 
-# Grant broad write permissions. 0775 is preferred; if that fails (e.g. due to
-# restrictive umask or ownership) fall back to 0777. These logs may contain
-# diagnostic information; if you need stricter security, manually adjust perms
-# and rebuild the image with an init entrypoint that fixes ownership.
-chmod 0775 logs 2>/dev/null || chmod 0777 logs 2>/dev/null || true
+echo -e "${GREEN}✅ Configuration files generated${NC}"
 
-# Verify file integrity
-echo "🔐 Verifying file integrity..."
-if command -v sha256sum &> /dev/null; then
-    # Create temporary checksums for downloaded files only (auto-generated values)
-    echo "a6623dc15b2b1cb2504e0f393d2c605b77e00a751a6712978ddccc11f2b508ec  docker-compose.yml" > temp_checksums.txt
-    echo "75436ec98b8f55133edb9faff48264f88274e88c73c2e0f1d908b68cdc62098b  haproxy.cfg" >> temp_checksums.txt
-    
-    if ! sha256sum -c temp_checksums.txt --quiet 2>/dev/null; then
-        echo "❌ Warning: File integrity verification failed. Files may have been tampered with."
-        echo "   Proceeding anyway, but please report this issue."
-    else
-        echo "✅ File integrity verified"
-    fi
-    rm -f temp_checksums.txt
-elif command -v shasum &> /dev/null; then
-    # macOS fallback (same hashes as above)
-    echo "a6623dc15b2b1cb2504e0f393d2c605b77e00a751a6712978ddccc11f2b508ec  docker-compose.yml" > temp_checksums.txt
-    echo "75436ec98b8f55133edb9faff48264f88274e88c73c2e0f1d908b68cdc62098b  haproxy.cfg" >> temp_checksums.txt
-    
-    if ! shasum -a 256 -c temp_checksums.txt --quiet 2>/dev/null; then
-        echo "❌ Warning: File integrity verification failed. Files may have been tampered with."
-        echo "   Proceeding anyway, but please report this issue."
-    else
-        echo "✅ File integrity verified"
-    fi
-    rm -f temp_checksums.txt
-else
-    echo "⚠️  Warning: Cannot verify file integrity (sha256sum/shasum not available)"
-fi
+# ============================================================================
+# Pull Pre-Built Images
+# ============================================================================
 
-# Copy user's config file
-echo "📋 Using config file: $CONFIG_FILE"
-cp "../$CONFIG_FILE" config.yaml
-
-# Stop existing containers (if any)
-echo "🛑 Stopping existing containers..."
-$DOCKER_COMPOSE down 2>/dev/null || true
-
-# Pull latest images from GitHub Container Registry
-echo "📦 Pulling latest images..."
+echo ""
+echo -e "${BLUE}📦 Pulling FHIR server images...${NC}"
 $DOCKER_COMPOSE pull
 
-# Start containers
-echo "🚀 Starting Couchbase FHIR CE..."
+# ============================================================================
+# Start Services
+# ============================================================================
+
+echo ""
+echo -e "${BLUE}🚀 Starting services...${NC}"
+
+# Stop existing containers
+$DOCKER_COMPOSE down 2>/dev/null || true
+
+# Start new containers
 $DOCKER_COMPOSE up -d
 
-# Wait a moment for containers to start
+# Wait for services to be ready
+echo "⏳ Waiting for services to start..."
 sleep 5
 
-# Check if containers are running
+# ============================================================================
+# Verify and Display Access Info
+# ============================================================================
+
 if $DOCKER_COMPOSE ps | grep -q "Up"; then
     echo ""
-    echo "✅ Couchbase FHIR CE is now running!"
+    echo -e "${GREEN}✅ Couchbase FHIR CE is now running!${NC}"
+    echo ""
     
-    # Auto-detect hostname for access URL
+    # Auto-detect access URL
     ACCESS_URL=""
     
     # Try AWS EC2 metadata (IMDSv2)
     if command -v curl &> /dev/null; then
-        # Get token first (IMDSv2 requirement)
-        AWS_TOKEN=$(curl -s --max-time 3 --connect-timeout 2 -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600" 2>/dev/null || echo "")
+        AWS_TOKEN=$(curl -s --max-time 2 -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600" 2>/dev/null || echo "")
         if [ -n "$AWS_TOKEN" ]; then
-            AWS_HOSTNAME=$(curl -s --max-time 3 --connect-timeout 2 -H "X-aws-ec2-metadata-token: $AWS_TOKEN" http://169.254.169.254/latest/meta-data/public-hostname 2>/dev/null || echo "")
-            if [ -n "$AWS_HOSTNAME" ] && [ "$AWS_HOSTNAME" != "" ]; then
-                ACCESS_URL="http://$AWS_HOSTNAME"
-            fi
+            AWS_HOSTNAME=$(curl -s --max-time 2 -H "X-aws-ec2-metadata-token: $AWS_TOKEN" http://169.254.169.254/latest/meta-data/public-hostname 2>/dev/null || echo "")
+            [ -n "$AWS_HOSTNAME" ] && ACCESS_URL="http://$AWS_HOSTNAME"
         fi
     fi
     
-    # Try Google Cloud metadata
+    # Try GCP metadata
     if [ -z "$ACCESS_URL" ] && command -v curl &> /dev/null; then
         GCP_IP=$(curl -s --max-time 2 -H "Metadata-Flavor: Google" http://metadata.google.internal/computeMetadata/v1/instance/network-interfaces/0/access-configs/0/external-ip 2>/dev/null || echo "")
-        if [ -n "$GCP_IP" ]; then
-            ACCESS_URL="http://$GCP_IP"
-        fi
+        [ -n "$GCP_IP" ] && ACCESS_URL="http://$GCP_IP"
     fi
     
     # Try Azure metadata
     if [ -z "$ACCESS_URL" ] && command -v curl &> /dev/null; then
         AZURE_IP=$(curl -s --max-time 2 -H "Metadata:true" "http://169.254.169.254/metadata/instance/network/interface/0/ipv4/ipAddress/0/publicIpAddress?api-version=2021-02-01&format=text" 2>/dev/null || echo "")
-        if [ -n "$AZURE_IP" ]; then
-            ACCESS_URL="http://$AZURE_IP"
-        fi
+        [ -n "$AZURE_IP" ] && ACCESS_URL="http://$AZURE_IP"
     fi
     
-    # Fallback to localhost or show generic message
+    # Display access URL
     if [ -n "$ACCESS_URL" ]; then
-        echo "🌐 Access the FHIR server at: $ACCESS_URL"
+        echo -e "${GREEN}🌐 Access URL: $ACCESS_URL${NC}"
     else
-        echo "🌐 Access the FHIR server at: http://localhost"
-        echo "   Note: If running on a remote server, use your server's external hostname or IP address"
+        echo -e "${GREEN}🌐 Access URL: http://localhost${NC}"
+        echo -e "${YELLOW}   (Use your server's external hostname/IP if running remotely)${NC}"
     fi
     
     echo ""
-    echo "📋 Useful commands:"
+    echo -e "${BLUE}📋 Useful Commands:${NC}"
     echo "   cd $INSTALL_DIR"
     echo "   View logs:    $DOCKER_COMPOSE logs -f"
     echo "   Stop:         $DOCKER_COMPOSE down"
     echo "   Restart:      $DOCKER_COMPOSE restart"
     echo "   Status:       $DOCKER_COMPOSE ps"
+    echo "   Update config: Edit config.yaml, then: ./scripts/apply-config.sh config.yaml"
+    echo ""
+    echo -e "${BLUE}📚 Documentation:${NC}"
+    echo "   https://github.com/couchbaselabs/couchbase-fhir-ce"
+    
 else
-    echo "❌ Error: Containers failed to start. Check logs with:"
-    echo "   cd $INSTALL_DIR && $DOCKER_COMPOSE logs"
+    echo ""
+    echo -e "${RED}❌ Error: Services failed to start${NC}"
+    echo "   Check logs: cd $INSTALL_DIR && $DOCKER_COMPOSE logs"
     exit 1
 fi
