@@ -128,42 +128,69 @@ public class ConfigurationStartupService {
             return false;
         }
 
-        // Apply logging level overrides if present: logging.levels:
-        //   com.couchbase.admin: DEBUG
-        //   com.couchbase.fhir: INFO
+        // Apply logging levels: logging.default + logging.overrides + direct entries
         @SuppressWarnings("unchecked")
         Map<String, Object> loggingSection = (Map<String, Object>) yamlData.get("logging");
         if (loggingSection != null) {
+            Map<String, Object> levelsToApply = new HashMap<>();
+            
+            // Apply default level to root logger
+            if (loggingSection.containsKey("default")) {
+                String defaultLevel = String.valueOf(loggingSection.get("default"));
+                levelsToApply.put("ROOT", defaultLevel);
+            }
+            
+            // Apply overrides if present
             @SuppressWarnings("unchecked")
-            Map<String, Object> levels = (Map<String, Object>) loggingSection.get("levels");
-            if (levels != null && !levels.isEmpty()) {
-                applyLoggingLevels(levels);
+            Map<String, Object> overrides = (Map<String, Object>) loggingSection.get("overrides");
+            if (overrides != null && !overrides.isEmpty()) {
+                levelsToApply.putAll(overrides);
+            }
+            
+            // Apply direct logger entries (like ConfigurationStartupService: INFO)
+            for (Map.Entry<String, Object> entry : loggingSection.entrySet()) {
+                String key = entry.getKey();
+                if (!key.equals("default") && !key.equals("overrides")) {
+                    levelsToApply.put(key, entry.getValue());
+                }
+            }
+            
+            if (!levelsToApply.isEmpty()) {
+                applyLoggingLevels(levelsToApply);
             }
         }
 
-        // Apply Couchbase SDK configuration if present: couchbase.sdk.*
-        // This ensures Spring Boot @Value annotations can read these properties
+        // Extract Couchbase configuration: couchbase.connection and couchbase.sdk.overrides
         @SuppressWarnings("unchecked")
         Map<String, Object> couchbaseSection = (Map<String, Object>) yamlData.get("couchbase");
-        Map<String, Object> sdkConfig = new HashMap<>();
-        if (couchbaseSection != null) {
-            @SuppressWarnings("unchecked")
-            Map<String, Object> sdkConfigTemp = (Map<String, Object>) couchbaseSection.get("sdk");
-            if (sdkConfigTemp != null) {
-                sdkConfig = sdkConfigTemp;
-            }
-        }
-        // Always apply SDK configuration (will use defaults if none specified)
-        applyCouchbaseSdkConfiguration(sdkConfig);
-
-        // Extract connection configuration
-        @SuppressWarnings("unchecked")
-        Map<String, Object> connectionConfig = (Map<String, Object>) yamlData.get("connection");
         
-        if (connectionConfig == null) {
-            logger.warn("⚠️ No 'connection' section found in config.yaml");
+        if (couchbaseSection == null) {
+            logger.warn("⚠️ No 'couchbase' section found in config.yaml");
             return false;
         }
+        
+        // Connection config: couchbase.connection
+        @SuppressWarnings("unchecked")
+        Map<String, Object> connectionConfig = (Map<String, Object>) couchbaseSection.get("connection");
+        if (connectionConfig == null) {
+            logger.warn("⚠️ No 'couchbase.connection' section found in config.yaml");
+            return false;
+        }
+        
+        // SDK configuration: couchbase.sdk.overrides
+        Map<String, Object> sdkConfig = new HashMap<>();
+        @SuppressWarnings("unchecked")
+        Map<String, Object> sdkSection = (Map<String, Object>) couchbaseSection.get("sdk");
+        if (sdkSection != null) {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> overrides = (Map<String, Object>) sdkSection.get("overrides");
+            if (overrides != null) {
+                sdkConfig = overrides;
+            }
+        }
+        
+        // Apply SDK configuration (uses defaults if none specified)
+        applyCouchbaseSdkConfiguration(sdkConfig);
 
         // Extract app configuration and determine autoConnect behavior.
         @SuppressWarnings("unchecked")

@@ -21,13 +21,11 @@ import { getStoredTimeRange, storeTimeRange } from "../../utils/sessionStorage";
 import { fetchBackendVersion } from "../../services/versionService";
 
 const DashboardFhirServer: React.FC = () => {
-  // Mock metrics data since we removed ActuatorAggregatorService
-  const metrics = {
-    server: {
-      status: "UP",
-      uptime: "Running",
-    },
-  };
+  // Real server status from health endpoint
+  const [serverStatus, setServerStatus] = useState<"UP" | "DOWN" | "UNKNOWN">(
+    "UNKNOWN"
+  );
+  const [haproxyAvailable, setHaproxyAvailable] = useState<boolean>(true);
   const error = null;
   const [haproxyMetrics, setHaproxyMetrics] = React.useState<any>(null);
   const [haproxyError, setHaproxyError] = React.useState<string | null>(null);
@@ -47,20 +45,38 @@ const DashboardFhirServer: React.FC = () => {
 
   useEffect(() => {
     // Initial fetch when component mounts
+    fetchServerHealth();
     fetchHaproxyMetrics();
     fetchVersion();
+
+    // Poll server health every 10 seconds
+    const healthInterval = setInterval(fetchServerHealth, 10000);
+
+    return () => clearInterval(healthInterval);
   }, []);
+
+  const fetchServerHealth = async () => {
+    try {
+      const response = await fetch("/health");
+      setServerStatus(response.ok ? "UP" : "DOWN");
+    } catch (err) {
+      setServerStatus("DOWN");
+    }
+  };
 
   const fetchHaproxyMetrics = async () => {
     try {
       const data = await haproxyMetricsService.getDashboardMetrics();
       setHaproxyMetrics(data);
       setHaproxyError(null);
+      setHaproxyAvailable(true);
     } catch (err) {
       setHaproxyError(
         err instanceof Error ? err.message : "Failed to fetch HAProxy metrics"
       );
       setHaproxyMetrics(null);
+      // If HAProxy endpoint fails, we're probably in dev mode without HAProxy
+      setHaproxyAvailable(false);
     }
   };
 
@@ -102,22 +118,7 @@ const DashboardFhirServer: React.FC = () => {
     );
   }
 
-  if (!metrics || !metrics.server) {
-    return (
-      <Box
-        sx={{
-          display: "flex",
-          justifyContent: "center",
-          alignItems: "center",
-          height: 200,
-        }}
-      >
-        <Typography variant="body2" color="text.secondary">
-          Loading metrics...
-        </Typography>
-      </Box>
-    );
-  }
+  // Removed loading check - we show status immediately (even if UNKNOWN)
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
@@ -154,8 +155,14 @@ const DashboardFhirServer: React.FC = () => {
             Status:
           </Typography>
           <Chip
-            label={metrics.server.status}
-            color={metrics.server.status === "UP" ? "success" : "error"}
+            label={serverStatus}
+            color={
+              serverStatus === "UP"
+                ? "success"
+                : serverStatus === "DOWN"
+                ? "error"
+                : "default"
+            }
             size="small"
           />
         </Box>
@@ -175,22 +182,32 @@ const DashboardFhirServer: React.FC = () => {
           <Typography variant="subtitle1" component="div">
             System & Load Balancer Metrics
           </Typography>
-          <FormControl size="small" sx={{ minWidth: 120 }}>
-            <InputLabel>Range</InputLabel>
-            <Select
-              value={timeRange}
-              onChange={handleTimeRangeChange}
-              label="Range"
-            >
-              {TIME_RANGE_OPTIONS.map((option) => (
-                <MenuItem key={option.value} value={option.value}>
-                  {option.label.replace("Last ", "")}
-                </MenuItem>
-              ))}
-            </Select>
-          </FormControl>
+          {haproxyAvailable && (
+            <FormControl size="small" sx={{ minWidth: 120 }}>
+              <InputLabel>Range</InputLabel>
+              <Select
+                value={timeRange}
+                onChange={handleTimeRangeChange}
+                label="Range"
+              >
+                {TIME_RANGE_OPTIONS.map((option) => (
+                  <MenuItem key={option.value} value={option.value}>
+                    {option.label.replace("Last ", "")}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+          )}
         </Box>
-        <HAProxyMetricsCharts timeRange={timeRange} />
+
+        {haproxyAvailable ? (
+          <HAProxyMetricsCharts timeRange={timeRange} />
+        ) : (
+          <Alert severity="info" sx={{ mt: 1 }}>
+            Load balancer metrics unavailable. Running in dev mode without
+            HAProxy.
+          </Alert>
+        )}
       </Box>
     </Box>
   );
