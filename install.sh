@@ -135,6 +135,17 @@ fi
 echo -e "${GREEN}✅ Configuration files generated${NC}"
 
 # ============================================================================
+# Download Scripts for Management
+# ============================================================================
+
+echo ""
+echo -e "${BLUE}📥 Downloading management scripts...${NC}"
+mkdir -p scripts
+curl -sSL https://raw.githubusercontent.com/couchbaselabs/couchbase-fhir-ce/master/scripts/apply-config.sh -o scripts/apply-config.sh
+chmod +x scripts/apply-config.sh
+echo -e "${GREEN}✅ Scripts downloaded${NC}"
+
+# ============================================================================
 # Pull Pre-Built Images
 # ============================================================================
 
@@ -168,6 +179,11 @@ if $DOCKER_COMPOSE ps | grep -q "Up"; then
     echo -e "${GREEN}✅ Couchbase FHIR CE is now running!${NC}"
     echo ""
     
+    # Extract HTTP port from docker-compose.yml
+    HTTP_PORT=$(grep -E "^\s+- \"[0-9]+:80\"" docker-compose.yml | sed -E 's/.*"([0-9]+):80".*/\1/' || echo "80")
+    PORT_SUFFIX=""
+    [ "$HTTP_PORT" != "80" ] && PORT_SUFFIX=":$HTTP_PORT"
+    
     # Auto-detect access URL
     ACCESS_URL=""
     
@@ -176,45 +192,45 @@ if $DOCKER_COMPOSE ps | grep -q "Up"; then
         AWS_TOKEN=$(curl -s --max-time 2 -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600" 2>/dev/null || echo "")
         if [ -n "$AWS_TOKEN" ]; then
             AWS_HOSTNAME=$(curl -s --max-time 2 -H "X-aws-ec2-metadata-token: $AWS_TOKEN" http://169.254.169.254/latest/meta-data/public-hostname 2>/dev/null || echo "")
-            [ -n "$AWS_HOSTNAME" ] && ACCESS_URL="http://$AWS_HOSTNAME"
+            [ -n "$AWS_HOSTNAME" ] && ACCESS_URL="http://$AWS_HOSTNAME$PORT_SUFFIX"
         fi
     fi
     
     # Try GCP metadata
     if [ -z "$ACCESS_URL" ] && command -v curl &> /dev/null; then
         GCP_IP=$(curl -s --max-time 2 -H "Metadata-Flavor: Google" http://metadata.google.internal/computeMetadata/v1/instance/network-interfaces/0/access-configs/0/external-ip 2>/dev/null || echo "")
-        [ -n "$GCP_IP" ] && ACCESS_URL="http://$GCP_IP"
+        [ -n "$GCP_IP" ] && ACCESS_URL="http://$GCP_IP$PORT_SUFFIX"
     fi
     
     # Try Azure metadata
     if [ -z "$ACCESS_URL" ] && command -v curl &> /dev/null; then
         AZURE_IP=$(curl -s --max-time 2 -H "Metadata:true" "http://169.254.169.254/metadata/instance/network/interface/0/ipv4/ipAddress/0/publicIpAddress?api-version=2021-02-01&format=text" 2>/dev/null || echo "")
-        [ -n "$AZURE_IP" ] && ACCESS_URL="http://$AZURE_IP"
+        [ -n "$AZURE_IP" ] && ACCESS_URL="http://$AZURE_IP$PORT_SUFFIX"
     fi
     
     # Display access URL
     if [ -n "$ACCESS_URL" ]; then
         echo -e "${GREEN}🌐 Access URL: $ACCESS_URL${NC}"
     else
-        echo -e "${GREEN}🌐 Access URL: http://localhost${NC}"
+        echo -e "${GREEN}🌐 Access URL: http://localhost$PORT_SUFFIX${NC}"
         echo -e "${YELLOW}   (Use your server's external hostname/IP if running remotely)${NC}"
     fi
     
     echo ""
     echo -e "${BLUE}📋 Useful Commands:${NC}"
     echo "   cd $INSTALL_DIR"
-    echo "   View logs:    $DOCKER_COMPOSE logs -f"
-    echo "   Stop:         $DOCKER_COMPOSE down"
-    echo "   Restart:      $DOCKER_COMPOSE restart"
-    echo "   Status:       $DOCKER_COMPOSE ps"
-    echo "   Update config: Edit config.yaml, then: ./scripts/apply-config.sh config.yaml"
+    echo "   View logs:    docker compose logs -f"
+    echo "   Stop:         docker compose down"
+    echo "   Restart:      docker compose restart"
+    echo "   Status:       docker compose ps"
+    echo "   Update:       Edit config.yaml, then: ./scripts/apply-config.sh config.yaml"
     echo ""
     echo -e "${BLUE}📚 Documentation:${NC}"
-    echo "   https://github.com/couchbaselabs/couchbase-fhir-ce"
+    echo "   https://fhir.couchbase.com/docs/intro"
     
 else
     echo ""
     echo -e "${RED}❌ Error: Services failed to start${NC}"
-    echo "   Check logs: cd $INSTALL_DIR && $DOCKER_COMPOSE logs"
+    echo "   Check logs: cd $INSTALL_DIR && docker compose logs"
     exit 1
 fi
