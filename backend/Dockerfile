@@ -7,13 +7,13 @@ COPY .mvn .mvn
 COPY mvnw .
 
 # Download dependencies (this layer will be cached)
-RUN ./mvnw dependency:go-offline -B
+RUN ./mvnw dependency:resolve dependency:resolve-plugins -B
 
 # Now copy source code
 COPY src ./src
 
 # Build application (source changes won't invalidate dependency cache)
-RUN ./mvnw clean package -DskipTests -o
+RUN ./mvnw clean package -DskipTests
 RUN ls target/*
 
 FROM eclipse-temurin:21-jre
