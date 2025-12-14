@@ -70,7 +70,7 @@ def generate_docker_compose(config):
                     'context': './backend',
                     'dockerfile': 'Dockerfile'
                 },
-                'image': 'couchbase/fhir-server:latest',
+                'image': 'ghcr.io/couchbaselabs/couchbase-fhir-ce/fhir-server:latest',
                 'container_name': 'fhir-server',
                 'environment': env,
                 'volumes': [
@@ -98,7 +98,7 @@ def generate_docker_compose(config):
                     'context': './frontend',
                     'dockerfile': 'Dockerfile'
                 },
-                'image': 'couchbase/fhir-admin:latest',
+                'image': 'ghcr.io/couchbaselabs/couchbase-fhir-ce/fhir-admin:latest',
                 'container_name': 'fhir-admin',
                 'restart': 'unless-stopped',
                 'deploy': {
