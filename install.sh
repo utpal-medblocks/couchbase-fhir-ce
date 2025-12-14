@@ -179,41 +179,53 @@ if $DOCKER_COMPOSE ps | grep -q "Up"; then
     echo -e "${GREEN}✅ Couchbase FHIR CE is now running!${NC}"
     echo ""
     
-    # Extract HTTP port from docker-compose.yml
-    HTTP_PORT=$(grep -E "^\s+- \"[0-9]+:80\"" docker-compose.yml | sed -E 's/.*"([0-9]+):80".*/\1/' || echo "80")
-    PORT_SUFFIX=""
-    [ "$HTTP_PORT" != "80" ] && PORT_SUFFIX=":$HTTP_PORT"
+    # Extract baseUrl from config.yaml and derive access URL
+    BASE_URL=$(grep -E "^\s+baseUrl:" config.yaml | sed -E 's/.*baseUrl:\s*"?([^"]+)"?.*/\1/' | sed 's|/fhir$||')
     
-    # Auto-detect access URL
-    ACCESS_URL=""
-    
-    # Try AWS EC2 metadata (IMDSv2)
-    if command -v curl &> /dev/null; then
-        AWS_TOKEN=$(curl -s --max-time 2 -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600" 2>/dev/null || echo "")
-        if [ -n "$AWS_TOKEN" ]; then
-            AWS_HOSTNAME=$(curl -s --max-time 2 -H "X-aws-ec2-metadata-token: $AWS_TOKEN" http://169.254.169.254/latest/meta-data/public-hostname 2>/dev/null || echo "")
-            [ -n "$AWS_HOSTNAME" ] && ACCESS_URL="http://$AWS_HOSTNAME$PORT_SUFFIX"
+    # Check if baseUrl is localhost/127.0.0.1 (needs hostname detection)
+    if echo "$BASE_URL" | grep -qE "(localhost|127\.0\.0\.1)"; then
+        # Extract port from docker-compose.yml for dev environments
+        HTTP_PORT=$(grep -E "^\s+- \"[0-9]+:80\"" docker-compose.yml | sed -E 's/.*"([0-9]+):80".*/\1/' || echo "80")
+        PORT_SUFFIX=""
+        [ "$HTTP_PORT" != "80" ] && [ "$HTTP_PORT" != "443" ] && PORT_SUFFIX=":$HTTP_PORT"
+        
+        # Auto-detect public hostname for cloud environments
+        ACCESS_URL=""
+        
+        # Try AWS EC2 metadata (IMDSv2)
+        if command -v curl &> /dev/null; then
+            AWS_TOKEN=$(curl -s --max-time 2 -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600" 2>/dev/null || echo "")
+            if [ -n "$AWS_TOKEN" ]; then
+                AWS_HOSTNAME=$(curl -s --max-time 2 -H "X-aws-ec2-metadata-token: $AWS_TOKEN" http://169.254.169.254/latest/meta-data/public-hostname 2>/dev/null || echo "")
+                [ -n "$AWS_HOSTNAME" ] && ACCESS_URL="http://$AWS_HOSTNAME$PORT_SUFFIX"
+            fi
         fi
-    fi
-    
-    # Try GCP metadata
-    if [ -z "$ACCESS_URL" ] && command -v curl &> /dev/null; then
-        GCP_IP=$(curl -s --max-time 2 -H "Metadata-Flavor: Google" http://metadata.google.internal/computeMetadata/v1/instance/network-interfaces/0/access-configs/0/external-ip 2>/dev/null || echo "")
-        [ -n "$GCP_IP" ] && ACCESS_URL="http://$GCP_IP$PORT_SUFFIX"
-    fi
-    
-    # Try Azure metadata
-    if [ -z "$ACCESS_URL" ] && command -v curl &> /dev/null; then
-        AZURE_IP=$(curl -s --max-time 2 -H "Metadata:true" "http://169.254.169.254/metadata/instance/network/interface/0/ipv4/ipAddress/0/publicIpAddress?api-version=2021-02-01&format=text" 2>/dev/null || echo "")
-        [ -n "$AZURE_IP" ] && ACCESS_URL="http://$AZURE_IP$PORT_SUFFIX"
+        
+        # Try GCP metadata
+        if [ -z "$ACCESS_URL" ] && command -v curl &> /dev/null; then
+            GCP_IP=$(curl -s --max-time 2 -H "Metadata-Flavor: Google" http://metadata.google.internal/computeMetadata/v1/instance/network-interfaces/0/access-configs/0/external-ip 2>/dev/null || echo "")
+            [ -n "$GCP_IP" ] && ACCESS_URL="http://$GCP_IP$PORT_SUFFIX"
+        fi
+        
+        # Try Azure metadata
+        if [ -z "$ACCESS_URL" ] && command -v curl &> /dev/null; then
+            AZURE_IP=$(curl -s --max-time 2 -H "Metadata:true" "http://169.254.169.254/metadata/instance/network/interface/0/ipv4/ipAddress/0/publicIpAddress?api-version=2021-02-01&format=text" 2>/dev/null || echo "")
+            [ -n "$AZURE_IP" ] && ACCESS_URL="http://$AZURE_IP$PORT_SUFFIX"
+        fi
+        
+        # Fallback to localhost
+        if [ -z "$ACCESS_URL" ]; then
+            ACCESS_URL="http://localhost$PORT_SUFFIX"
+        fi
+    else
+        # Production: Use baseUrl as-is (already has scheme + hostname)
+        ACCESS_URL="$BASE_URL"
     fi
     
     # Display access URL
-    if [ -n "$ACCESS_URL" ]; then
-        echo -e "${GREEN}🌐 Access URL: $ACCESS_URL${NC}"
-    else
-        echo -e "${GREEN}🌐 Access URL: http://localhost$PORT_SUFFIX${NC}"
-        echo -e "${YELLOW}   (Use your server's external hostname/IP if running remotely)${NC}"
+    echo -e "${GREEN}🌐 Access URL: $ACCESS_URL${NC}"
+    if echo "$BASE_URL" | grep -qE "(localhost|127\.0\.0\.1)"; then
+        echo -e "${YELLOW}   💡 Tip: Update config.yaml baseUrl to your domain for production${NC}"
     fi
     
     echo ""
