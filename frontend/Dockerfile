@@ -7,9 +7,14 @@ RUN chmod -R 777 /app
 # Copy package files first for better layer caching
 COPY package.json package-lock.json ./
 
+# Accept NODE_OPTIONS as build arg for memory tuning
+ARG NODE_OPTIONS=--max-old-space-size=4096
+ENV NODE_OPTIONS=$NODE_OPTIONS
+
 # Install dependencies - this layer will be cached unless package files change
-# Increase memory and use legacy peer deps for compatibility
-RUN npm ci --maxsockets=1 --prefer-offline --no-audit && \
+# Use single socket and prefer offline to avoid concurrency issues in QEMU
+RUN npm ci --maxsockets=1 --prefer-offline --no-audit 2>&1 || \
+    (echo "npm ci failed, retrying..." && npm ci --maxsockets=1 --no-audit) && \
     npm cache clean --force
 
 # Copy source code - this layer changes most often
