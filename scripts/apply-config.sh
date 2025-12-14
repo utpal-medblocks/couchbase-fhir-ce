@@ -13,7 +13,7 @@
 set -e
 
 CONFIG_FILE=${1:-./config.yaml}
-GENERATOR_IMAGE="couchbase/fhir-generator:latest"
+GENERATOR_IMAGE="ghcr.io/couchbaselabs/couchbase-fhir-ce/fhir-generator:latest"
 
 echo "🔄 Applying configuration from: $CONFIG_FILE"
 echo ""

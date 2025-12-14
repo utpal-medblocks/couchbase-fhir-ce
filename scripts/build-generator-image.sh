@@ -11,7 +11,7 @@
 
 set -e
 
-IMAGE_NAME="couchbase/fhir-generator"
+IMAGE_NAME="ghcr.io/couchbaselabs/couchbase-fhir-ce/fhir-generator"
 TAG="latest"
 
 echo "🔨 Building generator image: $IMAGE_NAME:$TAG"

@@ -31,7 +31,7 @@ NC='\033[0m' # No Color
 
 CONFIG_FILE="$1"
 INSTALL_DIR="couchbase-fhir-ce"
-GENERATOR_IMAGE="ghcr.io/couchbaselabs/couchbase-fhir-generator:latest"
+GENERATOR_IMAGE="ghcr.io/couchbaselabs/couchbase-fhir-ce/fhir-generator:latest"
 
 echo -e "${BLUE}🚀 Couchbase FHIR CE Installer${NC}"
 echo ""
