@@ -124,6 +124,7 @@ echo -e "${BLUE}🔧 Generating docker-compose.yml and haproxy.cfg...${NC}"
 docker run --rm \
     -v "$(pwd):/work" \
     -w /work \
+    -u "$(id -u):$(id -g)" \
     "$GENERATOR_IMAGE" \
     config.yaml
 

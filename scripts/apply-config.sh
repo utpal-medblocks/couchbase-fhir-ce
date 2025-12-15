@@ -43,29 +43,39 @@ docker run --rm \
     -v "$(pwd):/work" \
     -u "$(id -u):$(id -g)" \
     "$GENERATOR_IMAGE" \
-    python scripts/generate.py "$CONFIG_FILE"
+    "$CONFIG_FILE"
 
 echo ""
 echo "🐳 Applying changes to services..."
 
+# Detect docker compose command
+if command -v docker-compose &> /dev/null; then
+    DOCKER_COMPOSE="docker-compose"
+elif docker compose version &> /dev/null 2>&1; then
+    DOCKER_COMPOSE="docker compose"
+else
+    echo "❌ Error: Docker Compose not installed"
+    exit 1
+fi
+
 # Check if services are running
-if docker-compose ps 2>/dev/null | grep -q "Up"; then
+if $DOCKER_COMPOSE ps 2>/dev/null | grep -q "Up"; then
     # Services running - rebuild and restart them
-    docker-compose down
-    docker-compose up -d --build
+    $DOCKER_COMPOSE down
+    $DOCKER_COMPOSE up -d --build
     echo "✅ Services built and restarted with new configuration!"
 else
     # Services not running - build and start them
-    docker-compose up -d --build
+    $DOCKER_COMPOSE up -d --build
     echo "✅ Services built and started with new configuration!"
 fi
 
 echo ""
 echo "📊 Service status:"
-docker-compose ps
+$DOCKER_COMPOSE ps
 
 echo ""
 echo "💡 Tips:"
-echo "   • View logs: docker-compose logs -f"
-echo "   • Stop services: docker-compose down"
+echo "   • View logs: $DOCKER_COMPOSE logs -f"
+echo "   • Stop services: $DOCKER_COMPOSE down"
 echo "   • Update config: edit config.yaml, then run this script again"
