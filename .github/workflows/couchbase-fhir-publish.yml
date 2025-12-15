@@ -84,30 +84,63 @@ jobs:
             echo "SERVER_TAGS=${{ env.REGISTRY }}/${{ github.repository }}/fhir-server:${SHA},${{ env.REGISTRY }}/${{ github.repository }}/fhir-server:latest" >> $GITHUB_OUTPUT
             echo "ADMIN_TAGS=${{ env.REGISTRY }}/${{ github.repository }}/fhir-admin:${SHA},${{ env.REGISTRY }}/${{ github.repository }}/fhir-admin:latest"   >> $GITHUB_OUTPUT
           fi
-      - name: Build and push fhir-server
+      # Build AMD64 (fast, native)
+      - name: Build and push fhir-server (amd64)
         if: ${{ steps.meta.outputs.SERVER_TAGS != '' }}
         uses: docker/build-push-action@v5
         with:
           context: ./backend
           push: true
           tags: ${{ steps.meta.outputs.SERVER_TAGS }}
-          platforms: linux/amd64,linux/arm64
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          platforms: linux/amd64
+          cache-from: type=gha,scope=server-amd64
+          cache-to: type=gha,mode=max,scope=server-amd64
+          provenance: false
 
-      - name: Build and push fhir-admin
+      # Build ARM64 (slower, via QEMU)
+      - name: Build and push fhir-server (arm64)
+        if: ${{ steps.meta.outputs.SERVER_TAGS != '' }}
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          push: true
+          tags: ${{ steps.meta.outputs.SERVER_TAGS }}
+          platforms: linux/arm64
+          cache-from: type=gha,scope=server-arm64
+          cache-to: type=gha,mode=max,scope=server-arm64
+          provenance: false
+
+      # Build AMD64 (fast, native)
+      - name: Build and push fhir-admin (amd64)
         if: ${{ steps.meta.outputs.ADMIN_TAGS != '' }}
         uses: docker/build-push-action@v5
         with:
           context: ./frontend
           push: true
           tags: ${{ steps.meta.outputs.ADMIN_TAGS }}
-          platforms: linux/amd64,linux/arm64
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          platforms: linux/amd64
+          cache-from: type=gha,scope=admin-amd64
+          cache-to: type=gha,mode=max,scope=admin-amd64
+          provenance: false
           build-args: |
             NODE_OPTIONS=--max-old-space-size=4096
 
+      # Build ARM64 with retries (slower, via QEMU)
+      - name: Build and push fhir-admin (arm64)
+        if: ${{ steps.meta.outputs.ADMIN_TAGS != '' }}
+        uses: docker/build-push-action@v5
+        with:
+          context: ./frontend
+          push: true
+          tags: ${{ steps.meta.outputs.ADMIN_TAGS }}
+          platforms: linux/arm64
+          cache-from: type=gha,scope=admin-arm64
+          cache-to: type=gha,mode=max,scope=admin-arm64
+          provenance: false
+          build-args: |
+            NODE_OPTIONS=--max-old-space-size=6144
+
+      # Generator (lightweight, both platforms together)
       - name: Build and push fhir-generator
         if: ${{ steps.version.outputs.changed == 'true' || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') }}
         uses: docker/build-push-action@v5
@@ -117,8 +150,9 @@ jobs:
           push: true
           tags: ${{ env.REGISTRY }}/${{ github.repository }}/fhir-generator:latest
           platforms: linux/amd64,linux/arm64
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=generator
+          cache-to: type=gha,mode=max,scope=generator
+          provenance: false
 
       - name: Skip note (no version change)
         if: ${{ steps.version.outputs.changed != 'true' && github.event_name != 'workflow_dispatch' && !startsWith(github.ref, 'refs/tags/') }}
