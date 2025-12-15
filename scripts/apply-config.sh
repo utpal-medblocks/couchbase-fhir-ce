@@ -58,16 +58,29 @@ else
     exit 1
 fi
 
+# Check if source code exists (dev environment)
+if [ -d "./backend" ] && [ -d "./frontend" ]; then
+    # Development: Build from source
+    BUILD_FLAG="--build"
+    ACTION="built and"
+else
+    # Production: Pull pre-built images
+    BUILD_FLAG=""
+    ACTION=""
+    echo "📦 Pulling pre-built images..."
+    $DOCKER_COMPOSE pull 2>/dev/null || true
+fi
+
 # Check if services are running
 if $DOCKER_COMPOSE ps 2>/dev/null | grep -q "Up"; then
-    # Services running - rebuild and restart them
+    # Services running - restart them
     $DOCKER_COMPOSE down
-    $DOCKER_COMPOSE up -d --build
-    echo "✅ Services built and restarted with new configuration!"
+    $DOCKER_COMPOSE up -d $BUILD_FLAG
+    echo "✅ Services ${ACTION} restarted with new configuration!"
 else
-    # Services not running - build and start them
-    $DOCKER_COMPOSE up -d --build
-    echo "✅ Services built and started with new configuration!"
+    # Services not running - start them
+    $DOCKER_COMPOSE up -d $BUILD_FLAG
+    echo "✅ Services ${ACTION} started with new configuration!"
 fi
 
 echo ""
