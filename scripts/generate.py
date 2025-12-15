@@ -56,7 +56,8 @@ def generate_docker_compose(config):
     
     # Build environment variables
     env = {
-        'JAVA_TOOL_OPTIONS': f'-Xms{xms} -Xmx{xmx} -XX:+UseG1GC -XX:MaxGCPauseMillis=200'
+        'JAVA_TOOL_OPTIONS': f'-Xms{xms} -Xmx{xmx} -XX:+UseG1GC -XX:MaxGCPauseMillis=200',
+        'APP_BASE_URL': app['baseUrl']  # OAuth issuer needs this
     }
     
     # Add environment overrides
