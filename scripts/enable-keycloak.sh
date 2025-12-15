@@ -148,6 +148,11 @@ fi
 # 4) Suggest HAProxy changes (append guidance to haproxy.cfg if present)
 HAPROXY_CFG="$ROOT_DIR/haproxy.cfg"
 if [ -f "$HAPROXY_CFG" ]; then
+  # Backup haproxy.cfg before any changes
+  if [ ! -f "$HAPROXY_CFG.bak" ]; then
+    cp "$HAPROXY_CFG" "$HAPROXY_CFG.bak" || true
+  fi
+
   if grep -qE '^backend[ \t]+keycloak_backend' "$HAPROXY_CFG"; then
     echo "HAProxy already configured for Keycloak (marker found)."
   else

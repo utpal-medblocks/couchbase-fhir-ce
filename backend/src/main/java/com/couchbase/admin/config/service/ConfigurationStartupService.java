@@ -9,6 +9,7 @@ import com.couchbase.admin.tokens.service.JwtTokenCacheService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Service;
@@ -49,6 +50,15 @@ public class ConfigurationStartupService {
     
     @Autowired
     private com.couchbase.fhir.auth.AuthorizationServerConfig authorizationServerConfig;
+
+    @Autowired
+    private com.couchbase.common.config.AdminConfig adminConfig;
+
+    @Autowired
+    private com.couchbase.admin.users.service.UserService userService;
+
+    @Value("${app.security.use-keycloak:false}")
+    private boolean useKeycloak;
 
     /**
      * Load configuration and establish connection after application is fully started
@@ -222,6 +232,9 @@ public class ConfigurationStartupService {
             
             // Check initialization status for single-tenant "fhir" bucket
             checkAndReportInitializationStatus();
+
+            // Attempt to seed initial Admin user (from config.yaml) when appropriate
+            seedAdminUserIfNeeded();
             
         } else {
             String errorMsg = response.getMessage();
@@ -407,6 +420,57 @@ public class ConfigurationStartupService {
             logger.warn("⚠️ Failed to initialize token cache: {}", e.getMessage());
             logger.debug("Token cache initialization error:", e);
             // Don't fail startup if cache initialization fails
+        }
+    }
+
+    /**
+     * Seed the initial Admin user defined in config.yaml (if configured)
+     * - If Keycloak is enabled, attempts to create the user in Keycloak (delegated)
+     * - Otherwise, seeds the local Couchbase users collection (requires FHIR initialization)
+     */
+    private void seedAdminUserIfNeeded() {
+        try {
+            String email = adminConfig.getEmail();
+            String password = adminConfig.getPassword();
+            String name = adminConfig.getName();
+
+            if (email == null || email.isEmpty()) {
+                logger.info("ℹ️ No admin.email configured; skipping admin user seeding");
+                return;
+            }
+
+            // If user already exists (either Keycloak or Couchbase), skip
+            try {
+                if (userService.getUserById(email).isPresent() || userService.getUserByEmail(email).isPresent()) {
+                    logger.info("👤 Admin user '{}' already exists - skipping seeding", email);
+                    return;
+                }
+            } catch (Exception e) {
+                // getUserById/getUserByEmail may fail if DB not ready; continue and attempt create
+                logger.debug("Could not check existing users (may be uninitialized): {}", e.getMessage());
+            }
+
+            com.couchbase.admin.users.model.User adminUser = new com.couchbase.admin.users.model.User();
+            adminUser.setId(email);
+            adminUser.setUsername(name != null && !name.isBlank() ? name : "Administrator");
+            adminUser.setEmail(email);
+            adminUser.setRole("admin");
+
+            if (useKeycloak) {
+                adminUser.setPasswordPlain(password);
+                adminUser.setAuthMethod("keycloak");
+            } else {
+                // UserService.createUser will bcrypt the passwordHash passed here
+                adminUser.setPasswordHash(password);
+                adminUser.setAuthMethod("local");
+            }
+
+            userService.createUser(adminUser, "system");
+            logger.info("✅ Seeded initial Admin user from config.yaml: {}", email);
+
+        } catch (Exception e) {
+            logger.warn("⚠️ Failed to seed initial Admin user: {}", e.getMessage());
+            logger.debug("Admin seeding error:", e);
         }
     }
 }

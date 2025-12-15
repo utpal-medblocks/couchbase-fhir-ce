@@ -41,14 +41,14 @@ This implementation plan lists all the tasks required to realize the technical d
 - [ ] Ensure /fhir/* endpoints require Keycloak tokens
 
 ## Ticket 4: Update SMART Discovery Endpoint
-- [ ] Make `/.well-known/smart-configuration` dynamic
-- [ ] Return Keycloak endpoints if enabled
-- [ ] Route endpoints through HAProxy
+- [x] Make `/.well-known/smart-configuration` dynamic
+- [x] Return Keycloak endpoints if enabled
+- [x] Route endpoints through HAProxy
 
 ## Subtasks
-- [ ] Make /.well-known/smart-configuration dynamic
-- [ ] Return Keycloak endpoints if enabled
-- [ ] Route endpoints through HAProxy
+- [x] Make /.well-known/smart-configuration dynamic
+- [x] Return Keycloak endpoints if enabled
+- [x] Route endpoints through HAProxy
 
 ## Ticket 5: Delegate User Management to Keycloak
 - [x] Refactor `UserService.java` to proxy user CRUD to Keycloak Admin REST API
@@ -109,6 +109,32 @@ These changes implement a safe, opt-in delegation: when `app.security.use-keyclo
 ## Ticket 10: Testing & Validation
 - [ ] Test all OAuth, user CRUD, registration, SSO, consent flows with Keycloak enabled/disabled
 - [ ] Document test cases and results
+
+## Ticket 11: Seed Admin User on Startup (local + Keycloak)
+- [x] Seed initial Admin user from `config.yaml` on application start
+- [x] When `app.security.use-keycloak` is true, create admin in Keycloak via Admin REST API
+- [x] When Keycloak is disabled, create admin user in Couchbase `fhir.Admin.users` collection
+- [x] Ensure idempotency: do not recreate existing users
+- [x] Document env vars and config required for Keycloak seeding (`KEYCLOAK_URL`, `KEYCLOAK_REALM`, `KEYCLOAK_ADMIN_USERNAME`, `KEYCLOAK_ADMIN_PASSWORD`)
+
+## Ticket 12: Make disabling keycloak possible
+- [ ] Ensure backups are created of `docker-compose*.yml` and `docker-compose*.yaml`, haproxy.cfg and application.yaml are created before keycloak specific configurations are injected
+- [ ] Create a script called disable-keycloak.sh that restores the backups of the original files free from any key cloak references
+ - [x] Ensure backups are created of `docker-compose*.yml` and `docker-compose*.yaml`, haproxy.cfg and application.yaml are created before keycloak specific configurations are injected
+ - [x] Create a script called disable-keycloak.sh that restores the backups of the original files free from any key cloak references
+
+## Subtasks
+- [x] Add system property loading from `config.yaml` (admin.email/password/name) (already implemented by `ConfigurationStartupService`)
+- [x] Implement startup seeding attempt in `ConfigurationStartupService` after successful auto-connection and initialization (creates user via `UserService`)
+- [ ] Add guidance for production Keycloak seeding (see notes below)
+
+### Notes / Plan for Keycloak seeding on Tomcat startup
+- Preconditions: Keycloak must be reachable and admin credentials available via env (`KEYCLOAK_ADMIN_USERNAME`, `KEYCLOAK_ADMIN_PASSWORD`).
+- Behavior: On startup the backend will call `UserService.createUser(...)`. When Keycloak integration is enabled, `UserService` delegates to `KeycloakUserManager`, which uses the Keycloak Admin REST API to create the user and set the password.
+- Idempotency: `KeycloakUserManager` first searches for existing user by username/email and will not duplicate; startup code checks existence and skips creation if present.
+- Error handling: If Keycloak is unreachable or admin credentials are invalid, the seeding will log a warning and continue startup (no hard failure).
+- Operational recommendation: For production, seed Keycloak once using an infrastructure provisioning step (Terraform/Ansible) or a one-shot init job. Relying on app startup is convenient for dev/test but less ideal for production rock-solid provisioning.
+
 
 ## Subtasks
 - [ ] Test all OAuth, user CRUD, registration, SSO, consent flows with Keycloak enabled/disabled
