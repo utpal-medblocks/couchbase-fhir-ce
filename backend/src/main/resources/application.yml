@@ -94,6 +94,4 @@ logging:
     "[com.couchbase.transactions]": ERROR
   pattern:
     console: "%d{HH:mm:ss.SSS} %-5level %logger{20} - %msg%n"
-
-
 # The resource values above will be resolved from environment variables at runtime (docker-compose/.env)

@@ -38,27 +38,28 @@ public class TomcatConfigLogger {
 
     @EventListener(ApplicationReadyEvent.class)
     public void logTomcatConfiguration() {
-        logger.info("╔════════════════════════════════════════════════════════════╗");
-        logger.info("║           TOMCAT THREAD POOL CONFIGURATION                 ║");
-        logger.info("╚════════════════════════════════════════════════════════════╝");
+        // Use WARN level so this critical startup info is visible even with ERROR default logging
+        logger.warn("╔════════════════════════════════════════════════════════════╗");
+        logger.warn("║           TOMCAT THREAD POOL CONFIGURATION                 ║");
+        logger.warn("╚════════════════════════════════════════════════════════════╝");
         
         // Virtual threads status (most important!)
         if (virtualThreadsEnabled) {
-            logger.info("🚀 Virtual Threads:         ENABLED (Java 21+)");
-            logger.info("   ✅ Thread pool limits no longer apply");
-            logger.info("   ✅ Can handle 1000+ concurrent connections efficiently");
+            logger.warn("🚀 Virtual Threads:         ENABLED (Java 21+)");
+            logger.warn("   ✅ Thread pool limits no longer apply");
+            logger.warn("   ✅ Can handle 1000+ concurrent connections efficiently");
         } else {
-            logger.info("⚠️  Virtual Threads:         DISABLED");
-            logger.info("   ℹ️  Using platform threads (limited by max threads below)");
+            logger.warn("⚠️  Virtual Threads:         DISABLED");
+            logger.warn("   ℹ️  Using platform threads (limited by max threads below)");
         }
-        logger.info("────────────────────────────────────────────────────────────");
-        logger.info("📊 Max Threads:             {}", maxThreads);
-        logger.info("📊 Min Spare Threads:       {}", minSpareThreads);
-        logger.info("📊 Accept Count (Queue):    {}", acceptCount);
-        logger.info("📊 Max Connections:         {}", maxConnections);
-        logger.info("📊 Connection Timeout:      {}", connectionTimeout);
-        logger.info("📊 Max Keep-Alive Requests: {}", maxKeepAliveRequests);
-        logger.info("════════════════════════════════════════════════════════════");
+        logger.warn("────────────────────────────────────────────────────────────");
+        logger.warn("📊 Max Threads:             {}", maxThreads);
+        logger.warn("📊 Min Spare Threads:       {}", minSpareThreads);
+        logger.warn("📊 Accept Count (Queue):    {}", acceptCount);
+        logger.warn("📊 Max Connections:         {}", maxConnections);
+        logger.warn("📊 Connection Timeout:      {}", connectionTimeout);
+        logger.warn("📊 Max Keep-Alive Requests: {}", maxKeepAliveRequests);
+        logger.warn("════════════════════════════════════════════════════════════");
         
         // Warn if using defaults in production without virtual threads
         if (!virtualThreadsEnabled && maxThreads == 200 && "prod".equals(System.getProperty("spring.profiles.active"))) {
