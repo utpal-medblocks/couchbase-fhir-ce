@@ -140,7 +140,7 @@ public class DashboardMetricsController {
             // Check if running in containerized environment
             // Use internal stats port (8404) to avoid HTTPS redirects
             String haproxyUrl = isRunningInContainer() 
-                ? "http://haproxy:8404/stats;csv"  // Internal container network on stats port
+                ? "http://haproxy:8404/haproxy?stats;csv"  // Internal container network on stats port
                 : "http://localhost/haproxy?stats;csv"; // Development mode
             
             Map<String, Object> haproxyStats = fetchHaproxyStats(haproxyUrl);

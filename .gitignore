@@ -77,6 +77,13 @@ config*.yaml
 *.config.yaml
 .token.env
 
+# Generated files (from config.yaml.template)
+docker-compose.yml
+docker-compose.yaml
+haproxy.cfg
+*.bak.*
+config.yaml.template.old
+
 # Python
 __pycache__/
 *.py[cod]

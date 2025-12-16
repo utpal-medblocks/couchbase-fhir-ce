@@ -1,6 +1,18 @@
 FROM maven:3.9.7-eclipse-temurin-21 AS builder
 WORKDIR /app
-COPY . .
+
+# Copy only pom.xml first to cache dependencies
+COPY pom.xml .
+COPY .mvn .mvn
+COPY mvnw .
+
+# Download dependencies (this layer will be cached)
+RUN ./mvnw dependency:resolve dependency:resolve-plugins -B
+
+# Now copy source code
+COPY src ./src
+
+# Build application (source changes won't invalidate dependency cache)
 RUN ./mvnw clean package -DskipTests
 RUN ls target/*
 

@@ -41,7 +41,11 @@ public class SmartConfigurationController {
         
         // Read baseUrl from system property (set by ConfigurationStartupService from config.yaml)
         // This ensures we get the value from config.yaml, not application.yml default
-        String baseUrl = System.getProperty("app.baseUrl", "http://localhost:8080/fhir");
+        // Try environment variable first (Docker), then system property (dev), then default
+        String baseUrl = System.getenv("APP_BASE_URL");
+        if (baseUrl == null || baseUrl.isEmpty()) {
+            baseUrl = System.getProperty("app.baseUrl", "http://localhost:8080/fhir");
+        }
         
         // Extract issuer (remove /fhir suffix if present)
         String issuer = baseUrl;
