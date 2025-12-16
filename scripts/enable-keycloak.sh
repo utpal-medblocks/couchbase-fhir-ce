@@ -115,32 +115,14 @@ JSON
 
 echo "Wrote Keycloak realm import file to $REALM_FILE"
 
-# 3) Patch backend application.yml to include Keycloak JWKS and a toggle (if not already present)
+# 3) Patch backend application.yml to include resolved Keycloak properties (inject concrete values)
 APP_YML="$ROOT_DIR/backend/src/main/resources/application.yml"
 if [ -f "$APP_YML" ]; then
-  if grep -q "### Keycloak integration" "$APP_YML"; then
-    echo "application.yml already patched for Keycloak (found marker)."
-  else
-    echo "Patching $APP_YML to add Keycloak properties"
-    cp "$APP_YML" "$APP_YML.bak" || true
-    cat >> "$APP_YML" <<'AY'
-
-### Keycloak integration (managed by scripts/enable-keycloak.sh)
-app:
-  security:
-    use-keycloak: ${KEYCLOAK_ENABLED}
-
-spring:
-  security:
-    oauth2:
-      resourceserver:
-        jwt:
-          jwk-set-uri: ${KEYCLOAK_JWKS_URI}
-
-# The resource values above will be resolved from environment variables at runtime (docker-compose/.env)
-AY
-    echo "Patched $APP_YML (backup at $APP_YML.bak)."
-  fi
+  # Use Python helper to merge values safely (creates .bak if not present)
+  echo "Patching $APP_YML with Keycloak settings (use-keycloak=$KEYCLOAK_ENABLED)"
+  python3 "$SCRIPT_DIR/keycloak/patch_application_yml.py" "$APP_YML" "$KEYCLOAK_ENABLED" "${JWKS_URI:-}" || {
+    echo "Failed to patch $APP_YML with Keycloak settings" >&2
+  }
 else
   echo "Warning: $APP_YML not found; cannot patch application.yml" >&2
 fi
