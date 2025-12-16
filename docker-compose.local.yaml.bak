@@ -24,7 +24,7 @@ services:
     build:
       context: ./backend
     environment:
-    - SPRING_PROFILES_ACTIVE=prod
+    - SPRING_PROFILES_ACTIVE=debug
     - JAVA_OPTS=-Xms256m -Xmx1024m
     - DEPLOYED_ENV=container
     expose:
@@ -51,6 +51,5 @@ services:
     depends_on:
     - fhir-server
     restart: unless-stopped
-  
 volumes:
   couchbase_data: {}
