@@ -57,9 +57,15 @@ def main():
         except Exception as e:
             print(f"Warning: could not write backup: {e}", file=sys.stderr)
 
-    # load
+    # load all documents (support multi-document YAML)
     with open(path, 'r', encoding='utf-8') as f:
-        data = yaml.safe_load(f) or {}
+        docs = list(yaml.safe_load_all(f))
+
+    if not docs:
+        docs = [{}]
+
+    # Prefer to update the first document (most app-level properties live there)
+    data = docs[0] if isinstance(docs[0], dict) else {}
 
     # set app.security.use-keycloak
     appsec = ensure_path(data, ['app', 'security'])
@@ -73,10 +79,12 @@ def main():
         # remove if present and empty
         jwt.pop('jwk-set-uri', None)
 
-    # write back
+    # replace first document and write all docs back
+    docs[0] = data
+
     try:
         with open(path, 'w', encoding='utf-8') as f:
-            yaml.safe_dump(data, f, default_flow_style=False, sort_keys=False)
+            yaml.safe_dump_all(docs, f, default_flow_style=False, sort_keys=False)
         print(f"Patched {path} (use-keycloak={use_keycloak}, jwks_uri={'set' if jwks_uri else 'empty'})")
     except Exception as e:
         print(f"Failed to write {path}: {e}", file=sys.stderr)

@@ -118,8 +118,6 @@ These changes implement a safe, opt-in delegation: when `app.security.use-keyclo
 - [x] Document env vars and config required for Keycloak seeding (`KEYCLOAK_URL`, `KEYCLOAK_REALM`, `KEYCLOAK_ADMIN_USERNAME`, `KEYCLOAK_ADMIN_PASSWORD`)
 
 ## Ticket 12: Make disabling keycloak possible
-- [ ] Ensure backups are created of `docker-compose*.yml` and `docker-compose*.yaml`, haproxy.cfg and application.yaml are created before keycloak specific configurations are injected
-- [ ] Create a script called disable-keycloak.sh that restores the backups of the original files free from any key cloak references
  - [x] Ensure backups are created of `docker-compose*.yml` and `docker-compose*.yaml`, haproxy.cfg and application.yaml are created before keycloak specific configurations are injected
  - [x] Create a script called disable-keycloak.sh that restores the backups of the original files free from any key cloak references
 

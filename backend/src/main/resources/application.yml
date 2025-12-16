@@ -3,42 +3,29 @@ spring:
     name: backend
   config:
     import: classpath:fhir.yml
-
-# OAuth2 Authorization Server Configuration
-# Default value for local development
-# Production deployments should set this in config.yaml (takes precedence at runtime)
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          jwk-set-uri: http://localhost/auth/realms/fhir/protocol/openid-connect/certs
 app:
   baseUrl: ${APP_BASE_URL:http://localhost:8080/fhir}
-
-# CORS Configuration (can be overridden via environment variables)
+  security:
+    use-keycloak: true
 cors:
   allowed-origins: ${CORS_ALLOWED_ORIGINS:*}
   allowed-methods: ${CORS_ALLOWED_METHODS:GET,POST,PUT,DELETE,OPTIONS}
   allowed-headers: ${CORS_ALLOWED_HEADERS:*}
-
-# OAuth Token Expiry Configuration
-# Set OAUTH_TOKEN_EXPIRY_HOURS environment variable to change token validity
-# Default: 24 hours (development/testing)
-# Production recommendation: 1 hour
-# Examples:
-#   - 24 hour stress test: export OAUTH_TOKEN_EXPIRY_HOURS=25
-#   - Production: export OAUTH_TOKEN_EXPIRY_HOURS=1
-#   - Week-long testing: export OAUTH_TOKEN_EXPIRY_HOURS=168
-
-# HTTP Compression (applies to all responses including fastpath JSON)
 server:
   compression:
     enabled: true
     mime-types: application/json,application/fhir+json,text/html,text/xml,text/plain,application/xml
-    min-response-size: 1024 # Compress responses > 1KB
-  # Session cookie configuration for OAuth cross-site flows
+    min-response-size: 1024
   servlet:
     session:
       cookie:
-        same-site: none # Required for cross-site OAuth (Inferno -> cbfhir.com)
-        secure: true # Required when same-site=none (HTTPS)
-
-# Basic Actuator Configuration
+        same-site: none
+        secure: true
 management:
   endpoints:
     web:
@@ -49,15 +36,11 @@ management:
     health:
       show-details: always
       show-components: always
-
-# Container-specific configuration
 ---
 spring:
   config:
     activate:
       on-profile: prod
-
-# Suppress error details and stack traces in production/container environments
 server:
   error:
     include-stacktrace: never
@@ -67,26 +50,18 @@ server:
   compression:
     enabled: true
     mime-types: application/json,application/fhir+json,text/html,text/xml,text/plain,application/xml
-    min-response-size: 1024 # Compress responses > 1KB
+    min-response-size: 1024
   tomcat:
     accesslog:
       enabled: false
-    # Tomcat thread pool configuration delegates to Spring Boot defaults
-    # Set environment variables (SERVER_TOMCAT_THREADS_MAX, etc.) to override
-    # Spring Boot defaults: 200 max threads, 10 min-spare, 100 accept-count, 10000 max-connections
-
-# Logging configuration for containers
 logging:
   level:
-    "[ca.uhn.fhir.rest.server.RestfulServer]": OFF
-    "[org.apache.catalina]": ERROR
-    "[org.apache.catalina.connector]": OFF
-    "[org.springframework.security]": ERROR
-    "[org.springframework.security.oauth2]": ERROR
-    "[org.springframework.web.servlet]": ERROR
-    "[com.couchbase.transactions]": ERROR
+    '[ca.uhn.fhir.rest.server.RestfulServer]': false
+    '[org.apache.catalina]': ERROR
+    '[org.apache.catalina.connector]': false
+    '[org.springframework.security]': ERROR
+    '[org.springframework.security.oauth2]': ERROR
+    '[org.springframework.web.servlet]': ERROR
+    '[com.couchbase.transactions]': ERROR
   pattern:
-    console: "%d{HH:mm:ss.SSS} %-5level %logger{20} - %msg%n"
-
-
-# The resource values above will be resolved from environment variables at runtime (docker-compose/.env)
+    console: '%d{HH:mm:ss.SSS} %-5level %logger{20} - %msg%n'

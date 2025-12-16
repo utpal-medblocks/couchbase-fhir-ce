@@ -56,7 +56,6 @@ frontend http-in
 
     # ACLs to detect API / FHIR traffic and health checks
     # Order matters: Check .well-known FIRST (before /fhir catches it)
-  acl url_keycloak path_beg /auth
     acl is_wellknown path_beg /.well-known
     acl is_wellknown_in_fhir path_sub /.well-known
     acl is_api path_beg /api /fhir
@@ -66,7 +65,6 @@ frontend http-in
     acl is_consent path_reg ^/consent$
     
     # Route .well-known first (including /fhir/.well-known)
-  use_backend keycloak_backend if url_keycloak
     use_backend backend-fhir-server if is_wellknown
     use_backend backend-fhir-server if is_wellknown_in_fhir
     use_backend backend-fhir-server if is_oauth
@@ -106,8 +104,4 @@ backend backend-fhir-server
 
 # End of file
 
-
-
-backend keycloak_backend
-  server keycloak keycloak:8080 check
 
