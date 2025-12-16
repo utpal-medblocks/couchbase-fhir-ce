@@ -32,12 +32,26 @@ public class TomcatConfigLogger {
 
     @Value("${server.tomcat.max-keep-alive-requests:100}")
     private int maxKeepAliveRequests;
+    
+    @Value("${spring.threads.virtual.enabled:false}")
+    private boolean virtualThreadsEnabled;
 
     @EventListener(ApplicationReadyEvent.class)
     public void logTomcatConfiguration() {
         logger.info("╔════════════════════════════════════════════════════════════╗");
         logger.info("║           TOMCAT THREAD POOL CONFIGURATION                 ║");
         logger.info("╚════════════════════════════════════════════════════════════╝");
+        
+        // Virtual threads status (most important!)
+        if (virtualThreadsEnabled) {
+            logger.info("🚀 Virtual Threads:         ENABLED (Java 21+)");
+            logger.info("   ✅ Thread pool limits no longer apply");
+            logger.info("   ✅ Can handle 1000+ concurrent connections efficiently");
+        } else {
+            logger.info("⚠️  Virtual Threads:         DISABLED");
+            logger.info("   ℹ️  Using platform threads (limited by max threads below)");
+        }
+        logger.info("────────────────────────────────────────────────────────────");
         logger.info("📊 Max Threads:             {}", maxThreads);
         logger.info("📊 Min Spare Threads:       {}", minSpareThreads);
         logger.info("📊 Accept Count (Queue):    {}", acceptCount);
@@ -46,9 +60,9 @@ public class TomcatConfigLogger {
         logger.info("📊 Max Keep-Alive Requests: {}", maxKeepAliveRequests);
         logger.info("════════════════════════════════════════════════════════════");
         
-        // Warn if using defaults in production
-        if (maxThreads == 200 && "prod".equals(System.getProperty("spring.profiles.active"))) {
-            logger.warn("⚠️  Using default Tomcat thread pool (200) - consider tuning for production load");
+        // Warn if using defaults in production without virtual threads
+        if (!virtualThreadsEnabled && maxThreads == 200 && "prod".equals(System.getProperty("spring.profiles.active"))) {
+            logger.warn("⚠️  Using default Tomcat thread pool (200) without virtual threads - consider enabling virtual threads for high concurrency");
         }
     }
 }

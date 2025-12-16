@@ -3,6 +3,12 @@ spring:
     name: backend
   config:
     import: classpath:fhir.yml
+  # Enable Virtual Threads (Java 21+)
+  # Eliminates thread pool exhaustion under high concurrency (1000+ concurrent users)
+  # Virtual threads are lightweight and yield during I/O operations (Couchbase queries, JSON parsing)
+  threads:
+    virtual:
+      enabled: true
 
 # OAuth2 Authorization Server Configuration
 # Default value for local development
@@ -71,8 +77,9 @@ server:
   tomcat:
     accesslog:
       enabled: false
-    # Tomcat thread pool configuration delegates to Spring Boot defaults
-    # Set environment variables (SERVER_TOMCAT_THREADS_MAX, etc.) to override
+    # With virtual threads enabled, Tomcat thread pool sizing becomes less critical
+    # Virtual threads handle concurrency efficiently without traditional thread pool limits
+    # Legacy note: Set environment variables (SERVER_TOMCAT_THREADS_MAX, etc.) to override if needed
     # Spring Boot defaults: 200 max threads, 10 min-spare, 100 accept-count, 10000 max-connections
 
 # Logging configuration for containers
