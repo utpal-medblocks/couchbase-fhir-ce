@@ -40,11 +40,20 @@ public class KeycloakUserManagerImpl implements KeycloakUserManager {
             @Value("${KEYCLOAK_ADMIN_USERNAME:admin}") String adminUser,
             @Value("${KEYCLOAK_ADMIN_PASSWORD:admin}") String adminPass
     ) {
-        this.keycloakUrl = keycloakUrl.endsWith("/") ? keycloakUrl.substring(0, keycloakUrl.length()-1) : keycloakUrl;
-        this.realm = realm;
-        this.adminUser = adminUser;
-        this.adminPass = adminPass;
+        this.keycloakUrl = stripQuotes(keycloakUrl).endsWith("/") ? stripQuotes(keycloakUrl).substring(0, stripQuotes(keycloakUrl).length()-1) : stripQuotes(keycloakUrl);
+        this.realm = stripQuotes(realm);
+        this.adminUser = stripQuotes(adminUser);
+        this.adminPass = stripQuotes(adminPass);
         this.http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
+    }
+
+    private static String stripQuotes(String s) {
+        if (s == null) return null;
+        String t = s.trim();
+        if ((t.startsWith("\"") && t.endsWith("\"")) || (t.startsWith("'") && t.endsWith("'"))) {
+            if (t.length() >= 2) t = t.substring(1, t.length() - 1);
+        }
+        return t;
     }
 
     // Obtain admin access token using admin-cli on master realm
@@ -56,11 +65,14 @@ public class KeycloakUserManagerImpl implements KeycloakUserManager {
             }
         } catch (Exception ignored) {}
 
+        String tokenUrl = keycloakUrl + "/realms/master/protocol/openid-connect/token";
+        String form = "grant_type=password&client_id=admin-cli&username=" +
+                URLEncoder.encode(adminUser, StandardCharsets.UTF_8) +
+                "&password=" + URLEncoder.encode(adminPass, StandardCharsets.UTF_8);
+
         try {
-            String tokenUrl = keycloakUrl + "/realms/master/protocol/openid-connect/token";
-            String form = "grant_type=password&client_id=admin-cli&username=" +
-                    URLEncoder.encode(adminUser, StandardCharsets.UTF_8) +
-                    "&password=" + URLEncoder.encode(adminPass, StandardCharsets.UTF_8);
+            System.out.format("Requesting Keycloak admin token from {} with client=admin-cli user={}", tokenUrl, adminUser);
+            System.out.format("Token request body (encoded): {}", form);
 
             HttpRequest req = HttpRequest.newBuilder()
                     .uri(URI.create(tokenUrl))
@@ -71,7 +83,13 @@ public class KeycloakUserManagerImpl implements KeycloakUserManager {
 
             HttpResponse<String> resp = http.send(req, HttpResponse.BodyHandlers.ofString());
             if (resp.statusCode() != 200) {
-                logger.error("Failed to obtain admin token: {} {}", resp.statusCode(), resp.body());
+                System.out.format("Keycloak token endpoint returned {}: {}", resp.statusCode(), resp.body());
+                // If we got an invalid_grant, attempt a minimal fallback using HttpURLConnection
+                if (resp.statusCode() == 400 && resp.body() != null && resp.body().contains("invalid_grant")) {
+                    System.out.format("Attempting fallback token request using HttpURLConnection due to invalid_grant response");
+                    Optional<String> fb = obtainAdminTokenViaUrlConnection(tokenUrl, form);
+                    if (fb.isPresent()) return fb;
+                }
                 return Optional.empty();
             }
             JsonNode json = mapper.readTree(resp.body());
@@ -81,7 +99,41 @@ public class KeycloakUserManagerImpl implements KeycloakUserManager {
             tokenExpiryEpochMs = System.currentTimeMillis() + (expiresIn * 1000L);
             return Optional.ofNullable(tok);
         } catch (Exception e) {
-            logger.error("Error obtaining Keycloak admin token", e);
+            System.out.format("Error obtaining Keycloak admin token via HttpClient, trying fallback", e);
+            Optional<String> fb = obtainAdminTokenViaUrlConnection(tokenUrl, form);
+            return fb;
+        }
+    }
+
+    // Fallback implementation using HttpURLConnection to rule out HttpClient differences
+    private Optional<String> obtainAdminTokenViaUrlConnection(String tokenUrl, String form) {
+        try {
+            System.out.format("Fallback: HttpURLConnection POST to {}", tokenUrl);
+            java.net.URL url = new java.net.URL(tokenUrl);
+            java.net.HttpURLConnection conn = (java.net.HttpURLConnection) url.openConnection();
+            conn.setConnectTimeout(10_000);
+            conn.setReadTimeout(10_000);
+            conn.setRequestMethod("POST");
+            conn.setDoOutput(true);
+            conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded");
+            try (java.io.OutputStream os = conn.getOutputStream()) {
+                os.write(form.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            }
+            int code = conn.getResponseCode();
+            java.io.InputStream is = (code >= 200 && code < 300) ? conn.getInputStream() : conn.getErrorStream();
+            String body = new String(is.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+            if (code != 200) {
+                System.out.format("Fallback token request returned {}: {}", code, body);
+                return Optional.empty();
+            }
+            JsonNode json = mapper.readTree(body);
+            String tok = json.path("access_token").asText(null);
+            long expiresIn = json.path("expires_in").asLong(60);
+            cachedToken = tok;
+            tokenExpiryEpochMs = System.currentTimeMillis() + (expiresIn * 1000L);
+            return Optional.ofNullable(tok);
+        } catch (Exception e) {
+            System.out.format("Fallback token request failed", e);
             return Optional.empty();
         }
     }
@@ -122,7 +174,22 @@ public class KeycloakUserManagerImpl implements KeycloakUserManager {
             body.put("username", user.getId());
             body.put("email", user.getEmail());
             body.put("enabled", true);
-            body.put("firstName", user.getUsername());
+            // derive firstName and lastName from username (split on whitespace)
+            String fullName = user.getUsername();
+            String firstName = fullName;
+            String lastName = "Doe";
+            if (fullName != null) {
+                String[] parts = fullName.trim().split("\\s+");
+                if (parts.length > 1) {
+                    firstName = parts[0];
+                    lastName = parts[parts.length - 1];
+                } else {
+                    firstName = fullName;
+                    lastName = "Doe";
+                }
+            }
+            body.put("firstName", firstName);
+            body.put("lastName", lastName);
             // attributes: map role/status
             ObjectNode attrs = mapper.createObjectNode();
             if (user.getRole() != null) attrs.put("role", user.getRole());
@@ -359,7 +426,22 @@ public class KeycloakUserManagerImpl implements KeycloakUserManager {
         try {
             ObjectNode body = mapper.createObjectNode();
             body.put("email", updatedUser.getEmail());
-            body.put("firstName", updatedUser.getUsername());
+            // derive firstName and lastName from provided username
+            String updatedFull = updatedUser.getUsername();
+            String updatedFirst = updatedFull;
+            String updatedLast = "Doe";
+            if (updatedFull != null) {
+                String[] p = updatedFull.trim().split("\\s+");
+                if (p.length > 1) {
+                    updatedFirst = p[0];
+                    updatedLast = p[p.length - 1];
+                } else {
+                    updatedFirst = updatedFull;
+                    updatedLast = "Doe";
+                }
+            }
+            body.put("firstName", updatedFirst);
+            body.put("lastName", updatedLast);
             body.put("enabled", "active".equals(updatedUser.getStatus()));
             ObjectNode attrs = mapper.createObjectNode();
             if (updatedUser.getRole() != null) attrs.put("role", updatedUser.getRole());

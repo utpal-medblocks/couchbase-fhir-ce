@@ -34,15 +34,7 @@ fi
 
 echo "Keycloak is enabled. URL=$KEYCLOAK_URL realm=$KEYCLOAK_REALM"
 
-# 1) Insert Keycloak service into all docker-compose*.yml files using Python helper
-if python3 "$SCRIPT_DIR/keycloak/insert_keycloak_compose.py" "$ROOT_DIR"; then
-  echo "Compose files updated (if any)."
-else
-  echo "Failed to update compose files with Keycloak service."
-  exit 1
-fi
-
-# 2) Export env vars to .env (so docker-compose picks them up)
+# 1) Export env vars to .env (so docker-compose picks them up)
 ENV_FILE="$ROOT_DIR/.env"
 mkdir -p "$ROOT_DIR"
 if [ ! -f "$ENV_FILE" ]; then
@@ -75,6 +67,16 @@ set_env "KEYCLOAK_CLIENT_SECRET" "$KEYCLOAK_CLIENT_SECRET"
 set_env "KEYCLOAK_URL" "$KEYCLOAK_URL"
 set_env "KEYCLOAK_REALM" "$KEYCLOAK_REALM"
 set_env "KEYCLOAK_ENABLED" "true"
+
+# 2) Insert Keycloak service into all docker-compose*.yml files using Python helper
+if KEYCLOAK_ADMIN_USERNAME=$KEYCLOAK_ADMIN_USERNAME KEYCLOAK_ADMIN_PASSWORD=$KEYCLOAK_ADMIN_PASSWORD KEYCLOAK_REALM=$KEYCLOAK_REALM KEYCLOAK_CLIENT_ID=$KEYCLOAK_CLIENT_ID KEYCLOAK_CLIENT_SECRET=$KEYCLOAK_CLIENT_SECRET python3 "$SCRIPT_DIR/keycloak/insert_keycloak_compose.py" "$ROOT_DIR"; then
+  echo "Compose files updated (if any)."
+else
+  echo "Failed to update compose files with Keycloak service."
+  exit 1
+fi
+
+
 
 # Derive JWKS URI and store it in .env for application.yml consumption
 if [ -n "$KEYCLOAK_URL" ] && [ -n "$KEYCLOAK_REALM" ]; then

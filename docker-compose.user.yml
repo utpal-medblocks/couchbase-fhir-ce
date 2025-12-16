@@ -32,8 +32,6 @@ services:
         max-size: 50m
         max-file: '3'
     restart: unless-stopped
-    depends_on:
-    - keycloak
   fhir-admin:
     image: ghcr.io/couchbaselabs/couchbase-fhir-ce/fhir-admin:${FHIR_FRONTEND_TAG:-latest}
     environment:
@@ -58,17 +56,4 @@ services:
     - fhir-admin
     - fhir-server
     restart: unless-stopped
-  keycloak:
-    image: quay.io/keycloak/keycloak:24.0.1
-    environment:
-      KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN_USERNAME}
-      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD}
-      KC_IMPORT: 'true'
-      KC_HEALTH_ENABLED: 'true'
-    ports:
-    - 8081:8080
-    command: start-dev --http-relative-path=/auth
-    restart: unless-stopped
-    volumes:
-    - ./scripts/keycloak/realm.json:/opt/keycloak/data/import/realm.json:ro
 volumes: {}

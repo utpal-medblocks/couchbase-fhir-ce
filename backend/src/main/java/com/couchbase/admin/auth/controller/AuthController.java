@@ -14,10 +14,19 @@ import com.couchbase.admin.initialization.service.InitializationService;
 import com.couchbase.client.java.Cluster;
 import com.couchbase.common.config.AdminConfig;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.net.URI;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.HashMap;
@@ -50,6 +59,23 @@ public class AuthController {
     
     @Autowired
     private InitializationService initializationService;
+
+    @Value("${app.security.use-keycloak:false}")
+    private boolean useKeycloak;
+
+    @Value("${KEYCLOAK_URL:http://localhost/auth}")
+    private String keycloakUrl;
+
+    @Value("${KEYCLOAK_REALM:fhir}")
+    private String keycloakRealm;
+
+    @Value("${KEYCLOAK_CLIENT_ID:fhir-server}")
+    private String keycloakClientId;
+
+    @Value("${KEYCLOAK_CLIENT_SECRET:}")
+    private String keycloakClientSecret;
+
+    private final ObjectMapper mapper = new ObjectMapper();
 
     // Simple cached presence flag to avoid repeating management API calls on every login.
     // null = unknown (not checked yet). True/false cached after first check.
@@ -85,6 +111,18 @@ public class AuthController {
      */
     @PostMapping("/login")
     public ResponseEntity<?> login(@RequestBody LoginRequest loginRequest) {
+        String email = loginRequest.getEmail();
+        String password = loginRequest.getPassword();
+
+        if (useKeycloak) {
+            try {
+                return performKeycloakRopc(email, password);
+            } catch (Exception e) {
+                logger.error("Error during Keycloak ROPC login: {}", e.getMessage());
+                return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                        .body(createErrorResponse("Failed to authenticate with Keycloak"));
+            }
+        }
         long startNs = System.nanoTime();
         logger.debug("🔐 [LOGIN] Request received for email='{}'", loginRequest.getEmail());
         if (loginRequest.getEmail() == null || loginRequest.getPassword() == null) {
@@ -92,8 +130,8 @@ public class AuthController {
                     .body(createErrorResponse("Email and password are required"));
         }
 
-        String email = loginRequest.getEmail();
-        String password = loginRequest.getPassword();
+        // String email = loginRequest.getEmail();
+        // String password = loginRequest.getPassword();
 
         // 1) Try authenticating against Admin.users ONLY if the fhir bucket exists AND is initialized
         // Check initialization status to avoid 10-second KV timeout on non-existent collections
@@ -223,6 +261,55 @@ public class AuthController {
         Map<String, String> error = new HashMap<>();
         error.put("error", message);
         return error;
+    }
+
+    private ResponseEntity<?> performKeycloakRopc(String username, String password) throws Exception {
+        String base = stripQuotes(keycloakUrl).endsWith("/") ? stripQuotes(keycloakUrl).substring(0, stripQuotes(keycloakUrl).length()-1) : stripQuotes(keycloakUrl);
+        String realm = stripQuotes(keycloakRealm);
+        String clientId = stripQuotes(keycloakClientId);
+        String clientSecret = stripQuotes(keycloakClientSecret);
+
+        String tokenUrl = base + "/realms/" + URLEncoder.encode(realm, StandardCharsets.UTF_8) + "/protocol/openid-connect/token";
+
+        StringBuilder form = new StringBuilder();
+        form.append("grant_type=password");
+        form.append("&username=").append(URLEncoder.encode(username, StandardCharsets.UTF_8));
+        form.append("&password=").append(URLEncoder.encode(password, StandardCharsets.UTF_8));
+        form.append("&client_id=").append(URLEncoder.encode(clientId, StandardCharsets.UTF_8));
+        if (clientSecret != null && !clientSecret.isBlank()) {
+            form.append("&client_secret=").append(URLEncoder.encode(clientSecret, StandardCharsets.UTF_8));
+        }
+
+        HttpClient http = HttpClient.newBuilder().build();
+        HttpRequest req = HttpRequest.newBuilder()
+                .uri(URI.create(tokenUrl))
+                .header("Content-Type", "application/x-www-form-urlencoded")
+                .POST(HttpRequest.BodyPublishers.ofString(form.toString()))
+                .build();
+
+        HttpResponse<String> resp = http.send(req, HttpResponse.BodyHandlers.ofString());
+        int status = resp.statusCode();
+        String body = resp.body();
+
+        // Try to return as JSON with status from Keycloak
+        try {
+            Object json = mapper.readValue(body, Object.class);
+            return ResponseEntity.status(status).contentType(MediaType.APPLICATION_JSON).body(json);
+        } catch (Exception ex) {
+            // Not JSON? return as plain text
+            Map<String, String> err = new HashMap<>();
+            err.put("error", body == null ? "Unknown error from Keycloak" : body);
+            return ResponseEntity.status(status).contentType(MediaType.APPLICATION_JSON).body(err);
+        }
+    }
+
+    private static String stripQuotes(String s) {
+        if (s == null) return null;
+        String t = s.trim();
+        if ((t.startsWith("\"") && t.endsWith("\"")) || (t.startsWith("'") && t.endsWith("'"))) {
+            if (t.length() >= 2) t = t.substring(1, t.length() - 1);
+        }
+        return t;
     }
 
     /**

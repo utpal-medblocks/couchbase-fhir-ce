@@ -48,7 +48,7 @@ public class ConfigurationStartupService {
     @Autowired
     private JwtTokenCacheService jwtTokenCacheService;
     
-    @Autowired
+    @Autowired(required = false)
     private com.couchbase.fhir.auth.AuthorizationServerConfig authorizationServerConfig;
 
     @Autowired
@@ -224,8 +224,14 @@ public class ConfigurationStartupService {
         if (response.isSuccess()) {
             logger.info("✅ Auto-connection successful!");
             
-            // Initialize OAuth signing key after connection is established
-            initializeOAuthSigningKey();
+            // Initialize OAuth signing key after connection is established (only when embedded auth server is active)
+            if (!useKeycloak && authorizationServerConfig != null) {
+                initializeOAuthSigningKey();
+            } else if (useKeycloak) {
+                logger.info("🔐 Skipping embedded OAuth signing key initialization because Keycloak is enabled");
+            } else {
+                logger.info("🔐 No embedded AuthorizationServerConfig available; skipping signing key initialization");
+            }
             
             // Initialize JWT token cache after connection is established
             initializeTokenCache();

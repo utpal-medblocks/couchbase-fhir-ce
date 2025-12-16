@@ -68,14 +68,57 @@ else
   "publicClient": false,
   "protocol": "openid-connect",
   "redirectUris": ["http://localhost:8080/authorized"],
-  "serviceAccountsEnabled": true
+  "serviceAccountsEnabled": true,
+  "directAccessGrantsEnabled": true
 }
 JSON
   curl -s -X POST "$CLIENTS_URL" \
     -H "Authorization: Bearer $ADMIN_TOKEN" \
     -H "Content-Type: application/json" \
     -d @/tmp/client-payload.json
-  echo "Created client. Configure client secret via the Keycloak Admin UI or API if needed."
+  echo "Created client (requested direct access grants)."
+fi
+
+# Ensure the client has direct access grants enabled and a client secret (for confidential client)
+CLIENT_INTERNAL_ID=$(curl -s -H "Authorization: Bearer $ADMIN_TOKEN" "$CLIENTS_URL?clientId=${KEYCLOAK_CLIENT_ID}" | jq -r '.[0].id // empty')
+if [ -z "$CLIENT_INTERNAL_ID" ]; then
+  echo "Failed to locate internal client id for ${KEYCLOAK_CLIENT_ID}" >&2
+  exit 1
+fi
+
+echo "Configuring client (id=$CLIENT_INTERNAL_ID) to allow ROPC..."
+
+# Fetch current representation
+CLIENT_REPR=$(curl -s -H "Authorization: Bearer $ADMIN_TOKEN" "$CLIENTS_URL/$CLIENT_INTERNAL_ID")
+
+# Patch representation: enable directAccessGrantsEnabled and serviceAccountsEnabled, ensure publicClient=false
+UPDATED=$(echo "$CLIENT_REPR" | jq '. + {directAccessGrantsEnabled: true, serviceAccountsEnabled: true, publicClient: false}')
+
+if [ -n "${KEYCLOAK_CLIENT_SECRET:-}" ]; then
+  # If a secret is provided in env, set it explicitly
+  UPDATED=$(echo "$UPDATED" | jq --arg sec "$KEYCLOAK_CLIENT_SECRET" '. + {secret: $sec}')
+fi
+
+# Put updated representation back
+curl -s -X PUT "$CLIENTS_URL/$CLIENT_INTERNAL_ID" \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "$UPDATED" >/dev/null
+
+# If no client secret was provided, generate one via the client-secret endpoint
+if [ -z "${KEYCLOAK_CLIENT_SECRET:-}" ]; then
+  echo "No KEYCLOAK_CLIENT_SECRET provided; generating one via Keycloak API..."
+  GEN=$(curl -s -X POST "$CLIENTS_URL/$CLIENT_INTERNAL_ID/client-secret" \
+    -H "Authorization: Bearer $ADMIN_TOKEN" \
+    -H "Content-Type: application/json")
+  # Try common fields for returned secret
+  NEW_SECRET=$(echo "$GEN" | jq -r '.value // .secret.value // .secret // empty')
+  if [ -n "$NEW_SECRET" ]; then
+    echo "Generated client secret for ${KEYCLOAK_CLIENT_ID}: $NEW_SECRET"
+    echo "Update your .env KEYCLOAK_CLIENT_SECRET with this value for future runs."
+  else
+    echo "Warning: could not extract generated client secret from Keycloak response: $GEN" >&2
+  fi
 fi
 
 # Optionally create a test user if not present
@@ -90,6 +133,8 @@ else
 {
   "username": "${TEST_USER_EMAIL}",
   "enabled": true,
+  "firstName": "Smart",
+  "lastName": "User",
   "email": "${TEST_USER_EMAIL}",
   "credentials": [{"type":"password","value":"password123","temporary":false}]
 }

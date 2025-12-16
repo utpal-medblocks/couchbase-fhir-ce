@@ -60,6 +60,27 @@ def process_file(path):
 
     services['fhir-server']['depends_on'] = ["keycloak"]
 
+    if not 'environment' in services['fhir-server']:
+        services['fhir-server']['environment'] = {}
+    if isinstance(services['fhir-server']['environment'],dict):
+        services['fhir-server']['environment']['KEYCLOAK_JWKS_URI'] = "http://keycloak:8080/auth/realms/fhir/protocol/openid-connect/certs"
+        services['fhir-server']['environment']['KEYCLOAK_URL'] = "http://keycloak:8080/auth"
+        services['fhir-server']['environment']['KEYCLOAK_REALM'] = os.getenv("KEYCLOAK_REALM")
+        services['fhir-server']['environment']['KEYCLOAK_ADMIN_USERNAME'] = os.getenv("KEYCLOAK_ADMIN_USERNAME")
+        services['fhir-server']['environment']['KEYCLOAK_ADMIN_PASSWORD'] = os.getenv("KEYCLOAK_ADMIN_PASSWORD")
+        services['fhir-server']['environment']['KEYCLOAK_CLIENT_ID'] = os.getenv("KEYCLOAK_CLIENT_ID")
+        services['fhir-server']['environment']['KEYCLOAK_CLIENT_SECRET'] = os.getenv("KEYCLOAK_CLIENT_SECRET")
+        
+    if isinstance(services['fhir-server']['environment'],list):
+        services['fhir-server']['environment'].append(f"KEYCLOAK_JWKS_URI=http://keycloak:8080/auth/realms/fhir/protocol/openid-connect/certs")
+        services['fhir-server']['environment'].append(f"KEYCLOAK_URL=http://keycloak:8080/auth")
+        services['fhir-server']['environment'].append(f'KEYCLOAK_REALM="{os.getenv("KEYCLOAK_REALM")}"')
+        services['fhir-server']['environment'].append(f'KEYCLOAK_ADMIN_USERNAME="{os.getenv("KEYCLOAK_ADMIN_USERNAME")}"')
+        services['fhir-server']['environment'].append(f'KEYCLOAK_ADMIN_PASSWORD="{os.getenv("KEYCLOAK_ADMIN_PASSWORD")}"')
+        services['fhir-server']['environment'].append(f'KEYCLOAK_CLIENT_ID="{os.getenv("KEYCLOAK_CLIENT_ID")}"')
+        services['fhir-server']['environment'].append(f'KEYCLOAK_CLIENT_SECRET="{os.getenv("KEYCLOAK_CLIENT_SECRET")}"')
+    
+
     # Backup original
     try:
         with open(path + '.bak', 'w', encoding='utf-8') as b:
