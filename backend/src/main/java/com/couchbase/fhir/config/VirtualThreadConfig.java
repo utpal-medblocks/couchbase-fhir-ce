@@ -30,7 +30,7 @@ public class VirtualThreadConfig {
         ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
         return protocolHandler -> {
             protocolHandler.setExecutor(executor);
-            log.warn("Tomcat executor set to VirtualThreadPerTaskExecutor: {}", executor.getClass().getName());
+            log.info("Tomcat executor set to VirtualThreadPerTaskExecutor: {}", executor.getClass().getName());
         };
     }
 
@@ -41,7 +41,7 @@ public class VirtualThreadConfig {
     @Bean
     TaskExecutor virtualThreadTaskExecutor() {
         ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
-        log.warn("Spring TaskExecutor backed by virtual threads: {}", executor.getClass().getName());
+        log.info("Spring TaskExecutor backed by virtual threads: {}", executor.getClass().getName());
         return new ConcurrentTaskExecutor(executor);
     }
 }
