@@ -3,10 +3,15 @@ spring:
     name: backend
   config:
     import: classpath:fhir.yml
-  
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          jwk-set-uri: http://localhost/auth/realms/fhir/protocol/openid-connect/certs
 app:
   baseUrl: ${APP_BASE_URL:http://localhost:8080/fhir}
-
+  security:
+    use-keycloak: true
 cors:
   allowed-origins: ${CORS_ALLOWED_ORIGINS:*}
   allowed-methods: ${CORS_ALLOWED_METHODS:GET,POST,PUT,DELETE,OPTIONS}

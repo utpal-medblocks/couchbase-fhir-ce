@@ -109,3 +109,5 @@ coverage.xml
 copilot-instructions.md
 k8s-deployment-plan.md
 load-tests/requirements.txt
+
+docker-compose.local.yaml
