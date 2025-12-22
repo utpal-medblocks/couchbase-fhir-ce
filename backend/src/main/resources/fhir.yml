@@ -27,6 +27,9 @@ fhir:
 
         - name: "tokens"
           description: "Token management, authentication"
+        
+        - name: "bulk_groups"
+          description: "Bulk group membership lists"
 
     resources:
       name: "Resources"

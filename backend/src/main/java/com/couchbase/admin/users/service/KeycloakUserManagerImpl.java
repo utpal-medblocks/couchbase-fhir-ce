@@ -404,6 +404,18 @@ public class KeycloakUserManagerImpl implements KeycloakUserManager {
                     u.setUsername(n.path("firstName").asText(null));
                     u.setEmail(n.path("email").asText(null));
                     u.setStatus(n.path("enabled").asBoolean(true) ? "active" : "inactive");
+                    // Attempt to read role from attributes (Keycloak may store attributes.role as string or array)
+                    JsonNode attrs = n.path("attributes");
+                    if (attrs != null && !attrs.isMissingNode()) {
+                        JsonNode roleNode = attrs.path("role");
+                        if (roleNode != null && !roleNode.isMissingNode()) {
+                            if (roleNode.isTextual()) {
+                                u.setRole(roleNode.asText(null));
+                            } else if (roleNode.isArray() && roleNode.size() > 0) {
+                                u.setRole(roleNode.get(0).asText(null));
+                            }
+                        }
+                    }
                     out.add(u);
                 }
             }

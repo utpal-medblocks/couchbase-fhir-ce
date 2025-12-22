@@ -116,7 +116,8 @@ public class AuthController {
 
         if (useKeycloak) {
             try {
-                return performKeycloakRopc(email, password);
+                LoginResponse resp = performKeycloakRopc(email, password);
+                return ResponseEntity.ok(resp);
             } catch (Exception e) {
                 logger.error("Error during Keycloak ROPC login: {}", e.getMessage());
                 return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
@@ -263,7 +264,7 @@ public class AuthController {
         return error;
     }
 
-    private ResponseEntity<?> performKeycloakRopc(String username, String password) throws Exception {
+    private ResponseEntity<?> performKeycloakRopcOld(String username, String password) throws Exception {
         String base = stripQuotes(keycloakUrl).endsWith("/") ? stripQuotes(keycloakUrl).substring(0, stripQuotes(keycloakUrl).length()-1) : stripQuotes(keycloakUrl);
         String realm = stripQuotes(keycloakRealm);
         String clientId = stripQuotes(keycloakClientId);
@@ -302,8 +303,53 @@ public class AuthController {
             return ResponseEntity.status(status).contentType(MediaType.APPLICATION_JSON).body(err);
         }
     }
+    private LoginResponse performKeycloakRopc(String username, String password) throws Exception {
+        String base = stripQuotes(keycloakUrl).endsWith("/") ? stripQuotes(keycloakUrl).substring(0, stripQuotes(keycloakUrl).length()-1) : stripQuotes(keycloakUrl);
+        String realm = stripQuotes(keycloakRealm);
+        String clientId = stripQuotes(keycloakClientId);
+        String clientSecret = stripQuotes(keycloakClientSecret);
 
-    private static String stripQuotes(String s) {
+        String tokenUrl = base + "/realms/" + URLEncoder.encode(realm, StandardCharsets.UTF_8) + "/protocol/openid-connect/token";
+        StringBuilder form = new StringBuilder();
+        form.append("grant_type=password");
+        form.append("&username=").append(URLEncoder.encode(username, StandardCharsets.UTF_8));
+        form.append("&password=").append(URLEncoder.encode(password, StandardCharsets.UTF_8));
+        form.append("&client_id=").append(URLEncoder.encode(clientId, StandardCharsets.UTF_8));
+        if (clientSecret != null && !clientSecret.isBlank()) {
+            form.append("&client_secret=").append(URLEncoder.encode(clientSecret, StandardCharsets.UTF_8));
+        }
+
+        HttpClient http = HttpClient.newBuilder().build();
+        HttpRequest req = HttpRequest.newBuilder()
+                .uri(URI.create(tokenUrl))
+                .header("Content-Type", "application/x-www-form-urlencoded")
+                .POST(HttpRequest.BodyPublishers.ofString(form.toString()))
+                .build();
+
+        HttpResponse<String> resp = http.send(req, HttpResponse.BodyHandlers.ofString());
+        int status = resp.statusCode();
+        String body = resp.body();
+
+        if (status >= 200 && status < 300) {
+            Map<String, Object> json = mapper.readValue(body, Map.class);
+            String accessToken = (String) json.get("access_token");
+            String displayName = username;
+            String role = "admin";
+            String[] scopes = new String[]{"system/*.*", "user/*.*"};
+            UserInfo userInfo = new UserInfo(username, displayName, role, scopes);
+            return new LoginResponse(accessToken, userInfo);
+        } else {
+            try {
+                Map<String, Object> errJson = mapper.readValue(body, Map.class);
+                String err = errJson.containsKey("error_description") ? String.valueOf(errJson.get("error_description")) : String.valueOf(errJson.getOrDefault("error", body));
+                throw new RuntimeException("Keycloak error: " + err);
+            } catch (Exception ex) {
+                throw new RuntimeException("Keycloak token endpoint returned status " + status + ": " + body);
+            }
+        }
+    }
+
+    public static String stripQuotes(String s) {
         if (s == null) return null;
         String t = s.trim();
         if ((t.startsWith("\"") && t.endsWith("\"")) || (t.startsWith("'") && t.endsWith("'"))) {

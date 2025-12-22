@@ -463,6 +463,20 @@ public class ConfigurationStartupService {
      */
     private void seedAdminUserIfNeeded() {
         try {
+            // Only attempt seeding when the FHIR bucket is initialized and ready.
+            try {
+                InitializationStatus status = initializationService.checkStatus(DEFAULT_CONNECTION_NAME);
+                if (status == null || status.getStatus() != InitializationStatus.Status.READY) {
+                    logger.info("ℹ️  Skipping admin seeding: FHIR initialization status is not READY (status={})", status == null ? "null" : status.getStatus());
+                    return;
+                }
+            } catch (Exception e) {
+                logger.warn("⚠️ Could not determine FHIR initialization status before seeding admin user: {}", e.getMessage());
+                logger.debug("Initialization status check error:", e);
+                // If we cannot determine status, fail-safe: skip seeding to avoid exceptions during startup
+                return;
+            }
+
             String email = adminConfig.getEmail();
             String password = adminConfig.getPassword();
             String name = adminConfig.getName();

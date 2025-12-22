@@ -3,86 +3,126 @@ package com.couchbase.fhir.auth.controller;
 import com.couchbase.fhir.auth.SmartScopes;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import jakarta.servlet.http.HttpServletRequest;
 import java.util.*;
+import com.couchbase.admin.auth.controller.AuthController;
 
 /**
  * SMART on FHIR Configuration Endpoint
- * 
- * Implements: http://www.hl7.org/fhir/smart-app-launch/conformance.html
- * 
- * Returns OAuth 2.0 endpoints and SMART capabilities for discovery.
- * SMART apps query this endpoint to discover:
- * - Authorization and token endpoints
- * - Supported scopes
- * - SMART capabilities
- * - Supported grant types
+ *
+ * Merged controller: supports both the embedded Spring Authorization Server
+ * and an external Keycloak instance depending on `app.security.use-keycloak`.
  */
 @RestController
 public class SmartConfigurationController {
-    
+
     private static final Logger logger = LoggerFactory.getLogger(SmartConfigurationController.class);
-    
-    /**
-     * SMART Configuration Discovery Endpoint
-     * GET /.well-known/smart-configuration (root)
-     * GET /fhir/.well-known/smart-configuration (FHIR base)
-     * 
-     * Returns JSON describing the SMART server's OAuth 2.0 endpoints and capabilities.
-     * This endpoint MUST be publicly accessible (no authentication required).
-     */
+
+    @Value("${app.security.use-keycloak:false}")
+    private boolean useKeycloak;
+
+    @Value("${KEYCLOAK_URL:}")
+    private String keycloakUrl;
+
+    @Value("${KEYCLOAK_REALM:}")
+    private String keycloakRealm;
+
+    @Value("${KEYCLOAK_JWKS_URI:}")
+    private String keycloakJwksUri;
+
+    @Value("${KEYCLOAK_PUBLIC_URL:}")
+    private String keycloakPublicUrl;
+
+    @Value("${app.baseUrl:}")
+    private String appBaseUrl;
+
     @GetMapping(value = {"/.well-known/smart-configuration", "/fhir/.well-known/smart-configuration"}, produces = MediaType.APPLICATION_JSON_VALUE)
-    public ResponseEntity<Map<String, Object>> getSmartConfiguration() {
+    public ResponseEntity<Map<String, Object>> getSmartConfiguration(HttpServletRequest req) {
         logger.debug("🔍 SMART configuration requested");
-        
-        // Read baseUrl from system property (set by ConfigurationStartupService from config.yaml)
-        // This ensures we get the value from config.yaml, not application.yml default
-        // Try environment variable first (Docker), then system property (dev), then default
+
+        // Determine base URL: prefer environment (Docker), then system property, then configured app.baseUrl, then derive from request
         String baseUrl = System.getenv("APP_BASE_URL");
         if (baseUrl == null || baseUrl.isEmpty()) {
-            baseUrl = System.getProperty("app.baseUrl", "http://localhost:8080/fhir");
+            baseUrl = System.getProperty("app.baseUrl", "");
         }
-        
-        // Extract issuer (remove /fhir suffix if present)
-        String issuer = baseUrl;
-        if (issuer.endsWith("/fhir")) {
-            issuer = issuer.substring(0, issuer.length() - 5);
+        if ((baseUrl == null || baseUrl.isEmpty()) && appBaseUrl != null && !appBaseUrl.isBlank()) {
+            baseUrl = appBaseUrl;
         }
-        
-        // Build SMART configuration response
+        if (baseUrl == null || baseUrl.isEmpty()) {
+            baseUrl = deriveBaseUrl(req);
+        }
+
         Map<String, Object> config = new LinkedHashMap<>();
-        
-        // OAuth 2.0 endpoints
-        config.put("issuer", issuer);
-        config.put("authorization_endpoint", issuer + "/oauth2/authorize");
-        config.put("token_endpoint", issuer + "/oauth2/token");
-        config.put("token_endpoint_auth_methods_supported", Arrays.asList(
-            "client_secret_basic",
-            "client_secret_post"
-        ));
-        config.put("registration_endpoint", issuer + "/oauth2/register"); // Future: Dynamic Client Registration
-        config.put("introspection_endpoint", issuer + "/oauth2/introspect");
-        config.put("revocation_endpoint", issuer + "/oauth2/revoke");
-        config.put("jwks_uri", issuer + "/oauth2/jwks");
-        
-        // Supported scopes (SMART on FHIR)
+
+        if (useKeycloak) {
+            // If Keycloak is fully configured, return Keycloak endpoints; otherwise fall back to jwks or base issuer
+            if (keycloakUrl == null || keycloakUrl.isBlank() || keycloakRealm == null || keycloakRealm.isBlank()) {
+                if (keycloakJwksUri != null && !keycloakJwksUri.isBlank()) {
+                    config.put("jwks_uri", keycloakJwksUri);
+                }
+                config.put("issuer", baseUrl);
+            } else {
+                // Determine the public-facing base for Keycloak endpoints. Prefer explicit public URL
+                // (KEYCLOAK_PUBLIC_URL). If not provided, derive from appBaseUrl or the request and append
+                // the HAProxy-mounted prefix `/auth` so advertised endpoints are reachable externally.
+                String publicBase = null;
+                if (keycloakPublicUrl != null && !keycloakPublicUrl.isBlank()) {
+                    publicBase = keycloakPublicUrl;
+                } else {
+                    String base = (appBaseUrl != null && !appBaseUrl.isBlank()) ? appBaseUrl : deriveBaseUrl(req);
+                    // If base includes a /fhir suffix, remove it before appending /auth
+                    if (base != null && base.endsWith("/fhir")) {
+                        base = base.substring(0, base.length() - 5);
+                    }
+                    publicBase = base;
+                }
+
+                if (publicBase == null) publicBase = "";
+
+                if(keycloakJwksUri.contains("keycloak:8080")) {
+                    keycloakJwksUri = keycloakJwksUri.replace("keycloak:8080", "localhost");
+                    logger.debug(" as -> "+keycloakJwksUri);
+                }
+                // Trim trailing slash
+                if (publicBase.endsWith("/")) publicBase = publicBase.substring(0, publicBase.length() - 1);
+
+                String issuer = publicBase + "/auth/realms/" + AuthController.stripQuotes(keycloakRealm);
+                config.put("issuer", issuer);
+                config.put("authorization_endpoint", issuer + "/protocol/openid-connect/auth");
+                config.put("token_endpoint", issuer + "/protocol/openid-connect/token");
+                config.put("introspection_endpoint", issuer + "/protocol/openid-connect/token/introspect");
+                config.put("revocation_endpoint", issuer + "/protocol/openid-connect/revoke");
+                config.put("jwks_uri", (keycloakJwksUri != null && !keycloakJwksUri.isBlank()) ? keycloakJwksUri : issuer + "/protocol/openid-connect/certs");
+                config.put("registration_endpoint", issuer + "/clients-registrations/openid-connect");
+            }
+        } else {
+            // Embedded Spring Authorization Server endpoints
+            String issuer = baseUrl;
+            if (issuer.endsWith("/fhir")) {
+                issuer = issuer.substring(0, issuer.length() - 5);
+            }
+            config.put("issuer", issuer);
+            config.put("authorization_endpoint", issuer + "/oauth2/authorize");
+            config.put("token_endpoint", issuer + "/oauth2/token");
+            config.put("jwks_uri", issuer + "/oauth2/jwks");
+            config.put("registration_endpoint", issuer + "/oauth2/register");
+        }
+
+        // Common capabilities and supported values (SMART on FHIR scopes + capabilities)
         config.put("scopes_supported", Arrays.asList(
-            // OpenID Connect
             "openid",
             "profile",
             "fhirUser",
-            
-            // Launch contexts
             "launch",
             "launch/patient",
             "online_access",
             "offline_access",
-            
-            // Patient scopes
             SmartScopes.PATIENT_ALL_READ,
             SmartScopes.PATIENT_ALL_WRITE,
             SmartScopes.PATIENT_ALL,
@@ -100,8 +140,6 @@ public class SmartConfigurationController {
             "patient/DiagnosticReport.read",
             "patient/Immunization.read",
             "patient/DocumentReference.read",
-            
-            // US Core resource scopes (SMART v2 granular - .rs suffix)
             "patient/Device.rs",
             "patient/MedicationRequest.rs",
             "patient/DiagnosticReport.rs",
@@ -122,12 +160,10 @@ public class SmartConfigurationController {
             "patient/Location.rs",
             "patient/Condition.rs",
             "patient/Medication.rs",
-            "patient/ServiceRequest.rs",     
+            "patient/ServiceRequest.rs",
             "patient/Coverage.rs",
             "patient/MedicationDispense.rs",
             "patient/Specimen.rs",
-            
-            // User scopes
             SmartScopes.USER_ALL_READ,
             SmartScopes.USER_ALL_WRITE,
             SmartScopes.USER_ALL,
@@ -139,63 +175,47 @@ public class SmartConfigurationController {
             "user/Condition.write",
             "user/MedicationRequest.read",
             "user/MedicationRequest.write",
-            
-            // System scopes (backend services)
             SmartScopes.SYSTEM_ALL_READ,
             SmartScopes.SYSTEM_ALL_WRITE,
             SmartScopes.SYSTEM_ALL
         ));
-        
-        // Response types supported
-        config.put("response_types_supported", Arrays.asList(
-            "code" // Authorization code flow
-        ));
-        
-        // Grant types supported
-        config.put("grant_types_supported", Arrays.asList(
-            "authorization_code",
-            "client_credentials",
-            "refresh_token"
-        ));
-        
-        // PKCE (Proof Key for Code Exchange) support
-        config.put("code_challenge_methods_supported", Arrays.asList(
-            "S256" // SHA-256 based PKCE (required for public clients)
-        ));
-        
-        // SMART capabilities
+
+        config.put("response_types_supported", Arrays.asList("code"));
+        config.put("grant_types_supported", Arrays.asList("authorization_code", "client_credentials", "refresh_token"));
+        config.put("code_challenge_methods_supported", Arrays.asList("S256"));
+
         config.put("capabilities", Arrays.asList(
-            // Launch capabilities
-            "launch-ehr",              // EHR launch (launched from within EHR)
-            "launch-standalone",        // Standalone launch (launched independently)
-            
-            // Client capabilities
-            "client-public",           // Support for public clients (no client secret)
-            "client-confidential-symmetric", // Support for confidential clients with shared secret
-            "client-confidential-asymmetric", // Support for JWT-based client authentication (private_key_jwt)
-            
-            // Authorization methods
-            "authorize-post",          // Support for POST to authorization endpoint
-            
-            // Single sign-on
-            "sso-openid-connect",      // OpenID Connect for SSO
-            
-            // Context capabilities
-            "context-ehr-patient",     // EHR provides patient context
-            "context-ehr-encounter",   // EHR provides encounter context
-            "context-standalone-patient", // Standalone app can select patient
-            
-            // Permissions
-            "permission-offline",      // Offline access (refresh tokens)
-            "permission-patient",      // Patient-specific scopes
-            "permission-user",         // User-specific scopes
-            "permission-v1",           // SMART v1 scopes (backward compatibility)
-            "permission-v2"            // SMART v2 scopes (granular permissions)
+            "launch-ehr",
+            "launch-standalone",
+            "client-public",
+            "client-confidential-symmetric",
+            "client-confidential-asymmetric",
+            "authorize-post",
+            "sso-openid-connect",
+            "context-ehr-patient",
+            "context-ehr-encounter",
+            "context-standalone-patient",
+            "permission-offline",
+            "permission-patient",
+            "permission-user",
+            "permission-v1",
+            "permission-v2"
         ));
-        
-        logger.info("✅ Returned SMART configuration (issuer: {})", issuer);
-        
+
+        logger.info("✅ Returned SMART configuration (useKeycloak: {}, issuer: {})", useKeycloak, config.get("issuer"));
+
         return ResponseEntity.ok(config);
+    }
+
+    private String deriveBaseUrl(HttpServletRequest req) {
+        String scheme = req.getScheme();
+        String host = req.getHeader("X-Forwarded-Host");
+        if (host == null || host.isBlank()) host = req.getServerName();
+        int port = req.getServerPort();
+        String forwardedProto = req.getHeader("X-Forwarded-Proto");
+        if (forwardedProto != null && !forwardedProto.isBlank()) scheme = forwardedProto;
+        boolean defaultPort = ("http".equalsIgnoreCase(scheme) && port == 80) || ("https".equalsIgnoreCase(scheme) && port == 443);
+        return host + (defaultPort ? "" : (":" + port));
     }
 }
 

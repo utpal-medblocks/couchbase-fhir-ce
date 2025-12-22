@@ -29,7 +29,11 @@ KEYCLOAK_SERVICE = {
     'ports': ['8081:8080'],
     'command': 'start-dev --http-relative-path=/auth',
     'restart': 'unless-stopped',
-    'volumes': ['./scripts/keycloak/realm.json:/opt/keycloak/data/import/realm.json:ro'],
+    # Use a Docker named volume for Keycloak data so the embedded H2 DB persists
+    'volumes': [
+        './scripts/keycloak/realm.json:/opt/keycloak/data/import/realm.json:ro',
+        'keycloak-data:/opt/keycloak/data',
+    ],
 }
 
 
@@ -57,6 +61,12 @@ def process_file(path):
 
     # Insert keycloak service
     services['keycloak'] = KEYCLOAK_SERVICE
+
+    # Ensure a top-level named volume exists so Docker will manage persistence
+    if 'volumes' not in data or data['volumes'] is None:
+        data['volumes'] = {}
+    if 'keycloak-data' not in data['volumes']:
+        data['volumes']['keycloak-data'] = {}
 
     services['fhir-server']['depends_on'] = ["keycloak"]
 

@@ -9,7 +9,7 @@ spring:
         jwt:
           jwk-set-uri: http://localhost/auth/realms/fhir/protocol/openid-connect/certs
 app:
-  baseUrl: ${APP_BASE_URL:http://localhost:8080/fhir}
+  baseUrl: ${APP_BASE_URL:http://localhost}
   security:
     use-keycloak: true
 cors:
