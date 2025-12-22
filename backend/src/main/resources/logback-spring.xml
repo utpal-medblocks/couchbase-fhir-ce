@@ -60,7 +60,8 @@
 
     <root level="ERROR">
         <appender-ref ref="STDOUT"/>
-        <appender-ref ref="FILE"/>
+        <!-- FILE appender disabled for Docker - use 'docker logs' instead -->
+        <!-- <appender-ref ref="FILE"/> -->
     </root>
 
     <!-- Couchbase SDK loggers (performance diagnostics) -->
@@ -68,44 +69,36 @@
     <!-- Override in config.yaml for debugging: logging.levels.com.couchbase.core: DEBUG -->
     <!-- These loggers route SDK logs to separate file (sdk.log) -->
     
-    <!-- SDK internal loggers → sdk.log -->
+    <!-- SDK internal loggers → console only (Docker captures via stdout) -->
     <logger name="com.couchbase.core" level="ERROR" additivity="false">
-        <appender-ref ref="SDK_FILE"/>
         <appender-ref ref="STDOUT"/>
     </logger>
     
     <logger name="com.couchbase.client.core" level="ERROR" additivity="false">
-        <appender-ref ref="SDK_FILE"/>
         <appender-ref ref="STDOUT"/>
     </logger>
     
     <logger name="com.couchbase.client.java" level="ERROR" additivity="false">
-        <appender-ref ref="SDK_FILE"/>
         <appender-ref ref="STDOUT"/>
     </logger>
     
     <logger name="com.couchbase.io" level="ERROR" additivity="false">
-        <appender-ref ref="SDK_FILE"/>
         <appender-ref ref="STDOUT"/>
     </logger>
     
     <logger name="com.couchbase.endpoint" level="ERROR" additivity="false">
-        <appender-ref ref="SDK_FILE"/>
         <appender-ref ref="STDOUT"/>
     </logger>
     
     <logger name="com.couchbase.node" level="ERROR" additivity="false">
-        <appender-ref ref="SDK_FILE"/>
         <appender-ref ref="STDOUT"/>
     </logger>
     
     <logger name="com.couchbase.transactions" level="ERROR" additivity="false">
-        <appender-ref ref="SDK_FILE"/>
         <appender-ref ref="STDOUT"/>
     </logger>
     
     <logger name="com.couchbase.tracing" level="ERROR" additivity="false">
-        <appender-ref ref="SDK_FILE"/>
         <appender-ref ref="STDOUT"/>
     </logger>
     

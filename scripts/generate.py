@@ -61,8 +61,9 @@ def generate_docker_compose(config):
     }
     
     # Add environment overrides
-    if 'overrides' in deploy.get('environment', {}):
-        env.update(deploy['environment']['overrides'])
+    env_overrides = deploy.get('environment', {}).get('overrides')
+    if env_overrides:
+        env.update(env_overrides)
     
     compose = {
         'services': {

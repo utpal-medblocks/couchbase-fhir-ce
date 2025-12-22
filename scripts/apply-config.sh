@@ -58,8 +58,14 @@ else
     exit 1
 fi
 
-# Check if source code exists (dev environment)
-if [ -d "./backend" ] && [ -d "./frontend" ]; then
+# Check if FORCE_PULL env var is set (skip building even if source exists)
+if [ "$FORCE_PULL" = "true" ]; then
+    # Force pull pre-built images (useful for old Docker versions on EC2)
+    BUILD_FLAG=""
+    ACTION=""
+    echo "📦 Pulling pre-built images (FORCE_PULL=true)..."
+    $DOCKER_COMPOSE pull 2>/dev/null || true
+elif [ -d "./backend" ] && [ -d "./frontend" ]; then
     # Development: Build from source
     BUILD_FLAG="--build"
     ACTION="built and"
@@ -70,6 +76,10 @@ else
     echo "📦 Pulling pre-built images..."
     $DOCKER_COMPOSE pull 2>/dev/null || true
 fi
+
+# Disable BuildKit for older Docker versions that don't support --allow flag
+export DOCKER_BUILDKIT=0
+export COMPOSE_DOCKER_CLI_BUILD=0
 
 # Check if services are running
 if $DOCKER_COMPOSE ps 2>/dev/null | grep -q "Up"; then
