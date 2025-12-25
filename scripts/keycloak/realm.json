@@ -1,6 +1,7 @@
 {
   "realm": "fhir",
   "enabled": true,
+  "loginTheme": "cbfhir-theme",
   "clients": [
     {
       "clientId": "fhir-server",
@@ -10,5 +11,44 @@
       "redirectUris": ["http://localhost:8080/authorized"],
       "serviceAccountsEnabled": true
     }
+  ]
+  ,
+  "clientScopes": [
+    { "name": "openid", "protocol": "openid-connect" },
+    { "name": "fhirUser", "protocol": "openid-connect" },
+    { "name": "offline_access", "protocol": "openid-connect" },
+    { "name": "launch/patient", "protocol": "openid-connect" },
+    { "name": "launch", "protocol": "openid-connect" },
+    { "name": "profile", "protocol": "openid-connect" },
+    { "name": "user/*.read", "protocol": "openid-connect" },
+    { "name": "user/*.write", "protocol": "openid-connect" },
+    { "name": "system/*.read", "protocol": "openid-connect" },
+    { "name": "system/*.write", "protocol": "openid-connect" },
+    { "name": "patient/*.rs", "protocol": "openid-connect" },
+    { "name": "patient/Medication.rs", "protocol": "openid-connect" },
+    { "name": "patient/AllergyIntolerance.rs", "protocol": "openid-connect" },
+    { "name": "patient/CarePlan.rs", "protocol": "openid-connect" },
+    { "name": "patient/CareTeam.rs", "protocol": "openid-connect" },
+    { "name": "patient/Condition.rs", "protocol": "openid-connect" },
+    { "name": "patient/Coverage.rs", "protocol": "openid-connect" },
+    { "name": "patient/Device.rs", "protocol": "openid-connect" },
+    { "name": "patient/DiagnosticReport.rs", "protocol": "openid-connect" },
+    { "name": "patient/DocumentReference.rs", "protocol": "openid-connect" },
+    { "name": "patient/Encounter.rs", "protocol": "openid-connect" },
+    { "name": "patient/Goal.rs", "protocol": "openid-connect" },
+    { "name": "patient/Immunization.rs", "protocol": "openid-connect" },
+    { "name": "patient/Location.rs", "protocol": "openid-connect" },
+    { "name": "patient/MedicationDispense.rs", "protocol": "openid-connect" },
+    { "name": "patient/MedicationRequest.rs", "protocol": "openid-connect" },
+    { "name": "patient/Observation.rs", "protocol": "openid-connect" },
+    { "name": "patient/Organization.rs", "protocol": "openid-connect" },
+    { "name": "patient/Patient.rs", "protocol": "openid-connect" },
+    { "name": "patient/Practitioner.rs", "protocol": "openid-connect" },
+    { "name": "patient/PractitionerRole.rs", "protocol": "openid-connect" },
+    { "name": "patient/Procedure.rs", "protocol": "openid-connect" },
+    { "name": "patient/Provenance.rs", "protocol": "openid-connect" },
+    { "name": "patient/RelatedPerson.rs", "protocol": "openid-connect" },
+    { "name": "patient/ServiceRequest.rs", "protocol": "openid-connect" },
+    { "name": "patient/Specimen.rs", "protocol": "openid-connect" }
   ]
 }

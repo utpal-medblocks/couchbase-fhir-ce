@@ -104,6 +104,11 @@ public class OAuthClient {
      * Timestamp of last token issuance using this client
      */
     private Instant lastUsed;
+
+    /**
+     * Optional reference to a Bulk Group id used for bulk operations
+     */
+    private String bulkGroupId;
     
     // Constructors
     
@@ -235,6 +240,14 @@ public class OAuthClient {
     public void setLastUsed(Instant lastUsed) {
         this.lastUsed = lastUsed;
     }
+
+    public String getBulkGroupId() {
+        return bulkGroupId;
+    }
+
+    public void setBulkGroupId(String bulkGroupId) {
+        this.bulkGroupId = bulkGroupId;
+    }
     
     // Utility methods
     
@@ -267,6 +280,7 @@ public class OAuthClient {
                 ", clientType='" + clientType + '\'' +
                 ", authenticationType='" + authenticationType + '\'' +
                 ", status='" + status + '\'' +
+                ", bulkGroupId='" + bulkGroupId + '\'' +
                 '}';
     }
 }

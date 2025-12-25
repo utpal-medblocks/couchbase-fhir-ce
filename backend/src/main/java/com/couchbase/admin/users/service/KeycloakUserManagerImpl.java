@@ -346,6 +346,73 @@ public class KeycloakUserManagerImpl implements KeycloakUserManager {
         u.setUsername(n.path("firstName").asText(null));
         u.setEmail(n.path("email").asText(null));
         u.setStatus(n.path("enabled").asBoolean(true) ? "active" : "inactive");
+        // First try to populate User.role from Keycloak realm role-mappings
+        // (preferred), fallback to attributes.role if mappings not present.
+        String kcId = n.path("id").asText(null);
+        if (kcId != null) {
+            try {
+                String rolesUrl = String.format("%s/admin/realms/%s/users/%s/role-mappings/realm",
+                        keycloakUrl, realm, URLEncoder.encode(kcId, StandardCharsets.UTF_8));
+                HttpRequest req = HttpRequest.newBuilder()
+                        .uri(URI.create(rolesUrl))
+                        .header("Authorization", "Bearer " + token)
+                        .timeout(Duration.ofSeconds(5))
+                        .GET()
+                        .build();
+                HttpResponse<String> resp = http.send(req, HttpResponse.BodyHandlers.ofString());
+                if (resp.statusCode() == 200) {
+                    JsonNode roleArr = mapper.readTree(resp.body());
+                    logger.info("[ROLES-getUserById] Found Roles ");
+                    logger.info(roleArr.toString());
+                    if (roleArr.isArray() && roleArr.size() > 0) {
+                        // roleArr contains role objects; prefer explicit 'admin' or 'developer' realm roles
+                        String fallback = null;
+                        for (int i = 0; i < roleArr.size(); i++) {
+                            JsonNode r = roleArr.get(i);
+                            String roleName = r.path("name").asText(null);
+                            if (roleName == null || roleName.isEmpty()) continue;
+                            if (fallback == null) fallback = roleName;
+                            String rn = roleName.toLowerCase();
+                            if ("admin".equals(rn)) {
+                                u.setRole("admin");
+                                break;
+                            } else if ("developer".equals(rn) || rn.contains("developer")) {
+                                u.setRole("developer");
+                                // continue searching in case 'admin' appears later
+                            }
+                        }
+                        if (u.getRole() == null && fallback != null) {
+                            u.setRole(fallback);
+                        }
+                        if (u.getRole() != null) logger.info("[ROLES-getUserById] selected role='{}'", u.getRole());
+                    }
+                }
+            } catch (Exception e) {
+                logger.debug("Could not fetch realm role-mappings for user {}", kcId, e);
+            }
+        }
+        // Fallback: read attributes.role if role still not set
+        if (u.getRole() == null) {
+            JsonNode attrs = n.path("attributes");
+            if (attrs != null && !attrs.isMissingNode()) {
+                JsonNode roleNode = attrs.path("role");
+                if (roleNode != null && !roleNode.isMissingNode()) {
+                    if (roleNode.isTextual()) {
+                        u.setRole(roleNode.asText(null));
+                    } else if (roleNode.isArray() && roleNode.size() > 0) {
+                       for(int i = 0; i < roleNode.size(); i++) {
+                         if(roleNode.get(i).asText().equals("admin")) {
+                           u.setRole(roleNode.get(i).asText(null));
+                           break;
+                         } else if (roleNode.get(i).asText().equals("developer"))
+                           u.setRole(roleNode.get(i).asText(null));
+                       }
+                    }
+
+                    if(u.getRole() == null) u.setRole(roleNode.get(0).asText(null));
+                }
+            }
+        }
         return Optional.of(u);
     }
 
@@ -404,15 +471,64 @@ public class KeycloakUserManagerImpl implements KeycloakUserManager {
                     u.setUsername(n.path("firstName").asText(null));
                     u.setEmail(n.path("email").asText(null));
                     u.setStatus(n.path("enabled").asBoolean(true) ? "active" : "inactive");
-                    // Attempt to read role from attributes (Keycloak may store attributes.role as string or array)
+                    // First try to populate User.role from Keycloak realm role-mappings
+                    // (preferred), fallback to attributes.role if mappings not present.
+                    String kcId = n.path("id").asText(null);
+                    if (kcId != null) {
+                        try {
+                            String rolesUrl = String.format("%s/admin/realms/%s/users/%s/role-mappings/realm",
+                                    keycloakUrl, realm, URLEncoder.encode(kcId, StandardCharsets.UTF_8));
+                            HttpRequest reqRoles = HttpRequest.newBuilder()
+                                    .uri(URI.create(rolesUrl))
+                                    .header("Authorization", "Bearer " + token)
+                                    .timeout(Duration.ofSeconds(5))
+                                    .GET()
+                                    .build();
+                            HttpResponse<String> respRoles = http.send(reqRoles, HttpResponse.BodyHandlers.ofString());
+                            if (respRoles.statusCode() == 200) {
+                                JsonNode roleArr = mapper.readTree(respRoles.body());
+                                if (roleArr.isArray() && roleArr.size() > 0) {
+                                    String fallback = null;
+                                    for (int i = 0; i < roleArr.size(); i++) {
+                                        JsonNode r = roleArr.get(i);
+                                        String roleName = r.path("name").asText(null);
+                                        if (roleName == null || roleName.isEmpty()) continue;
+                                        if (fallback == null) fallback = roleName;
+                                        String rn = roleName.toLowerCase();
+                                        if ("admin".equals(rn)) {
+                                            u.setRole("admin");
+                                            break;
+                                        } else if ("developer".equals(rn) || rn.contains("developer")) {
+                                            u.setRole("developer");
+                                        }
+                                    }
+                                    if (u.getRole() == null && fallback != null) {
+                                        u.setRole(fallback);
+                                    }
+                                }
+                            }
+                        } catch (Exception e) {
+                            logger.debug("Could not fetch realm role-mappings for user {}", kcId, e);
+                        }
+                    }
+
+                    // Fallback: read attributes.role if role still not set
                     JsonNode attrs = n.path("attributes");
-                    if (attrs != null && !attrs.isMissingNode()) {
+                    if (u.getRole() == null && attrs != null && !attrs.isMissingNode()) {
                         JsonNode roleNode = attrs.path("role");
                         if (roleNode != null && !roleNode.isMissingNode()) {
                             if (roleNode.isTextual()) {
                                 u.setRole(roleNode.asText(null));
                             } else if (roleNode.isArray() && roleNode.size() > 0) {
-                                u.setRole(roleNode.get(0).asText(null));
+                                for (int i = 0; i < roleNode.size(); i++) {
+                                    if ("admin".equals(roleNode.get(i).asText())) {
+                                        u.setRole(roleNode.get(i).asText(null));
+                                        break;
+                                    } else if ("developer".equals(roleNode.get(i).asText())) {
+                                        u.setRole(roleNode.get(i).asText(null));
+                                    }
+                                }
+                                if (u.getRole() == null) u.setRole(roleNode.get(0).asText(null));
                             }
                         }
                     }

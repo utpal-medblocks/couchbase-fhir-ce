@@ -39,6 +39,9 @@ public class SmartConfigurationController {
     @Value("${KEYCLOAK_PUBLIC_URL:}")
     private String keycloakPublicUrl;
 
+    @Value("${KEYCLOAK_TOKEN_PROXY_URL:}")
+    private String keycloakTokenProxyUrl;
+
     @Value("${app.baseUrl:}")
     private String appBaseUrl;
 
@@ -95,7 +98,11 @@ public class SmartConfigurationController {
                 String issuer = publicBase + "/auth/realms/" + AuthController.stripQuotes(keycloakRealm);
                 config.put("issuer", issuer);
                 config.put("authorization_endpoint", issuer + "/protocol/openid-connect/auth");
-                config.put("token_endpoint", issuer + "/protocol/openid-connect/token");
+                if (keycloakTokenProxyUrl != null && !keycloakTokenProxyUrl.isBlank()) {
+                    config.put("token_endpoint", keycloakTokenProxyUrl);
+                } else {
+                    config.put("token_endpoint", issuer + "/protocol/openid-connect/token");
+                }
                 config.put("introspection_endpoint", issuer + "/protocol/openid-connect/token/introspect");
                 config.put("revocation_endpoint", issuer + "/protocol/openid-connect/revoke");
                 config.put("jwks_uri", (keycloakJwksUri != null && !keycloakJwksUri.isBlank()) ? keycloakJwksUri : issuer + "/protocol/openid-connect/certs");

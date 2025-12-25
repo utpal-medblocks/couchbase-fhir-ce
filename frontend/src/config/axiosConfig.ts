@@ -9,7 +9,7 @@ import axios from "axios";
 axios.interceptors.request.use(
   (config) => {
     // Only add token to /api/admin/* endpoints
-    if (config.url?.startsWith("/api/admin")) {
+    // if (config.url?.startsWith("/api/admin")) {
       // Get token from localStorage (Zustand persists it there)
       const authStorage = localStorage.getItem("auth-storage");
       
@@ -25,7 +25,7 @@ axios.interceptors.request.use(
           console.error("Failed to parse auth token:", error);
         }
       }
-    }
+    // }
     
     return config;
   },

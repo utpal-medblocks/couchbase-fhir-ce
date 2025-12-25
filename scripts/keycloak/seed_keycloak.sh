@@ -54,6 +54,24 @@ else
     -d @"$(dirname "$0")/realm.json" | jq .
 fi
 
+# Ensure the realm has the desired login theme attached. If the realm exists, patch it; otherwise realm.json already
+# contained the loginTheme so creation above applied it.
+DESIRED_THEME="cbfhir-theme"
+echo "Ensuring realm has login theme set to '$DESIRED_THEME'"
+REALM_REPR=$(curl -s -H "Authorization: Bearer $ADMIN_TOKEN" "$API_BASE/$KEYCLOAK_REALM")
+CURRENT_THEME=$(echo "$REALM_REPR" | jq -r '.loginTheme // empty')
+if [ "$CURRENT_THEME" = "$DESIRED_THEME" ]; then
+  echo "Realm already configured with theme '$DESIRED_THEME'"
+else
+  echo "Patching realm to set loginTheme='$DESIRED_THEME'"
+  UPDATED=$(echo "$REALM_REPR" | jq --arg t "$DESIRED_THEME" '. + {loginTheme: $t}')
+  curl -s -X PUT "$API_BASE/$KEYCLOAK_REALM" \
+    -H "Authorization: Bearer $ADMIN_TOKEN" \
+    -H "Content-Type: application/json" \
+    -d "$UPDATED" >/dev/null
+  echo "Realm theme updated."
+fi
+
 # Create client (fhir-server) if not exists
 CLIENTS_URL="$API_BASE/$KEYCLOAK_REALM/clients"
 EXISTS=$(curl -s -H "Authorization: Bearer $ADMIN_TOKEN" "$CLIENTS_URL?clientId=${KEYCLOAK_CLIENT_ID}" | jq 'length')
@@ -147,3 +165,63 @@ JSON
 fi
 
 echo "Seeding complete."
+
+# --- Ensure SMART/FHIR client-scopes exist in the realm ---
+# These scopes mirror the scopes available in the frontend ClientRegistration UI.
+CLIENT_SCOPES_URL="$API_BASE/$KEYCLOAK_REALM/client-scopes"
+
+SCOPES=(
+  "openid"
+  "fhirUser"
+  "offline_access"
+  "launch/patient"
+  "launch"
+  "profile"
+  "user/*.read"
+  "user/*.write"
+  "system/*.read"
+  "system/*.write"
+  "patient/*.rs"
+  "patient/Medication.rs"
+  "patient/AllergyIntolerance.rs"
+  "patient/CarePlan.rs"
+  "patient/CareTeam.rs"
+  "patient/Condition.rs"
+  "patient/Coverage.rs"
+  "patient/Device.rs"
+  "patient/DiagnosticReport.rs"
+  "patient/DocumentReference.rs"
+  "patient/Encounter.rs"
+  "patient/Goal.rs"
+  "patient/Immunization.rs"
+  "patient/Location.rs"
+  "patient/MedicationDispense.rs"
+  "patient/MedicationRequest.rs"
+  "patient/Observation.rs"
+  "patient/Organization.rs"
+  "patient/Patient.rs"
+  "patient/Practitioner.rs"
+  "patient/PractitionerRole.rs"
+  "patient/Procedure.rs"
+  "patient/Provenance.rs"
+  "patient/RelatedPerson.rs"
+  "patient/ServiceRequest.rs"
+  "patient/Specimen.rs"
+)
+
+echo "Ensuring client-scopes for SMART/FHIR resources exist in realm '$KEYCLOAK_REALM'"
+for sc in "${SCOPES[@]}"; do
+  EXISTS=$(curl -s -H "Authorization: Bearer $ADMIN_TOKEN" "$CLIENT_SCOPES_URL" | jq --arg name "$sc" 'map(select(.name == $name)) | length')
+  if [ "$EXISTS" -gt 0 ]; then
+    echo "Client scope '$sc' already exists"
+  else
+    echo "Creating client scope: $sc"
+    PAYLOAD=$(jq -n --arg n "$sc" '{name: $n, protocol: "openid-connect"}')
+    curl -s -X POST "$CLIENT_SCOPES_URL" \
+      -H "Authorization: Bearer $ADMIN_TOKEN" \
+      -H "Content-Type: application/json" \
+      -d "$PAYLOAD" >/dev/null
+  fi
+done
+
+echo "Client-scope seeding complete."

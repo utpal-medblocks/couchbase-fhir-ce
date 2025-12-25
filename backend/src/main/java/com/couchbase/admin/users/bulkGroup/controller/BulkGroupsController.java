@@ -27,6 +27,20 @@ public class BulkGroupsController {
         logger.info("📋 Fetching all bulk groups");
         List<BulkGroup> groups = bulkGroupService.getAllBulkGroups();
         List<BulkGroupResponse> dto = groups.stream().map(BulkGroupResponse::from).toList();
+
+        // For each group, resolve patient display names so UI can render chips as name (id)
+        for (BulkGroupResponse g : dto) {
+            try {
+                java.util.List<String> pids = g.getPatientIds();
+                if (pids != null && !pids.isEmpty()) {
+                    java.util.Map<String, String> names = bulkGroupService.getPatientNamesForIds(pids);
+                    g.setPatientNames(names);
+                }
+            } catch (Exception e) {
+                logger.debug("Failed to populate patient names for bulk group {}: {}", g.getId(), e.getMessage());
+            }
+        }
+
         return ResponseEntity.ok(dto);
     }
 

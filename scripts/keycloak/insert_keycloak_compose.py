@@ -25,6 +25,7 @@ KEYCLOAK_SERVICE = {
         'KEYCLOAK_ADMIN_PASSWORD': '${KEYCLOAK_ADMIN_PASSWORD}',
         'KC_IMPORT': 'true',
         'KC_HEALTH_ENABLED': 'true',
+        'KC_FEATURES': 'token-exchange'
     },
     'ports': ['8081:8080'],
     'command': 'start-dev --http-relative-path=/auth',
@@ -32,6 +33,7 @@ KEYCLOAK_SERVICE = {
     # Use a Docker named volume for Keycloak data so the embedded H2 DB persists
     'volumes': [
         './scripts/keycloak/realm.json:/opt/keycloak/data/import/realm.json:ro',
+        './keycloak/themes:/opt/keycloak/themes:ro',
         'keycloak-data:/opt/keycloak/data',
     ],
 }
