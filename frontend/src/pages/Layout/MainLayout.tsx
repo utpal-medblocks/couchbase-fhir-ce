@@ -154,6 +154,13 @@ const menuItems = [
     adminOnly: true,
   },
   {
+    id: "bulk-groups",
+    label: "Bulk Groups",
+    icon: BsPeople,
+    path: "/bulk-groups",
+    adminOnly: true,
+  },
+  {
     id: "tokens",
     label: "API Tokens",
     icon: BsKey,

@@ -12,6 +12,8 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import org.springframework.web.bind.annotation.RequestHeader;
 
 /**
  * REST controller for API token management
@@ -33,7 +35,7 @@ public class TokensController {
      * Request body: { "appName": "My App", "scopes": ["patient/*.read", "patient/*.write"] }
      */
     @PostMapping
-    public ResponseEntity<?> generateToken(@RequestBody Map<String, Object> request) {
+    public ResponseEntity<?> generateToken(@RequestBody Map<String, Object> request, @RequestHeader(value = "Authorization", required = false) String authHeader) {
         try {
             Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
             String userId = (authentication != null && authentication.isAuthenticated()) ? authentication.getName() : "unknown";
@@ -52,7 +54,30 @@ public class TokensController {
             }
 
             logger.info("🔑 Generating JWT access token for user: {} (app: {})", userId, appName);
-            Map<String, Object> result = tokenService.generateToken(userId, appName, scopes, userId);
+
+            // Try to derive role from the authenticated principal to avoid Keycloak admin API calls
+            // String derivedRole = null;
+            // if (authentication != null) {
+            //     derivedRole = authentication.getAuthorities().stream()
+            //             .map(a -> a.getAuthority())
+            //             .filter(Objects::nonNull)
+            //             .map(String::toLowerCase)
+            //             .filter(s -> !s.isEmpty())
+            //             .filter(s -> s.contains("admin") || s.contains("developer") || s.contains("role_admin"))
+            //             .findFirst()
+            //             .orElse(null);
+
+            //     if (derivedRole != null && derivedRole.contains("admin")) derivedRole = "admin";
+            //     else if (derivedRole != null && derivedRole.contains("developer")) derivedRole = "developer";
+            // }
+
+            // Extract incoming Bearer token (if present) to allow Keycloak token-exchange
+            String subjectToken = null;
+            if (authHeader != null && authHeader.toLowerCase().startsWith("bearer ")) {
+                subjectToken = authHeader.substring(7).trim();
+            }
+
+            Map<String, Object> result = tokenService.generateTokenWithSubjectToken(userId, appName, scopes, userId, subjectToken);
 
             return ResponseEntity.status(HttpStatus.CREATED).body(result);
         } catch (Exception e) {

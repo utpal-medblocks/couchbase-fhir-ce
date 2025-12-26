@@ -54,6 +54,24 @@ else
     -d @"$(dirname "$0")/realm.json" | jq .
 fi
 
+# Ensure the realm has the desired login theme attached. If the realm exists, patch it; otherwise realm.json already
+# contained the loginTheme so creation above applied it.
+DESIRED_THEME="cbfhir-theme"
+echo "Ensuring realm has login theme set to '$DESIRED_THEME'"
+REALM_REPR=$(curl -s -H "Authorization: Bearer $ADMIN_TOKEN" "$API_BASE/$KEYCLOAK_REALM")
+CURRENT_THEME=$(echo "$REALM_REPR" | jq -r '.loginTheme // empty')
+if [ "$CURRENT_THEME" = "$DESIRED_THEME" ]; then
+  echo "Realm already configured with theme '$DESIRED_THEME'"
+else
+  echo "Patching realm to set loginTheme='$DESIRED_THEME'"
+  UPDATED=$(echo "$REALM_REPR" | jq --arg t "$DESIRED_THEME" '. + {loginTheme: $t}')
+  curl -s -X PUT "$API_BASE/$KEYCLOAK_REALM" \
+    -H "Authorization: Bearer $ADMIN_TOKEN" \
+    -H "Content-Type: application/json" \
+    -d "$UPDATED" >/dev/null
+  echo "Realm theme updated."
+fi
+
 # Create client (fhir-server) if not exists
 CLIENTS_URL="$API_BASE/$KEYCLOAK_REALM/clients"
 EXISTS=$(curl -s -H "Authorization: Bearer $ADMIN_TOKEN" "$CLIENTS_URL?clientId=${KEYCLOAK_CLIENT_ID}" | jq 'length')
@@ -68,14 +86,57 @@ else
   "publicClient": false,
   "protocol": "openid-connect",
   "redirectUris": ["http://localhost:8080/authorized"],
-  "serviceAccountsEnabled": true
+  "serviceAccountsEnabled": true,
+  "directAccessGrantsEnabled": true
 }
 JSON
   curl -s -X POST "$CLIENTS_URL" \
     -H "Authorization: Bearer $ADMIN_TOKEN" \
     -H "Content-Type: application/json" \
     -d @/tmp/client-payload.json
-  echo "Created client. Configure client secret via the Keycloak Admin UI or API if needed."
+  echo "Created client (requested direct access grants)."
+fi
+
+# Ensure the client has direct access grants enabled and a client secret (for confidential client)
+CLIENT_INTERNAL_ID=$(curl -s -H "Authorization: Bearer $ADMIN_TOKEN" "$CLIENTS_URL?clientId=${KEYCLOAK_CLIENT_ID}" | jq -r '.[0].id // empty')
+if [ -z "$CLIENT_INTERNAL_ID" ]; then
+  echo "Failed to locate internal client id for ${KEYCLOAK_CLIENT_ID}" >&2
+  exit 1
+fi
+
+echo "Configuring client (id=$CLIENT_INTERNAL_ID) to allow ROPC..."
+
+# Fetch current representation
+CLIENT_REPR=$(curl -s -H "Authorization: Bearer $ADMIN_TOKEN" "$CLIENTS_URL/$CLIENT_INTERNAL_ID")
+
+# Patch representation: enable directAccessGrantsEnabled and serviceAccountsEnabled, ensure publicClient=false
+UPDATED=$(echo "$CLIENT_REPR" | jq '. + {directAccessGrantsEnabled: true, serviceAccountsEnabled: true, publicClient: false}')
+
+if [ -n "${KEYCLOAK_CLIENT_SECRET:-}" ]; then
+  # If a secret is provided in env, set it explicitly
+  UPDATED=$(echo "$UPDATED" | jq --arg sec "$KEYCLOAK_CLIENT_SECRET" '. + {secret: $sec}')
+fi
+
+# Put updated representation back
+curl -s -X PUT "$CLIENTS_URL/$CLIENT_INTERNAL_ID" \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "$UPDATED" >/dev/null
+
+# If no client secret was provided, generate one via the client-secret endpoint
+if [ -z "${KEYCLOAK_CLIENT_SECRET:-}" ]; then
+  echo "No KEYCLOAK_CLIENT_SECRET provided; generating one via Keycloak API..."
+  GEN=$(curl -s -X POST "$CLIENTS_URL/$CLIENT_INTERNAL_ID/client-secret" \
+    -H "Authorization: Bearer $ADMIN_TOKEN" \
+    -H "Content-Type: application/json")
+  # Try common fields for returned secret
+  NEW_SECRET=$(echo "$GEN" | jq -r '.value // .secret.value // .secret // empty')
+  if [ -n "$NEW_SECRET" ]; then
+    echo "Generated client secret for ${KEYCLOAK_CLIENT_ID}: $NEW_SECRET"
+    echo "Update your .env KEYCLOAK_CLIENT_SECRET with this value for future runs."
+  else
+    echo "Warning: could not extract generated client secret from Keycloak response: $GEN" >&2
+  fi
 fi
 
 # Optionally create a test user if not present
@@ -90,6 +151,8 @@ else
 {
   "username": "${TEST_USER_EMAIL}",
   "enabled": true,
+  "firstName": "Smart",
+  "lastName": "User",
   "email": "${TEST_USER_EMAIL}",
   "credentials": [{"type":"password","value":"password123","temporary":false}]
 }
@@ -102,3 +165,63 @@ JSON
 fi
 
 echo "Seeding complete."
+
+# --- Ensure SMART/FHIR client-scopes exist in the realm ---
+# These scopes mirror the scopes available in the frontend ClientRegistration UI.
+CLIENT_SCOPES_URL="$API_BASE/$KEYCLOAK_REALM/client-scopes"
+
+SCOPES=(
+  "openid"
+  "fhirUser"
+  "offline_access"
+  "launch/patient"
+  "launch"
+  "profile"
+  "user/*.read"
+  "user/*.write"
+  "system/*.read"
+  "system/*.write"
+  "patient/*.rs"
+  "patient/Medication.rs"
+  "patient/AllergyIntolerance.rs"
+  "patient/CarePlan.rs"
+  "patient/CareTeam.rs"
+  "patient/Condition.rs"
+  "patient/Coverage.rs"
+  "patient/Device.rs"
+  "patient/DiagnosticReport.rs"
+  "patient/DocumentReference.rs"
+  "patient/Encounter.rs"
+  "patient/Goal.rs"
+  "patient/Immunization.rs"
+  "patient/Location.rs"
+  "patient/MedicationDispense.rs"
+  "patient/MedicationRequest.rs"
+  "patient/Observation.rs"
+  "patient/Organization.rs"
+  "patient/Patient.rs"
+  "patient/Practitioner.rs"
+  "patient/PractitionerRole.rs"
+  "patient/Procedure.rs"
+  "patient/Provenance.rs"
+  "patient/RelatedPerson.rs"
+  "patient/ServiceRequest.rs"
+  "patient/Specimen.rs"
+)
+
+echo "Ensuring client-scopes for SMART/FHIR resources exist in realm '$KEYCLOAK_REALM'"
+for sc in "${SCOPES[@]}"; do
+  EXISTS=$(curl -s -H "Authorization: Bearer $ADMIN_TOKEN" "$CLIENT_SCOPES_URL" | jq --arg name "$sc" 'map(select(.name == $name)) | length')
+  if [ "$EXISTS" -gt 0 ]; then
+    echo "Client scope '$sc' already exists"
+  else
+    echo "Creating client scope: $sc"
+    PAYLOAD=$(jq -n --arg n "$sc" '{name: $n, protocol: "openid-connect"}')
+    curl -s -X POST "$CLIENT_SCOPES_URL" \
+      -H "Authorization: Bearer $ADMIN_TOKEN" \
+      -H "Content-Type: application/json" \
+      -d "$PAYLOAD" >/dev/null
+  fi
+done
+
+echo "Client-scope seeding complete."

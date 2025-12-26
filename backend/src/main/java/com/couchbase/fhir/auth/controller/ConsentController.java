@@ -3,6 +3,7 @@ package com.couchbase.fhir.auth.controller;
 import jakarta.servlet.http.HttpServletResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.security.oauth2.core.endpoint.OAuth2ParameterNames;
 import org.springframework.security.oauth2.server.authorization.client.RegisteredClient;
 import org.springframework.security.oauth2.server.authorization.client.RegisteredClientRepository;
@@ -22,6 +23,7 @@ import java.util.stream.Collectors;
  * Required for SMART on FHIR authorization flow.
  */
 @Controller
+@ConditionalOnProperty(name = "app.security.use-keycloak", havingValue = "false", matchIfMissing = true)
 public class ConsentController {
     
     private static final Logger logger = LoggerFactory.getLogger(ConsentController.class);

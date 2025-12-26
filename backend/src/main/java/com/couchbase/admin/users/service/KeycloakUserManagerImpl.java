@@ -40,11 +40,20 @@ public class KeycloakUserManagerImpl implements KeycloakUserManager {
             @Value("${KEYCLOAK_ADMIN_USERNAME:admin}") String adminUser,
             @Value("${KEYCLOAK_ADMIN_PASSWORD:admin}") String adminPass
     ) {
-        this.keycloakUrl = keycloakUrl.endsWith("/") ? keycloakUrl.substring(0, keycloakUrl.length()-1) : keycloakUrl;
-        this.realm = realm;
-        this.adminUser = adminUser;
-        this.adminPass = adminPass;
+        this.keycloakUrl = stripQuotes(keycloakUrl).endsWith("/") ? stripQuotes(keycloakUrl).substring(0, stripQuotes(keycloakUrl).length()-1) : stripQuotes(keycloakUrl);
+        this.realm = stripQuotes(realm);
+        this.adminUser = stripQuotes(adminUser);
+        this.adminPass = stripQuotes(adminPass);
         this.http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
+    }
+
+    private static String stripQuotes(String s) {
+        if (s == null) return null;
+        String t = s.trim();
+        if ((t.startsWith("\"") && t.endsWith("\"")) || (t.startsWith("'") && t.endsWith("'"))) {
+            if (t.length() >= 2) t = t.substring(1, t.length() - 1);
+        }
+        return t;
     }
 
     // Obtain admin access token using admin-cli on master realm
@@ -56,11 +65,14 @@ public class KeycloakUserManagerImpl implements KeycloakUserManager {
             }
         } catch (Exception ignored) {}
 
+        String tokenUrl = keycloakUrl + "/realms/master/protocol/openid-connect/token";
+        String form = "grant_type=password&client_id=admin-cli&username=" +
+                URLEncoder.encode(adminUser, StandardCharsets.UTF_8) +
+                "&password=" + URLEncoder.encode(adminPass, StandardCharsets.UTF_8);
+
         try {
-            String tokenUrl = keycloakUrl + "/realms/master/protocol/openid-connect/token";
-            String form = "grant_type=password&client_id=admin-cli&username=" +
-                    URLEncoder.encode(adminUser, StandardCharsets.UTF_8) +
-                    "&password=" + URLEncoder.encode(adminPass, StandardCharsets.UTF_8);
+            System.out.format("Requesting Keycloak admin token from {} with client=admin-cli user={}", tokenUrl, adminUser);
+            System.out.format("Token request body (encoded): {}", form);
 
             HttpRequest req = HttpRequest.newBuilder()
                     .uri(URI.create(tokenUrl))
@@ -71,7 +83,13 @@ public class KeycloakUserManagerImpl implements KeycloakUserManager {
 
             HttpResponse<String> resp = http.send(req, HttpResponse.BodyHandlers.ofString());
             if (resp.statusCode() != 200) {
-                logger.error("Failed to obtain admin token: {} {}", resp.statusCode(), resp.body());
+                System.out.format("Keycloak token endpoint returned {}: {}", resp.statusCode(), resp.body());
+                // If we got an invalid_grant, attempt a minimal fallback using HttpURLConnection
+                if (resp.statusCode() == 400 && resp.body() != null && resp.body().contains("invalid_grant")) {
+                    System.out.format("Attempting fallback token request using HttpURLConnection due to invalid_grant response");
+                    Optional<String> fb = obtainAdminTokenViaUrlConnection(tokenUrl, form);
+                    if (fb.isPresent()) return fb;
+                }
                 return Optional.empty();
             }
             JsonNode json = mapper.readTree(resp.body());
@@ -81,7 +99,41 @@ public class KeycloakUserManagerImpl implements KeycloakUserManager {
             tokenExpiryEpochMs = System.currentTimeMillis() + (expiresIn * 1000L);
             return Optional.ofNullable(tok);
         } catch (Exception e) {
-            logger.error("Error obtaining Keycloak admin token", e);
+            System.out.format("Error obtaining Keycloak admin token via HttpClient, trying fallback", e);
+            Optional<String> fb = obtainAdminTokenViaUrlConnection(tokenUrl, form);
+            return fb;
+        }
+    }
+
+    // Fallback implementation using HttpURLConnection to rule out HttpClient differences
+    private Optional<String> obtainAdminTokenViaUrlConnection(String tokenUrl, String form) {
+        try {
+            System.out.format("Fallback: HttpURLConnection POST to {}", tokenUrl);
+            java.net.URL url = new java.net.URL(tokenUrl);
+            java.net.HttpURLConnection conn = (java.net.HttpURLConnection) url.openConnection();
+            conn.setConnectTimeout(10_000);
+            conn.setReadTimeout(10_000);
+            conn.setRequestMethod("POST");
+            conn.setDoOutput(true);
+            conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded");
+            try (java.io.OutputStream os = conn.getOutputStream()) {
+                os.write(form.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            }
+            int code = conn.getResponseCode();
+            java.io.InputStream is = (code >= 200 && code < 300) ? conn.getInputStream() : conn.getErrorStream();
+            String body = new String(is.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+            if (code != 200) {
+                System.out.format("Fallback token request returned {}: {}", code, body);
+                return Optional.empty();
+            }
+            JsonNode json = mapper.readTree(body);
+            String tok = json.path("access_token").asText(null);
+            long expiresIn = json.path("expires_in").asLong(60);
+            cachedToken = tok;
+            tokenExpiryEpochMs = System.currentTimeMillis() + (expiresIn * 1000L);
+            return Optional.ofNullable(tok);
+        } catch (Exception e) {
+            System.out.format("Fallback token request failed", e);
             return Optional.empty();
         }
     }
@@ -122,7 +174,22 @@ public class KeycloakUserManagerImpl implements KeycloakUserManager {
             body.put("username", user.getId());
             body.put("email", user.getEmail());
             body.put("enabled", true);
-            body.put("firstName", user.getUsername());
+            // derive firstName and lastName from username (split on whitespace)
+            String fullName = user.getUsername();
+            String firstName = fullName;
+            String lastName = "Doe";
+            if (fullName != null) {
+                String[] parts = fullName.trim().split("\\s+");
+                if (parts.length > 1) {
+                    firstName = parts[0];
+                    lastName = parts[parts.length - 1];
+                } else {
+                    firstName = fullName;
+                    lastName = "Doe";
+                }
+            }
+            body.put("firstName", firstName);
+            body.put("lastName", lastName);
             // attributes: map role/status
             ObjectNode attrs = mapper.createObjectNode();
             if (user.getRole() != null) attrs.put("role", user.getRole());
@@ -279,6 +346,73 @@ public class KeycloakUserManagerImpl implements KeycloakUserManager {
         u.setUsername(n.path("firstName").asText(null));
         u.setEmail(n.path("email").asText(null));
         u.setStatus(n.path("enabled").asBoolean(true) ? "active" : "inactive");
+        // First try to populate User.role from Keycloak realm role-mappings
+        // (preferred), fallback to attributes.role if mappings not present.
+        String kcId = n.path("id").asText(null);
+        if (kcId != null) {
+            try {
+                String rolesUrl = String.format("%s/admin/realms/%s/users/%s/role-mappings/realm",
+                        keycloakUrl, realm, URLEncoder.encode(kcId, StandardCharsets.UTF_8));
+                HttpRequest req = HttpRequest.newBuilder()
+                        .uri(URI.create(rolesUrl))
+                        .header("Authorization", "Bearer " + token)
+                        .timeout(Duration.ofSeconds(5))
+                        .GET()
+                        .build();
+                HttpResponse<String> resp = http.send(req, HttpResponse.BodyHandlers.ofString());
+                if (resp.statusCode() == 200) {
+                    JsonNode roleArr = mapper.readTree(resp.body());
+                    logger.info("[ROLES-getUserById] Found Roles ");
+                    logger.info(roleArr.toString());
+                    if (roleArr.isArray() && roleArr.size() > 0) {
+                        // roleArr contains role objects; prefer explicit 'admin' or 'developer' realm roles
+                        String fallback = null;
+                        for (int i = 0; i < roleArr.size(); i++) {
+                            JsonNode r = roleArr.get(i);
+                            String roleName = r.path("name").asText(null);
+                            if (roleName == null || roleName.isEmpty()) continue;
+                            if (fallback == null) fallback = roleName;
+                            String rn = roleName.toLowerCase();
+                            if ("admin".equals(rn)) {
+                                u.setRole("admin");
+                                break;
+                            } else if ("developer".equals(rn) || rn.contains("developer")) {
+                                u.setRole("developer");
+                                // continue searching in case 'admin' appears later
+                            }
+                        }
+                        if (u.getRole() == null && fallback != null) {
+                            u.setRole(fallback);
+                        }
+                        if (u.getRole() != null) logger.info("[ROLES-getUserById] selected role='{}'", u.getRole());
+                    }
+                }
+            } catch (Exception e) {
+                logger.debug("Could not fetch realm role-mappings for user {}", kcId, e);
+            }
+        }
+        // Fallback: read attributes.role if role still not set
+        if (u.getRole() == null) {
+            JsonNode attrs = n.path("attributes");
+            if (attrs != null && !attrs.isMissingNode()) {
+                JsonNode roleNode = attrs.path("role");
+                if (roleNode != null && !roleNode.isMissingNode()) {
+                    if (roleNode.isTextual()) {
+                        u.setRole(roleNode.asText(null));
+                    } else if (roleNode.isArray() && roleNode.size() > 0) {
+                       for(int i = 0; i < roleNode.size(); i++) {
+                         if(roleNode.get(i).asText().equals("admin")) {
+                           u.setRole(roleNode.get(i).asText(null));
+                           break;
+                         } else if (roleNode.get(i).asText().equals("developer"))
+                           u.setRole(roleNode.get(i).asText(null));
+                       }
+                    }
+
+                    if(u.getRole() == null) u.setRole(roleNode.get(0).asText(null));
+                }
+            }
+        }
         return Optional.of(u);
     }
 
@@ -337,6 +471,67 @@ public class KeycloakUserManagerImpl implements KeycloakUserManager {
                     u.setUsername(n.path("firstName").asText(null));
                     u.setEmail(n.path("email").asText(null));
                     u.setStatus(n.path("enabled").asBoolean(true) ? "active" : "inactive");
+                    // First try to populate User.role from Keycloak realm role-mappings
+                    // (preferred), fallback to attributes.role if mappings not present.
+                    String kcId = n.path("id").asText(null);
+                    if (kcId != null) {
+                        try {
+                            String rolesUrl = String.format("%s/admin/realms/%s/users/%s/role-mappings/realm",
+                                    keycloakUrl, realm, URLEncoder.encode(kcId, StandardCharsets.UTF_8));
+                            HttpRequest reqRoles = HttpRequest.newBuilder()
+                                    .uri(URI.create(rolesUrl))
+                                    .header("Authorization", "Bearer " + token)
+                                    .timeout(Duration.ofSeconds(5))
+                                    .GET()
+                                    .build();
+                            HttpResponse<String> respRoles = http.send(reqRoles, HttpResponse.BodyHandlers.ofString());
+                            if (respRoles.statusCode() == 200) {
+                                JsonNode roleArr = mapper.readTree(respRoles.body());
+                                if (roleArr.isArray() && roleArr.size() > 0) {
+                                    String fallback = null;
+                                    for (int i = 0; i < roleArr.size(); i++) {
+                                        JsonNode r = roleArr.get(i);
+                                        String roleName = r.path("name").asText(null);
+                                        if (roleName == null || roleName.isEmpty()) continue;
+                                        if (fallback == null) fallback = roleName;
+                                        String rn = roleName.toLowerCase();
+                                        if ("admin".equals(rn)) {
+                                            u.setRole("admin");
+                                            break;
+                                        } else if ("developer".equals(rn) || rn.contains("developer")) {
+                                            u.setRole("developer");
+                                        }
+                                    }
+                                    if (u.getRole() == null && fallback != null) {
+                                        u.setRole(fallback);
+                                    }
+                                }
+                            }
+                        } catch (Exception e) {
+                            logger.debug("Could not fetch realm role-mappings for user {}", kcId, e);
+                        }
+                    }
+
+                    // Fallback: read attributes.role if role still not set
+                    JsonNode attrs = n.path("attributes");
+                    if (u.getRole() == null && attrs != null && !attrs.isMissingNode()) {
+                        JsonNode roleNode = attrs.path("role");
+                        if (roleNode != null && !roleNode.isMissingNode()) {
+                            if (roleNode.isTextual()) {
+                                u.setRole(roleNode.asText(null));
+                            } else if (roleNode.isArray() && roleNode.size() > 0) {
+                                for (int i = 0; i < roleNode.size(); i++) {
+                                    if ("admin".equals(roleNode.get(i).asText())) {
+                                        u.setRole(roleNode.get(i).asText(null));
+                                        break;
+                                    } else if ("developer".equals(roleNode.get(i).asText())) {
+                                        u.setRole(roleNode.get(i).asText(null));
+                                    }
+                                }
+                                if (u.getRole() == null) u.setRole(roleNode.get(0).asText(null));
+                            }
+                        }
+                    }
                     out.add(u);
                 }
             }
@@ -359,7 +554,22 @@ public class KeycloakUserManagerImpl implements KeycloakUserManager {
         try {
             ObjectNode body = mapper.createObjectNode();
             body.put("email", updatedUser.getEmail());
-            body.put("firstName", updatedUser.getUsername());
+            // derive firstName and lastName from provided username
+            String updatedFull = updatedUser.getUsername();
+            String updatedFirst = updatedFull;
+            String updatedLast = "Doe";
+            if (updatedFull != null) {
+                String[] p = updatedFull.trim().split("\\s+");
+                if (p.length > 1) {
+                    updatedFirst = p[0];
+                    updatedLast = p[p.length - 1];
+                } else {
+                    updatedFirst = updatedFull;
+                    updatedLast = "Doe";
+                }
+            }
+            body.put("firstName", updatedFirst);
+            body.put("lastName", updatedLast);
             body.put("enabled", "active".equals(updatedUser.getStatus()));
             ObjectNode attrs = mapper.createObjectNode();
             if (updatedUser.getRole() != null) attrs.put("role", updatedUser.getRole());

@@ -34,15 +34,7 @@ fi
 
 echo "Keycloak is enabled. URL=$KEYCLOAK_URL realm=$KEYCLOAK_REALM"
 
-# 1) Insert Keycloak service into all docker-compose*.yml files using Python helper
-if python3 "$SCRIPT_DIR/keycloak/insert_keycloak_compose.py" "$ROOT_DIR"; then
-  echo "Compose files updated (if any)."
-else
-  echo "Failed to update compose files with Keycloak service."
-  exit 1
-fi
-
-# 2) Export env vars to .env (so docker-compose picks them up)
+# 1) Export env vars to .env (so docker-compose picks them up)
 ENV_FILE="$ROOT_DIR/.env"
 mkdir -p "$ROOT_DIR"
 if [ ! -f "$ENV_FILE" ]; then
@@ -75,6 +67,16 @@ set_env "KEYCLOAK_CLIENT_SECRET" "$KEYCLOAK_CLIENT_SECRET"
 set_env "KEYCLOAK_URL" "$KEYCLOAK_URL"
 set_env "KEYCLOAK_REALM" "$KEYCLOAK_REALM"
 set_env "KEYCLOAK_ENABLED" "true"
+
+# 2) Insert Keycloak service into all docker-compose*.yml files using Python helper
+if KEYCLOAK_ADMIN_USERNAME=$KEYCLOAK_ADMIN_USERNAME KEYCLOAK_ADMIN_PASSWORD=$KEYCLOAK_ADMIN_PASSWORD KEYCLOAK_REALM=$KEYCLOAK_REALM KEYCLOAK_CLIENT_ID=$KEYCLOAK_CLIENT_ID KEYCLOAK_CLIENT_SECRET=$KEYCLOAK_CLIENT_SECRET python3 "$SCRIPT_DIR/keycloak/insert_keycloak_compose.py" "$ROOT_DIR"; then
+  echo "Compose files updated (if any)."
+else
+  echo "Failed to update compose files with Keycloak service."
+  exit 1
+fi
+
+
 
 # Derive JWKS URI and store it in .env for application.yml consumption
 if [ -n "$KEYCLOAK_URL" ] && [ -n "$KEYCLOAK_REALM" ]; then
@@ -115,32 +117,14 @@ JSON
 
 echo "Wrote Keycloak realm import file to $REALM_FILE"
 
-# 3) Patch backend application.yml to include Keycloak JWKS and a toggle (if not already present)
+# 3) Patch backend application.yml to include resolved Keycloak properties (inject concrete values)
 APP_YML="$ROOT_DIR/backend/src/main/resources/application.yml"
 if [ -f "$APP_YML" ]; then
-  if grep -q "### Keycloak integration" "$APP_YML"; then
-    echo "application.yml already patched for Keycloak (found marker)."
-  else
-    echo "Patching $APP_YML to add Keycloak properties"
-    cp "$APP_YML" "$APP_YML.bak" || true
-    cat >> "$APP_YML" <<'AY'
-
-### Keycloak integration (managed by scripts/enable-keycloak.sh)
-app:
-  security:
-    use-keycloak: ${KEYCLOAK_ENABLED}
-
-spring:
-  security:
-    oauth2:
-      resourceserver:
-        jwt:
-          jwk-set-uri: ${KEYCLOAK_JWKS_URI}
-
-# The resource values above will be resolved from environment variables at runtime (docker-compose/.env)
-AY
-    echo "Patched $APP_YML (backup at $APP_YML.bak)."
-  fi
+  # Use Python helper to merge values safely (creates .bak if not present)
+  echo "Patching $APP_YML with Keycloak settings (use-keycloak=$KEYCLOAK_ENABLED)"
+  python3 "$SCRIPT_DIR/keycloak/patch_application_yml.py" "$APP_YML" "$KEYCLOAK_ENABLED" "${JWKS_URI:-}" || {
+    echo "Failed to patch $APP_YML with Keycloak settings" >&2
+  }
 else
   echo "Warning: $APP_YML not found; cannot patch application.yml" >&2
 fi
@@ -148,6 +132,11 @@ fi
 # 4) Suggest HAProxy changes (append guidance to haproxy.cfg if present)
 HAPROXY_CFG="$ROOT_DIR/haproxy.cfg"
 if [ -f "$HAPROXY_CFG" ]; then
+  # Backup haproxy.cfg before any changes
+  if [ ! -f "$HAPROXY_CFG.bak" ]; then
+    cp "$HAPROXY_CFG" "$HAPROXY_CFG.bak" || true
+  fi
+
   if grep -qE '^backend[ \t]+keycloak_backend' "$HAPROXY_CFG"; then
     echo "HAProxy already configured for Keycloak (marker found)."
   else

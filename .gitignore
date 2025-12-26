@@ -7,6 +7,11 @@
 # BlueJ files
 *.ctxt
 
+# Backup files
+*.yaml.bak
+*.yml.bak
+*.cfg.bak
+
 # Mobile Tools for Java (J2ME)
 .mtj.tmp/
 
@@ -104,3 +109,5 @@ coverage.xml
 copilot-instructions.md
 k8s-deployment-plan.md
 load-tests/requirements.txt
+
+docker-compose.local.yaml
