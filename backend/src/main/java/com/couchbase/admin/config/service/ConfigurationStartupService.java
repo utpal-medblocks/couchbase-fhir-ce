@@ -235,6 +235,73 @@ public class ConfigurationStartupService {
             logger.info("🔐 Admin UI credentials loaded from config.yaml");
         }
 
+        // Extract Keycloak configuration and set as system properties / environment variables
+        @SuppressWarnings("unchecked")
+        Map<String, Object> keycloakConfig = (Map<String, Object>) yamlData.get("keycloak");
+        if (keycloakConfig != null && Boolean.TRUE.equals(keycloakConfig.get("enabled"))) {
+            logger.info("🔐 Keycloak integration enabled in config.yaml");
+            
+            // Set USE_KEYCLOAK flag
+            System.setProperty("USE_KEYCLOAK", "true");
+            
+            // Extract and set Keycloak properties
+            if (keycloakConfig.get("url") != null) {
+                String keycloakUrl = String.valueOf(keycloakConfig.get("url"));
+                System.setProperty("KEYCLOAK_URL", keycloakUrl);
+                logger.info("   🔗 Keycloak URL: {}", keycloakUrl);
+            }
+            
+            if (keycloakConfig.get("realm") != null) {
+                String realm = String.valueOf(keycloakConfig.get("realm"));
+                System.setProperty("KEYCLOAK_REALM", realm);
+                logger.info("   🏛️  Keycloak Realm: {}", realm);
+            }
+            
+            if (keycloakConfig.get("adminUsername") != null) {
+                System.setProperty("KEYCLOAK_ADMIN_USERNAME", String.valueOf(keycloakConfig.get("adminUsername")));
+            }
+            
+            if (keycloakConfig.get("adminPassword") != null) {
+                System.setProperty("KEYCLOAK_ADMIN_PASSWORD", String.valueOf(keycloakConfig.get("adminPassword")));
+            }
+            
+            if (keycloakConfig.get("clientId") != null) {
+                System.setProperty("KEYCLOAK_CLIENT_ID", String.valueOf(keycloakConfig.get("clientId")));
+                logger.info("   🔑 Keycloak Client ID: {}", keycloakConfig.get("clientId"));
+            }
+            
+            if (keycloakConfig.get("clientSecret") != null) {
+                System.setProperty("KEYCLOAK_CLIENT_SECRET", String.valueOf(keycloakConfig.get("clientSecret")));
+                logger.info("   🔑 Keycloak Client Secret: [REDACTED]");
+            }
+            
+            // Construct JWKS URI from URL and realm
+            String keycloakUrl = System.getProperty("KEYCLOAK_URL");
+            String realm = System.getProperty("KEYCLOAK_REALM");
+            if (keycloakUrl != null && realm != null) {
+                String jwksUri = keycloakUrl + "/realms/" + realm + "/protocol/openid-connect/certs";
+                System.setProperty("KEYCLOAK_JWKS_URI", jwksUri);
+                logger.info("   🔐 Keycloak JWKS URI: {}", jwksUri);
+            }
+            
+            // Set public URL if specified, otherwise derive from app.baseUrl
+            if (keycloakConfig.get("publicUrl") != null) {
+                System.setProperty("KEYCLOAK_PUBLIC_URL", String.valueOf(keycloakConfig.get("publicUrl")));
+            } else if (appConfig != null && appConfig.get("baseUrl") != null) {
+                // Default: use app baseUrl + /auth path
+                String baseUrl = String.valueOf(appConfig.get("baseUrl"));
+                String publicUrl = baseUrl.replaceFirst("/fhir$", "") + "/auth";
+                System.setProperty("KEYCLOAK_PUBLIC_URL", publicUrl);
+                logger.info("   🌐 Keycloak Public URL (derived): {}", publicUrl);
+            }
+            
+            logger.info("✅ Keycloak configuration loaded from config.yaml");
+        } else {
+            // Keycloak not enabled or not present - ensure USE_KEYCLOAK is false
+            System.setProperty("USE_KEYCLOAK", "false");
+            logger.info("ℹ️  Keycloak integration disabled - using embedded Spring Authorization Server");
+        }
+
         // CORS configuration is now in application.yml (not config.yaml)
         // See backend/src/main/resources/application.yml for CORS settings
         logger.info("ℹ️  CORS configuration is managed in application.yml (default: allow all origins)");

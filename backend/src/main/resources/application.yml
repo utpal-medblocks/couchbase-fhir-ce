@@ -3,11 +3,13 @@ spring:
     name: backend
   config:
     import: classpath:fhir.yml
+  # Keycloak JWT configuration - only active when app.security.use-keycloak=true
+  # KEYCLOAK_JWKS_URI is set via System.setProperty from config.yaml during startup
   security:
     oauth2:
       resourceserver:
         jwt:
-          jwk-set-uri: http://keycloak:8080/auth/realms/fhir/protocol/openid-connect/certs
+          jwk-set-uri: ${KEYCLOAK_JWKS_URI:}
   # Enable Virtual Threads (Java 21+)
   # Eliminates thread pool exhaustion under high concurrency (1000+ concurrent users)
   # Virtual threads are lightweight and yield during I/O operations (Couchbase queries, JSON parsing)
@@ -21,7 +23,7 @@ spring:
 app:
   baseUrl: ${APP_BASE_URL:http://localhost}
   security:
-    use-keycloak: true
+    use-keycloak: ${USE_KEYCLOAK:false} # Default to embedded server, override from config.yaml
 cors:
   allowed-origins: ${CORS_ALLOWED_ORIGINS:*}
   allowed-methods: ${CORS_ALLOWED_METHODS:GET,POST,PUT,DELETE,OPTIONS}
@@ -72,13 +74,13 @@ server:
 # Logging configuration for containers
 logging:
   level:
-    '[ca.uhn.fhir.rest.server.RestfulServer]': false
-    '[org.apache.catalina]': ERROR
-    '[org.apache.catalina.connector]': false
-    '[org.springframework.security]': ERROR
-    '[org.springframework.security.oauth2]': ERROR
-    '[org.springframework.web.servlet]': ERROR
-    '[com.couchbase.transactions]': ERROR
+    "[ca.uhn.fhir.rest.server.RestfulServer]": false
+    "[org.apache.catalina]": ERROR
+    "[org.apache.catalina.connector]": false
+    "[org.springframework.security]": ERROR
+    "[org.springframework.security.oauth2]": ERROR
+    "[org.springframework.web.servlet]": ERROR
+    "[com.couchbase.transactions]": ERROR
   pattern:
     console: "%d{HH:mm:ss.SSS} %-5level %logger{20} - %msg%n"
 # The resource values above will be resolved from environment variables at runtime (docker-compose/.env)

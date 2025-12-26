@@ -267,15 +267,8 @@
         <input type="hidden" name="client_id" th:value="${client_id}" />
         <input type="hidden" name="state" th:value="${state}" />
 
-        <!-- Each scope needs to be a checkbox for Spring Authorization Server consent handling -->
-        <div th:each="scopeItem : ${scopes}" style="display: none">
-          <input
-            type="checkbox"
-            name="scope"
-            th:value="${scopeItem.scope}"
-            checked="checked"
-          />
-        </div>
+        <!-- Dynamic scope field updated by JavaScript based on user selection -->
+        <input type="hidden" id="finalScope" name="scope" value="" />
 
         <div class="actions">
           <button type="submit" name="cancel" class="btn-deny">Deny</button>
