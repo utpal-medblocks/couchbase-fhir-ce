@@ -48,13 +48,13 @@ import {
   Block as BlockIcon,
 } from "@mui/icons-material";
 import { BsKey } from "react-icons/bs";
-import type { OAuthClient } from "../../services/oauthClientService";
+import type { OAuthClient } from "../../services/oauthClientApi";
 import {
   getAllClients,
   createClient as createClientAPI,
   revokeClient as revokeClientAPI,
   deleteClient as deleteClientAPI,
-} from "../../services/oauthClientService";
+} from "../../services/oauthClientApi";
 
 // OAuth Client interface (will be shared with backend later)
 interface OAuthClientForm {
@@ -74,6 +74,12 @@ interface OAuthClientForm {
   createdAt: string;
   lastUsed?: string;
 }
+
+import { useLocation, useNavigate } from "react-router-dom";
+import oauthClientService from "../../services/oauthClientApi";
+import BulkGroupAttachModal from "../../components/BulkGroupAttachModal";
+import { decodeIntent, encodeIntent } from "../../utils/intent";
+import GroupAddIcon from '@mui/icons-material/GroupAdd';
 
 // Mandatory SMART scopes factory (cannot be removed)
 const getMandatoryScopes = (clientType: "patient" | "provider" | "system") => {
@@ -206,6 +212,34 @@ const ClientRegistration: React.FC = () => {
   const [selectedClient, setSelectedClient] = useState<OAuthClient | null>(
     null
   );
+  // Bulk group attach modal state
+  const [attachModalOpen, setAttachModalOpen] = useState(false);
+  const [attachClientId, setAttachClientId] = useState<string | null>(null);
+  const [initialAttachGroups, setInitialAttachGroups] = useState<any[] | null>(null);
+  const [initialSelectedGroupId, setInitialSelectedGroupId] = useState<string | undefined>(undefined);
+  const navigate = useNavigate();
+  const location = useLocation();
+
+  useEffect(() => {
+    // handle intent_response when redirected back from BulkGroups
+    const q = new URLSearchParams(location.search);
+    const enc = q.get('intent_response');
+    if (enc) {
+      const resp = decodeIntent(enc);
+      if (resp && resp.action === 'bulk_group_created' && resp.clientId && resp.group) {
+        // Instead of auto-attaching, open the attach modal and preselect the created group
+        setAttachClientId(resp.clientId);
+        setInitialAttachGroups([resp.group]);
+        setInitialSelectedGroupId(resp.group.id);
+        setAttachModalOpen(true);
+
+        // remove the intent_response from URL so it doesn't trigger again
+        const params = new URLSearchParams(location.search);
+        params.delete('intent_response');
+        navigate({ pathname: location.pathname, search: params.toString() }, { replace: true } as any);
+      }
+    }
+  }, []);
   // New scopes UI state
   const [scopeMode, setScopeMode] = useState<"custom" | "all-read" | "us-core">(
     "custom"
@@ -440,6 +474,7 @@ const ClientRegistration: React.FC = () => {
                     <TableCell>Launch</TableCell>
                     <TableCell>Auth</TableCell>
                     <TableCell>Status</TableCell>
+                    <TableCell>Bulk Group</TableCell>
                     <TableCell>Created</TableCell>
                     <TableCell align="right">Actions</TableCell>
                   </TableRow>
@@ -496,8 +531,30 @@ const ClientRegistration: React.FC = () => {
                         />
                       </TableCell>
                       <TableCell>
+                        {client.bulkGroupId ? (
+                          <Chip
+                            label={client.bulkGroupId}
+                            size="small"
+                            clickable
+                            color="primary"
+                            onClick={() => {
+                              const intent = {
+                                intent_type: 'highlight_bulk_group',
+                                groupId: client.bulkGroupId,
+                                flashCount: 20,
+                                sourcePath: '/clients',
+                              };
+                              const enc = encodeIntent(intent);
+                              navigate(`/bulk-groups?intent=${enc}`);
+                            }}
+                          />
+                        ) : (
+                          <Typography variant="caption" color="text.secondary">—</Typography>
+                        )}
+                      </TableCell>
+                      <TableCell>
                         <Typography variant="caption">
-                          {new Date(client.createdAt).toLocaleDateString()}
+                          {client.createdAt ? new Date(client.createdAt).toLocaleDateString() : '-'}
                         </Typography>
                       </TableCell>
                       <TableCell align="right">
@@ -522,6 +579,19 @@ const ClientRegistration: React.FC = () => {
                             </IconButton>
                           </span>
                         </Tooltip>
+                        {(client.clientType === 'provider' || client.clientType === 'system') && (
+                          <Tooltip title="Attach bulk group">
+                            <IconButton
+                              size="small"
+                              onClick={() => {
+                                setAttachClientId(client.clientId);
+                                setAttachModalOpen(true);
+                              }}
+                            >
+                              <GroupAddIcon fontSize="small" />
+                            </IconButton>
+                          </Tooltip>
+                        )}
                         <Tooltip title="Permanently delete">
                           <IconButton
                             size="small"
@@ -1128,6 +1198,25 @@ const ClientRegistration: React.FC = () => {
         autoHideDuration={2000}
         onClose={() => setCopySnackbar(false)}
         message="Copied to clipboard!"
+      />
+      <BulkGroupAttachModal
+        open={attachModalOpen}
+        onClose={() => {
+          setAttachModalOpen(false);
+          setInitialAttachGroups(null);
+          setInitialSelectedGroupId(undefined);
+          setAttachClientId(null);
+        }}
+        clientId={attachClientId || ''}
+        initialGroups={initialAttachGroups || undefined}
+        initialSelectedGroupId={initialSelectedGroupId}
+        onAttached={async (updated) => {
+          await loadClients();
+          setAttachModalOpen(false);
+          setInitialAttachGroups(null);
+          setInitialSelectedGroupId(undefined);
+          setAttachClientId(null);
+        }}
       />
     </Box>
   );

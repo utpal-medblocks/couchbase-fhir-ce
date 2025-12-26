@@ -25,11 +25,17 @@ KEYCLOAK_SERVICE = {
         'KEYCLOAK_ADMIN_PASSWORD': '${KEYCLOAK_ADMIN_PASSWORD}',
         'KC_IMPORT': 'true',
         'KC_HEALTH_ENABLED': 'true',
+        'KC_FEATURES': 'token-exchange'
     },
     'ports': ['8081:8080'],
     'command': 'start-dev --http-relative-path=/auth',
     'restart': 'unless-stopped',
-    'volumes': ['./scripts/keycloak/realm.json:/opt/keycloak/data/import/realm.json:ro'],
+    # Use a Docker named volume for Keycloak data so the embedded H2 DB persists
+    'volumes': [
+        './scripts/keycloak/realm.json:/opt/keycloak/data/import/realm.json:ro',
+        './keycloak/themes:/opt/keycloak/themes:ro',
+        'keycloak-data:/opt/keycloak/data',
+    ],
 }
 
 
@@ -57,6 +63,35 @@ def process_file(path):
 
     # Insert keycloak service
     services['keycloak'] = KEYCLOAK_SERVICE
+
+    # Ensure a top-level named volume exists so Docker will manage persistence
+    if 'volumes' not in data or data['volumes'] is None:
+        data['volumes'] = {}
+    if 'keycloak-data' not in data['volumes']:
+        data['volumes']['keycloak-data'] = {}
+
+    services['fhir-server']['depends_on'] = ["keycloak"]
+
+    if not 'environment' in services['fhir-server']:
+        services['fhir-server']['environment'] = {}
+    if isinstance(services['fhir-server']['environment'],dict):
+        services['fhir-server']['environment']['KEYCLOAK_JWKS_URI'] = "http://keycloak:8080/auth/realms/fhir/protocol/openid-connect/certs"
+        services['fhir-server']['environment']['KEYCLOAK_URL'] = "http://keycloak:8080/auth"
+        services['fhir-server']['environment']['KEYCLOAK_REALM'] = os.getenv("KEYCLOAK_REALM")
+        services['fhir-server']['environment']['KEYCLOAK_ADMIN_USERNAME'] = os.getenv("KEYCLOAK_ADMIN_USERNAME")
+        services['fhir-server']['environment']['KEYCLOAK_ADMIN_PASSWORD'] = os.getenv("KEYCLOAK_ADMIN_PASSWORD")
+        services['fhir-server']['environment']['KEYCLOAK_CLIENT_ID'] = os.getenv("KEYCLOAK_CLIENT_ID")
+        services['fhir-server']['environment']['KEYCLOAK_CLIENT_SECRET'] = os.getenv("KEYCLOAK_CLIENT_SECRET")
+        
+    if isinstance(services['fhir-server']['environment'],list):
+        services['fhir-server']['environment'].append(f"KEYCLOAK_JWKS_URI=http://keycloak:8080/auth/realms/fhir/protocol/openid-connect/certs")
+        services['fhir-server']['environment'].append(f"KEYCLOAK_URL=http://keycloak:8080/auth")
+        services['fhir-server']['environment'].append(f'KEYCLOAK_REALM="{os.getenv("KEYCLOAK_REALM")}"')
+        services['fhir-server']['environment'].append(f'KEYCLOAK_ADMIN_USERNAME="{os.getenv("KEYCLOAK_ADMIN_USERNAME")}"')
+        services['fhir-server']['environment'].append(f'KEYCLOAK_ADMIN_PASSWORD="{os.getenv("KEYCLOAK_ADMIN_PASSWORD")}"')
+        services['fhir-server']['environment'].append(f'KEYCLOAK_CLIENT_ID="{os.getenv("KEYCLOAK_CLIENT_ID")}"')
+        services['fhir-server']['environment'].append(f'KEYCLOAK_CLIENT_SECRET="{os.getenv("KEYCLOAK_CLIENT_SECRET")}"')
+    
 
     # Backup original
     try:

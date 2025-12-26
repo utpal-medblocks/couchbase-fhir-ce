@@ -44,7 +44,7 @@ public class SmartConfigurationFilter extends OncePerRequestFilter {
             
             try {
                 // Call the controller to get the configuration
-                var configResponse = smartConfigController.getSmartConfiguration();
+                var configResponse = smartConfigController.getSmartConfiguration(request);
                 
                 // Write JSON response
                 response.setContentType("application/json");

@@ -1,0 +1,62 @@
+spring:
+  application:
+    name: backend
+  config:
+    import: classpath:fhir.yml
+  
+app:
+  baseUrl: ${APP_BASE_URL:http://localhost:8080/fhir}
+
+cors:
+  allowed-origins: ${CORS_ALLOWED_ORIGINS:*}
+  allowed-methods: ${CORS_ALLOWED_METHODS:GET,POST,PUT,DELETE,OPTIONS}
+  allowed-headers: ${CORS_ALLOWED_HEADERS:*}
+server:
+  compression:
+    enabled: true
+    mime-types: application/json,application/fhir+json,text/html,text/xml,text/plain,application/xml
+    min-response-size: 1024
+  servlet:
+    session:
+      cookie:
+        same-site: none
+        secure: true
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,mappings,beans
+      base-path: /actuator
+  endpoint:
+    health:
+      show-details: always
+      show-components: always
+---
+spring:
+  config:
+    activate:
+      on-profile: prod
+server:
+  error:
+    include-stacktrace: never
+    include-message: on-param
+    include-binding-errors: never
+    include-exception: false
+  compression:
+    enabled: true
+    mime-types: application/json,application/fhir+json,text/html,text/xml,text/plain,application/xml
+    min-response-size: 1024
+  tomcat:
+    accesslog:
+      enabled: false
+logging:
+  level:
+    '[ca.uhn.fhir.rest.server.RestfulServer]': false
+    '[org.apache.catalina]': ERROR
+    '[org.apache.catalina.connector]': false
+    '[org.springframework.security]': ERROR
+    '[org.springframework.security.oauth2]': ERROR
+    '[org.springframework.web.servlet]': ERROR
+    '[com.couchbase.transactions]': ERROR
+  pattern:
+    console: '%d{HH:mm:ss.SSS} %-5level %logger{20} - %msg%n'
