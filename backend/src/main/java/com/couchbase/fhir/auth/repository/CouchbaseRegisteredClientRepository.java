@@ -101,11 +101,19 @@ public class CouchbaseRegisteredClientRepository implements RegisteredClientRepo
         }
         
         // Authorization grant types
-        builder.authorizationGrantType(AuthorizationGrantType.AUTHORIZATION_CODE);
-        
-        // Add refresh token grant if offline_access scope is requested
-        if (client.getScopes() != null && client.getScopes().contains("offline_access")) {
-            builder.authorizationGrantType(AuthorizationGrantType.REFRESH_TOKEN);
+        // System apps use client_credentials, others use authorization_code
+        if ("system".equals(client.getClientType())) {
+            // System/Backend Service - client_credentials grant (no user interaction)
+            builder.authorizationGrantType(AuthorizationGrantType.CLIENT_CREDENTIALS);
+            logger.debug("🔧 System app: enabling client_credentials grant for {}", client.getClientId());
+        } else {
+            // Patient/Provider apps - authorization_code grant (interactive)
+            builder.authorizationGrantType(AuthorizationGrantType.AUTHORIZATION_CODE);
+            
+            // Add refresh token grant if offline_access scope is requested
+            if (client.getScopes() != null && client.getScopes().contains("offline_access")) {
+                builder.authorizationGrantType(AuthorizationGrantType.REFRESH_TOKEN);
+            }
         }
         
         // Redirect URIs
@@ -124,7 +132,9 @@ public class CouchbaseRegisteredClientRepository implements RegisteredClientRepo
         
         // Client settings
         ClientSettings.Builder clientSettingsBuilder = ClientSettings.builder()
-            .requireAuthorizationConsent(true) // Always require consent for SMART apps
+            // System apps don't need consent (no user interaction)
+            // Patient/Provider apps require consent
+            .requireAuthorizationConsent(!"system".equals(client.getClientType()))
             .requireProofKey(client.isPkceEnabled()); // PKCE requirement
         
         builder.clientSettings(clientSettingsBuilder.build());

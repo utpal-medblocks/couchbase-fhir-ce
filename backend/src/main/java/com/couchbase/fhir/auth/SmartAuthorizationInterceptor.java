@@ -139,13 +139,25 @@ public class SmartAuthorizationInterceptor {
         
         logger.debug("✅ Authorized: {} for {} {}", authentication.getName(), operation, resourceType);
         
-        // Additional patient-scope filtering - ENFORCE patient context
+        // System-scoped tokens have full access (no patient/user context restrictions)
+        if (scopeValidator.hasSystemScope(authentication)) {
+            logger.debug("🔓 System-scoped request: full access granted (no context restrictions)");
+            return; // Skip all context enforcement for system/* scopes
+        }
+        
+        // Patient-scope filtering - ENFORCE patient context
         if (scopeValidator.hasPatientScope(authentication)) {
             String patientContext = scopeValidator.getPatientContext(authentication);
             if (patientContext != null) {
                 logger.debug("📋 Patient-scoped request: enforcing patient context {}", patientContext);
                 enforcePatientContext(theRequestDetails, resourceType, operationType, patientContext);
             }
+        }
+        
+        // User-scope filtering - TODO: Implement provider/clinician context enforcement
+        if (scopeValidator.hasUserScope(authentication)) {
+            logger.debug("👤 User-scoped request: user context enforcement not yet implemented");
+            // TODO: Implement fhirUser-based access control (care team, organization, etc.)
         }
 
         // Enforce bulk-group restrictions for app clients (apz claim starting with "app-")

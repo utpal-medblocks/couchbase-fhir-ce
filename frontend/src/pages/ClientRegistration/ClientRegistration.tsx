@@ -83,6 +83,11 @@ import GroupAddIcon from "@mui/icons-material/GroupAdd";
 
 // Mandatory SMART scopes factory (cannot be removed)
 const getMandatoryScopes = (clientType: "patient" | "provider" | "system") => {
+  // System apps don't need interactive scopes (no user, no launch, no browser)
+  if (clientType === "system") {
+    return []; // System apps use client_credentials - no mandatory scopes
+  }
+
   const base = [
     {
       value: "openid",
@@ -115,34 +120,55 @@ const getMandatoryScopes = (clientType: "patient" | "provider" | "system") => {
   return [launchScope, ...base];
 };
 
-// US Core resource scopes for ONC certification (25 resources)
-const US_CORE_RESOURCE_SCOPES = [
-  "patient/Medication.rs",
-  "patient/AllergyIntolerance.rs",
-  "patient/CarePlan.rs",
-  "patient/CareTeam.rs",
-  "patient/Condition.rs",
-  "patient/Coverage.rs",
-  "patient/Device.rs",
-  "patient/DiagnosticReport.rs",
-  "patient/DocumentReference.rs",
-  "patient/Encounter.rs",
-  "patient/Goal.rs",
-  "patient/Immunization.rs",
-  "patient/Location.rs",
-  "patient/MedicationDispense.rs",
-  "patient/MedicationRequest.rs",
-  "patient/Observation.rs",
-  "patient/Organization.rs",
-  "patient/Patient.rs",
-  "patient/Practitioner.rs",
-  "patient/PractitionerRole.rs",
-  "patient/Procedure.rs",
-  "patient/Provenance.rs",
-  "patient/RelatedPerson.rs",
-  "patient/ServiceRequest.rs",
-  "patient/Specimen.rs",
-];
+// Helper function to get scope prefix based on client type
+const getScopePrefix = (clientType: "patient" | "provider" | "system") => {
+  switch (clientType) {
+    case "patient":
+      return "patient";
+    case "provider":
+      return "user";
+    case "system":
+      return "system";
+    default:
+      return "patient";
+  }
+};
+
+// Helper function to get US Core scopes with correct prefix
+const getUSCoreScopes = (clientType: "patient" | "provider" | "system") => {
+  const prefix = getScopePrefix(clientType);
+  const resources = [
+    "Medication",
+    "AllergyIntolerance",
+    "CarePlan",
+    "CareTeam",
+    "Condition",
+    "Coverage",
+    "Device",
+    "DiagnosticReport",
+    "DocumentReference",
+    "Encounter",
+    "Goal",
+    "Immunization",
+    "Location",
+    "MedicationDispense",
+    "MedicationRequest",
+    "Observation",
+    "Organization",
+    "Patient",
+    "Practitioner",
+    "PractitionerRole",
+    "Procedure",
+    "Provenance",
+    "RelatedPerson",
+    "ServiceRequest",
+    "Specimen",
+  ];
+  return resources.map((r) => `${prefix}/${r}.rs`);
+};
+
+// Legacy: kept for backwards compatibility
+const US_CORE_RESOURCE_SCOPES = getUSCoreScopes("patient");
 
 // Additional optional scopes
 const OPTIONAL_SCOPES = [
@@ -336,10 +362,11 @@ const ClientRegistration: React.FC = () => {
     if (mode === "custom") {
       setScopesText("");
     } else if (mode === "all-read") {
-      // Single-patient: prefer read-only (SMART v2 format: .rs = read+search)
-      setScopesText("patient/*.rs");
+      const prefix = getScopePrefix(formData.clientType);
+      setScopesText(`${prefix}/*.rs`);
     } else if (mode === "us-core") {
-      setScopesText(US_CORE_RESOURCE_SCOPES.join(" "));
+      const usCoreScopes = getUSCoreScopes(formData.clientType);
+      setScopesText(usCoreScopes.join(" "));
     }
   };
 
@@ -357,10 +384,27 @@ const ClientRegistration: React.FC = () => {
       setError("App name is required");
       return;
     }
-    if (formData.redirectUris.length === 0) {
-      setError("At least one redirect URI is required");
+
+    // System apps: require confidential authentication
+    if (
+      formData.clientType === "system" &&
+      formData.authenticationType !== "confidential"
+    ) {
+      setError(
+        "System apps must use confidential authentication (client_credentials flow requires a secret)"
+      );
       return;
     }
+
+    // Patient/Provider apps: require redirect URIs
+    if (
+      formData.clientType !== "system" &&
+      formData.redirectUris.length === 0
+    ) {
+      setError("At least one redirect URI is required for interactive apps");
+      return;
+    }
+
     // Build final scopes: mandatory + parsed from textarea
     const mandatoryScopes = getMandatoryScopes(formData.clientType).map(
       (s) => s.value
@@ -680,7 +724,12 @@ const ClientRegistration: React.FC = () => {
                   value={formData.clientType}
                   onChange={(_, newValue) => {
                     if (newValue) {
-                      setFormData({ ...formData, clientType: newValue });
+                      // Force confidential auth for system apps
+                      const updates: any = { clientType: newValue };
+                      if (newValue === "system") {
+                        updates.authenticationType = "confidential";
+                      }
+                      setFormData({ ...formData, ...updates });
                     }
                   }}
                 >
@@ -701,43 +750,45 @@ const ClientRegistration: React.FC = () => {
               </Typography>
             </FormControl>
 
-            {/* Launch Type */}
-            <FormControl component="fieldset">
-              <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
-                <FormLabel component="legend" sx={{ mb: 0 }}>
-                  Launch Type
-                </FormLabel>
-                <ToggleButtonGroup
-                  exclusive
-                  size="small"
-                  color="primary"
-                  value={formData.launchType}
-                  onChange={(_, newValue) => {
-                    if (newValue) {
-                      setFormData({ ...formData, launchType: newValue });
-                    }
-                  }}
-                >
-                  <ToggleButton
-                    value="standalone"
-                    sx={{ textTransform: "none" }}
+            {/* Launch Type - Hide for system apps */}
+            {formData.clientType !== "system" && (
+              <FormControl component="fieldset">
+                <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
+                  <FormLabel component="legend" sx={{ mb: 0 }}>
+                    Launch Type
+                  </FormLabel>
+                  <ToggleButtonGroup
+                    exclusive
+                    size="small"
+                    color="primary"
+                    value={formData.launchType}
+                    onChange={(_, newValue) => {
+                      if (newValue) {
+                        setFormData({ ...formData, launchType: newValue });
+                      }
+                    }}
                   >
-                    Standalone Launch
-                  </ToggleButton>
-                  <ToggleButton
-                    value="ehr-launch"
-                    disabled
-                    sx={{ textTransform: "none" }}
-                  >
-                    EHR Launch
-                  </ToggleButton>
-                </ToggleButtonGroup>
-              </Box>
-              <Typography variant="caption" color="text.secondary">
-                Standalone: App launches independently | EHR Launch: Launched
-                from within EHR (coming soon)
-              </Typography>
-            </FormControl>
+                    <ToggleButton
+                      value="standalone"
+                      sx={{ textTransform: "none" }}
+                    >
+                      Standalone Launch
+                    </ToggleButton>
+                    <ToggleButton
+                      value="ehr-launch"
+                      disabled
+                      sx={{ textTransform: "none" }}
+                    >
+                      EHR Launch
+                    </ToggleButton>
+                  </ToggleButtonGroup>
+                </Box>
+                <Typography variant="caption" color="text.secondary">
+                  Standalone: App launches independently | EHR Launch: Launched
+                  from within EHR (coming soon)
+                </Typography>
+              </FormControl>
+            )}
 
             {/* Authentication Type */}
             <FormControl component="fieldset">
@@ -759,7 +810,11 @@ const ClientRegistration: React.FC = () => {
                     }
                   }}
                 >
-                  <ToggleButton value="public" sx={{ textTransform: "none" }}>
+                  <ToggleButton
+                    value="public"
+                    sx={{ textTransform: "none" }}
+                    disabled={formData.clientType === "system"}
+                  >
                     Public Client
                   </ToggleButton>
                   <ToggleButton
@@ -771,8 +826,9 @@ const ClientRegistration: React.FC = () => {
                 </ToggleButtonGroup>
               </Box>
               <Typography variant="caption" color="text.secondary">
-                Public: No client secret (mobile/browser apps) | Confidential:
-                Uses client secret (server apps)
+                {formData.clientType === "system"
+                  ? "System apps must be confidential (client_credentials requires a secret)"
+                  : "Public: No client secret (mobile/browser apps) | Confidential: Uses client secret (server apps)"}
               </Typography>
             </FormControl>
 
@@ -824,61 +880,77 @@ const ClientRegistration: React.FC = () => {
               )}
             </Box>
 
-            {/* Redirect URIs */}
+            {/* Redirect URIs - Optional for system apps */}
             <Box>
               <Typography variant="subtitle2" gutterBottom>
-                Redirect URIs *
-                <Tooltip title="URLs where the authorization server will redirect after authentication">
+                Redirect URIs {formData.clientType !== "system" && "*"}
+                <Tooltip
+                  title={
+                    formData.clientType === "system"
+                      ? "Not required for system apps (no browser redirect)"
+                      : "URLs where the authorization server will redirect after authentication"
+                  }
+                >
                   <IconButton size="small">
                     <InfoIcon fontSize="small" />
                   </IconButton>
                 </Tooltip>
               </Typography>
-              <Box sx={{ display: "flex", gap: 1, mb: 1 }}>
-                <TextField
-                  size="small"
-                  fullWidth
-                  value={redirectUriInput}
-                  onChange={(e) => setRedirectUriInput(e.target.value)}
-                  placeholder="https://example.com/callback"
-                  onKeyPress={(e) => {
-                    if (e.key === "Enter") {
-                      e.preventDefault();
-                      handleAddRedirectUri();
-                    }
-                  }}
-                />
-                <Button variant="outlined" onClick={handleAddRedirectUri}>
-                  Add
-                </Button>
-              </Box>
-              {formData.redirectUris.length > 0 && (
-                <Paper variant="outlined" sx={{ p: 1 }}>
-                  {formData.redirectUris.map((uri) => (
-                    <Box
-                      key={uri}
-                      sx={{
-                        display: "flex",
-                        justifyContent: "space-between",
-                        alignItems: "center",
-                        p: 1,
+
+              {formData.clientType === "system" ? (
+                <Alert severity="info" sx={{ mb: 2 }}>
+                  System apps use client_credentials flow (no user interaction,
+                  no redirect)
+                </Alert>
+              ) : (
+                <>
+                  <Box sx={{ display: "flex", gap: 1, mb: 1 }}>
+                    <TextField
+                      size="small"
+                      fullWidth
+                      value={redirectUriInput}
+                      onChange={(e) => setRedirectUriInput(e.target.value)}
+                      placeholder="https://example.com/callback"
+                      onKeyPress={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          handleAddRedirectUri();
+                        }
                       }}
-                    >
-                      <Typography
-                        variant="body2"
-                        sx={{ fontFamily: "monospace" }}
-                      >
-                        {uri}
-                      </Typography>
-                      <IconButton
-                        size="small"
-                        onClick={() => handleRemoveRedirectUri(uri)}
-                      >
-                        <DeleteIcon fontSize="small" />
-                      </IconButton>
-                    </Box>
-                  ))}
-                </Paper>
+                    />
+                    <Button variant="outlined" onClick={handleAddRedirectUri}>
+                      Add
+                    </Button>
+                  </Box>
+                  {formData.redirectUris.length > 0 && (
+                    <Paper variant="outlined" sx={{ p: 1 }}>
+                      {formData.redirectUris.map((uri) => (
+                        <Box
+                          key={uri}
+                          sx={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            alignItems: "center",
+                            p: 1,
+                          }}
+                        >
+                          <Typography
+                            variant="body2"
+                            sx={{ fontFamily: "monospace" }}
+                          >
+                            {uri}
+                          </Typography>
+                          <IconButton
+                            size="small"
+                            onClick={() => handleRemoveRedirectUri(uri)}
+                          >
+                            <DeleteIcon fontSize="small" />
+                          </IconButton>
+                        </Box>
+                      ))}
+                    </Paper>
+                  )}
+                </>
               )}
             </Box>
 
@@ -894,27 +966,41 @@ const ClientRegistration: React.FC = () => {
 
               {/* Mandatory Scopes - Chips (non-removable) */}
               <Box sx={{ mb: 2 }}>
-                <Typography
-                  variant="caption"
-                  color="text.secondary"
-                  gutterBottom
-                  display="block"
-                >
-                  Required Scopes (cannot be removed):
-                </Typography>
-                <Box
-                  sx={{ display: "flex", flexWrap: "wrap", gap: 0.5, mt: 1 }}
-                >
-                  {getMandatoryScopes(formData.clientType).map((scope) => (
-                    <Chip
-                      key={scope.value}
-                      label={scope.value}
-                      size="small"
-                      color="primary"
-                      icon={<CheckCircleIcon />}
-                    />
-                  ))}
-                </Box>
+                {formData.clientType === "system" ? (
+                  <Alert severity="info">
+                    System apps don't require launch/openid/fhirUser scopes (no
+                    user interaction)
+                  </Alert>
+                ) : (
+                  <>
+                    <Typography
+                      variant="caption"
+                      color="text.secondary"
+                      gutterBottom
+                      display="block"
+                    >
+                      Required Scopes (cannot be removed):
+                    </Typography>
+                    <Box
+                      sx={{
+                        display: "flex",
+                        flexWrap: "wrap",
+                        gap: 0.5,
+                        mt: 1,
+                      }}
+                    >
+                      {getMandatoryScopes(formData.clientType).map((scope) => (
+                        <Chip
+                          key={scope.value}
+                          label={scope.value}
+                          size="small"
+                          color="primary"
+                          icon={<CheckCircleIcon />}
+                        />
+                      ))}
+                    </Box>
+                  </>
+                )}
               </Box>
 
               <Divider sx={{ my: 2 }} />
@@ -967,7 +1053,9 @@ const ClientRegistration: React.FC = () => {
                   multiline
                   minRows={3}
                   fullWidth
-                  placeholder="e.g. patient/*.rs (SMART v2: rs=read+search)"
+                  placeholder={`e.g. ${getScopePrefix(
+                    formData.clientType
+                  )}/*.rs (SMART v2: rs=read+search)`}
                   value={scopesText}
                   onChange={(e) => setScopesText(e.target.value)}
                 />
