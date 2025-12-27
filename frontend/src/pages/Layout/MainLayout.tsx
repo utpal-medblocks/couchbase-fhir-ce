@@ -154,10 +154,10 @@ const menuItems = [
     adminOnly: true,
   },
   {
-    id: "bulk-groups",
-    label: "Bulk Groups",
+    id: "fhir-groups",
+    label: "FHIR Groups",
     icon: BsPeople,
-    path: "/bulk-groups",
+    path: "/fhir-groups",
     adminOnly: true,
   },
   {

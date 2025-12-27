@@ -79,7 +79,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import oauthClientService from "../../services/oauthClientApi";
 import BulkGroupAttachModal from "../../components/BulkGroupAttachModal";
 import { decodeIntent, encodeIntent } from "../../utils/intent";
-import GroupAddIcon from '@mui/icons-material/GroupAdd';
+import GroupAddIcon from "@mui/icons-material/GroupAdd";
 
 // Mandatory SMART scopes factory (cannot be removed)
 const getMandatoryScopes = (clientType: "patient" | "provider" | "system") => {
@@ -215,18 +215,27 @@ const ClientRegistration: React.FC = () => {
   // Bulk group attach modal state
   const [attachModalOpen, setAttachModalOpen] = useState(false);
   const [attachClientId, setAttachClientId] = useState<string | null>(null);
-  const [initialAttachGroups, setInitialAttachGroups] = useState<any[] | null>(null);
-  const [initialSelectedGroupId, setInitialSelectedGroupId] = useState<string | undefined>(undefined);
+  const [initialAttachGroups, setInitialAttachGroups] = useState<any[] | null>(
+    null
+  );
+  const [initialSelectedGroupId, setInitialSelectedGroupId] = useState<
+    string | undefined
+  >(undefined);
   const navigate = useNavigate();
   const location = useLocation();
 
   useEffect(() => {
     // handle intent_response when redirected back from BulkGroups
     const q = new URLSearchParams(location.search);
-    const enc = q.get('intent_response');
+    const enc = q.get("intent_response");
     if (enc) {
       const resp = decodeIntent(enc);
-      if (resp && resp.action === 'bulk_group_created' && resp.clientId && resp.group) {
+      if (
+        resp &&
+        resp.action === "bulk_group_created" &&
+        resp.clientId &&
+        resp.group
+      ) {
         // Instead of auto-attaching, open the attach modal and preselect the created group
         setAttachClientId(resp.clientId);
         setInitialAttachGroups([resp.group]);
@@ -235,8 +244,10 @@ const ClientRegistration: React.FC = () => {
 
         // remove the intent_response from URL so it doesn't trigger again
         const params = new URLSearchParams(location.search);
-        params.delete('intent_response');
-        navigate({ pathname: location.pathname, search: params.toString() }, { replace: true } as any);
+        params.delete("intent_response");
+        navigate({ pathname: location.pathname, search: params.toString() }, {
+          replace: true,
+        } as any);
       }
     }
   }, []);
@@ -539,22 +550,26 @@ const ClientRegistration: React.FC = () => {
                             color="primary"
                             onClick={() => {
                               const intent = {
-                                intent_type: 'highlight_bulk_group',
+                                intent_type: "highlight_bulk_group",
                                 groupId: client.bulkGroupId,
                                 flashCount: 20,
-                                sourcePath: '/clients',
+                                sourcePath: "/clients",
                               };
                               const enc = encodeIntent(intent);
-                              navigate(`/bulk-groups?intent=${enc}`);
+                              navigate(`/fhir-groups?intent=${enc}`);
                             }}
                           />
                         ) : (
-                          <Typography variant="caption" color="text.secondary">—</Typography>
+                          <Typography variant="caption" color="text.secondary">
+                            —
+                          </Typography>
                         )}
                       </TableCell>
                       <TableCell>
                         <Typography variant="caption">
-                          {client.createdAt ? new Date(client.createdAt).toLocaleDateString() : '-'}
+                          {client.createdAt
+                            ? new Date(client.createdAt).toLocaleDateString()
+                            : "-"}
                         </Typography>
                       </TableCell>
                       <TableCell align="right">
@@ -579,7 +594,8 @@ const ClientRegistration: React.FC = () => {
                             </IconButton>
                           </span>
                         </Tooltip>
-                        {(client.clientType === 'provider' || client.clientType === 'system') && (
+                        {(client.clientType === "provider" ||
+                          client.clientType === "system") && (
                           <Tooltip title="Attach bulk group">
                             <IconButton
                               size="small"
@@ -1207,7 +1223,7 @@ const ClientRegistration: React.FC = () => {
           setInitialSelectedGroupId(undefined);
           setAttachClientId(null);
         }}
-        clientId={attachClientId || ''}
+        clientId={attachClientId || ""}
         initialGroups={initialAttachGroups || undefined}
         initialSelectedGroupId={initialSelectedGroupId}
         onAttached={async (updated) => {

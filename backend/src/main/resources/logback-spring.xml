@@ -58,7 +58,7 @@
         </rollingPolicy>
     </appender>
 
-    <root level="INFO">
+    <root level="ERROR">
         <appender-ref ref="STDOUT"/>
         <!-- FILE appender disabled for Docker - use 'docker logs' instead -->
         <!-- <appender-ref ref="FILE"/> -->
@@ -112,6 +112,11 @@
     <logger name="org.springframework.security.oauth2.server.resource" level="ERROR"/>
     <logger name="org.springframework.security.web" level="ERROR"/>
     <logger name="org.springframework.security.web.access" level="ERROR"/>
+    
+    <!-- JWT and SMART scope processing (reduces polling noise) -->
+    <logger name="com.couchbase.fhir.auth.CustomJwtGrantedAuthoritiesConverter" level="ERROR"/>
+    <logger name="com.couchbase.fhir.auth.SmartScopeValidator" level="ERROR"/>
+    <logger name="com.couchbase.fhir.auth.SmartScopes" level="ERROR"/>
     
     <!-- Only target the specific noisy classes you mentioned -->
     <logger name="com.couchbase.fhir.repository.service.FhirBundleProcessingService" level="ERROR"/>

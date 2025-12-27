@@ -74,6 +74,7 @@ server:
 # Logging configuration for containers
 logging:
   level:
+    root: ERROR # Default to ERROR for all loggers
     "[ca.uhn.fhir.rest.server.RestfulServer]": false
     "[org.apache.catalina]": ERROR
     "[org.apache.catalina.connector]": false
@@ -81,6 +82,9 @@ logging:
     "[org.springframework.security.oauth2]": ERROR
     "[org.springframework.web.servlet]": ERROR
     "[com.couchbase.transactions]": ERROR
+    "[com.couchbase.fhir.auth.CustomJwtGrantedAuthoritiesConverter]": ERROR
+    "[com.couchbase.fhir.auth.SmartScopeValidator]": ERROR
+    "[com.couchbase.fhir.auth.SmartScopes]": ERROR
   pattern:
     console: "%d{HH:mm:ss.SSS} %-5level %logger{20} - %msg%n"
 # The resource values above will be resolved from environment variables at runtime (docker-compose/.env)

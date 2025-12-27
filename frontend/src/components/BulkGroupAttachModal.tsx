@@ -19,8 +19,8 @@ import {
   CircularProgress,
   Tooltip,
 } from "@mui/material";
-import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
-import bulkGroupService from "../services/bulkGroupService";
+import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
+import groupService from "../services/groupService";
 import oauthClientService from "../services/oauthClientApi";
 import { useNavigate } from "react-router-dom";
 import { encodeIntent } from "../utils/intent";
@@ -34,7 +34,14 @@ interface Props {
   initialSelectedGroupId?: string;
 }
 
-const BulkGroupAttachModal: React.FC<Props> = ({ open, onClose, clientId, onAttached, initialGroups, initialSelectedGroupId }) => {
+const BulkGroupAttachModal: React.FC<Props> = ({
+  open,
+  onClose,
+  clientId,
+  onAttached,
+  initialGroups,
+  initialSelectedGroupId,
+}) => {
   const [groups, setGroups] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
@@ -56,7 +63,7 @@ const BulkGroupAttachModal: React.FC<Props> = ({ open, onClose, clientId, onAtta
   const loadGroups = async (initial?: any[]) => {
     try {
       setLoading(true);
-      const data = (await bulkGroupService.getAll()) || [];
+      const data = (await groupService.getAll()) || [];
       // Merge initial groups (prefer initial group's data when ids match)
       if (initial && initial.length > 0) {
         const map = new Map<string, any>();
@@ -70,7 +77,9 @@ const BulkGroupAttachModal: React.FC<Props> = ({ open, onClose, clientId, onAtta
             ...(g.patientNames || {}),
           };
           // Also merge patientIds ensuring uniqueness and order (existing first)
-          const ids = Array.from(new Set([...(existing.patientIds || []), ...(g.patientIds || [])]));
+          const ids = Array.from(
+            new Set([...(existing.patientIds || []), ...(g.patientIds || [])])
+          );
           merged.patientIds = ids;
           map.set(g.id, merged);
         });
@@ -89,11 +98,14 @@ const BulkGroupAttachModal: React.FC<Props> = ({ open, onClose, clientId, onAtta
     if (!selected) return;
     try {
       setAttaching(true);
-      const updated = await oauthClientService.attachBulkGroup(clientId, selected);
+      const updated = await oauthClientService.attachBulkGroup(
+        clientId,
+        selected
+      );
       if (onAttached) onAttached(updated);
       onClose();
     } catch (e) {
-      console.error('Failed to attach bulk group', e);
+      console.error("Failed to attach bulk group", e);
     } finally {
       setAttaching(false);
     }
@@ -102,13 +114,13 @@ const BulkGroupAttachModal: React.FC<Props> = ({ open, onClose, clientId, onAtta
   const handleCreateNew = () => {
     // Build intent: sourcePath and clientId, intent_type
     const intent = {
-      intent_type: 'new_bulk_group',
-      sourcePath: '/clients',
+      intent_type: "new_bulk_group",
+      sourcePath: "/clients",
       clientId,
       modalOpen: true,
     };
     const enc = encodeIntent(intent);
-    navigate(`/bulk-groups?intent=${enc}`);
+    navigate(`/fhir-groups?intent=${enc}`);
   };
 
   return (
@@ -116,17 +128,25 @@ const BulkGroupAttachModal: React.FC<Props> = ({ open, onClose, clientId, onAtta
       <DialogTitle>Attach Bulk Group to client: {clientId}</DialogTitle>
       <DialogContent>
         {loading ? (
-          <Box sx={{ display: 'flex', justifyContent: 'center', p: 4 }}>
+          <Box sx={{ display: "flex", justifyContent: "center", p: 4 }}>
             <CircularProgress />
           </Box>
         ) : (
           <Box>
             {groups.length === 0 ? (
-              <Typography>No bulk groups available. Create one to attach.</Typography>
+              <Typography>
+                No FHIR groups available. Create one to attach.
+              </Typography>
             ) : (
-              <RadioGroup value={selected || ''} onChange={(e) => setSelected(e.target.value)}>
+              <RadioGroup
+                value={selected || ""}
+                onChange={(e) => setSelected(e.target.value)}
+              >
                 {groups.map((g) => (
-                  <Box key={g.id} sx={{ borderBottom: '1px solid #eee', pb: 1, mb: 1 }}>
+                  <Box
+                    key={g.id}
+                    sx={{ borderBottom: "1px solid #eee", pb: 1, mb: 1 }}
+                  >
                     <FormControlLabel
                       value={g.id}
                       control={<Radio />}
@@ -134,14 +154,26 @@ const BulkGroupAttachModal: React.FC<Props> = ({ open, onClose, clientId, onAtta
                     />
                     <Accordion disabled={selected !== g.id}>
                       <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-                        <Typography variant="body2">Members ({(g.patientIds || []).length})</Typography>
+                        <Typography variant="body2">
+                          Members ({(g.patientIds || []).length})
+                        </Typography>
                       </AccordionSummary>
                       <AccordionDetails>
-                        <Box sx={{ maxHeight: 220, overflow: 'auto' }}>
+                        <Box sx={{ maxHeight: 220, overflow: "auto" }}>
                           <List dense>
                             {(g.patientIds || []).map((pid: string) => (
                               <ListItem key={pid}>
-                                <ListItemText primary={g.patientNames && (g.patientNames[pid] || g.patientNames[`Patient/${pid}`]) ? (g.patientNames[pid] || g.patientNames[`Patient/${pid}`]) : pid} secondary={pid} />
+                                <ListItemText
+                                  primary={
+                                    g.patientNames &&
+                                    (g.patientNames[pid] ||
+                                      g.patientNames[`Patient/${pid}`])
+                                      ? g.patientNames[pid] ||
+                                        g.patientNames[`Patient/${pid}`]
+                                      : pid
+                                  }
+                                  secondary={pid}
+                                />
                               </ListItem>
                             ))}
                           </List>
@@ -161,8 +193,12 @@ const BulkGroupAttachModal: React.FC<Props> = ({ open, onClose, clientId, onAtta
         <Button onClick={onClose}>Cancel</Button>
         <Tooltip title="Attach selected bulk group to this client">
           <span>
-            <Button variant="contained" onClick={handleAttach} disabled={!selected || attaching}>
-              {attaching ? 'Attaching...' : 'Attach'}
+            <Button
+              variant="contained"
+              onClick={handleAttach}
+              disabled={!selected || attaching}
+            >
+              {attaching ? "Attaching..." : "Attach"}
             </Button>
           </span>
         </Tooltip>

@@ -29,7 +29,10 @@ import {
 import AddIcon from "@mui/icons-material/Add";
 import DeleteIcon from "@mui/icons-material/Delete";
 import EditIcon from "@mui/icons-material/Edit";
-import bulkGroupService, { type BulkGroupRequest, type BulkGroupResponse } from "../../services/bulkGroupService";
+import bulkGroupService, {
+  type BulkGroupRequest,
+  type BulkGroupResponse,
+} from "../../services/bulkGroupService";
 import axios from "../../config/axiosConfig";
 import Chip from "@mui/material/Chip";
 import { useThemeContext } from "../../contexts/ThemeContext";
@@ -52,7 +55,9 @@ const BulkGroups: React.FC = () => {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   type SelectedResource = { id: string; name: string };
-  const [selectedPatients, setSelectedPatients] = useState<SelectedResource[]>([]);
+  const [selectedPatients, setSelectedPatients] = useState<SelectedResource[]>(
+    []
+  );
 
   // patient search
   const [resourceType, setResourceType] = useState<string>("Patient");
@@ -66,7 +71,8 @@ const BulkGroups: React.FC = () => {
   const [patientIdFetch, setPatientIdFetch] = useState("");
   const [nextUrl, setNextUrl] = useState<string | null>(null);
   const [prevUrl, setPrevUrl] = useState<string | null>(null);
-  
+  const [dialogError, setDialogError] = useState<string>(""); // Dialog-specific error
+
   const location = useLocation();
   const { themeMode } = useThemeContext();
 
@@ -91,20 +97,22 @@ const BulkGroups: React.FC = () => {
     loadGroups();
     // decode intent from query if present
     const q = new URLSearchParams(window.location.search);
-    const enc = q.get('intent');
+    const enc = q.get("intent");
     if (enc) {
       const decoded = decodeIntent(enc);
       if (decoded) {
         setIntent(decoded as any);
-        q.delete('intent');
-        navigate({ pathname: location.pathname, search: q.toString() }, { replace: true } as any);
+        q.delete("intent");
+        navigate({ pathname: location.pathname, search: q.toString() }, {
+          replace: true,
+        } as any);
         // If another page requested we open the "new bulk group" dialog, do so
-        if (decoded.intent_type === 'new_bulk_group' && decoded.modalOpen) {
+        if (decoded.intent_type === "new_bulk_group" && decoded.modalOpen) {
           // openCreate is defined below; calling it will open the create dialog
           openCreate();
         }
         // If caller requested highlighting a specific group, prepare to flash it
-        if (decoded.intent_type === 'highlight_bulk_group' && decoded.groupId) {
+        if (decoded.intent_type === "highlight_bulk_group" && decoded.groupId) {
           const gid = decoded.groupId as string;
           const flashCount = decoded.flashCount || 10;
           setHighlightId(gid);
@@ -112,8 +120,8 @@ const BulkGroups: React.FC = () => {
           // scroll to row after a short delay to allow render
           setTimeout(() => {
             const el = rowRefs.current[gid];
-            if (el && typeof el.scrollIntoView === 'function') {
-              el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            if (el && typeof el.scrollIntoView === "function") {
+              el.scrollIntoView({ behavior: "smooth", block: "center" });
             }
             // clear highlight after animation duration completes
             const totalMs = (flashCount || 10) * 250 + 200;
@@ -146,6 +154,7 @@ const BulkGroups: React.FC = () => {
     setDescription("");
     setSelectedPatients([]);
     setPatientResults([]);
+    setDialogError(""); // Clear dialog errors
     setDialogOpen(true);
   };
 
@@ -160,6 +169,7 @@ const BulkGroups: React.FC = () => {
     setNextUrl(null);
     setPrevUrl(null);
     setPatientSearching(false);
+    setDialogError(""); // Clear dialog errors
   };
 
   const closeDialog = () => {
@@ -170,6 +180,7 @@ const BulkGroups: React.FC = () => {
     setName("");
     setDescription("");
     setSelectedPatients([]);
+    setDialogError(""); // Clear dialog errors
     resetPatientSearchInputs();
   };
 
@@ -178,14 +189,17 @@ const BulkGroups: React.FC = () => {
     setId(g.id);
     setName(g.name || "");
     setDescription(g.description || "");
-    setSelectedPatients((g.patientIds || []).map((pid) => {
-      const names = g.patientNames || {};
-      const nameFromPlain = names[pid];
-      const nameFromPrefixed = names[`Patient/${pid}`];
-      const displayName = nameFromPlain ?? nameFromPrefixed ?? pid;
-      return { id: pid, name: displayName };
-    }));
+    setSelectedPatients(
+      (g.patientIds || []).map((pid) => {
+        const names = g.patientNames || {};
+        const nameFromPlain = names[pid];
+        const nameFromPrefixed = names[`Patient/${pid}`];
+        const displayName = nameFromPlain ?? nameFromPrefixed ?? pid;
+        return { id: pid, name: displayName };
+      })
+    );
     setPatientResults([]);
+    setDialogError(""); // Clear dialog errors
     setDialogOpen(true);
   };
 
@@ -202,18 +216,26 @@ const BulkGroups: React.FC = () => {
 
     try {
       setPatientSearching(true);
+      setDialogError(""); // Clear previous dialog errors
       let q = "";
       if (url) {
         // paging URL provided
       } else if (advancedFilter && advancedFilter.trim()) {
-        q = advancedFilter.trim().startsWith("?") ? advancedFilter.trim().substring(1) : advancedFilter.trim();
-        if (!q.includes("_count")) q = q.length > 0 ? `${q}&_count=50` : `_count=50`;
+        q = advancedFilter.trim().startsWith("?")
+          ? advancedFilter.trim().substring(1)
+          : advancedFilter.trim();
+        if (!q.includes("_count"))
+          q = q.length > 0 ? `${q}&_count=50` : `_count=50`;
       } else {
         const parts: string[] = [];
-        if (patientQuery) parts.push(`name=${encodeURIComponent(patientQuery)}`);
-        if (patientFamily) parts.push(`family=${encodeURIComponent(patientFamily)}`);
-        if (patientGiven) parts.push(`given=${encodeURIComponent(patientGiven)}`);
-        if (patientIdentifier) parts.push(`identifier=${encodeURIComponent(patientIdentifier)}`);
+        if (patientQuery)
+          parts.push(`name=${encodeURIComponent(patientQuery)}`);
+        if (patientFamily)
+          parts.push(`family=${encodeURIComponent(patientFamily)}`);
+        if (patientGiven)
+          parts.push(`given=${encodeURIComponent(patientGiven)}`);
+        if (patientIdentifier)
+          parts.push(`identifier=${encodeURIComponent(patientIdentifier)}`);
         parts.push(`_count=50`);
         q = parts.join("&");
       }
@@ -243,12 +265,15 @@ const BulkGroups: React.FC = () => {
 
       const links = data.link || [];
       const next = links.find((l: any) => l.relation === "next");
-      const prev = links.find((l: any) => l.relation === "previous" || l.relation === "prev");
+      const prev = links.find(
+        (l: any) => l.relation === "previous" || l.relation === "prev"
+      );
       setNextUrl(next ? next.url : null);
       setPrevUrl(prev ? prev.url : null);
       setPatientResults(mapped);
-    } catch (e) {
-      setError("Failed to search patients");
+    } catch (e: any) {
+      const errorMsg = e?.response?.data?.error || "Failed to search patients";
+      setDialogError(errorMsg);
     } finally {
       setPatientSearching(false);
     }
@@ -258,27 +283,29 @@ const BulkGroups: React.FC = () => {
     if (!patientIdFetch || !patientIdFetch.trim()) return;
     try {
       setPatientSearching(true);
-      const resp = await axios.get(`/fhir/Patient/${encodeURIComponent(patientIdFetch.trim())}`);
-      const r = resp.data;
-      // Map resource to same shape as search results
-      let display = "(no name)";
-      if (r?.name && r.name.length > 0) {
-        const n = r.name[0];
-        if (n.text) display = n.text;
-        else {
-          const given = n.given ? n.given.join(" ") : "";
-          display = `${given} ${n.family || ""}`.trim() || display;
-        }
-      } else if (r?.title) display = r.title;
+      setDialogError(""); // Clear previous dialog errors
 
-      const mapped = [{ id: r?.id || patientIdFetch.trim(), name: display, raw: r }];
-      setPatientResults(mapped);
+      // Use Admin API instead of FHIR API (no OAuth token required)
+      const resp = await axios.get(`/api/admin/patients/search`, {
+        params: { id: patientIdFetch.trim() },
+      });
+
+      const patients = resp.data.patients || [];
+      if (patients.length === 0) {
+        setDialogError(`Patient not found with ID: ${patientIdFetch.trim()}`);
+        setPatientResults([]);
+        return;
+      }
+
+      setPatientResults(patients);
       setNextUrl(null);
       setPrevUrl(null);
       // clear the id input after successful fetch
       setPatientIdFetch("");
-    } catch (e) {
-      setError("Failed to fetch patient by id");
+    } catch (e: any) {
+      const errorMsg =
+        e?.response?.data?.error || "Failed to fetch patient by id";
+      setDialogError(errorMsg);
       setPatientResults([]);
     } finally {
       setPatientSearching(false);
@@ -287,7 +314,8 @@ const BulkGroups: React.FC = () => {
 
   const toggleSelectPatient = (patient: { id: string; name: string }) => {
     setSelectedPatients((prev) => {
-      if (prev.find((p) => p.id === patient.id)) return prev.filter((p) => p.id !== patient.id);
+      if (prev.find((p) => p.id === patient.id))
+        return prev.filter((p) => p.id !== patient.id);
       return [...prev, { id: patient.id, name: patient.name }];
     });
   };
@@ -317,15 +345,20 @@ const BulkGroups: React.FC = () => {
 
       closeDialog();
       // If there is an intent telling us to redirect back, do so with a response payload
-      if (!editingId && intent && intent.intent_type === 'new_bulk_group' && created) {
+      if (
+        !editingId &&
+        intent &&
+        intent.intent_type === "new_bulk_group" &&
+        created
+      ) {
         const respPayload = {
-          action: 'bulk_group_created',
+          action: "bulk_group_created",
           clientId: intent.clientId,
           group: created,
         };
         const encResp = encodeIntent(respPayload);
         // navigate back to sourcePath with intent_response
-        const target = intent.sourcePath || '/clients';
+        const target = intent.sourcePath || "/clients";
         navigate(`${target}?intent_response=${encResp}`);
         return;
       }
@@ -361,10 +394,21 @@ const BulkGroups: React.FC = () => {
   };
 
   return (
-    <Box sx={{ p: 2, width: '100%' }}>
-      <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 2 }}>
-        <Typography variant="h6">Bulk Groups</Typography>
-        <Button startIcon={<AddIcon />} variant="contained" onClick={openCreate}>
+    <Box sx={{ p: 2, width: "100%" }}>
+      <Box
+        sx={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          mb: 2,
+        }}
+      >
+        <Typography variant="h6">FHIR Groups</Typography>
+        <Button
+          startIcon={<AddIcon />}
+          variant="contained"
+          onClick={openCreate}
+        >
           Create Bulk Group
         </Button>
       </Box>
@@ -378,7 +422,7 @@ const BulkGroups: React.FC = () => {
               <CircularProgress />
             </Box>
           ) : groups.length === 0 ? (
-            <Typography>No bulk groups found.</Typography>
+            <Typography>No FHIR groups found.</Typography>
           ) : (
             <TableContainer>
               <Table>
@@ -397,10 +441,14 @@ const BulkGroups: React.FC = () => {
                       key={g.id}
                       hover
                       ref={(el: any) => (rowRefs.current[g.id] = el)}
-                      className={highlightId === g.id ? 'flash-highlight' : undefined}
+                      className={
+                        highlightId === g.id ? "flash-highlight" : undefined
+                      }
                       style={
                         highlightId === g.id
-                          ? ({ ['--flash-count' as any]: highlightCount } as React.CSSProperties)
+                          ? ({
+                              ["--flash-count" as any]: highlightCount,
+                            } as React.CSSProperties)
                           : undefined
                       }
                     >
@@ -417,10 +465,17 @@ const BulkGroups: React.FC = () => {
                         <Tooltip title="Delete">
                           <IconButton
                             size="small"
-                            onClick={(e) => { e.stopPropagation(); handleDelete(g); }}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDelete(g);
+                            }}
                             disabled={deletingId === g.id}
                           >
-                            {deletingId === g.id ? <CircularProgress size={18} color="inherit" /> : <DeleteIcon />}
+                            {deletingId === g.id ? (
+                              <CircularProgress size={18} color="inherit" />
+                            ) : (
+                              <DeleteIcon />
+                            )}
                           </IconButton>
                         </Tooltip>
                       </TableCell>
@@ -434,20 +489,52 @@ const BulkGroups: React.FC = () => {
       </Card>
 
       <Dialog open={dialogOpen} onClose={closeDialog} maxWidth="md" fullWidth>
-        <DialogTitle>{editingId ? `Edit Bulk Group: ${editingId}` : "Create Bulk Group"}</DialogTitle>
+        <DialogTitle>
+          {editingId ? `Edit Bulk Group: ${editingId}` : "Create Bulk Group"}
+        </DialogTitle>
         <DialogContent>
           <Box sx={{ display: "flex", flexDirection: "column", gap: 2, mt: 1 }}>
             {editingId ? (
-              <TextField label="ID" value={id} disabled fullWidth InputProps={{ readOnly: true }} />
+              <TextField
+                label="ID"
+                value={id}
+                disabled
+                fullWidth
+                InputProps={{ readOnly: true }}
+              />
             ) : null}
-            <TextField label="Name" value={name} onChange={(e) => setName(e.target.value)} fullWidth />
-            <TextField label="Description" value={description} onChange={(e) => setDescription(e.target.value)} fullWidth multiline rows={2} />
+            <TextField
+              label="Name"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              fullWidth
+            />
+            <TextField
+              label="Description"
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              fullWidth
+              multiline
+              rows={2}
+            />
 
             <Box>
-              <Typography variant="subtitle1">Search resources to add</Typography>
-              <Box sx={{ display: "flex", gap: 2, alignItems: "center", mt: 1, flexWrap: "wrap" }}>
+              <Typography variant="subtitle1">
+                Search resources to add
+              </Typography>
+              <Box
+                sx={{
+                  display: "flex",
+                  gap: 2,
+                  alignItems: "center",
+                  mt: 1,
+                  flexWrap: "wrap",
+                }}
+              >
                 <FormControl size="small" sx={{ minWidth: 160 }}>
-                  <InputLabel id="resource-type-label">Resource Type</InputLabel>
+                  <InputLabel id="resource-type-label">
+                    Resource Type
+                  </InputLabel>
                   <Select
                     labelId="resource-type-label"
                     label="Resource Type"
@@ -460,10 +547,30 @@ const BulkGroups: React.FC = () => {
                   </Select>
                 </FormControl>
 
-                <TextField size="small" label="Name" value={patientQuery} onChange={(e) => setPatientQuery(e.target.value)} />
-                <TextField size="small" label="Family" value={patientFamily} onChange={(e) => setPatientFamily(e.target.value)} />
-                <TextField size="small" label="Given" value={patientGiven} onChange={(e) => setPatientGiven(e.target.value)} />
-                <TextField size="small" label="Identifier" value={patientIdentifier} onChange={(e) => setPatientIdentifier(e.target.value)} />
+                <TextField
+                  size="small"
+                  label="Name"
+                  value={patientQuery}
+                  onChange={(e) => setPatientQuery(e.target.value)}
+                />
+                <TextField
+                  size="small"
+                  label="Family"
+                  value={patientFamily}
+                  onChange={(e) => setPatientFamily(e.target.value)}
+                />
+                <TextField
+                  size="small"
+                  label="Given"
+                  value={patientGiven}
+                  onChange={(e) => setPatientGiven(e.target.value)}
+                />
+                <TextField
+                  size="small"
+                  label="Identifier"
+                  value={patientIdentifier}
+                  onChange={(e) => setPatientIdentifier(e.target.value)}
+                />
                 <Button
                   onClick={() => handleSearchPatients()}
                   variant="outlined"
@@ -482,7 +589,7 @@ const BulkGroups: React.FC = () => {
                 {patientSearching && <CircularProgress size={20} />}
               </Box>
 
-               <Box sx={{ mt: 1 }}>
+              <Box sx={{ mt: 1 }}>
                 <TextField
                   size="small"
                   label="Advanced filter (raw FHIR query, e.g. family=Smith&birthdate=eq1990-01-01)"
@@ -496,39 +603,111 @@ const BulkGroups: React.FC = () => {
 
               <Box sx={{ mt: 2, mb: 1 }}>
                 <Typography variant="subtitle1">Get by Id</Typography>
-                <Typography variant="caption" color="text.secondary">Enter a Patient resource id to fetch the single Patient using the <code>/fhir/Patient/{'{id}'}</code> route.</Typography>
-                <Box sx={{ display: "flex", gap: 2, alignItems: "center", mt: 1 }}>
-                  <TextField size="small" label="Patient ID" value={patientIdFetch} onChange={(e) => setPatientIdFetch(e.target.value)} />
-                  <Button onClick={handleFetchPatientById} variant="outlined" disabled={!patientIdFetch.trim()}>Fetch</Button>
+                <Typography variant="caption" color="text.secondary">
+                  Enter a Patient resource id to fetch directly from the
+                  database.
+                </Typography>
+                <Box
+                  sx={{ display: "flex", gap: 2, alignItems: "center", mt: 1 }}
+                >
+                  <TextField
+                    size="small"
+                    label="Patient ID"
+                    value={patientIdFetch}
+                    onChange={(e) => setPatientIdFetch(e.target.value)}
+                  />
+                  <Button
+                    onClick={handleFetchPatientById}
+                    variant="outlined"
+                    disabled={!patientIdFetch.trim()}
+                  >
+                    Fetch
+                  </Button>
                 </Box>
               </Box>
 
-             
+              {/* Dialog-specific error display */}
+              {dialogError && (
+                <Box
+                  sx={{
+                    mt: 1,
+                    p: 1.5,
+                    bgcolor: "error.light",
+                    borderRadius: 1,
+                  }}
+                >
+                  <Typography color="error.dark" variant="body2">
+                    {dialogError}
+                  </Typography>
+                </Box>
+              )}
 
               <Box sx={{ maxHeight: 240, overflow: "auto", mt: 1 }}>
                 {patientResults.map((p) => (
-                  <Box key={p.id} sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", p: 1, borderBottom: "1px solid #eee" }}>
+                  <Box
+                    key={p.id}
+                    sx={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      p: 1,
+                      borderBottom: "1px solid #eee",
+                    }}
+                  >
                     <Box>
                       <Typography variant="body2">{p.name}</Typography>
-                      <Typography variant="caption" color="text.secondary">{p.id}</Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        {p.id}
+                      </Typography>
                     </Box>
                     <Button size="small" onClick={() => toggleSelectPatient(p)}>
-                      {selectedPatients.find((sp) => sp.id === p.id) ? "Remove" : "Add"}
+                      {selectedPatients.find((sp) => sp.id === p.id)
+                        ? "Remove"
+                        : "Add"}
                     </Button>
                   </Box>
                 ))}
               </Box>
 
-              <Box sx={{ display: "flex", justifyContent: "flex-end", gap: 1, mt: 1 }}>
-                <Button size="small" disabled={!prevUrl} onClick={() => prevUrl && handleSearchPatients(prevUrl)}>Previous</Button>
-                <Button size="small" disabled={!nextUrl} onClick={() => nextUrl && handleSearchPatients(nextUrl)}>Next</Button>
+              <Box
+                sx={{
+                  display: "flex",
+                  justifyContent: "flex-end",
+                  gap: 1,
+                  mt: 1,
+                }}
+              >
+                <Button
+                  size="small"
+                  disabled={!prevUrl}
+                  onClick={() => prevUrl && handleSearchPatients(prevUrl)}
+                >
+                  Previous
+                </Button>
+                <Button
+                  size="small"
+                  disabled={!nextUrl}
+                  onClick={() => nextUrl && handleSearchPatients(nextUrl)}
+                >
+                  Next
+                </Button>
               </Box>
 
               <Box sx={{ mt: 1 }}>
-                <Typography variant="subtitle2">Selected ({selectedPatients.length})</Typography>
+                <Typography variant="subtitle2">
+                  Selected ({selectedPatients.length})
+                </Typography>
                 <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap", mt: 1 }}>
                   {selectedPatients.map((p) => (
-                    <Chip key={p.id} label={`${p.name} (${p.id})`} onDelete={() => setSelectedPatients((prev) => prev.filter((x) => x.id !== p.id))} />
+                    <Chip
+                      key={p.id}
+                      label={`${p.name} (${p.id})`}
+                      onDelete={() =>
+                        setSelectedPatients((prev) =>
+                          prev.filter((x) => x.id !== p.id)
+                        )
+                      }
+                    />
                   ))}
                 </Box>
               </Box>
@@ -536,8 +715,22 @@ const BulkGroups: React.FC = () => {
           </Box>
         </DialogContent>
         <DialogActions>
-          <Button onClick={closeDialog} disabled={submitting}>Cancel</Button>
-          <Button onClick={handleSave} variant="contained" disabled={submitting}>{submitting ? (editingId ? "Saving..." : "Creating...") : (editingId ? "Save" : "Create")}</Button>
+          <Button onClick={closeDialog} disabled={submitting}>
+            Cancel
+          </Button>
+          <Button
+            onClick={handleSave}
+            variant="contained"
+            disabled={submitting}
+          >
+            {submitting
+              ? editingId
+                ? "Saving..."
+                : "Creating..."
+              : editingId
+              ? "Save"
+              : "Create"}
+          </Button>
         </DialogActions>
       </Dialog>
     </Box>

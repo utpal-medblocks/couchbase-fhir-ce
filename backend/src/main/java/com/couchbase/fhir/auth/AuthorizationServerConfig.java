@@ -358,25 +358,6 @@ public class AuthorizationServerConfig {
     }
     
     /**
-     * JWT Authentication Converter for extracting authorities from scope claim
-     * Uses our custom converter that safely handles both String and Collection scope claims
-     */
-    @Bean
-    public org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter jwtAuthenticationConverter() {
-        logger.info("🔧 Configuring JwtAuthenticationConverter with CustomJwtGrantedAuthoritiesConverter");
-        
-        // Use our custom converter that handles both String and Collection types
-        CustomJwtGrantedAuthoritiesConverter grantedAuthoritiesConverter = new CustomJwtGrantedAuthoritiesConverter();
-        
-        org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter jwtAuthenticationConverter = 
-            new org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter();
-        jwtAuthenticationConverter.setJwtGrantedAuthoritiesConverter(grantedAuthoritiesConverter);
-        
-        logger.info("✅ JwtAuthenticationConverter configured with custom scope handler");
-        return jwtAuthenticationConverter;
-    }
-
-    /**
      * JwtEncoder for issuing custom application tokens (e.g., admin login) signed with same JWK.
      */
     @Bean

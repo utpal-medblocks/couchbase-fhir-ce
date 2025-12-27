@@ -63,6 +63,9 @@ public class FhirRestfulServer extends RestfulServer {
     @Autowired
     private com.couchbase.fhir.rest.interceptors.JwtValidationInterceptor jwtValidationInterceptor;
     
+    @Autowired
+    private com.couchbase.fhir.auth.GroupWriteBlockInterceptor groupWriteBlockInterceptor;
+    
     @Autowired(required = false)
     private org.springframework.boot.info.BuildProperties buildProperties;
     
@@ -114,6 +117,7 @@ public class FhirRestfulServer extends RestfulServer {
             registerInterceptor(bucketValidationInterceptor);
             registerInterceptor(smartAuthorizationInterceptor); // 🔐 SMART on FHIR authorization
             registerInterceptor(jwtValidationInterceptor); // 🔒 JWT token revocation check
+            registerInterceptor(groupWriteBlockInterceptor); // 🚫 Block Group write operations via FHIR API
             registerInterceptor(cleanExceptionInterceptor);
             registerInterceptor(fastpathResponseInterceptor); // 🚀 Fastpath JSON bypass (10× memory reduction)
             USCoreCapabilityProvider capabilityProvider = new USCoreCapabilityProvider(this, buildProperties, configuredBaseUrl);
@@ -138,6 +142,7 @@ public class FhirRestfulServer extends RestfulServer {
             registerInterceptor(bucketValidationInterceptor);
             registerInterceptor(smartAuthorizationInterceptor); // 🔐 SMART on FHIR authorization
             registerInterceptor(jwtValidationInterceptor); // 🔒 JWT token revocation check
+            registerInterceptor(groupWriteBlockInterceptor); // 🚫 Block Group write operations via FHIR API
             registerInterceptor(cleanExceptionInterceptor);
             registerInterceptor(fastpathResponseInterceptor); // 🚀 Fastpath JSON bypass (10× memory reduction)
             USCoreCapabilityProvider capabilityProvider = new USCoreCapabilityProvider(this, buildProperties, configuredBaseUrl);

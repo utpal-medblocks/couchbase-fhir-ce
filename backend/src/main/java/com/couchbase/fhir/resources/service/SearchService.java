@@ -189,6 +189,138 @@ public class SearchService {
     }
     
     /**
+     * Key-only search result containing document keys and total count.
+     * Used when full resources are not needed (e.g., Group membership, display previews).
+     */
+    public static class KeySearchResult {
+        private final List<String> keys;
+        private final long totalCount;
+        
+        public KeySearchResult(List<String> keys, long totalCount) {
+            this.keys = keys;
+            this.totalCount = totalCount;
+        }
+        
+        public List<String> getKeys() { return keys; }
+        public long getTotalCount() { return totalCount; }
+    }
+    
+    /**
+     * Key-only search operation returning document keys without fetching full resources.
+     * Uses same HAPI parameter validation and FTS query building as search(), but skips BatchKvService.
+     * 
+     * Limitations:
+     * - Does not support _include, _revinclude, or chained searches (throws exception)
+     * - Does not support _summary or _elements (not applicable for key-only)
+     * - Does support all standard search parameters (name, identifier, date ranges, etc.)
+     * 
+     * @param resourceType FHIR resource type
+     * @param requestDetails HAPI FHIR request details containing search parameters
+     * @return KeySearchResult with document keys (e.g., ["Patient/123"]) and total count
+     */
+    public KeySearchResult searchForKeys(String resourceType, RequestDetails requestDetails) {
+        String bucketName = TenantContextHolder.getTenantId();
+        
+        long searchStartMs = System.currentTimeMillis();
+        
+        logger.debug("🔑 SearchService.searchForKeys: {} in bucket {} | reqId={}", resourceType, bucketName, 
+            RequestPerfBagUtils.getCurrentRequestId(requestDetails));
+        
+        // Validate FHIR bucket
+        try {
+            bucketValidator.validateFhirBucketOrThrow(bucketName, "default");
+        } catch (FhirBucketValidationException e) {
+            throw e;
+        }
+        
+        // Extract parameters (same as search())
+        Map<String, String[]> rawParams = requestDetails.getParameters();
+        Map<String, List<String>> allParams = rawParams.entrySet().stream()
+                .filter(e -> e.getValue() != null && e.getValue().length > 0)
+                .collect(Collectors.toMap(
+                        Map.Entry::getKey,
+                        e -> Arrays.asList(e.getValue())
+                ));
+        
+        Map<String, String> searchParams = rawParams.entrySet().stream()
+                .filter(e -> e.getValue() != null && e.getValue().length > 0)
+                .collect(Collectors.toMap(
+                        Map.Entry::getKey,
+                        e -> e.getValue()[0]
+                ));
+        
+        // Check for unsupported features (chain, _include, _revinclude, _has)
+        ChainParam chainParam = detectChainParameter(searchParams, resourceType);
+        HasParam hasParam = detectHasParameter(searchParams);
+        List<String> includeValues = allParams.get("_include");
+        List<String> revIncludeValues = allParams.get("_revinclude");
+        
+        if (chainParam != null) {
+            throw new InvalidRequestException("Chained searches are not supported for key-only queries");
+        }
+        if (hasParam != null) {
+            throw new InvalidRequestException("_has parameter is not supported for key-only queries");
+        }
+        if (includeValues != null && !includeValues.isEmpty()) {
+            throw new InvalidRequestException("_include is not supported for key-only queries");
+        }
+        if (revIncludeValues != null && !revIncludeValues.isEmpty()) {
+            throw new InvalidRequestException("_revinclude is not supported for key-only queries");
+        }
+        
+        // Validate search parameters
+        Map<String, List<String>> paramsToValidate = new java.util.HashMap<>(allParams);
+        paramsToValidate.remove("_summary");
+        paramsToValidate.remove("_elements");
+        paramsToValidate.remove("_count");
+        paramsToValidate.remove("_sort");
+        paramsToValidate.remove("_total");
+        
+        try {
+            searchPreprocessor.validateSearchParameters(resourceType, paramsToValidate);
+        } catch (FhirSearchValidationException e) {
+            throw new InvalidRequestException(e.getUserFriendlyMessage());
+        }
+        
+        // Parse parameters
+        int count = parseCountParameter(searchParams);
+        List<SearchSort> sortFields = parseSortParameter(searchParams);
+        
+        // Remove control parameters from search criteria
+        searchParams.remove("_summary");
+        searchParams.remove("_elements");
+        searchParams.remove("_count");
+        searchParams.remove("_sort");
+        searchParams.remove("_total");
+        searchParams.remove("_include");
+        searchParams.remove("_revinclude");
+        
+        // Build FTS queries (same as search())
+        SearchQueryResult searchQueryResult = buildSearchQueries(resourceType, allParams);
+        List<SearchQuery> ftsQueries = searchQueryResult.getFtsQueries();
+        
+        logger.debug("🔑 Built {} FTS queries for key-only search", ftsQueries.size());
+        
+        // Execute FTS search for keys (NO BatchKvService call!)
+        FtsSearchService.FtsSearchResult ftsResult = ftsSearchService.searchForKeys(
+            ftsQueries, resourceType, 0, count + 1, sortFields);
+        
+        List<String> allKeys = ftsResult.getDocumentKeys();
+        long totalCount = ftsResult.getTotalCount();
+        
+        // Apply pagination limit (return up to 'count' keys)
+        List<String> resultKeys = allKeys.size() > count ? 
+            allKeys.subList(0, count) : allKeys;
+        
+        logger.debug("🔑 searchForKeys complete: {} keys returned, {} total | duration: {} ms", 
+            resultKeys.size(), totalCount, System.currentTimeMillis() - searchStartMs);
+        
+        RequestPerfBagUtils.addTiming(requestDetails, "search_keys", System.currentTimeMillis() - searchStartMs);
+        
+        return new KeySearchResult(resultKeys, totalCount);
+    }
+    
+    /**
      * Full search operation returning complete Bundle with resources.
      * 
      * @param resourceType FHIR resource type

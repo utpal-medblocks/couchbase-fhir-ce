@@ -9,7 +9,7 @@ import FhirResources from "../pages/FHIRResources/FhirResources";
 import AuditLogs from "../pages/AuditLogs/AuditLogs";
 import SystemLogs from "../pages/SystemLogs/Logs";
 import Users from "../pages/Users/Users";
-import BulkGroups from "../pages/BulkGroups/BulkGroups";
+import FHIRGroups from "../pages/FHIRGroups/FHIRGroups";
 import Tokens from "../pages/Tokens/Tokens";
 import ClientRegistration from "../pages/ClientRegistration/ClientRegistration";
 
@@ -91,11 +91,11 @@ const AppRoutes: React.FC = () => {
         }
       />
       <Route
-        path="/bulk-groups"
+        path="/fhir-groups"
         element={
           <ProtectedRoute>
             <MainLayout>
-              <BulkGroups />
+              <FHIRGroups />
             </MainLayout>
           </ProtectedRoute>
         }
