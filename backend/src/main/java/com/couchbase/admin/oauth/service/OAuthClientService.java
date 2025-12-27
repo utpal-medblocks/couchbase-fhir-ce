@@ -18,7 +18,7 @@ import org.springframework.beans.factory.annotation.Value;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
-import com.couchbase.admin.users.bulkGroup.model.BulkGroup;
+import org.hl7.fhir.r4.model.Group;
 import java.util.UUID;
 
 /**
@@ -253,9 +253,9 @@ public class OAuthClientService {
     }
 
     /**
-     * Fetch a BulkGroup document by id from `fhir`.`Admin`.`bulk_groups` collection
+     * Fetch a FHIR Group document by id from `fhir`.`Resources`.`General` collection
      */
-    public Optional<BulkGroup> getBulkGroupById(String bulkGroupId) {
+    public Optional<Group> getBulkGroupById(String bulkGroupId) {
         if (useKeycloak && keycloakClientManager != null) {
             // Keycloak path doesn't manage bulk groups in Couchbase
             return Optional.empty();
@@ -263,12 +263,20 @@ public class OAuthClientService {
         try {
             Cluster cluster = connectionService.getConnection(CONNECTION_NAME);
             Bucket bucket = cluster.bucket(BUCKET_NAME);
-            Scope scope = bucket.scope(SCOPE_NAME);
-            Collection collection = scope.collection("bulk_groups");
-            BulkGroup bg = collection.get(bulkGroupId).contentAs(BulkGroup.class);
-            return Optional.ofNullable(bg);
+            Scope scope = bucket.scope("Resources");
+            Collection collection = scope.collection("General");
+            
+            // FHIR Groups use key format: Group/[id]
+            String documentKey = "Group/" + bulkGroupId;
+            String json = collection.get(documentKey).contentAsObject().toString();
+            
+            // Parse as FHIR Group resource
+            ca.uhn.fhir.context.FhirContext fhirContext = ca.uhn.fhir.context.FhirContext.forR4();
+            Group group = fhirContext.newJsonParser().parseResource(Group.class, json);
+            
+            return Optional.ofNullable(group);
         } catch (Exception e) {
-            logger.debug("BulkGroup not found: {} (err: {})", bulkGroupId, e.getMessage());
+            logger.debug("FHIR Group not found: {} (err: {})", bulkGroupId, e.getMessage());
             return Optional.empty();
         }
     }

@@ -11,6 +11,7 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.stream.Collectors;
 
 /**
@@ -139,24 +140,9 @@ public class GroupAdminController {
     @GetMapping
     public ResponseEntity<?> getAllGroups() {
         try {
-            logger.info("📋 Fetching all groups");
+            logger.info("📋 Fetching all groups (summary mode)");
 
-            List<Group> groups = groupAdminService.getAllGroups();
-            List<Map<String, Object>> summaries = groups.stream()
-                    .map(GroupAdminService.GroupSummary::new)
-                    .map(summary -> Map.of(
-                            "id", (Object) summary.getId(),
-                            "name", summary.getName(),
-                            "filter", summary.getFilter() != null ? summary.getFilter() : "",
-                            "resourceType", summary.getResourceType(),
-                            "memberCount", summary.getMemberCount(),
-                            "createdBy", summary.getCreatedBy(),
-                            "lastUpdated", summary.getLastUpdated().toString(),
-                            "lastRefreshed", summary.getLastRefreshed() != null ? 
-                                    summary.getLastRefreshed().toString() : ""
-                    ))
-                    .collect(Collectors.toList());
-
+            List<GroupAdminService.GroupSummaryRow> summaries = groupAdminService.getAllGroupSummaries();
             return ResponseEntity.ok(Map.of("groups", summaries));
 
         } catch (Exception e) {
@@ -199,6 +185,80 @@ public class GroupAdminController {
             logger.error("❌ Error fetching group", e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                     .body(Map.of("error", "Failed to fetch group: " + e.getMessage()));
+        }
+    }
+
+    /**
+     * Update an existing group (Edit - re-run filter with same ID)
+     * PUT /api/admin/groups/{id}
+     * Body: { "name": "...", "resourceType": "...", "filter": "..." }
+     */
+    @PutMapping("/{id}")
+    public ResponseEntity<?> updateGroup(@PathVariable String id, @RequestBody Map<String, String> request) {
+        try {
+            logger.info("✏️  Update request for group: {}", id);
+            logger.debug("📥 Update request body: {}", request);
+            
+            String name = request.get("name");
+            String resourceType = request.get("resourceType");
+            String filter = request.get("filter");
+            
+            if (name == null || name.isEmpty()) {
+                logger.error("❌ Missing required field: name");
+                return ResponseEntity.badRequest()
+                        .body(Map.of("error", "name is required"));
+            }
+            if (resourceType == null || resourceType.isEmpty()) {
+                logger.error("❌ Missing required field: resourceType");
+                return ResponseEntity.badRequest()
+                        .body(Map.of("error", "resourceType is required"));
+            }
+            
+            // Check if group exists
+            Optional<Group> existingOpt = groupAdminService.getGroupById(id);
+            if (existingOpt.isEmpty()) {
+                logger.error("❌ Group not found: {}", id);
+                return ResponseEntity.notFound().build();
+            }
+            
+            Group existing = existingOpt.get();
+            
+            // Get createdBy from existing group
+            String createdBy = existing.getExtension().stream()
+                    .filter(e -> "http://couchbase.fhir.com/StructureDefinition/created-by".equals(e.getUrl()))
+                    .map(e -> ((org.hl7.fhir.r4.model.StringType) e.getValue()).getValue())
+                    .findFirst()
+                    .orElse("anonymous");
+            
+            // Re-create group with same ID (UPSERT)
+            logger.debug("🔍 Calling updateGroupFromFilter with id: {}", id);
+            Group updatedGroup = groupAdminService.updateGroupFromFilter(id, name, resourceType, filter, createdBy);
+            GroupAdminService.GroupSummary summary = new GroupAdminService.GroupSummary(updatedGroup);
+            
+            Map<String, Object> response = Map.of(
+                    "id", summary.getId(),
+                    "name", summary.getName(),
+                    "filter", summary.getFilter(),
+                    "resourceType", summary.getResourceType(),
+                    "memberCount", summary.getMemberCount(),
+                    "createdBy", summary.getCreatedBy(),
+                    "lastUpdated", summary.getLastUpdated().toString(),
+                    "lastRefreshed", summary.getLastRefreshed() != null ? 
+                            summary.getLastRefreshed().toString() : ""
+            );
+            
+            logger.info("✅ Group updated successfully: {}", id);
+            logger.debug("📤 Returning response: {}", response);
+            return ResponseEntity.ok(response);
+            
+        } catch (IllegalArgumentException e) {
+            logger.error("❌ Invalid update request: {}", e.getMessage());
+            return ResponseEntity.badRequest()
+                    .body(Map.of("error", e.getMessage()));
+        } catch (Exception e) {
+            logger.error("❌ Error updating group", e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("error", "Failed to update group: " + e.getMessage()));
         }
     }
 

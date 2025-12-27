@@ -17,7 +17,7 @@ import org.springframework.security.oauth2.server.resource.authentication.JwtAut
 import org.springframework.security.oauth2.jwt.Jwt;
 import com.couchbase.admin.oauth.service.OAuthClientService;
 import com.couchbase.admin.oauth.model.OAuthClient;
-import com.couchbase.admin.users.bulkGroup.model.BulkGroup;
+import org.hl7.fhir.r4.model.Group;
 import com.couchbase.fhir.resources.service.FHIRResourceService;
 import ca.uhn.fhir.context.FhirContext;
 import com.couchbase.fhir.resources.config.TenantContextHolder;
@@ -162,10 +162,21 @@ public class SmartAuthorizationInterceptor {
                             OAuthClient oc = ocOpt.get();
                             String bulkGroupId = oc.getBulkGroupId();
                             if (bulkGroupId != null && !bulkGroupId.isBlank()) {
-                                Optional<BulkGroup> bgOpt = oauthClientService.getBulkGroupById(bulkGroupId);
+                                Optional<Group> bgOpt = oauthClientService.getBulkGroupById(bulkGroupId);
                                 if (bgOpt.isPresent()) {
-                                    BulkGroup bg = bgOpt.get();
-                                    List<String> patientIds = bg.getPatientIds() != null ? bg.getPatientIds() : new ArrayList<>();
+                                    Group group = bgOpt.get();
+                                    // Extract patient IDs from FHIR Group members
+                                    List<String> patientIds = group.getMember().stream()
+                                        .filter(m -> m.hasEntity() && m.getEntity().hasReference())
+                                        .map(m -> {
+                                            String ref = m.getEntity().getReference();
+                                            // Extract ID from "Patient/123" format
+                                            if (ref.startsWith("Patient/")) {
+                                                return ref.substring("Patient/".length());
+                                            }
+                                            return ref;
+                                        })
+                                        .collect(java.util.stream.Collectors.toList());
 
                                     // Determine requested resource id from the request path
                                     String resource = resourceType;

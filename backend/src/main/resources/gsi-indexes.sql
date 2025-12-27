@@ -1,7 +1,6 @@
 CREATE PRIMARY INDEX ON `fhir`.`Admin`.`users`;
 CREATE PRIMARY INDEX ON `fhir`.`Admin`.`clients`;
 CREATE PRIMARY INDEX ON `fhir`.`Admin`.`tokens`;
-CREATE PRIMARY INDEX ON `fhir`.`Admin`.`bulk_groups`;
 -- Users lookup by email
 -- CREATE INDEX idx_users_email ON `fhir`.`Admin`.`users`(email);
 -- Clients lookup by clientId

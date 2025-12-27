@@ -4,8 +4,6 @@ import ca.uhn.fhir.rest.server.servlet.ServletRequestDetails;
 import com.couchbase.admin.connections.service.ConnectionService;
 import com.couchbase.client.java.Cluster;
 import com.couchbase.fhir.resources.service.SearchService;
-import org.hl7.fhir.r4.model.Bundle;
-import org.hl7.fhir.r4.model.Resource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;

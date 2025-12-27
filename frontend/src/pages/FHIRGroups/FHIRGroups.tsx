@@ -30,7 +30,7 @@ import {
 } from "@mui/material";
 import AddIcon from "@mui/icons-material/Add";
 import DeleteIcon from "@mui/icons-material/Delete";
-import RefreshIcon from "@mui/icons-material/Refresh";
+import EditIcon from "@mui/icons-material/Edit";
 import groupService, {
   type GroupRequest,
   type GroupResponse,
@@ -71,6 +71,30 @@ const FILTER_EXAMPLES: Record<string, string[]> = {
 };
 
 const FHIRGroups: React.FC = () => {
+  // Helper: compute age in years from FHIR birthDate (YYYY[ -MM[ -DD ]])
+  const computeAge = (birthDate?: string): string => {
+    if (!birthDate) return "-";
+    const parts = birthDate.split("-");
+    const year = parseInt(parts[0], 10);
+    if (isNaN(year)) return "-";
+    const month =
+      parts.length > 1
+        ? Math.max(1, Math.min(12, parseInt(parts[1], 10) || 1))
+        : 1;
+    const day =
+      parts.length > 2
+        ? Math.max(1, Math.min(31, parseInt(parts[2], 10) || 1))
+        : 1;
+    const dob = new Date(year, month - 1, day);
+    const now = new Date();
+    let age = now.getFullYear() - dob.getFullYear();
+    const m = now.getMonth() - dob.getMonth();
+    if (m < 0 || (m === 0 && now.getDate() < dob.getDate())) {
+      age--;
+    }
+    if (age < 0) return "0";
+    return `${age}`;
+  };
   const [groups, setGroups] = useState<GroupResponse[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -87,6 +111,7 @@ const FHIRGroups: React.FC = () => {
   >("filter");
   const [submitting, setSubmitting] = useState(false);
   const [dialogError, setDialogError] = useState<string>("");
+  const [editingGroupId, setEditingGroupId] = useState<string | null>(null); // For edit mode
 
   // Form state
   const [groupName, setGroupName] = useState("");
@@ -148,6 +173,7 @@ const FHIRGroups: React.FC = () => {
   };
 
   const openCreateDialog = () => {
+    setEditingGroupId(null); // Clear edit mode
     setDialogOpen(true);
     setDialogStep("filter");
     setGroupName("");
@@ -157,9 +183,32 @@ const FHIRGroups: React.FC = () => {
     setDialogError("");
   };
 
+  const openEditDialog = async (groupId: string) => {
+    try {
+      setLoading(true);
+      const group = await groupService.getById(groupId);
+
+      setEditingGroupId(groupId);
+      setGroupName(group.name);
+      setResourceType(group.resourceType);
+      setFilter(group.filter);
+      setPreview(null);
+      setDialogError("");
+      setDialogStep("filter");
+      setDialogOpen(true);
+    } catch (err: any) {
+      setError(
+        err?.response?.data?.error || "Failed to load group for editing"
+      );
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const closeDialog = () => {
     setDialogOpen(false);
     setDialogStep("filter");
+    setEditingGroupId(null); // Clear edit mode
     setGroupName("");
     setResourceType("Patient");
     setFilter("");
@@ -199,37 +248,38 @@ const FHIRGroups: React.FC = () => {
         createdBy: "admin", // TODO: Get from auth context
       };
 
-      const created = await groupService.create(request);
+      if (editingGroupId) {
+        // Update existing group
+        await groupService.update(editingGroupId, request);
+        closeDialog();
+        loadGroups();
+      } else {
+        // Create new group
+        const created = await groupService.create(request);
+        closeDialog();
 
-      closeDialog();
+        // Handle intent response (redirect back to calling page)
+        if (intent && intent.intent_type === "new_bulk_group") {
+          const respPayload = {
+            action: "bulk_group_created",
+            clientId: intent.clientId,
+            group: created,
+          };
+          const encResp = encodeIntent(respPayload);
+          const target = intent.sourcePath || "/clients";
+          navigate(`${target}?intent_response=${encResp}`);
+          return;
+        }
 
-      // Handle intent response (redirect back to calling page)
-      if (intent && intent.intent_type === "new_bulk_group") {
-        const respPayload = {
-          action: "bulk_group_created",
-          clientId: intent.clientId,
-          group: created,
-        };
-        const encResp = encodeIntent(respPayload);
-        const target = intent.sourcePath || "/clients";
-        navigate(`${target}?intent_response=${encResp}`);
-        return;
+        loadGroups();
       }
-
-      loadGroups();
     } catch (err: any) {
-      setDialogError(err?.response?.data?.error || "Failed to create group");
+      setDialogError(
+        err?.response?.data?.error ||
+          `Failed to ${editingGroupId ? "update" : "create"} group`
+      );
     } finally {
       setSubmitting(false);
-    }
-  };
-
-  const handleRefresh = async (groupId: string) => {
-    try {
-      await groupService.refresh(groupId);
-      loadGroups();
-    } catch (err: any) {
-      setError(err?.response?.data?.error || "Failed to refresh group");
     }
   };
 
@@ -297,11 +347,13 @@ const FHIRGroups: React.FC = () => {
               <Table>
                 <TableHead>
                   <TableRow>
+                    <TableCell>ID</TableCell>
                     <TableCell>Name</TableCell>
                     <TableCell>Resource Type</TableCell>
                     <TableCell>Filter</TableCell>
                     <TableCell align="right">Members</TableCell>
                     <TableCell>Created By</TableCell>
+                    <TableCell>Last Updated</TableCell>
                     <TableCell align="right">Actions</TableCell>
                   </TableRow>
                 </TableHead>
@@ -316,6 +368,7 @@ const FHIRGroups: React.FC = () => {
                           highlightId === g.id ? "action.selected" : undefined,
                       }}
                     >
+                      <TableCell>{g.id}</TableCell>
                       <TableCell>{g.name}</TableCell>
                       <TableCell>{g.resourceType}</TableCell>
                       <TableCell>
@@ -333,13 +386,18 @@ const FHIRGroups: React.FC = () => {
                       </TableCell>
                       <TableCell align="right">{g.memberCount}</TableCell>
                       <TableCell>{g.createdBy}</TableCell>
+                      <TableCell>
+                        <Typography variant="body2">
+                          {new Date(g.lastUpdated).toLocaleString()}
+                        </Typography>
+                      </TableCell>
                       <TableCell align="right">
-                        <Tooltip title="Refresh (re-run filter)">
+                        <Tooltip title="Edit (re-run filter)">
                           <IconButton
                             size="small"
-                            onClick={() => handleRefresh(g.id)}
+                            onClick={() => openEditDialog(g.id)}
                           >
-                            <RefreshIcon />
+                            <EditIcon />
                           </IconButton>
                         </Tooltip>
                         <Tooltip title="Delete">
@@ -365,9 +423,11 @@ const FHIRGroups: React.FC = () => {
         </CardContent>
       </Card>
 
-      {/* Create Group Dialog */}
+      {/* Create/Edit Group Dialog */}
       <Dialog open={dialogOpen} onClose={closeDialog} maxWidth="md" fullWidth>
-        <DialogTitle>Create FHIR Group</DialogTitle>
+        <DialogTitle>
+          {editingGroupId ? "Edit FHIR Group" : "Create FHIR Group"}
+        </DialogTitle>
         <DialogContent>
           <Box sx={{ display: "flex", flexDirection: "column", gap: 2, mt: 1 }}>
             {dialogError && (
@@ -456,6 +516,7 @@ const FHIRGroups: React.FC = () => {
                         {preview.resourceType === "Patient" && (
                           <>
                             <TableCell>Birth Date</TableCell>
+                            <TableCell>Age (yrs)</TableCell>
                             <TableCell>Gender</TableCell>
                           </>
                         )}
@@ -469,6 +530,9 @@ const FHIRGroups: React.FC = () => {
                           {preview.resourceType === "Patient" && (
                             <>
                               <TableCell>{resource.birthDate || "-"}</TableCell>
+                              <TableCell>
+                                {computeAge(resource.birthDate)}
+                              </TableCell>
                               <TableCell>{resource.gender || "-"}</TableCell>
                             </>
                           )}
@@ -504,7 +568,13 @@ const FHIRGroups: React.FC = () => {
                 variant="contained"
                 disabled={submitting || !groupName.trim()}
               >
-                {submitting ? "Creating..." : "Create Group"}
+                {submitting
+                  ? editingGroupId
+                    ? "Updating..."
+                    : "Creating..."
+                  : editingGroupId
+                  ? "Update Group"
+                  : "Create Group"}
               </Button>
             </>
           )}

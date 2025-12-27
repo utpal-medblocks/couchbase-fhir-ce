@@ -61,6 +61,14 @@ export const groupService = {
   },
 
   /**
+   * Update an existing FHIR Group (re-run filter with same ID)
+   */
+  async update(id: string, request: GroupRequest): Promise<GroupResponse> {
+    const resp = await axios.put<GroupResponse>(`${API_BASE}/${id}`, request);
+    return resp.data;
+  },
+
+  /**
    * Get all groups
    */
   async getAll(): Promise<GroupResponse[]> {
@@ -79,9 +87,7 @@ export const groupService = {
   /**
    * Refresh a group (re-run its filter)
    */
-  async refresh(
-    id: string
-  ): Promise<{
+  async refresh(id: string): Promise<{
     id: string;
     name: string;
     memberCount: number;

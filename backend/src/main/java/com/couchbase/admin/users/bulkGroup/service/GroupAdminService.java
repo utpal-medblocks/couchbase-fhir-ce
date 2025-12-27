@@ -1,11 +1,11 @@
 package com.couchbase.admin.users.bulkGroup.service;
 
 import ca.uhn.fhir.context.FhirContext;
-import ca.uhn.fhir.parser.IParser;
 import com.couchbase.admin.connections.service.ConnectionService;
 import com.couchbase.client.java.Cluster;
-import com.couchbase.client.java.Collection;
 import com.couchbase.client.java.query.QueryResult;
+import com.couchbase.client.java.json.JsonObject;
+import com.couchbase.fhir.resources.service.FHIRResourceService;
 import org.hl7.fhir.r4.model.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -16,15 +16,13 @@ import java.util.*;
 
 /**
  * Service to create and manage FHIR Group resources.
- * Stores groups in fhir.Resources.General collection as proper FHIR resources.
+ * Uses FHIRResourceService for proper FHIR-compliant storage.
  */
 @Service
 public class GroupAdminService {
 
     private static final Logger logger = LoggerFactory.getLogger(GroupAdminService.class);
     private static final String BUCKET_NAME = "fhir";
-    private static final String SCOPE_NAME = "Resources";
-    private static final String COLLECTION_NAME = "General";
     private static final int MAX_GROUP_MEMBERS = 10000;
 
     // Custom extension URLs
@@ -35,16 +33,17 @@ public class GroupAdminService {
 
     private final ConnectionService connectionService;
     private final FilterPreviewService filterPreviewService;
+    private final FHIRResourceService fhirResourceService;
     private final FhirContext fhirContext;
-    private final IParser jsonParser;
-
     public GroupAdminService(ConnectionService connectionService,
                              FilterPreviewService filterPreviewService,
+                             FHIRResourceService fhirResourceService,
                              FhirContext fhirContext) {
         this.connectionService = connectionService;
         this.filterPreviewService = filterPreviewService;
+        this.fhirResourceService = fhirResourceService;
         this.fhirContext = fhirContext;
-        this.jsonParser = fhirContext.newJsonParser();
+        fhirContext.newJsonParser();
         logger.info("✅ GroupAdminService initialized");
     }
 
@@ -52,7 +51,23 @@ public class GroupAdminService {
      * Create a new FHIR Group from a filter
      */
     public Group createGroupFromFilter(String name, String resourceType, String filter, String createdBy) {
-        logger.info("➕ Creating group '{}' for {} with filter: {}", name, resourceType, filter);
+        return createOrUpdateGroupFromFilter(null, name, resourceType, filter, createdBy);
+    }
+    
+    /**
+     * Update an existing FHIR Group (re-run filter with same ID for UPSERT)
+     */
+    public Group updateGroupFromFilter(String existingId, String name, String resourceType, String filter, String createdBy) {
+        return createOrUpdateGroupFromFilter(existingId, name, resourceType, filter, createdBy);
+    }
+    
+    /**
+     * Internal method to create or update a FHIR Group from a filter
+     */
+    private Group createOrUpdateGroupFromFilter(String existingId, String name, String resourceType, String filter, String createdBy) {
+        logger.info("{}  FHIR Group '{}' for {} with filter: {}", 
+            existingId == null ? "➕ Creating" : "✏️ Updating",
+            name, resourceType, filter);
         logger.debug("🔍 Parameters: name='{}', resourceType='{}', filter='{}', createdBy='{}'", 
             name, resourceType, filter, createdBy);
 
@@ -73,12 +88,31 @@ public class GroupAdminService {
         // Build FHIR Group resource
         logger.debug("🔍 Building FHIR Group resource...");
         Group group = new Group();
-        group.setId(UUID.randomUUID().toString());
-        logger.debug("✅ Generated Group ID: {}", group.getId());
         
-        // Meta
+        // Use existing ID for update, generate new for create
+        String groupId = existingId != null ? existingId : UUID.randomUUID().toString();
+        group.setId(groupId);
+        logger.debug("✅ Group ID: {}", group.getId());
+        
+        // Meta - increment version if updating
         Meta meta = new Meta();
-        meta.setVersionId("1");
+        if (existingId != null) {
+            // For updates, try to get existing version and increment
+            Optional<Group> existingOpt = getGroupById(existingId);
+            if (existingOpt.isPresent() && existingOpt.get().getMeta() != null) {
+                String existingVersion = existingOpt.get().getMeta().getVersionId();
+                try {
+                    int version = Integer.parseInt(existingVersion);
+                    meta.setVersionId(String.valueOf(version + 1));
+                } catch (NumberFormatException e) {
+                    meta.setVersionId("2"); // Default to 2 if we can't parse
+                }
+            } else {
+                meta.setVersionId("2");
+            }
+        } else {
+            meta.setVersionId("1");
+        }
         meta.setLastUpdated(Date.from(Instant.now()));
         meta.addProfile("http://hl7.org/fhir/us/core/StructureDefinition/us-core-group");
         
@@ -116,7 +150,8 @@ public class GroupAdminService {
         // Extensions
         Extension filterExt = new Extension();
         filterExt.setUrl(EXT_CREATION_FILTER);
-        filterExt.setValue(new StringType(resourceType + "?" + filter));
+        // Store query-only string (e.g., "name=Baxter")
+        filterExt.setValue(new StringType(filter));
         group.addExtension(filterExt);
 
         Extension createdByExt = new Extension();
@@ -134,64 +169,135 @@ public class GroupAdminService {
         resourceTypeExt.setValue(new StringType(resourceType));
         group.addExtension(resourceTypeExt);
 
-        // Store in Couchbase
-        logger.debug("🔍 Storing Group in Couchbase...");
-        storeGroup(group);
-        logger.debug("✅ Group stored successfully");
+        // Store via Couchbase SDK (upsert)
+        logger.debug("🔍 Upserting Group via Couchbase SDK...");
+        Cluster cluster = connectionService.getConnection("default");
+        com.couchbase.client.java.Collection collection = cluster.bucket(BUCKET_NAME)
+            .scope("Resources")
+            .collection("General");
+        String documentKey = "Group/" + groupId;
+        String json = fhirContext.newJsonParser().encodeResourceToString(group);
+        collection.upsert(documentKey, JsonObject.fromJson(json));
+        logger.debug("✅ Group upserted: {}", documentKey);
 
-        logger.info("✅ Group created: {} with {} members", group.getId(), memberIds.size());
+        logger.info("✅ Group {} successfully: {} with {} members", 
+            existingId == null ? "created" : "updated",
+            group.getId(), memberIds.size());
         return group;
     }
 
     /**
-     * Get a Group by ID
+     * Get a Group by ID using FHIRResourceService
      */
     public Optional<Group> getGroupById(String id) {
         try {
-            Cluster cluster = connectionService.getConnection("default");
-            Collection collection = cluster.bucket(BUCKET_NAME).scope(SCOPE_NAME).collection(COLLECTION_NAME);
-            
-            String docKey = "Group::" + id;
-            String json = collection.get(docKey).contentAs(String.class);
-            Group group = jsonParser.parseResource(Group.class, json);
-            
-            return Optional.of(group);
+            return fhirResourceService.getService(Group.class)
+                    .read("Group", id, BUCKET_NAME);
         } catch (Exception e) {
             logger.debug("Group not found: {}", id);
             return Optional.empty();
         }
     }
 
+    // Deprecated: use getAllGroupSummaries() for list view performance and clean IDs.
+
     /**
-     * Get all groups
+     * Get all groups as lightweight summary rows directly from N1QL
+     * Avoids loading full HAPI resources for list view performance.
      */
-    public List<Group> getAllGroups() {
+    public List<GroupSummaryRow> getAllGroupSummaries() {
         try {
             Cluster cluster = connectionService.getConnection("default");
+
             String query = String.format(
-                    "SELECT META(g).id as docId, g.* FROM `%s`.`%s`.`%s` g " +
+                    "SELECT " +
+                    "  g.name, " +
+                    "  g.id, " +
+                    "  g.quantity, " +
+                    "  (ARRAY e.valueString " +
+                    "   FOR e IN g.extension " +
+                    "   WHEN e.url = '%s' " +
+                    "   END)[0] AS memberResourceType, " +
+                    "  (ARRAY e.valueString " +
+                    "   FOR e IN g.extension " +
+                    "   WHEN e.url = '%s' " +
+                    "   END)[0] AS creationFilter, " +
+                    "  (ARRAY e.valueString " +
+                    "   FOR e IN g.extension " +
+                    "   WHEN e.url = '%s' " +
+                    "   END)[0] AS createdBy, " +
+                    "  (ARRAY e.valueDateTime " +
+                    "   FOR e IN g.extension " +
+                    "   WHEN e.url = '%s' " +
+                    "   END)[0] AS lastRefreshed, " +
+                    "  g.type, " +
+                    "  g.meta.lastUpdated " +
+                    "FROM `%s`.`Resources`.`General` AS g " +
                     "WHERE g.resourceType = 'Group' " +
                     "ORDER BY g.meta.lastUpdated DESC",
-                    BUCKET_NAME, SCOPE_NAME, COLLECTION_NAME);
+                    EXT_RESOURCE_TYPE,
+                    EXT_CREATION_FILTER,
+                    EXT_CREATED_BY,
+                    EXT_LAST_REFRESHED,
+                    BUCKET_NAME);
 
+            logger.info("🔍 Querying Group summaries from fhir.Resources.General");
             QueryResult result = cluster.query(query);
-            List<Group> groups = new ArrayList<>();
 
+            List<GroupSummaryRow> rows = new ArrayList<>();
             for (var row : result.rowsAsObject()) {
-                try {
-                    String json = row.toString();
-                    Group group = jsonParser.parseResource(Group.class, json);
-                    groups.add(group);
-                } catch (Exception e) {
-                    logger.warn("Failed to parse group: {}", e.getMessage());
-                }
+                GroupSummaryRow dto = new GroupSummaryRow();
+                dto.setId(row.getString("id")); // logical UUID
+                dto.setName(row.getString("name"));
+                dto.setResourceType(row.getString("memberResourceType"));
+                dto.setFilter(row.getString("creationFilter"));
+                dto.setMemberCount(row.getInt("quantity"));
+                dto.setCreatedBy(row.getString("createdBy"));
+                // Convert timestamps to string for UI rendering
+                Object lu = row.get("lastUpdated");
+                dto.setLastUpdated(lu != null ? lu.toString() : null);
+                Object lr = row.get("lastRefreshed");
+                dto.setLastRefreshed(lr != null ? lr.toString() : null);
+                rows.add(dto);
             }
 
-            return groups;
+            logger.info("✅ Found {} group summaries", rows.size());
+            return rows;
         } catch (Exception e) {
-            logger.error("Error fetching groups", e);
+            logger.error("❌ Error fetching group summaries", e);
             return new ArrayList<>();
         }
+    }
+
+    /**
+     * Lightweight DTO for group list view
+     */
+    public static class GroupSummaryRow {
+        private String id;
+        private String name;
+        private String filter;
+        private String resourceType;
+        private int memberCount;
+        private String createdBy;
+        private String lastUpdated;
+        private String lastRefreshed;
+
+        public String getId() { return id; }
+        public void setId(String id) { this.id = id; }
+        public String getName() { return name; }
+        public void setName(String name) { this.name = name; }
+        public String getFilter() { return filter; }
+        public void setFilter(String filter) { this.filter = filter; }
+        public String getResourceType() { return resourceType; }
+        public void setResourceType(String resourceType) { this.resourceType = resourceType; }
+        public int getMemberCount() { return memberCount; }
+        public void setMemberCount(int memberCount) { this.memberCount = memberCount; }
+        public String getCreatedBy() { return createdBy; }
+        public void setCreatedBy(String createdBy) { this.createdBy = createdBy; }
+        public String getLastUpdated() { return lastUpdated; }
+        public void setLastUpdated(String lastUpdated) { this.lastUpdated = lastUpdated; }
+        public String getLastRefreshed() { return lastRefreshed; }
+        public void setLastRefreshed(String lastRefreshed) { this.lastRefreshed = lastRefreshed; }
     }
 
     /**
@@ -203,17 +309,14 @@ public class GroupAdminService {
         Group existingGroup = getGroupById(id)
                 .orElseThrow(() -> new IllegalArgumentException("Group not found: " + id));
 
-        // Extract filter from extension
+        // Extract query-only filter and resourceType from extensions
         Extension filterExt = existingGroup.getExtensionByUrl(EXT_CREATION_FILTER);
-        if (filterExt == null || filterExt.getValue() == null) {
-            throw new IllegalStateException("Group does not have a creation filter - cannot refresh");
+        Extension resourceTypeExt = existingGroup.getExtensionByUrl(EXT_RESOURCE_TYPE);
+        if (filterExt == null || filterExt.getValue() == null || resourceTypeExt == null || resourceTypeExt.getValue() == null) {
+            throw new IllegalStateException("Group missing filter or resource type - cannot refresh");
         }
-
-        String filterValue = filterExt.getValue().primitiveValue();
-        // Format: "Patient?family=Smith&birthdate=ge1987"
-        String[] parts = filterValue.split("\\?", 2);
-        String resourceType = parts[0];
-        String filter = parts.length > 1 ? parts[1] : "";
+        String filter = filterExt.getValue().primitiveValue();
+        String resourceType = resourceTypeExt.getValue().primitiveValue();
 
         // Get new member list
         List<String> newMemberIds = filterPreviewService.getAllMatchingIds(resourceType, filter, MAX_GROUP_MEMBERS);
@@ -246,9 +349,15 @@ public class GroupAdminService {
             existingGroup.addExtension(newExt);
         }
 
-        // Store updated group
-        storeGroup(existingGroup);
-
+        // Upsert updated group via Couchbase SDK
+        logger.debug("🔍 Upserting refreshed Group via Couchbase SDK...");
+        Cluster cluster = connectionService.getConnection("default");
+        com.couchbase.client.java.Collection collection = cluster.bucket(BUCKET_NAME)
+            .scope("Resources")
+            .collection("General");
+        String documentKey = "Group/" + id;
+        String json = fhirContext.newJsonParser().encodeResourceToString(existingGroup);
+        collection.upsert(documentKey, JsonObject.fromJson(json));
         logger.info("✅ Group refreshed: {} now has {} members", id, newMemberIds.size());
         return existingGroup;
     }
@@ -277,15 +386,22 @@ public class GroupAdminService {
                 Integer.parseInt(group.getMeta().getVersionId()) + 1));
         group.getMeta().setLastUpdated(Date.from(Instant.now()));
 
-        // Store updated group
-        storeGroup(group);
+        // Upsert updated group via Couchbase SDK
+        logger.debug("🔍 Upserting updated Group via Couchbase SDK...");
+        Cluster cluster = connectionService.getConnection("default");
+        com.couchbase.client.java.Collection collection = cluster.bucket(BUCKET_NAME)
+            .scope("Resources")
+            .collection("General");
+        String documentKey = "Group/" + groupId;
+        String json = fhirContext.newJsonParser().encodeResourceToString(group);
+        collection.upsert(documentKey, JsonObject.fromJson(json));
 
         logger.info("✅ Member removed from group {}", groupId);
         return group;
     }
 
     /**
-     * Delete a group
+     * Delete a Group using direct KV delete
      */
     public void deleteGroup(String id) {
         logger.info("🗑️  Deleting group: {}", id);
@@ -296,34 +412,17 @@ public class GroupAdminService {
 
         try {
             Cluster cluster = connectionService.getConnection("default");
-            Collection collection = cluster.bucket(BUCKET_NAME).scope(SCOPE_NAME).collection(COLLECTION_NAME);
+            String targetCollection = "General"; // Groups go to General collection
+            com.couchbase.client.java.Collection collection = cluster.bucket(BUCKET_NAME)
+                    .scope("Resources")
+                    .collection(targetCollection);
             
-            String docKey = "Group::" + id;
-            collection.remove(docKey);
-
+            String documentKey = "Group/" + id;  // Use FHIR standard key format
+            collection.remove(documentKey);
             logger.info("✅ Group deleted: {}", id);
         } catch (Exception e) {
-            logger.error("Error deleting group", e);
+            logger.error("❌ Error deleting group: {}", e.getMessage());
             throw new RuntimeException("Failed to delete group: " + e.getMessage(), e);
-        }
-    }
-
-    /**
-     * Store a Group resource in Couchbase
-     */
-    private void storeGroup(Group group) {
-        try {
-            Cluster cluster = connectionService.getConnection("default");
-            Collection collection = cluster.bucket(BUCKET_NAME).scope(SCOPE_NAME).collection(COLLECTION_NAME);
-            
-            String docKey = "Group::" + group.getId();
-            String json = jsonParser.encodeResourceToString(group);
-
-            collection.upsert(docKey, json);
-            logger.debug("Group stored: {}", docKey);
-        } catch (Exception e) {
-            logger.error("Error storing group", e);
-            throw new RuntimeException("Failed to store group: " + e.getMessage(), e);
         }
     }
 
