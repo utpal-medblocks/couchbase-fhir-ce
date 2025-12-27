@@ -139,13 +139,12 @@ public class SmartAuthorizationInterceptor {
         
         logger.debug("✅ Authorized: {} for {} {}", authentication.getName(), operation, resourceType);
         
-        // Additional patient-scope filtering if needed
+        // Additional patient-scope filtering - ENFORCE patient context
         if (scopeValidator.hasPatientScope(authentication)) {
-            String patientId = scopeValidator.getPatientContext(authentication);
-            if (patientId != null) {
-                logger.debug("📋 Patient-scoped request: limiting to patient {}", patientId);
-                // TODO: In future, add patient ID filter to search parameters
-                // This would require modifying the RequestDetails to add patient filter
+            String patientContext = scopeValidator.getPatientContext(authentication);
+            if (patientContext != null) {
+                logger.debug("📋 Patient-scoped request: enforcing patient context {}", patientContext);
+                enforcePatientContext(theRequestDetails, resourceType, operationType, patientContext);
             }
         }
 
@@ -306,6 +305,114 @@ public class SmartAuthorizationInterceptor {
                 logger.debug("Unknown operation type: {}", operationType);
                 return "read"; // Default to requiring read permission
         }
+    }
+    
+    /**
+     * Enforce patient context for patient-scoped tokens.
+     * Validates that searches and reads are restricted to the patient in the token.
+     * 
+     * @param requestDetails HAPI FHIR request details
+     * @param resourceType Resource type being accessed
+     * @param operationType Type of operation
+     * @param patientContext Patient ID from JWT token
+     */
+    private void enforcePatientContext(RequestDetails requestDetails, String resourceType, 
+                                       RestOperationTypeEnum operationType, String patientContext) {
+        
+        // For direct reads: GET /fhir/Patient/{id}
+        if (operationType == RestOperationTypeEnum.READ || operationType == RestOperationTypeEnum.VREAD) {
+            String resourceId = requestDetails.getId() != null ? requestDetails.getId().getIdPart() : null;
+            
+            if (resourceType.equals("Patient")) {
+                // Direct Patient read - must match token's patient context
+                if (resourceId != null && !resourceId.equals(patientContext)) {
+                    logger.warn("🚫 Patient-scoped token attempted to access Patient/{} (token patient: {})", 
+                               resourceId, patientContext);
+                    throw new AuthenticationException(
+                        String.format("Access denied: patient-scoped token can only access Patient/%s", patientContext)
+                    );
+                }
+            } else {
+                // Other resource types: validate subject/patient reference
+                // This will be checked in a post-processing hook if needed
+                // For now, we'll validate in SEARCH operations below
+            }
+        }
+        
+        // For searches: GET /fhir/Patient?_id=xyz or GET /fhir/Observation?patient=xyz
+        if (operationType == RestOperationTypeEnum.SEARCH_TYPE) {
+            // Check if searching for Patient resources
+            if (resourceType.equals("Patient")) {
+                // Get _id search parameter
+                String[] idParams = requestDetails.getParameters().get("_id");
+                if (idParams != null && idParams.length > 0) {
+                    for (String searchId : idParams) {
+                        if (!searchId.equals(patientContext)) {
+                            logger.warn("🚫 Patient-scoped token attempted to search Patient?_id={} (token patient: {})", 
+                                       searchId, patientContext);
+                            throw new AuthenticationException(
+                                String.format("Access denied: patient-scoped token can only search for Patient/%s", patientContext)
+                            );
+                        }
+                    }
+                }
+                
+                // If no _id parameter, add it to enforce patient context
+                if (idParams == null || idParams.length == 0) {
+                    logger.debug("🔒 Adding patient context filter: _id={}", patientContext);
+                    requestDetails.addParameter("_id", new String[]{patientContext});
+                }
+            } else {
+                // For other resources (Observation, Condition, etc.), enforce patient parameter
+                String[] patientParams = requestDetails.getParameters().get("patient");
+                String[] subjectParams = requestDetails.getParameters().get("subject");
+                
+                // Check patient parameter
+                if (patientParams != null && patientParams.length > 0) {
+                    for (String searchPatient : patientParams) {
+                        // Handle both "Patient/example" and "example" formats
+                        String patientId = searchPatient.startsWith("Patient/") 
+                            ? searchPatient.substring("Patient/".length()) 
+                            : searchPatient;
+                        
+                        if (!patientId.equals(patientContext)) {
+                            logger.warn("🚫 Patient-scoped token attempted to search {}?patient={} (token patient: {})", 
+                                       resourceType, patientId, patientContext);
+                            throw new AuthenticationException(
+                                String.format("Access denied: patient-scoped token can only access patient %s", patientContext)
+                            );
+                        }
+                    }
+                }
+                
+                // Check subject parameter (some resources use subject instead of patient)
+                if (subjectParams != null && subjectParams.length > 0) {
+                    for (String searchSubject : subjectParams) {
+                        String patientId = searchSubject.startsWith("Patient/") 
+                            ? searchSubject.substring("Patient/".length()) 
+                            : searchSubject;
+                        
+                        if (!patientId.equals(patientContext)) {
+                            logger.warn("🚫 Patient-scoped token attempted to search {}?subject={} (token patient: {})", 
+                                       resourceType, patientId, patientContext);
+                            throw new AuthenticationException(
+                                String.format("Access denied: patient-scoped token can only access patient %s", patientContext)
+                            );
+                        }
+                    }
+                }
+                
+                // If neither patient nor subject is specified, we need to add patient filter
+                // This ensures compartment-based access
+                if ((patientParams == null || patientParams.length == 0) && 
+                    (subjectParams == null || subjectParams.length == 0)) {
+                    logger.debug("🔒 Adding patient context filter: patient={}", patientContext);
+                    requestDetails.addParameter("patient", new String[]{patientContext});
+                }
+            }
+        }
+        
+        logger.debug("✅ Patient context enforcement passed for Patient/{}", patientContext);
     }
 }
 
