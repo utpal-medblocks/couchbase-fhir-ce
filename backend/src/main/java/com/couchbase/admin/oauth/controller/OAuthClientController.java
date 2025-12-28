@@ -153,5 +153,57 @@ public class OAuthClientController {
                     .body(Map.of("error", "Failed to delete OAuth client"));
         }
     }
+
+    /**
+     * Attach a bulk group id to a client
+     * POST /api/admin/oauth-clients/{clientId}/bulk-group
+     */
+    @PostMapping("/{clientId}/bulk-group")
+    public ResponseEntity<?> attachBulkGroup(@PathVariable String clientId, @RequestBody Map<String, String> body) {
+        try {
+            String bulkGroupId = body.get("bulkGroupId");
+            if (bulkGroupId == null || bulkGroupId.isEmpty()) {
+                return ResponseEntity.badRequest().body(Map.of("error", "bulkGroupId is required"));
+            }
+            OAuthClient updated = clientService.attachBulkGroup(clientId, bulkGroupId);
+            return ResponseEntity.ok(OAuthClientResponse.from(updated));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        } catch (Exception e) {
+            logger.error("❌ Error attaching bulk group to OAuth client: {}", e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Map.of("error", "Failed to attach bulk group"));
+        }
+    }
+
+    /**
+     * Get bulk group id attached to client
+     * GET /api/admin/oauth-clients/{clientId}/bulk-group
+     */
+    @GetMapping("/{clientId}/bulk-group")
+    public ResponseEntity<?> getBulkGroup(@PathVariable String clientId) {
+        try {
+            return clientService.getClientById(clientId)
+                    .map(c -> ResponseEntity.ok(OAuthClientResponse.from(c)))
+                    .orElse(ResponseEntity.notFound().build());
+        } catch (Exception e) {
+            logger.error("❌ Error fetching bulk group for OAuth client: {}", e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Map.of("error", "Failed to fetch bulk group"));
+        }
+    }
+
+    /**
+     * Detach bulk group from client
+     * DELETE /api/admin/oauth-clients/{clientId}/bulk-group
+     */
+    @DeleteMapping("/{clientId}/bulk-group")
+    public ResponseEntity<?> detachBulkGroup(@PathVariable String clientId) {
+        try {
+            OAuthClient updated = clientService.detachBulkGroup(clientId);
+            return ResponseEntity.ok(OAuthClientResponse.from(updated));
+        } catch (Exception e) {
+            logger.error("❌ Error detaching bulk group for OAuth client: {}", e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Map.of("error", "Failed to detach bulk group"));
+        }
+    }
 }
 

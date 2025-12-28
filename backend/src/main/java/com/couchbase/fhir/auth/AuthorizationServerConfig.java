@@ -16,6 +16,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.core.annotation.Order;
 import org.springframework.http.MediaType;
 import org.springframework.security.config.Customizer;
@@ -60,6 +61,7 @@ import java.util.UUID;
  * - /oauth2/jwks - JSON Web Key Set
  */
 @Configuration
+@ConditionalOnProperty(name = "app.security.use-keycloak", havingValue = "false", matchIfMissing = true)
 public class AuthorizationServerConfig {
 
     private static final Logger logger = LoggerFactory.getLogger(AuthorizationServerConfig.class);
@@ -172,9 +174,12 @@ public class AuthorizationServerConfig {
         // - /.well-known/oauth-authorization-server
         OAuth2AuthorizationServerConfiguration.applyDefaultSecurity(http);
 
-        // Enable OpenID Connect 1.0 (get the configurer from http after applyDefaultSecurity)
+        // Enable OpenID Connect and set custom consent page
         http.getConfigurer(OAuth2AuthorizationServerConfigurer.class)
-                .oidc(Customizer.withDefaults());
+            .oidc(Customizer.withDefaults())
+            .authorizationEndpoint(authorization -> authorization
+                .consentPage("/consent")
+            );
 
         // Redirect to login page when not authenticated for HTML requests
         http.exceptionHandling((exceptions) -> exceptions
@@ -298,8 +303,9 @@ public class AuthorizationServerConfig {
     @Bean
     public OAuth2TokenCustomizer<JwtEncodingContext> tokenCustomizer() {
         return context -> {
-            if (context.getTokenType().getValue().equals("access_token") || 
-                context.getTokenType().getValue().equals("id_token")) {
+            String tokenType = context.getTokenType().getValue();
+            
+            if (tokenType.equals("access_token") || tokenType.equals("id_token")) {
                 
                 String username = context.getPrincipal().getName();
                 
@@ -330,17 +336,14 @@ public class AuthorizationServerConfig {
                 if (user != null && user.getFhirUser() != null && !user.getFhirUser().isEmpty()) {
                     String fhirUserRef = user.getFhirUser();
                     context.getClaims().claim("fhirUser", fhirUserRef);
-                    logger.debug("✅ Added fhirUser claim: {}", fhirUserRef);
                     
                     // Add patient claim if user is a Patient resource
                     // SMART spec: patient claim should be just the ID, not the full reference
                     if (fhirUserRef.startsWith("Patient/")) {
                         String patientId = fhirUserRef.substring(8); // Extract "example" from "Patient/example"
                         context.getClaims().claim("patient", patientId);
-                        logger.debug("✅ Added patient claim: {} (extracted from {})", patientId, fhirUserRef);
+                        logger.debug("Added patient claim '{}' for user {}", patientId, username);
                     }
-                } else {
-                    logger.debug("ℹ️ No fhirUser reference for user: {}", username);
                 }
             }
         };
@@ -354,25 +357,6 @@ public class AuthorizationServerConfig {
         return OAuth2AuthorizationServerConfiguration.jwtDecoder(jwkSource);
     }
     
-    /**
-     * JWT Authentication Converter for extracting authorities from scope claim
-     * Uses our custom converter that safely handles both String and Collection scope claims
-     */
-    @Bean
-    public org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter jwtAuthenticationConverter() {
-        logger.info("🔧 Configuring JwtAuthenticationConverter with CustomJwtGrantedAuthoritiesConverter");
-        
-        // Use our custom converter that handles both String and Collection types
-        CustomJwtGrantedAuthoritiesConverter grantedAuthoritiesConverter = new CustomJwtGrantedAuthoritiesConverter();
-        
-        org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter jwtAuthenticationConverter = 
-            new org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter();
-        jwtAuthenticationConverter.setJwtGrantedAuthoritiesConverter(grantedAuthoritiesConverter);
-        
-        logger.info("✅ JwtAuthenticationConverter configured with custom scope handler");
-        return jwtAuthenticationConverter;
-    }
-
     /**
      * JwtEncoder for issuing custom application tokens (e.g., admin login) signed with same JWK.
      */

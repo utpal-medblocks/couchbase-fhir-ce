@@ -32,6 +32,7 @@ import {
   Collapse,
   Divider,
   CircularProgress,
+  Snackbar,
 } from "@mui/material";
 import {
   Add as AddIcon,
@@ -44,14 +45,16 @@ import {
   ExpandLess as ExpandLessIcon,
   CheckCircle as CheckCircleIcon,
   Refresh as RefreshIcon,
+  Block as BlockIcon,
 } from "@mui/icons-material";
 import { BsKey } from "react-icons/bs";
-import type { OAuthClient } from "../../services/oauthClientService";
+import type { OAuthClient } from "../../services/oauthClientApi";
 import {
   getAllClients,
   createClient as createClientAPI,
   revokeClient as revokeClientAPI,
-} from "../../services/oauthClientService";
+  deleteClient as deleteClientAPI,
+} from "../../services/oauthClientApi";
 
 // OAuth Client interface (will be shared with backend later)
 interface OAuthClientForm {
@@ -72,54 +75,100 @@ interface OAuthClientForm {
   lastUsed?: string;
 }
 
-// Mandatory SMART scopes (cannot be removed)
-const MANDATORY_SCOPES = [
-  {
-    value: "launch/patient",
-    label: "launch/patient",
-    description: "Patient context at launch",
-  },
-  {
-    value: "openid",
-    label: "openid",
-    description: "OpenID Connect authentication",
-  },
-  { value: "fhirUser", label: "fhirUser", description: "User identity claim" },
-  {
-    value: "offline_access",
-    label: "offline_access",
-    description: "Refresh tokens for offline access",
-  },
-];
+import { useLocation, useNavigate } from "react-router-dom";
+import oauthClientService from "../../services/oauthClientApi";
+import BulkGroupAttachModal from "../../components/BulkGroupAttachModal";
+import { decodeIntent, encodeIntent } from "../../utils/intent";
+import GroupAddIcon from "@mui/icons-material/GroupAdd";
 
-// US Core resource scopes for ONC certification (25 resources)
-const US_CORE_RESOURCE_SCOPES = [
-  "patient/Medication.rs",
-  "patient/AllergyIntolerance.rs",
-  "patient/CarePlan.rs",
-  "patient/CareTeam.rs",
-  "patient/Condition.rs",
-  "patient/Coverage.rs",
-  "patient/Device.rs",
-  "patient/DiagnosticReport.rs",
-  "patient/DocumentReference.rs",
-  "patient/Encounter.rs",
-  "patient/Goal.rs",
-  "patient/Immunization.rs",
-  "patient/Location.rs",
-  "patient/MedicationDispense.rs",
-  "patient/MedicationRequest.rs",
-  "patient/Observation.rs",
-  "patient/Organization.rs",
-  "patient/Patient.rs",
-  "patient/Practitioner.rs",
-  "patient/PractitionerRole.rs",
-  "patient/Procedure.rs",
-  "patient/Provenance.rs",
-  "patient/RelatedPerson.rs",
-  "patient/ServiceRequest.rs",
-  "patient/Specimen.rs",
-];
+// Mandatory SMART scopes factory (cannot be removed)
+const getMandatoryScopes = (clientType: "patient" | "provider" | "system") => {
+  // System apps don't need interactive scopes (no user, no launch, no browser)
+  if (clientType === "system") {
+    return []; // System apps use client_credentials - no mandatory scopes
+  }
+
+  const base = [
+    {
+      value: "openid",
+      label: "openid",
+      description: "OpenID Connect authentication",
+    },
+    {
+      value: "fhirUser",
+      label: "fhirUser",
+      description: "User identity claim",
+    },
+    {
+      value: "offline_access",
+      label: "offline_access",
+      description: "Refresh tokens for offline access",
+    },
+  ];
+  const launchScope =
+    clientType === "patient"
+      ? {
+          value: "launch/patient",
+          label: "launch/patient",
+          description: "Patient context at launch",
+        }
+      : {
+          value: "launch",
+          label: "launch",
+          description: "App launched with user or system context",
+        };
+  return [launchScope, ...base];
+};
+
+// Helper function to get scope prefix based on client type
+const getScopePrefix = (clientType: "patient" | "provider" | "system") => {
+  switch (clientType) {
+    case "patient":
+      return "patient";
+    case "provider":
+      return "user";
+    case "system":
+      return "system";
+    default:
+      return "patient";
+  }
+};
+
+// Helper function to get US Core scopes with correct prefix
+const getUSCoreScopes = (clientType: "patient" | "provider" | "system") => {
+  const prefix = getScopePrefix(clientType);
+  const resources = [
+    "Medication",
+    "AllergyIntolerance",
+    "CarePlan",
+    "CareTeam",
+    "Condition",
+    "Coverage",
+    "Device",
+    "DiagnosticReport",
+    "DocumentReference",
+    "Encounter",
+    "Goal",
+    "Immunization",
+    "Location",
+    "MedicationDispense",
+    "MedicationRequest",
+    "Observation",
+    "Organization",
+    "Patient",
+    "Practitioner",
+    "PractitionerRole",
+    "Procedure",
+    "Provenance",
+    "RelatedPerson",
+    "ServiceRequest",
+    "Specimen",
+  ];
+  return resources.map((r) => `${prefix}/${r}.rs`);
+};
+
+// Legacy: kept for backwards compatibility
+const US_CORE_RESOURCE_SCOPES = getUSCoreScopes("patient");
 
 // Additional optional scopes
 const OPTIONAL_SCOPES = [
@@ -183,11 +232,56 @@ const ClientRegistration: React.FC = () => {
   const [redirectUriInput, setRedirectUriInput] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
-  const [usCoreExpanded, setUsCoreExpanded] = useState(false);
-  const [usCoreEnabled, setUsCoreEnabled] = useState(true);
-  const [selectedUsCoreScopes, setSelectedUsCoreScopes] = useState<string[]>(
-    US_CORE_RESOURCE_SCOPES
+  const [copySnackbar, setCopySnackbar] = useState(false);
+  const [revokeDialogOpen, setRevokeDialogOpen] = useState(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [selectedClient, setSelectedClient] = useState<OAuthClient | null>(
+    null
   );
+  // Bulk group attach modal state
+  const [attachModalOpen, setAttachModalOpen] = useState(false);
+  const [attachClientId, setAttachClientId] = useState<string | null>(null);
+  const [initialAttachGroups, setInitialAttachGroups] = useState<any[] | null>(
+    null
+  );
+  const [initialSelectedGroupId, setInitialSelectedGroupId] = useState<
+    string | undefined
+  >(undefined);
+  const navigate = useNavigate();
+  const location = useLocation();
+
+  useEffect(() => {
+    // handle intent_response when redirected back from BulkGroups
+    const q = new URLSearchParams(location.search);
+    const enc = q.get("intent_response");
+    if (enc) {
+      const resp = decodeIntent(enc);
+      if (
+        resp &&
+        resp.action === "bulk_group_created" &&
+        resp.clientId &&
+        resp.group
+      ) {
+        // Instead of auto-attaching, open the attach modal and preselect the created group
+        setAttachClientId(resp.clientId);
+        setInitialAttachGroups([resp.group]);
+        setInitialSelectedGroupId(resp.group.id);
+        setAttachModalOpen(true);
+
+        // remove the intent_response from URL so it doesn't trigger again
+        const params = new URLSearchParams(location.search);
+        params.delete("intent_response");
+        navigate({ pathname: location.pathname, search: params.toString() }, {
+          replace: true,
+        } as any);
+      }
+    }
+  }, []);
+  // New scopes UI state
+  const [scopeMode, setScopeMode] = useState<"custom" | "all-read" | "us-core">(
+    "custom"
+  );
+  const [scopesText, setScopesText] = useState<string>("");
 
   // Load clients on mount
   useEffect(() => {
@@ -220,18 +314,15 @@ const ClientRegistration: React.FC = () => {
       authenticationType: "public",
       launchType: "standalone",
       redirectUris: [],
-      scopes: [
-        ...MANDATORY_SCOPES.map((s) => s.value),
-        ...US_CORE_RESOURCE_SCOPES,
-      ],
+      scopes: getMandatoryScopes("patient").map((s) => s.value),
       pkceEnabled: true,
       pkceMethod: "S256",
     });
     setRedirectUriInput("");
     setError(null);
-    setUsCoreEnabled(true);
-    setUsCoreExpanded(false);
-    setSelectedUsCoreScopes(US_CORE_RESOURCE_SCOPES);
+    // Reset new scopes UI
+    setScopeMode("custom");
+    setScopesText("");
   };
 
   const handleAddRedirectUri = () => {
@@ -265,66 +356,26 @@ const ClientRegistration: React.FC = () => {
     });
   };
 
-  const handleOptionalScopeToggle = (scope: string) => {
-    const currentScopes = formData.scopes;
-    if (currentScopes.includes(scope)) {
-      setFormData({
-        ...formData,
-        scopes: currentScopes.filter((s) => s !== scope),
-      });
-    } else {
-      setFormData({
-        ...formData,
-        scopes: [...currentScopes, scope],
-      });
+  // Scopes preset handler
+  const applyScopePreset = (mode: "custom" | "all-read" | "us-core") => {
+    setScopeMode(mode);
+    if (mode === "custom") {
+      setScopesText("");
+    } else if (mode === "all-read") {
+      const prefix = getScopePrefix(formData.clientType);
+      setScopesText(`${prefix}/*.rs`);
+    } else if (mode === "us-core") {
+      const usCoreScopes = getUSCoreScopes(formData.clientType);
+      setScopesText(usCoreScopes.join(" "));
     }
   };
 
-  const handleUsCoreToggle = () => {
-    const newUsCoreEnabled = !usCoreEnabled;
-    setUsCoreEnabled(newUsCoreEnabled);
-
-    if (newUsCoreEnabled) {
-      // Add all selected US Core scopes
-      const mandatoryScopes = MANDATORY_SCOPES.map((s) => s.value);
-      const otherScopes = formData.scopes.filter(
-        (s) =>
-          !US_CORE_RESOURCE_SCOPES.includes(s) && !mandatoryScopes.includes(s)
-      );
-      setFormData({
-        ...formData,
-        scopes: [...mandatoryScopes, ...otherScopes, ...selectedUsCoreScopes],
-      });
-    } else {
-      // Remove all US Core scopes
-      setFormData({
-        ...formData,
-        scopes: formData.scopes.filter(
-          (s) => !US_CORE_RESOURCE_SCOPES.includes(s)
-        ),
-      });
-    }
-  };
-
-  const handleUsCoreResourceToggle = (resource: string) => {
-    const newSelected = selectedUsCoreScopes.includes(resource)
-      ? selectedUsCoreScopes.filter((s) => s !== resource)
-      : [...selectedUsCoreScopes, resource];
-
-    setSelectedUsCoreScopes(newSelected);
-
-    // Update formData if US Core is enabled
-    if (usCoreEnabled) {
-      const mandatoryScopes = MANDATORY_SCOPES.map((s) => s.value);
-      const otherScopes = formData.scopes.filter(
-        (s) =>
-          !US_CORE_RESOURCE_SCOPES.includes(s) && !mandatoryScopes.includes(s)
-      );
-      setFormData({
-        ...formData,
-        scopes: [...mandatoryScopes, ...otherScopes, ...newSelected],
-      });
-    }
+  // Parse scopesText into array (space-delimited)
+  const parsedOptionalScopes = (text: string) => {
+    return text
+      .split(/\s+/)
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0);
   };
 
   const handleRegisterClient = async () => {
@@ -333,11 +384,37 @@ const ClientRegistration: React.FC = () => {
       setError("App name is required");
       return;
     }
-    if (formData.redirectUris.length === 0) {
-      setError("At least one redirect URI is required");
+
+    // System apps: require confidential authentication
+    if (
+      formData.clientType === "system" &&
+      formData.authenticationType !== "confidential"
+    ) {
+      setError(
+        "System apps must use confidential authentication (client_credentials flow requires a secret)"
+      );
       return;
     }
-    if (formData.scopes.length === 0) {
+
+    // Patient/Provider apps: require redirect URIs
+    if (
+      formData.clientType !== "system" &&
+      formData.redirectUris.length === 0
+    ) {
+      setError("At least one redirect URI is required for interactive apps");
+      return;
+    }
+
+    // Build final scopes: mandatory + parsed from textarea
+    const mandatoryScopes = getMandatoryScopes(formData.clientType).map(
+      (s) => s.value
+    );
+    const optionalScopes = parsedOptionalScopes(scopesText);
+    const finalScopes = Array.from(
+      new Set([...mandatoryScopes, ...optionalScopes])
+    );
+
+    if (finalScopes.length === 0) {
       setError("At least one scope is required");
       return;
     }
@@ -353,7 +430,7 @@ const ClientRegistration: React.FC = () => {
         authenticationType: formData.authenticationType,
         launchType: formData.launchType,
         redirectUris: formData.redirectUris,
-        scopes: formData.scopes,
+        scopes: finalScopes,
         pkceEnabled: formData.pkceEnabled,
         pkceMethod: formData.pkceMethod,
       });
@@ -373,7 +450,7 @@ const ClientRegistration: React.FC = () => {
 
   const handleCopyToClipboard = (text: string) => {
     navigator.clipboard.writeText(text);
-    // Could add a toast notification here
+    setCopySnackbar(true);
   };
 
   const handleRevokeClient = async (clientId: string) => {
@@ -381,9 +458,20 @@ const ClientRegistration: React.FC = () => {
       setError(null);
       await revokeClientAPI(clientId);
       setSuccess("Client revoked successfully");
-      loadClients(); // Reload list
+      loadClients();
     } catch (err: any) {
       setError(err.response?.data?.error || "Failed to revoke OAuth client");
+    }
+  };
+
+  const handleDeleteClient = async (clientId: string) => {
+    try {
+      setError(null);
+      await deleteClientAPI(clientId);
+      setSuccess("Client permanently deleted");
+      loadClients();
+    } catch (err: any) {
+      setError(err.response?.data?.error || "Failed to delete OAuth client");
     }
   };
 
@@ -396,6 +484,7 @@ const ClientRegistration: React.FC = () => {
           justifyContent: "space-between",
           alignItems: "center",
           mb: 2,
+          gap: 2,
         }}
       >
         <Box>
@@ -413,7 +502,7 @@ const ClientRegistration: React.FC = () => {
         </Button>
       </Box>
       {/* Registered Clients Table */}
-      <Card>
+      <Card sx={{ width: "100%", minHeight: 200 }}>
         <CardContent>
           {loading ? (
             <Box sx={{ display: "flex", justifyContent: "center", p: 4 }}>
@@ -430,7 +519,7 @@ const ClientRegistration: React.FC = () => {
               </Typography>
             </Box>
           ) : (
-            <TableContainer component={Paper} elevation={0}>
+            <TableContainer component={Paper}>
               <Table>
                 <TableHead>
                   <TableRow>
@@ -440,13 +529,14 @@ const ClientRegistration: React.FC = () => {
                     <TableCell>Launch</TableCell>
                     <TableCell>Auth</TableCell>
                     <TableCell>Status</TableCell>
+                    <TableCell>Bulk Group</TableCell>
                     <TableCell>Created</TableCell>
                     <TableCell align="right">Actions</TableCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
                   {clients.map((client) => (
-                    <TableRow key={client.clientId}>
+                    <TableRow key={client.clientId} hover>
                       <TableCell>
                         <Typography variant="body2" fontWeight="medium">
                           {client.clientName}
@@ -496,20 +586,83 @@ const ClientRegistration: React.FC = () => {
                         />
                       </TableCell>
                       <TableCell>
+                        {client.bulkGroupId ? (
+                          <Chip
+                            label={client.bulkGroupId}
+                            size="small"
+                            clickable
+                            color="primary"
+                            onClick={() => {
+                              const intent = {
+                                intent_type: "highlight_bulk_group",
+                                groupId: client.bulkGroupId,
+                                flashCount: 20,
+                                sourcePath: "/clients",
+                              };
+                              const enc = encodeIntent(intent);
+                              navigate(`/fhir-groups?intent=${enc}`);
+                            }}
+                          />
+                        ) : (
+                          <Typography variant="caption" color="text.secondary">
+                            —
+                          </Typography>
+                        )}
+                      </TableCell>
+                      <TableCell>
                         <Typography variant="caption">
-                          {new Date(client.createdAt).toLocaleDateString()}
+                          {client.createdAt
+                            ? new Date(client.createdAt).toLocaleDateString()
+                            : "-"}
                         </Typography>
                       </TableCell>
                       <TableCell align="right">
-                        {client.status === "active" && (
-                          <Button
-                            size="small"
-                            color="error"
-                            onClick={() => handleRevokeClient(client.clientId)}
-                          >
-                            Revoke
-                          </Button>
+                        <Tooltip
+                          title={
+                            client.status === "revoked"
+                              ? "Already revoked"
+                              : "Revoke client"
+                          }
+                        >
+                          <span>
+                            <IconButton
+                              size="small"
+                              onClick={() => {
+                                setSelectedClient(client);
+                                setRevokeDialogOpen(true);
+                              }}
+                              disabled={client.status === "revoked"}
+                              color="warning"
+                            >
+                              <BlockIcon fontSize="small" />
+                            </IconButton>
+                          </span>
+                        </Tooltip>
+                        {(client.clientType === "provider" ||
+                          client.clientType === "system") && (
+                          <Tooltip title="Attach bulk group">
+                            <IconButton
+                              size="small"
+                              onClick={() => {
+                                setAttachClientId(client.clientId);
+                                setAttachModalOpen(true);
+                              }}
+                            >
+                              <GroupAddIcon fontSize="small" />
+                            </IconButton>
+                          </Tooltip>
                         )}
+                        <Tooltip title="Permanently delete">
+                          <IconButton
+                            size="small"
+                            onClick={() => {
+                              setSelectedClient(client);
+                              setDeleteDialogOpen(true);
+                            }}
+                          >
+                            <DeleteIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
                       </TableCell>
                     </TableRow>
                   ))}
@@ -571,7 +724,12 @@ const ClientRegistration: React.FC = () => {
                   value={formData.clientType}
                   onChange={(_, newValue) => {
                     if (newValue) {
-                      setFormData({ ...formData, clientType: newValue });
+                      // Force confidential auth for system apps
+                      const updates: any = { clientType: newValue };
+                      if (newValue === "system") {
+                        updates.authenticationType = "confidential";
+                      }
+                      setFormData({ ...formData, ...updates });
                     }
                   }}
                 >
@@ -592,43 +750,45 @@ const ClientRegistration: React.FC = () => {
               </Typography>
             </FormControl>
 
-            {/* Launch Type */}
-            <FormControl component="fieldset">
-              <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
-                <FormLabel component="legend" sx={{ mb: 0 }}>
-                  Launch Type
-                </FormLabel>
-                <ToggleButtonGroup
-                  exclusive
-                  size="small"
-                  color="primary"
-                  value={formData.launchType}
-                  onChange={(_, newValue) => {
-                    if (newValue) {
-                      setFormData({ ...formData, launchType: newValue });
-                    }
-                  }}
-                >
-                  <ToggleButton
-                    value="standalone"
-                    sx={{ textTransform: "none" }}
+            {/* Launch Type - Hide for system apps */}
+            {formData.clientType !== "system" && (
+              <FormControl component="fieldset">
+                <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
+                  <FormLabel component="legend" sx={{ mb: 0 }}>
+                    Launch Type
+                  </FormLabel>
+                  <ToggleButtonGroup
+                    exclusive
+                    size="small"
+                    color="primary"
+                    value={formData.launchType}
+                    onChange={(_, newValue) => {
+                      if (newValue) {
+                        setFormData({ ...formData, launchType: newValue });
+                      }
+                    }}
                   >
-                    Standalone Launch
-                  </ToggleButton>
-                  <ToggleButton
-                    value="ehr-launch"
-                    disabled
-                    sx={{ textTransform: "none" }}
-                  >
-                    EHR Launch
-                  </ToggleButton>
-                </ToggleButtonGroup>
-              </Box>
-              <Typography variant="caption" color="text.secondary">
-                Standalone: App launches independently | EHR Launch: Launched
-                from within EHR (coming soon)
-              </Typography>
-            </FormControl>
+                    <ToggleButton
+                      value="standalone"
+                      sx={{ textTransform: "none" }}
+                    >
+                      Standalone Launch
+                    </ToggleButton>
+                    <ToggleButton
+                      value="ehr-launch"
+                      disabled
+                      sx={{ textTransform: "none" }}
+                    >
+                      EHR Launch
+                    </ToggleButton>
+                  </ToggleButtonGroup>
+                </Box>
+                <Typography variant="caption" color="text.secondary">
+                  Standalone: App launches independently | EHR Launch: Launched
+                  from within EHR (coming soon)
+                </Typography>
+              </FormControl>
+            )}
 
             {/* Authentication Type */}
             <FormControl component="fieldset">
@@ -650,7 +810,11 @@ const ClientRegistration: React.FC = () => {
                     }
                   }}
                 >
-                  <ToggleButton value="public" sx={{ textTransform: "none" }}>
+                  <ToggleButton
+                    value="public"
+                    sx={{ textTransform: "none" }}
+                    disabled={formData.clientType === "system"}
+                  >
                     Public Client
                   </ToggleButton>
                   <ToggleButton
@@ -662,8 +826,9 @@ const ClientRegistration: React.FC = () => {
                 </ToggleButtonGroup>
               </Box>
               <Typography variant="caption" color="text.secondary">
-                Public: No client secret (mobile/browser apps) | Confidential:
-                Uses client secret (server apps)
+                {formData.clientType === "system"
+                  ? "System apps must be confidential (client_credentials requires a secret)"
+                  : "Public: No client secret (mobile/browser apps) | Confidential: Uses client secret (server apps)"}
               </Typography>
             </FormControl>
 
@@ -715,61 +880,77 @@ const ClientRegistration: React.FC = () => {
               )}
             </Box>
 
-            {/* Redirect URIs */}
+            {/* Redirect URIs - Optional for system apps */}
             <Box>
               <Typography variant="subtitle2" gutterBottom>
-                Redirect URIs *
-                <Tooltip title="URLs where the authorization server will redirect after authentication">
+                Redirect URIs {formData.clientType !== "system" && "*"}
+                <Tooltip
+                  title={
+                    formData.clientType === "system"
+                      ? "Not required for system apps (no browser redirect)"
+                      : "URLs where the authorization server will redirect after authentication"
+                  }
+                >
                   <IconButton size="small">
                     <InfoIcon fontSize="small" />
                   </IconButton>
                 </Tooltip>
               </Typography>
-              <Box sx={{ display: "flex", gap: 1, mb: 1 }}>
-                <TextField
-                  size="small"
-                  fullWidth
-                  value={redirectUriInput}
-                  onChange={(e) => setRedirectUriInput(e.target.value)}
-                  placeholder="https://example.com/callback"
-                  onKeyPress={(e) => {
-                    if (e.key === "Enter") {
-                      e.preventDefault();
-                      handleAddRedirectUri();
-                    }
-                  }}
-                />
-                <Button variant="outlined" onClick={handleAddRedirectUri}>
-                  Add
-                </Button>
-              </Box>
-              {formData.redirectUris.length > 0 && (
-                <Paper variant="outlined" sx={{ p: 1 }}>
-                  {formData.redirectUris.map((uri) => (
-                    <Box
-                      key={uri}
-                      sx={{
-                        display: "flex",
-                        justifyContent: "space-between",
-                        alignItems: "center",
-                        p: 1,
+
+              {formData.clientType === "system" ? (
+                <Alert severity="info" sx={{ mb: 2 }}>
+                  System apps use client_credentials flow (no user interaction,
+                  no redirect)
+                </Alert>
+              ) : (
+                <>
+                  <Box sx={{ display: "flex", gap: 1, mb: 1 }}>
+                    <TextField
+                      size="small"
+                      fullWidth
+                      value={redirectUriInput}
+                      onChange={(e) => setRedirectUriInput(e.target.value)}
+                      placeholder="https://example.com/callback"
+                      onKeyPress={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          handleAddRedirectUri();
+                        }
                       }}
-                    >
-                      <Typography
-                        variant="body2"
-                        sx={{ fontFamily: "monospace" }}
-                      >
-                        {uri}
-                      </Typography>
-                      <IconButton
-                        size="small"
-                        onClick={() => handleRemoveRedirectUri(uri)}
-                      >
-                        <DeleteIcon fontSize="small" />
-                      </IconButton>
-                    </Box>
-                  ))}
-                </Paper>
+                    />
+                    <Button variant="outlined" onClick={handleAddRedirectUri}>
+                      Add
+                    </Button>
+                  </Box>
+                  {formData.redirectUris.length > 0 && (
+                    <Paper variant="outlined" sx={{ p: 1 }}>
+                      {formData.redirectUris.map((uri) => (
+                        <Box
+                          key={uri}
+                          sx={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            alignItems: "center",
+                            p: 1,
+                          }}
+                        >
+                          <Typography
+                            variant="body2"
+                            sx={{ fontFamily: "monospace" }}
+                          >
+                            {uri}
+                          </Typography>
+                          <IconButton
+                            size="small"
+                            onClick={() => handleRemoveRedirectUri(uri)}
+                          >
+                            <DeleteIcon fontSize="small" />
+                          </IconButton>
+                        </Box>
+                      ))}
+                    </Paper>
+                  )}
+                </>
               )}
             </Box>
 
@@ -785,189 +966,112 @@ const ClientRegistration: React.FC = () => {
 
               {/* Mandatory Scopes - Chips (non-removable) */}
               <Box sx={{ mb: 2 }}>
-                <Typography
-                  variant="caption"
-                  color="text.secondary"
-                  gutterBottom
-                  display="block"
-                >
-                  Required Scopes (cannot be removed):
-                </Typography>
-                <Box
-                  sx={{ display: "flex", flexWrap: "wrap", gap: 0.5, mt: 1 }}
-                >
-                  {MANDATORY_SCOPES.map((scope) => (
-                    <Chip
-                      key={scope.value}
-                      label={scope.value}
-                      size="small"
-                      color="primary"
-                      icon={<CheckCircleIcon />}
-                    />
-                  ))}
-                </Box>
+                {formData.clientType === "system" ? (
+                  <Alert severity="info">
+                    System apps don't require launch/openid/fhirUser scopes (no
+                    user interaction)
+                  </Alert>
+                ) : (
+                  <>
+                    <Typography
+                      variant="caption"
+                      color="text.secondary"
+                      gutterBottom
+                      display="block"
+                    >
+                      Required Scopes (cannot be removed):
+                    </Typography>
+                    <Box
+                      sx={{
+                        display: "flex",
+                        flexWrap: "wrap",
+                        gap: 0.5,
+                        mt: 1,
+                      }}
+                    >
+                      {getMandatoryScopes(formData.clientType).map((scope) => (
+                        <Chip
+                          key={scope.value}
+                          label={scope.value}
+                          size="small"
+                          color="primary"
+                          icon={<CheckCircleIcon />}
+                        />
+                      ))}
+                    </Box>
+                  </>
+                )}
               </Box>
 
               <Divider sx={{ my: 2 }} />
 
-              {/* US Core Resources - Expandable Mega Chip */}
-              {formData.clientType === "patient" && (
-                <Box sx={{ mb: 2 }}>
-                  <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
-                    <FormControlLabel
-                      sx={{ m: 0 }}
-                      control={
-                        <Checkbox
-                          size="small"
-                          checked={usCoreEnabled}
-                          onChange={handleUsCoreToggle}
-                        />
+              {/* New scopes preset toggle + textarea */}
+              <Box>
+                <Box
+                  sx={{ display: "flex", alignItems: "center", gap: 2, mb: 1 }}
+                >
+                  <FormLabel component="legend" sx={{ mb: 0 }}>
+                    Add
+                  </FormLabel>
+                  <ToggleButtonGroup
+                    exclusive
+                    size="small"
+                    color="primary"
+                    value={scopeMode}
+                    onChange={(_, newValue) => {
+                      if (newValue) {
+                        applyScopePreset(newValue);
                       }
-                      label={
-                        <Box
-                          sx={{ display: "flex", alignItems: "center", gap: 1 }}
-                        >
-                          <Typography variant="body2" fontWeight="medium">
-                            US Core Resources
-                          </Typography>
-                          <Chip
-                            label={`${selectedUsCoreScopes.length}/${US_CORE_RESOURCE_SCOPES.length} resources`}
-                            size="small"
-                            variant="outlined"
-                            color="info"
-                          />
-                        </Box>
-                      }
-                    />
-                    {usCoreEnabled && (
-                      <Button
-                        size="small"
-                        onClick={() => setUsCoreExpanded(!usCoreExpanded)}
-                        endIcon={
-                          usCoreExpanded ? (
-                            <ExpandLessIcon />
-                          ) : (
-                            <ExpandMoreIcon />
-                          )
-                        }
-                      >
-                        {usCoreExpanded ? "Hide" : "Show"} Resources
-                      </Button>
-                    )}
-                  </Box>
-                  <Typography
-                    variant="caption"
-                    color="text.secondary"
-                    sx={{ ml: 4, display: "block", mb: 1 }}
+                    }}
                   >
-                    ONC-required FHIR resources for patient access
-                  </Typography>
-                  {usCoreEnabled && (
-                    <Collapse in={usCoreExpanded}>
-                      <Paper
-                        variant="outlined"
-                        sx={{
-                          p: 2,
-                          mt: 1,
-                          maxHeight: 200,
-                          overflow: "auto",
-                          ml: 4,
-                        }}
-                      >
-                        <FormGroup>
-                          {US_CORE_RESOURCE_SCOPES.map((resource) => (
-                            <FormControlLabel
-                              key={resource}
-                              control={
-                                <Checkbox
-                                  size="small"
-                                  checked={selectedUsCoreScopes.includes(
-                                    resource
-                                  )}
-                                  onChange={() =>
-                                    handleUsCoreResourceToggle(resource)
-                                  }
-                                />
-                              }
-                              label={
-                                <Typography
-                                  variant="body2"
-                                  sx={{
-                                    fontFamily: "monospace",
-                                    fontSize: "0.8rem",
-                                  }}
-                                >
-                                  {resource}
-                                </Typography>
-                              }
-                              sx={{ my: 0 }}
-                            />
-                          ))}
-                        </FormGroup>
-                      </Paper>
-                    </Collapse>
-                  )}
+                    <ToggleButton value="custom" sx={{ textTransform: "none" }}>
+                      Custom
+                    </ToggleButton>
+                    <ToggleButton
+                      value="all-read"
+                      sx={{ textTransform: "none" }}
+                    >
+                      All Read
+                    </ToggleButton>
+                    <ToggleButton
+                      value="us-core"
+                      sx={{ textTransform: "none" }}
+                    >
+                      US-Core
+                    </ToggleButton>
+                  </ToggleButtonGroup>
                 </Box>
-              )}
-
-              {/* Optional Additional Scopes */}
-              {(formData.clientType === "provider" ||
-                formData.clientType === "system") && (
-                <Box>
-                  <Typography
-                    variant="caption"
-                    color="text.secondary"
-                    gutterBottom
-                    display="block"
-                  >
-                    Additional Scopes:
-                  </Typography>
-                  <FormGroup>
-                    {OPTIONAL_SCOPES.map((scope) => (
-                      <FormControlLabel
-                        key={scope.value}
-                        control={
-                          <Checkbox
-                            size="small"
-                            checked={formData.scopes.includes(scope.value)}
-                            onChange={() =>
-                              handleOptionalScopeToggle(scope.value)
-                            }
-                          />
-                        }
-                        label={
-                          <Box>
-                            <Typography
-                              variant="body2"
-                              component="span"
-                              sx={{
-                                fontFamily: "monospace",
-                                fontSize: "0.85rem",
-                              }}
-                            >
-                              {scope.label}
-                            </Typography>
-                            <Typography
-                              variant="caption"
-                              color="text.secondary"
-                              sx={{ ml: 1 }}
-                            >
-                              - {scope.description}
-                            </Typography>
-                          </Box>
-                        }
-                        sx={{ my: 0 }}
-                      />
-                    ))}
-                  </FormGroup>
-                </Box>
-              )}
+                <Typography
+                  variant="caption"
+                  color="text.secondary"
+                  display="block"
+                  sx={{ mb: 0.5 }}
+                >
+                  Enter space-delimited list of scopes
+                </Typography>
+                <TextField
+                  multiline
+                  minRows={3}
+                  fullWidth
+                  placeholder={`e.g. ${getScopePrefix(
+                    formData.clientType
+                  )}/*.rs (SMART v2: rs=read+search)`}
+                  value={scopesText}
+                  onChange={(e) => setScopesText(e.target.value)}
+                />
+              </Box>
             </Box>
           </Box>
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setRegisterDialogOpen(false)}>Cancel</Button>
-          <Button variant="contained" onClick={handleRegisterClient}>
+          <Button
+            variant="contained"
+            onClick={handleRegisterClient}
+            disabled={
+              formData.redirectUris.length === 0 || !formData.clientName.trim()
+            }
+          >
             Register Client
           </Button>
         </DialogActions>
@@ -1124,6 +1228,100 @@ const ClientRegistration: React.FC = () => {
           </Button>
         </DialogActions>
       </Dialog>
+
+      {/* Revoke Client Dialog */}
+      <Dialog
+        open={revokeDialogOpen}
+        onClose={() => setRevokeDialogOpen(false)}
+      >
+        <DialogTitle>Revoke Client?</DialogTitle>
+        <DialogContent>
+          <Typography>
+            Are you sure you want to revoke{" "}
+            <strong>{selectedClient?.clientName}</strong>? This will immediately
+            disable the client but keep it in the database. Revoked clients
+            cannot be reactivated.
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setRevokeDialogOpen(false)}>Cancel</Button>
+          <Button
+            onClick={async () => {
+              if (selectedClient) {
+                await handleRevokeClient(selectedClient.clientId);
+                setRevokeDialogOpen(false);
+                setSelectedClient(null);
+              }
+            }}
+            color="warning"
+            variant="contained"
+          >
+            Revoke
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Delete Client Dialog */}
+      <Dialog
+        open={deleteDialogOpen}
+        onClose={() => setDeleteDialogOpen(false)}
+      >
+        <DialogTitle>Permanently Delete Client</DialogTitle>
+        <DialogContent>
+          <Typography color="error" sx={{ mb: 1 }}>
+            ⚠️ <strong>WARNING: This action cannot be undone!</strong>
+          </Typography>
+          <Typography>
+            Are you sure you want to permanently delete{" "}
+            <strong>{selectedClient?.clientName}</strong>? This will remove all
+            client data from the system.
+          </Typography>
+          <Typography sx={{ mt: 2 }} color="text.secondary">
+            Consider using "Revoke" instead to keep the client record.
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setDeleteDialogOpen(false)}>Cancel</Button>
+          <Button
+            onClick={async () => {
+              if (selectedClient) {
+                await handleDeleteClient(selectedClient.clientId);
+                setDeleteDialogOpen(false);
+                setSelectedClient(null);
+              }
+            }}
+            variant="contained"
+          >
+            Permanently Delete
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Snackbar
+        open={copySnackbar}
+        autoHideDuration={2000}
+        onClose={() => setCopySnackbar(false)}
+        message="Copied to clipboard!"
+      />
+      <BulkGroupAttachModal
+        open={attachModalOpen}
+        onClose={() => {
+          setAttachModalOpen(false);
+          setInitialAttachGroups(null);
+          setInitialSelectedGroupId(undefined);
+          setAttachClientId(null);
+        }}
+        clientId={attachClientId || ""}
+        initialGroups={initialAttachGroups || undefined}
+        initialSelectedGroupId={initialSelectedGroupId}
+        onAttached={async (updated) => {
+          await loadClients();
+          setAttachModalOpen(false);
+          setInitialAttachGroups(null);
+          setInitialSelectedGroupId(undefined);
+          setAttachClientId(null);
+        }}
+      />
     </Box>
   );
 };

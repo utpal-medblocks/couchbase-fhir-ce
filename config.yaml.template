@@ -1,58 +1,90 @@
-# Couchbase FHIR Configuration Template
-# Copy this file to 'config.yaml' and update with your actual connection details
-# DO NOT commit config.yaml to git - it contains sensitive credentials
-
-connection:
-  connectionString: "ec2-xxx-xxx-xxx-xxx.compute-1.amazonaws.com"
-  # connectionString: "localhost"
-  # connectionString: "couchbases://cb.gaxsvcngnxyz.cloud.couchbase.com"
-  # connectionString: "host.docker.internal" # Works on Docker Desktop for Mac
-  username: "Administrator" # The userid
-  password: "password" # The password
-  serverType: "Server" # "Server" or "Capella"
-  sslEnabled: false # true for Capella
+# =============================================================================
+# Couchbase FHIR CE - Configuration File
+# =============================================================================
+# Edit this file, then run: ./scripts/apply-config.sh
+# =============================================================================
 
 app:
-  baseUrl: "http://localhost:8080/fhir" # Base URL of the FHIR server (used for pagination URLs, SMART on FHIR, etc.)
-  autoConnect: true # has to be set to true
+  # Public URL for your FHIR server
+  # Examples:
+  #   Dev:   http://localhost:8080/fhir
+  #   Prod:  https://acme.com/fhir
+  baseUrl: "http://localhost:8080/fhir"
+  autoConnect: true
 
-# Couchbase SDK Performance Tuning (Optional - defaults optimized for high-concurrency FHIR workloads)
 couchbase:
-  bucket:
-    name: "fhir" # FHIR Bucket Name. Has to exist in the cluster.
-    fhirRelease: "R4" # FHIR Release Fixed for now
-    validation:
-      mode: "lenient" # lenient, none
-      profile: "us-core" # FHIR Profile us-core, none
-    logs:
-      enableSystem: false # Enable System Logs
-      enableCRUDAudit: false # Enable CRUD Audit Logs
-      enableSearchAudit: false # Enable Search Audit Logs
-      rotationBy: "size" # size, days
-      number: 30 # in GB or Days
-      s3Endpoint: "" # Example: https://s3.amazonaws.com" # S3 Endpoint for Log Upload
-  sdk:
-    transaction-durability: NONE # NONE, MAJORITY, MAJORITY_AND_PERSIST_TO_ACTIVE, PERSIST_TO_MAJORITY
-    max-http-connections: 128 # Max HTTP Connections
-    num-kv-connections: 8 # Max KV Connections
-    kv-timeout-seconds: 30 # KV Timeout
-    query-timeout-seconds: 30 # Query Timeout
-    search-timeout-seconds: 30 # Search Timeout
-    connect-timeout-seconds: 10 # Connect Timeout
-    disconnect-timeout-seconds: 10 # Disconnect Timeout
-    transaction-timeout-seconds: 30 # Transaction Timeout
+  connection:
+    connectionString: "localhost"
+    # connectionString: "ec2-xx-xx-xxx-xxx.us-west-2.compute.amazonaws.com"
+    # connectionString: "couchbases://cb.xxx-xxx.cloud.couchbase.com"
+    # connectionString: "host.docker.internal"
+    username: "Administrator"
+    password: "password"
+    serverType: "Server" # [Server, Capella]
+    sslEnabled: false # [true, false]
 
-# Super User Credentials - These are seeded into the auth db
+  bucket:
+    name: "fhir" # Fixed
+    fhirRelease: "R4" # Fixed
+    validation:
+      mode: "lenient"     # [lenient, none]
+      profile: "us-core"  # [us-core, none]
+
+  sdk:
+    overrides: {}
+    # overrides. Complete list of available overrides in docs. Example below.
+  	# Do not change unless you know what you are doing
+    # transaction-durability: MAJORITY # NONE, MAJORITY, MAJORITY_AND_PERSIST_TO_ACTIVE, PERSIST_TO_MAJORITY
+    # max-http-connections: 12 # Max HTTP Connections
+    # num-kv-connections: 1 # Max KV Connections
+    # kv-timeout-seconds: 30 # KV Timeout
+    # query-timeout-seconds: 30 # Query Timeout
+    # search-timeout-seconds: 30 # Search Timeout
+    # connect-timeout-seconds: 10 # Connect Timeout
+    # disconnect-timeout-seconds: 10 # Disconnect Timeout
+    # transaction-timeout-seconds: 30 # Transaction Timeout
+
 admin:
-  email: "admin@cb-fhir.com"
+  email: "admin@example.com"
   password: "Admin123!"
   name: "Admin"
 
-logging:
-  levels:
-    com.couchbase.admin: ERROR # ERROR, WARN, INFO, DEBUG
-    com.couchbase.fhir: ERROR # ERROR, WARN, INFO, DEBUG
-    com.couchbase.common: ERROR # ERROR, WARN, INFO, DEBUG
-    com.couchbase.admin.config.service.ConfigurationStartupService: INFO # INFO, WARN, DEBUG, ERROR
-    org.springframework.security: ERROR
+deploy:
+  container:
+    mem_limit: "2g"
+    mem_reservation: "1g"
 
+  jvm:
+    xms: "1g"
+    xmx: "2g"
+
+  environment:
+    overrides: {}
+    # overrides. Complete list of available overrides in docs. Example below.
+  	# Do not change unless you know what you are doing
+    # SERVER_TOMCAT_THREADS_MAX: 200 # Max threads
+    # SERVER_TOMCAT_THREADS_MIN_SPARE: 10 # Minimum idle threads
+    # SERVER_TOMCAT_ACCEPT_COUNT: 100 # Queue size when all threads busy
+    # SERVER_TOMCAT_MAX_CONNECTIONS: 10000 # Max simultaneous connections
+    # SERVER_TOMCAT_CONNECTION_TIMEOUT: 20s # Connection timeout
+    # SERVER_TOMCAT_MAX_KEEP_ALIVE_REQUESTS: 1000 # Keep-alive requests per connection
+
+  tls:
+    enabled: false
+    # When enabled, HAProxy needs combined cert+key in single PEM:
+    # pemPath: "./certs/<your-domain>.pem"
+    # 
+    # To create combined PEM: cat cert.pem privkey.pem > cbfhir.com.pem
+
+logging:
+  default: "ERROR"
+  overrides: {}
+  # overrides. Complete list of available overrides in docs
+  com.couchbase.admin.config.service.ConfigurationStartupService: "INFO"
+
+# Optional (enabled via separate script)
+# keycloak:
+#   enabled: false
+#   realm: "fhir-realm"
+#   adminUser: "admin"
+#   adminPassword: "admin"

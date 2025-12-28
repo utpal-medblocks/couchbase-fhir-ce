@@ -68,7 +68,7 @@ public class HistoryService {
      * Uses direct KV operation on Versions collection with key: {resourceType}/{id}/{vid}
      */
     public Resource getResourceVersion(String resourceType, String id, String versionId, String bucketName) {
-        logger.info("📜 Getting specific version: {}/{} version {}", resourceType, id, versionId);
+        logger.debug("📜 Getting specific version: {}/{} version {}", resourceType, id, versionId);
         
         try {
             String connectionName = "default";
@@ -93,7 +93,7 @@ public class HistoryService {
             parser.setParserErrorHandler(new LenientErrorHandler().setErrorOnInvalidValue(false));
             Resource resource = (Resource) parser.parseResource(json.toString());
             
-            logger.info("✅ Retrieved version {}/{} v{}", resourceType, id, versionId);
+            logger.debug("✅ Retrieved version {}/{} v{}", resourceType, id, versionId);
             return resource;
             
         } catch (Exception e) {
@@ -110,7 +110,7 @@ public class HistoryService {
      */
     public List<Resource> getResourceHistoryResources(String resourceType, String id, Integer count,
                                                        Instant since, String bucketName) {
-        logger.info("📜 Getting history for {}/{} (count={}, since={})", resourceType, id, count, since);
+        logger.debug("📜 Getting history for {}/{} (count={}, since={})", resourceType, id, count, since);
         
         int pageSize = (count != null && count > 0) ? Math.min(count, MAX_HISTORY_SIZE) : DEFAULT_HISTORY_PAGE_SIZE;
         
@@ -129,7 +129,7 @@ public class HistoryService {
             // Step 2: Get historical versions from Versions collection
             List<String> historicalKeys = searchHistoricalVersions(resourceType, id, since, bucketName);
             
-            logger.info("📜 Found {} historical versions for {}/{}", historicalKeys.size(), resourceType, id);
+            logger.debug("📜 Found {} historical versions for {}/{}", historicalKeys.size(), resourceType, id);
             
             // Limit if needed
             if (historicalKeys.size() > pageSize - result.size()) {
@@ -148,7 +148,7 @@ public class HistoryService {
                 result.addAll(historical);
             }
             
-            logger.info("✅ Returning {} versions for {}/{}", result.size(), resourceType, id);
+            logger.debug("✅ Returning {} versions for {}/{}", result.size(), resourceType, id);
             return result;
             
         } catch (ResourceNotFoundException e) {

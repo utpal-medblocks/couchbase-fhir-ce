@@ -7,6 +7,11 @@
 # BlueJ files
 *.ctxt
 
+# Backup files
+*.yaml.bak
+*.yml.bak
+*.cfg.bak
+
 # Mobile Tools for Java (J2ME)
 .mtj.tmp/
 
@@ -72,6 +77,13 @@ config*.yaml
 *.config.yaml
 .token.env
 
+# Generated files (from config.yaml.template)
+docker-compose.yml
+docker-compose.yaml
+haproxy.cfg
+*.bak.*
+config.yaml.template.old
+
 # Python
 __pycache__/
 *.py[cod]
@@ -97,3 +109,5 @@ coverage.xml
 copilot-instructions.md
 k8s-deployment-plan.md
 load-tests/requirements.txt
+
+docker-compose.local.yaml

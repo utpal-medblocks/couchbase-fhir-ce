@@ -57,7 +57,7 @@ public class ConditionalPutService {
     public <T extends Resource> MethodOutcome conditionalPut(T resource, Map<String, List<String>> searchCriteria, String resourceType) throws IOException {
         String bucketName = TenantContextHolder.getTenantId();
         
-        logger.info("🔄 ConditionalPutService: Processing conditional PUT for {}", resourceType);
+        logger.debug("🔄 ConditionalPutService: Processing conditional PUT for {}", resourceType);
         logger.debug("🔍 ConditionalPutService: Search criteria: {}", searchCriteria);
         
         // Validate FHIR bucket
@@ -73,7 +73,7 @@ public class ConditionalPutService {
         switch (resolveResult.getStatus()) {
             case ZERO:
                 // No matches - create new resource via PostService
-                logger.info("✅ ConditionalPutService: No existing {} found, creating new", resourceType);
+                logger.debug("✅ ConditionalPutService: No existing {} found, creating new", resourceType);
                 
                 // Clear any ID from the resource body (PostService will generate new ID)
                 resource.setId((String) null);
@@ -84,7 +84,7 @@ public class ConditionalPutService {
             case ONE:
                 // Single match - update existing resource via PutService
                 String existingId = resolveResult.getResourceId();
-                logger.info("✅ ConditionalPutService: Found existing {}: {}, updating", resourceType, existingId);
+                logger.debug("✅ ConditionalPutService: Found existing {}: {}, updating", resourceType, existingId);
                 
                 // Inject the found ID into the resource body (ignore any client-provided ID)
                 resource.setId(existingId);
@@ -108,7 +108,7 @@ public class ConditionalPutService {
      * Delegate to PostService for resource creation
      */
     private <T extends Resource> MethodOutcome delegateToPostService(T resource, String bucketName) throws IOException {
-        logger.info("🆕 ConditionalPutService: Delegating to PostService for creation");
+        logger.debug("🆕 ConditionalPutService: Delegating to PostService for creation");
         
         try {
             @SuppressWarnings("unchecked")
@@ -119,7 +119,7 @@ public class ConditionalPutService {
             outcome.setResource(createdResource);
             outcome.setId(createdResource.getIdElement());
             
-            logger.info("✅ ConditionalPutService: Created new resource with ID {}", createdResource.getIdElement().getIdPart());
+            logger.debug("✅ ConditionalPutService: Created new resource with ID {}", createdResource.getIdElement().getIdPart());
             return outcome;
             
         } catch (Exception e) {
@@ -132,7 +132,7 @@ public class ConditionalPutService {
      * Delegate to PutService for resource update
      */
     private <T extends Resource> MethodOutcome delegateToPutService(T resource, String resourceId, String bucketName) throws IOException {
-        logger.info("🔄 ConditionalPutService: Delegating to PutService for update of ID {}", resourceId);
+        logger.debug("🔄 ConditionalPutService: Delegating to PutService for update of ID {}", resourceId);
         
         try {
             Cluster cluster = couchbaseGateway.getClusterForTransaction("default");
@@ -149,10 +149,10 @@ public class ConditionalPutService {
             String versionId = updatedResource.getMeta().getVersionId();
             if ("1".equals(versionId)) {
                 outcome.setCreated(true);
-                logger.info("✅ ConditionalPutService: PutService created new resource with ID {}", resourceId);
+                logger.debug("✅ ConditionalPutService: PutService created new resource with ID {}", resourceId);
             } else {
                 outcome.setCreated(false);
-                logger.info("✅ ConditionalPutService: PutService updated existing resource ID {}, version {}", resourceId, versionId);
+                logger.debug("✅ ConditionalPutService: PutService updated existing resource ID {}, version {}", resourceId, versionId);
             }
             
             return outcome;

@@ -1,7 +1,9 @@
 package com.couchbase.fhir.auth.controller;
 
+import jakarta.servlet.http.HttpServletResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.security.oauth2.core.endpoint.OAuth2ParameterNames;
 import org.springframework.security.oauth2.server.authorization.client.RegisteredClient;
 import org.springframework.security.oauth2.server.authorization.client.RegisteredClientRepository;
@@ -21,6 +23,7 @@ import java.util.stream.Collectors;
  * Required for SMART on FHIR authorization flow.
  */
 @Controller
+@ConditionalOnProperty(name = "app.security.use-keycloak", havingValue = "false", matchIfMissing = true)
 public class ConsentController {
     
     private static final Logger logger = LoggerFactory.getLogger(ConsentController.class);
@@ -33,12 +36,13 @@ public class ConsentController {
     
     /**
      * Show consent page
-     * GET /oauth2/consent
+     * GET /consent - Custom consent page for SMART on FHIR authorization
      */
-    @GetMapping("/oauth2/consent")
+    @GetMapping("/consent")
     public String consent(
             Principal principal,
             Model model,
+            HttpServletResponse response,
             @RequestParam(OAuth2ParameterNames.CLIENT_ID) String clientId,
             @RequestParam(OAuth2ParameterNames.SCOPE) String scope,
             @RequestParam(OAuth2ParameterNames.STATE) String state,
@@ -46,6 +50,11 @@ public class ConsentController {
             @RequestParam(value = OAuth2ParameterNames.RESPONSE_TYPE, required = false, defaultValue = "code") String responseType,
             @RequestParam(value = "code_challenge", required = false) String codeChallenge,
             @RequestParam(value = "code_challenge_method", required = false) String codeChallengeMethod) {
+        
+        // Prevent browser from caching the consent page HTML
+        response.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
+        response.setHeader("Pragma", "no-cache");
+        response.setHeader("Expires", "0");
         
         logger.info("🔐 Consent requested for client: {} by user: {}", clientId, principal.getName());
         
@@ -98,6 +107,10 @@ public class ConsentController {
         descriptions.put("launch/patient", "Know which patient record to access");
         descriptions.put("offline_access", "Access your data when you're not using the app");
         descriptions.put("online_access", "Access your data only when you're using the app");
+        descriptions.put("patient/*.rs", "Read and search all your health data");
+        descriptions.put("patient/*.cud", "Create, update, and delete your health data");
+        descriptions.put("patient/*.cruds", "Full access to your health data");
+        // Legacy v1 format support
         descriptions.put("patient/*.read", "Read all your health data");
         descriptions.put("patient/*.write", "Create and update your health data");
         descriptions.put("patient/*.*", "Full access to your health data");

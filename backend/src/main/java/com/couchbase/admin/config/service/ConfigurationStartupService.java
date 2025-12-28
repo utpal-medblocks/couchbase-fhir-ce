@@ -9,6 +9,7 @@ import com.couchbase.admin.tokens.service.JwtTokenCacheService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Service;
@@ -47,8 +48,17 @@ public class ConfigurationStartupService {
     @Autowired
     private JwtTokenCacheService jwtTokenCacheService;
     
-    @Autowired
+    @Autowired(required = false)
     private com.couchbase.fhir.auth.AuthorizationServerConfig authorizationServerConfig;
+
+    @Autowired
+    private com.couchbase.common.config.AdminConfig adminConfig;
+
+    @Autowired
+    private com.couchbase.admin.users.service.UserService userService;
+
+    @Value("${app.security.use-keycloak:false}")
+    private boolean useKeycloak;
 
     /**
      * Load configuration and establish connection after application is fully started
@@ -128,42 +138,69 @@ public class ConfigurationStartupService {
             return false;
         }
 
-        // Apply logging level overrides if present: logging.levels:
-        //   com.couchbase.admin: DEBUG
-        //   com.couchbase.fhir: INFO
+        // Apply logging levels: logging.default + logging.overrides + direct entries
         @SuppressWarnings("unchecked")
         Map<String, Object> loggingSection = (Map<String, Object>) yamlData.get("logging");
         if (loggingSection != null) {
+            Map<String, Object> levelsToApply = new HashMap<>();
+            
+            // Apply default level to root logger
+            if (loggingSection.containsKey("default")) {
+                String defaultLevel = String.valueOf(loggingSection.get("default"));
+                levelsToApply.put("ROOT", defaultLevel);
+            }
+            
+            // Apply overrides if present
             @SuppressWarnings("unchecked")
-            Map<String, Object> levels = (Map<String, Object>) loggingSection.get("levels");
-            if (levels != null && !levels.isEmpty()) {
-                applyLoggingLevels(levels);
+            Map<String, Object> overrides = (Map<String, Object>) loggingSection.get("overrides");
+            if (overrides != null && !overrides.isEmpty()) {
+                levelsToApply.putAll(overrides);
+            }
+            
+            // Apply direct logger entries (like ConfigurationStartupService: INFO)
+            for (Map.Entry<String, Object> entry : loggingSection.entrySet()) {
+                String key = entry.getKey();
+                if (!key.equals("default") && !key.equals("overrides")) {
+                    levelsToApply.put(key, entry.getValue());
+                }
+            }
+            
+            if (!levelsToApply.isEmpty()) {
+                applyLoggingLevels(levelsToApply);
             }
         }
 
-        // Apply Couchbase SDK configuration if present: couchbase.sdk.*
-        // This ensures Spring Boot @Value annotations can read these properties
+        // Extract Couchbase configuration: couchbase.connection and couchbase.sdk.overrides
         @SuppressWarnings("unchecked")
         Map<String, Object> couchbaseSection = (Map<String, Object>) yamlData.get("couchbase");
-        Map<String, Object> sdkConfig = new HashMap<>();
-        if (couchbaseSection != null) {
-            @SuppressWarnings("unchecked")
-            Map<String, Object> sdkConfigTemp = (Map<String, Object>) couchbaseSection.get("sdk");
-            if (sdkConfigTemp != null) {
-                sdkConfig = sdkConfigTemp;
-            }
-        }
-        // Always apply SDK configuration (will use defaults if none specified)
-        applyCouchbaseSdkConfiguration(sdkConfig);
-
-        // Extract connection configuration
-        @SuppressWarnings("unchecked")
-        Map<String, Object> connectionConfig = (Map<String, Object>) yamlData.get("connection");
         
-        if (connectionConfig == null) {
-            logger.warn("⚠️ No 'connection' section found in config.yaml");
+        if (couchbaseSection == null) {
+            logger.warn("⚠️ No 'couchbase' section found in config.yaml");
             return false;
         }
+        
+        // Connection config: couchbase.connection
+        @SuppressWarnings("unchecked")
+        Map<String, Object> connectionConfig = (Map<String, Object>) couchbaseSection.get("connection");
+        if (connectionConfig == null) {
+            logger.warn("⚠️ No 'couchbase.connection' section found in config.yaml");
+            return false;
+        }
+        
+        // SDK configuration: couchbase.sdk.overrides
+        Map<String, Object> sdkConfig = new HashMap<>();
+        @SuppressWarnings("unchecked")
+        Map<String, Object> sdkSection = (Map<String, Object>) couchbaseSection.get("sdk");
+        if (sdkSection != null) {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> overrides = (Map<String, Object>) sdkSection.get("overrides");
+            if (overrides != null) {
+                sdkConfig = overrides;
+            }
+        }
+        
+        // Apply SDK configuration (uses defaults if none specified)
+        applyCouchbaseSdkConfiguration(sdkConfig);
 
         // Extract app configuration and determine autoConnect behavior.
         @SuppressWarnings("unchecked")
@@ -198,6 +235,73 @@ public class ConfigurationStartupService {
             logger.info("🔐 Admin UI credentials loaded from config.yaml");
         }
 
+        // Extract Keycloak configuration and set as system properties / environment variables
+        @SuppressWarnings("unchecked")
+        Map<String, Object> keycloakConfig = (Map<String, Object>) yamlData.get("keycloak");
+        if (keycloakConfig != null && Boolean.TRUE.equals(keycloakConfig.get("enabled"))) {
+            logger.info("🔐 Keycloak integration enabled in config.yaml");
+            
+            // Set USE_KEYCLOAK flag
+            System.setProperty("USE_KEYCLOAK", "true");
+            
+            // Extract and set Keycloak properties
+            if (keycloakConfig.get("url") != null) {
+                String keycloakUrl = String.valueOf(keycloakConfig.get("url"));
+                System.setProperty("KEYCLOAK_URL", keycloakUrl);
+                logger.info("   🔗 Keycloak URL: {}", keycloakUrl);
+            }
+            
+            if (keycloakConfig.get("realm") != null) {
+                String realm = String.valueOf(keycloakConfig.get("realm"));
+                System.setProperty("KEYCLOAK_REALM", realm);
+                logger.info("   🏛️  Keycloak Realm: {}", realm);
+            }
+            
+            if (keycloakConfig.get("adminUsername") != null) {
+                System.setProperty("KEYCLOAK_ADMIN_USERNAME", String.valueOf(keycloakConfig.get("adminUsername")));
+            }
+            
+            if (keycloakConfig.get("adminPassword") != null) {
+                System.setProperty("KEYCLOAK_ADMIN_PASSWORD", String.valueOf(keycloakConfig.get("adminPassword")));
+            }
+            
+            if (keycloakConfig.get("clientId") != null) {
+                System.setProperty("KEYCLOAK_CLIENT_ID", String.valueOf(keycloakConfig.get("clientId")));
+                logger.info("   🔑 Keycloak Client ID: {}", keycloakConfig.get("clientId"));
+            }
+            
+            if (keycloakConfig.get("clientSecret") != null) {
+                System.setProperty("KEYCLOAK_CLIENT_SECRET", String.valueOf(keycloakConfig.get("clientSecret")));
+                logger.info("   🔑 Keycloak Client Secret: [REDACTED]");
+            }
+            
+            // Construct JWKS URI from URL and realm
+            String keycloakUrl = System.getProperty("KEYCLOAK_URL");
+            String realm = System.getProperty("KEYCLOAK_REALM");
+            if (keycloakUrl != null && realm != null) {
+                String jwksUri = keycloakUrl + "/realms/" + realm + "/protocol/openid-connect/certs";
+                System.setProperty("KEYCLOAK_JWKS_URI", jwksUri);
+                logger.info("   🔐 Keycloak JWKS URI: {}", jwksUri);
+            }
+            
+            // Set public URL if specified, otherwise derive from app.baseUrl
+            if (keycloakConfig.get("publicUrl") != null) {
+                System.setProperty("KEYCLOAK_PUBLIC_URL", String.valueOf(keycloakConfig.get("publicUrl")));
+            } else if (appConfig != null && appConfig.get("baseUrl") != null) {
+                // Default: use app baseUrl + /auth path
+                String baseUrl = String.valueOf(appConfig.get("baseUrl"));
+                String publicUrl = baseUrl.replaceFirst("/fhir$", "") + "/auth";
+                System.setProperty("KEYCLOAK_PUBLIC_URL", publicUrl);
+                logger.info("   🌐 Keycloak Public URL (derived): {}", publicUrl);
+            }
+            
+            logger.info("✅ Keycloak configuration loaded from config.yaml");
+        } else {
+            // Keycloak not enabled or not present - ensure USE_KEYCLOAK is false
+            System.setProperty("USE_KEYCLOAK", "false");
+            logger.info("ℹ️  Keycloak integration disabled - using embedded Spring Authorization Server");
+        }
+
         // CORS configuration is now in application.yml (not config.yaml)
         // See backend/src/main/resources/application.yml for CORS settings
         logger.info("ℹ️  CORS configuration is managed in application.yml (default: allow all origins)");
@@ -214,14 +318,23 @@ public class ConfigurationStartupService {
         if (response.isSuccess()) {
             logger.info("✅ Auto-connection successful!");
             
-            // Initialize OAuth signing key after connection is established
-            initializeOAuthSigningKey();
+            // Initialize OAuth signing key after connection is established (only when embedded auth server is active)
+            if (!useKeycloak && authorizationServerConfig != null) {
+                initializeOAuthSigningKey();
+            } else if (useKeycloak) {
+                logger.info("🔐 Skipping embedded OAuth signing key initialization because Keycloak is enabled");
+            } else {
+                logger.info("🔐 No embedded AuthorizationServerConfig available; skipping signing key initialization");
+            }
             
             // Initialize JWT token cache after connection is established
             initializeTokenCache();
             
             // Check initialization status for single-tenant "fhir" bucket
             checkAndReportInitializationStatus();
+
+            // Attempt to seed initial Admin user (from config.yaml) when appropriate
+            seedAdminUserIfNeeded();
             
         } else {
             String errorMsg = response.getMessage();
@@ -342,56 +455,36 @@ public class ConfigurationStartupService {
 
     /**
      * Apply Couchbase SDK configuration from config.yaml to Spring Boot system properties
-     * This ensures @Value annotations in ConnectionService can read the configured values
+     * ONLY sets properties that are explicitly configured in config.yaml
+     * All other parameters delegate to Couchbase Java SDK's built-in defaults
      */
     private void applyCouchbaseSdkConfiguration(Map<String, Object> sdkConfig) {
-        logger.info("🔧 Effective Couchbase SDK configuration:");
-        
-        // Define default values and their Spring property mappings
-        Map<String, String> defaults = Map.of(
-            "transaction-durability", "NONE",
-            "query-timeout-seconds", "30",
-            "search-timeout-seconds", "30", 
-            "kv-timeout-seconds", "10",
-            "connect-timeout-seconds", "10",
-            "disconnect-timeout-seconds", "10",
-            "enable-mutation-tokens", "true",
-            "max-http-connections", "128",
-            "num-kv-connections", "8"
-        );
-        
-        // Apply configuration (from YAML or defaults) and show what's being used
-        defaults.forEach((yamlKey, defaultValue) -> {
-            String value = sdkConfig.containsKey(yamlKey) ? String.valueOf(sdkConfig.get(yamlKey)) : defaultValue;
-            String source = sdkConfig.containsKey(yamlKey) ? "config.yaml" : "default";
-            
-            String springProperty = "couchbase.sdk." + yamlKey;
-            System.setProperty(springProperty, value);
-            
-            if (sdkConfig.containsKey(yamlKey)) {
-                logger.info("   ✅ {}: {} (from {})", yamlKey, value, source);
-            } else {
-                logger.info("   🔧 {}: {} ({})", yamlKey, value, source);
-            }
-        });
-        
-        // Log any extra properties from YAML that aren't in our defaults
-        sdkConfig.forEach((yamlKey, value) -> {
-            if (!defaults.containsKey(yamlKey)) {
-                String springProperty = "couchbase.sdk." + yamlKey;
-                String stringValue = String.valueOf(value);
-                System.setProperty(springProperty, stringValue);
-                logger.info("   ⚙️  {}: {} (custom from config.yaml)", yamlKey, stringValue);
-            }
-        });
-        
-        // Highlight critical transaction durability setting
-        String durability = System.getProperty("couchbase.sdk.transaction-durability");
-        if ("NONE".equals(durability)) {
-            logger.info("🔒 Transaction durability: {} (suitable for development/single-node)", durability);
-        } else {
-            logger.info("🔒 Transaction durability: {} (production setting - requires replicas)", durability);
+        if (sdkConfig.isEmpty()) {
+            logger.info("🔧 Couchbase SDK configuration: Using SDK defaults (no overrides in config.yaml)");
+            return;
         }
+        
+        logger.info("🔧 Couchbase SDK configuration overrides from config.yaml:");
+        
+        // Only set system properties for explicitly configured values
+        sdkConfig.forEach((yamlKey, value) -> {
+            String springProperty = "couchbase.sdk." + yamlKey;
+            String stringValue = String.valueOf(value);
+            System.setProperty(springProperty, stringValue);
+            logger.info("   ✅ {}: {} (from config.yaml)", yamlKey, stringValue);
+        });
+        
+        // Highlight critical transaction durability setting if configured
+        String durability = System.getProperty("couchbase.sdk.transaction-durability");
+        if (durability != null) {
+            if ("NONE".equals(durability)) {
+                logger.info("🔒 Transaction durability: {} (suitable for development/single-node)", durability);
+            } else {
+                logger.info("🔒 Transaction durability: {} (production setting - requires replicas)", durability);
+            }
+        }
+        
+        logger.info("ℹ️  Unconfigured SDK parameters will use Couchbase Java SDK defaults");
     }
     
     /**
@@ -427,6 +520,71 @@ public class ConfigurationStartupService {
             logger.warn("⚠️ Failed to initialize token cache: {}", e.getMessage());
             logger.debug("Token cache initialization error:", e);
             // Don't fail startup if cache initialization fails
+        }
+    }
+
+    /**
+     * Seed the initial Admin user defined in config.yaml (if configured)
+     * - If Keycloak is enabled, attempts to create the user in Keycloak (delegated)
+     * - Otherwise, seeds the local Couchbase users collection (requires FHIR initialization)
+     */
+    private void seedAdminUserIfNeeded() {
+        try {
+            // Only attempt seeding when the FHIR bucket is initialized and ready.
+            try {
+                InitializationStatus status = initializationService.checkStatus(DEFAULT_CONNECTION_NAME);
+                if (status == null || status.getStatus() != InitializationStatus.Status.READY) {
+                    logger.info("ℹ️  Skipping admin seeding: FHIR initialization status is not READY (status={})", status == null ? "null" : status.getStatus());
+                    return;
+                }
+            } catch (Exception e) {
+                logger.warn("⚠️ Could not determine FHIR initialization status before seeding admin user: {}", e.getMessage());
+                logger.debug("Initialization status check error:", e);
+                // If we cannot determine status, fail-safe: skip seeding to avoid exceptions during startup
+                return;
+            }
+
+            String email = adminConfig.getEmail();
+            String password = adminConfig.getPassword();
+            String name = adminConfig.getName();
+
+            if (email == null || email.isEmpty()) {
+                logger.info("ℹ️ No admin.email configured; skipping admin user seeding");
+                return;
+            }
+
+            // If user already exists (either Keycloak or Couchbase), skip
+            try {
+                if (userService.getUserById(email).isPresent() || userService.getUserByEmail(email).isPresent()) {
+                    logger.info("👤 Admin user '{}' already exists - skipping seeding", email);
+                    return;
+                }
+            } catch (Exception e) {
+                // getUserById/getUserByEmail may fail if DB not ready; continue and attempt create
+                logger.debug("Could not check existing users (may be uninitialized): {}", e.getMessage());
+            }
+
+            com.couchbase.admin.users.model.User adminUser = new com.couchbase.admin.users.model.User();
+            adminUser.setId(email);
+            adminUser.setUsername(name != null && !name.isBlank() ? name : "Administrator");
+            adminUser.setEmail(email);
+            adminUser.setRole("admin");
+
+            if (useKeycloak) {
+                adminUser.setPasswordPlain(password);
+                adminUser.setAuthMethod("keycloak");
+            } else {
+                // UserService.createUser will bcrypt the passwordHash passed here
+                adminUser.setPasswordHash(password);
+                adminUser.setAuthMethod("local");
+            }
+
+            userService.createUser(adminUser, "system");
+            logger.info("✅ Seeded initial Admin user from config.yaml: {}", email);
+
+        } catch (Exception e) {
+            logger.warn("⚠️ Failed to seed initial Admin user: {}", e.getMessage());
+            logger.debug("Admin seeding error:", e);
         }
     }
 }

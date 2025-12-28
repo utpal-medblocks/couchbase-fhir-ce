@@ -1,6 +1,7 @@
 package com.couchbase.common.config;
 
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.annotation.Order;
@@ -27,10 +28,21 @@ public class SecurityConfig {
     private CorsConfigurationSource corsConfigurationSource;
 
     @Autowired
-    private org.springframework.security.oauth2.jwt.JwtDecoder jwtDecoder;
+    private org.springframework.beans.factory.ObjectProvider<org.springframework.security.oauth2.jwt.JwtDecoder> jwtDecoderProvider;
     
     @Autowired
     private org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter jwtAuthenticationConverter;
+
+    @Value("${app.security.use-keycloak:false}")
+    private boolean useKeycloak;
+
+    private org.springframework.security.oauth2.jwt.JwtDecoder resolveJwtDecoder() {
+        org.springframework.security.oauth2.jwt.JwtDecoder decoder = jwtDecoderProvider.getIfAvailable();
+        if (decoder == null) {
+            throw new IllegalStateException("No JwtDecoder bean available. Ensure embedded Authorization Server is enabled or set KEYCLOAK_JWKS_URI when Keycloak is enabled.");
+        }
+        return decoder;
+    }
 
     /**
      * Admin UI and general API filter chain
@@ -60,7 +72,7 @@ public class SecurityConfig {
             )
             // Use same OAuth2 Resource Server JWT for admin endpoints now
             .oauth2ResourceServer(oauth2 -> oauth2.jwt(jwt -> jwt
-                .decoder(jwtDecoder)
+                .decoder(resolveJwtDecoder())
                 .jwtAuthenticationConverter(jwtAuthenticationConverter)));
         
         return http.build();
@@ -98,7 +110,7 @@ public class SecurityConfig {
             // OAuth 2.0 Resource Server - validates all OAuth2 JWT tokens
             .oauth2ResourceServer(oauth2 -> oauth2
                 .jwt(jwt -> jwt
-                    .decoder(jwtDecoder)
+                    .decoder(resolveJwtDecoder())
                     .jwtAuthenticationConverter(jwtAuthenticationConverter))
             )
             // Disable anonymous authentication
@@ -124,7 +136,8 @@ public class SecurityConfig {
                 // Allow open access to actuator endpoints (health, metrics)
                 .requestMatchers("/actuator/**").permitAll()
                 // Allow OAuth authorization server endpoints (authorize, token, jwks, userinfo)
-                .requestMatchers("/oauth2/**").permitAll()
+                // Permit internal /oauth2 endpoints only when the embedded Authorization Server is active
+                .requestMatchers("/oauth2/**").permitAll() // default allow; Security behavior will be controlled by bean presence
                 
                 // Allow login page and static resources
                 .requestMatchers("/login", "/error", "/css/**", "/js/**").permitAll()

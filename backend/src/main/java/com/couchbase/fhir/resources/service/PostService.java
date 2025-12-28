@@ -56,12 +56,12 @@ public class PostService {
         String serverGeneratedId;
         if (resource.getId() != null && !resource.getId().isEmpty()) {
             serverGeneratedId = resource.getId();
-            logger.info("🔗 POST {}: Using pre-assigned ID {} (from Bundle processing)", 
+            logger.debug("🔗 POST {}: Using pre-assigned ID {} (from Bundle processing)", 
                        resourceType, serverGeneratedId);
         } else {
             serverGeneratedId = generateResourceId();
             resource.setId(serverGeneratedId);
-            logger.info("🆔 POST {}: Generated new server ID {} (no pre-assigned ID)", 
+            logger.debug("🆔 POST {}: Generated new server ID {} (no pre-assigned ID)", 
                        resourceType, serverGeneratedId);
         }
         
@@ -76,7 +76,7 @@ public class PostService {
         // Insert into Couchbase (simple insert, no transaction handling)
         insertResource(cluster, bucketName, resourceType, documentKey, resourceJson);
         
-        logger.info("✅ POST {}: Created resource with ID {}", resourceType, serverGeneratedId);
+        logger.debug("✅ POST {}: Created resource with ID {}", resourceType, serverGeneratedId);
         return resource;
     }
     
@@ -103,12 +103,12 @@ public class PostService {
         String serverGeneratedId;
         if (resource.getId() != null && !resource.getId().isEmpty()) {
             serverGeneratedId = resource.getId();
-            logger.info("🔗 POST {} (in transaction): Using pre-assigned ID {} (from Bundle processing)", 
+            logger.debug("🔗 POST {} (in transaction): Using pre-assigned ID {} (from Bundle processing)", 
                        resourceType, serverGeneratedId);
         } else {
             serverGeneratedId = generateResourceId();
             resource.setId(serverGeneratedId);
-            logger.info("🆔 POST {} (in transaction): Generated new server ID {} (no pre-assigned ID)", 
+            logger.debug("🆔 POST {} (in transaction): Generated new server ID {} (no pre-assigned ID)", 
                        resourceType, serverGeneratedId);
         }
         
@@ -123,7 +123,7 @@ public class PostService {
         // Insert into Couchbase using transaction context
         insertResourceInTransaction(txContext, cluster, bucketName, resourceType, documentKey, resourceJson);
         
-        logger.info("✅ POST {} (in transaction): Created resource with ID {}", resourceType, serverGeneratedId);
+        logger.debug("✅ POST {} (in transaction): Created resource with ID {}", resourceType, serverGeneratedId);
         return resource;
     }
     

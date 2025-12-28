@@ -8,6 +8,7 @@ import com.couchbase.client.java.query.QueryResult;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
@@ -34,6 +35,12 @@ public class UserService {
     @Autowired
     private PasswordEncoder passwordEncoder;
     
+    @Value("${app.security.use-keycloak:false}")
+    private boolean useKeycloak;
+
+    @Autowired(required = false)
+    private KeycloakUserManager keycloakUserManager;
+    
     /**
      * Get Couchbase collection for users
      */
@@ -50,7 +57,12 @@ public class UserService {
      */
     public User createUser(User user, String createdBy) {
         logger.info("👤 Creating user: {} ({})", user.getId(), user.getEmail());
-        
+        // If Keycloak is enabled and a manager bean is available, delegate user creation
+        if (useKeycloak && keycloakUserManager != null) {
+            logger.info("Delegating createUser to KeycloakUserManager");
+            return keycloakUserManager.createUser(user, createdBy);
+        }
+
         // Validate required fields
         if (user.getId() == null || user.getId().isEmpty()) {
             throw new IllegalArgumentException("User ID is required");
@@ -94,6 +106,9 @@ public class UserService {
      * @return User if found
      */
     public Optional<User> getUserById(String userId) {
+        if (useKeycloak && keycloakUserManager != null) {
+            return keycloakUserManager.getUserById(userId);
+        }
         try {
             Collection collection = getUsersCollection();
             User user = collection.get(userId).contentAs(User.class);
@@ -110,6 +125,9 @@ public class UserService {
      * @return User if found
      */
     public Optional<User> getUserByEmail(String email) {
+        if (useKeycloak && keycloakUserManager != null) {
+            return keycloakUserManager.getUserByEmail(email);
+        }
         try {
             Cluster cluster = connectionService.getConnection("default");
             String query = "SELECT u.* FROM `" + BUCKET_NAME + "`.`" + SCOPE_NAME + "`.`" + COLLECTION_NAME + "` u " +
@@ -137,6 +155,9 @@ public class UserService {
      * @return List of all users
      */
     public List<User> getAllUsers() {
+        if (useKeycloak && keycloakUserManager != null) {
+            return keycloakUserManager.getAllUsers();
+        }
         try {
             Cluster cluster = connectionService.getConnection("default");
             String query = "SELECT u.* FROM `" + BUCKET_NAME + "`.`" + SCOPE_NAME + "`.`" + COLLECTION_NAME + "` u " +
@@ -158,7 +179,11 @@ public class UserService {
      */
     public User updateUser(String userId, User updatedUser) {
         logger.info("📝 Updating user: {}", userId);
-        
+        if (useKeycloak && keycloakUserManager != null) {
+            logger.info("Delegating updateUser to KeycloakUserManager");
+            return keycloakUserManager.updateUser(userId, updatedUser);
+        }
+
         // Get existing user
         User existingUser = getUserById(userId)
             .orElseThrow(() -> new IllegalArgumentException("User not found: " + userId));
@@ -191,15 +216,20 @@ public class UserService {
      */
     public void deactivateUser(String userId) {
         logger.info("⏸️ Deactivating user: {}", userId);
-        
+        if (useKeycloak && keycloakUserManager != null) {
+            logger.info("Delegating deactivateUser to KeycloakUserManager");
+            keycloakUserManager.deactivateUser(userId);
+            return;
+        }
+
         User user = getUserById(userId)
             .orElseThrow(() -> new IllegalArgumentException("User not found: " + userId));
-        
+
         user.setStatus("inactive");
-        
+
         Collection collection = getUsersCollection();
         collection.replace(userId, user);
-        
+
         logger.info("✅ User deactivated: {}", userId);
     }
 
@@ -209,15 +239,20 @@ public class UserService {
      */
     public void deleteUser(String userId) {
         logger.info("🗑️ Hard deleting user: {}", userId);
-        
+        if (useKeycloak && keycloakUserManager != null) {
+            logger.info("Delegating deleteUser to KeycloakUserManager");
+            keycloakUserManager.deleteUser(userId);
+            return;
+        }
+
         // Check existence
         if (getUserById(userId).isEmpty()) {
             throw new IllegalArgumentException("User not found: " + userId);
         }
-        
+
         Collection collection = getUsersCollection();
         collection.remove(userId);
-        
+
         logger.info("✅ User deleted (hard): {}", userId);
     }
     
@@ -227,6 +262,11 @@ public class UserService {
      */
     public void updateLastLogin(String userId) {
         try {
+            if (useKeycloak && keycloakUserManager != null) {
+                keycloakUserManager.updateLastLogin(userId);
+                return;
+            }
+
             User user = getUserById(userId).orElse(null);
             if (user != null) {
                 user.setLastLogin(Instant.now());

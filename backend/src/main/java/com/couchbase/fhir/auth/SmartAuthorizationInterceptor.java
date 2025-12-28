@@ -8,10 +8,24 @@ import ca.uhn.fhir.rest.api.server.RequestDetails;
 import ca.uhn.fhir.rest.server.exceptions.AuthenticationException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Component;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
+import org.springframework.security.oauth2.jwt.Jwt;
+import com.couchbase.admin.oauth.service.OAuthClientService;
+import com.couchbase.admin.oauth.model.OAuthClient;
+import org.hl7.fhir.r4.model.Group;
+import com.couchbase.fhir.resources.service.FHIRResourceService;
+import ca.uhn.fhir.context.FhirContext;
+import com.couchbase.fhir.resources.config.TenantContextHolder;
+import java.lang.reflect.Method;
+import java.util.List;
+import java.util.ArrayList;
+import java.util.Optional;
+import com.couchbase.fhir.resources.repository.FhirResourceDaoImpl;
 
 /**
  * HAPI FHIR Interceptor for SMART on FHIR authorization
@@ -34,11 +48,21 @@ public class SmartAuthorizationInterceptor {
     
     @Autowired
     private SmartScopeValidator scopeValidator;
+
+    @Autowired
+    private OAuthClientService oauthClientService;
+
+    @Autowired
+    private FHIRResourceService fhirResourceService;
+
+    @Autowired
+    private FhirContext fhirContext;
     
     /**
      * Hook that executes after the resource provider method is selected
      * but before it is invoked. This is the ideal point to check authorization.
      */
+    @SuppressWarnings({"unchecked","rawtypes"})
     @Hook(Pointcut.SERVER_INCOMING_REQUEST_PRE_HANDLER_SELECTED)
     public void authorizeRequest(RequestDetails theRequestDetails) {
         // Get resource type and operation first
@@ -48,16 +72,16 @@ public class SmartAuthorizationInterceptor {
         logger.debug("🔍 [SMART-AUTH] Incoming request: {} {} (operation: {})", 
             theRequestDetails.getRequestType(), resourceType, operationType);
         
-        // Skip authorization only for SMART discovery (smart-configuration), both root and /fhir forms
-        String requestPath = theRequestDetails.getRequestPath();
-        String completeUrl = theRequestDetails.getCompleteUrl();
-        boolean isSmartDiscovery =
-                (requestPath != null && (requestPath.contains("/.well-known/smart-configuration")
-                                         || requestPath.startsWith("/fhir/.well-known/smart-configuration")))
-             || (completeUrl != null && completeUrl.contains("/.well-known/smart-configuration"));
-        if (isSmartDiscovery) {
-            logger.debug("✅ Allowing public access to SMART discovery endpoint: path={} url={}", requestPath, completeUrl);
-            return;
+            // Skip authorization only for SMART discovery (smart-configuration), both root and /fhir forms
+            String reqPath = theRequestDetails.getRequestPath();
+            String completeUrl = theRequestDetails.getCompleteUrl();
+            boolean isSmartDiscovery =
+                    (reqPath != null && (reqPath.contains("/.well-known/smart-configuration")
+                                             || reqPath.startsWith("/fhir/.well-known/smart-configuration")))
+                 || (completeUrl != null && completeUrl.contains("/.well-known/smart-configuration"));
+            if (isSmartDiscovery) {
+                logger.debug("✅ Allowing public access to SMART discovery endpoint: path={} url={}", reqPath, completeUrl);
+                return;
         }
         
         // Skip authorization for CapabilityStatement (metadata endpoint) - must check FIRST
@@ -115,14 +139,132 @@ public class SmartAuthorizationInterceptor {
         
         logger.debug("✅ Authorized: {} for {} {}", authentication.getName(), operation, resourceType);
         
-        // Additional patient-scope filtering if needed
+        // System-scoped tokens have full access (no patient/user context restrictions)
+        if (scopeValidator.hasSystemScope(authentication)) {
+            logger.debug("🔓 System-scoped request: full access granted (no context restrictions)");
+            return; // Skip all context enforcement for system/* scopes
+        }
+        
+        // Patient-scope filtering - ENFORCE patient context
         if (scopeValidator.hasPatientScope(authentication)) {
-            String patientId = scopeValidator.getPatientContext(authentication);
-            if (patientId != null) {
-                logger.debug("📋 Patient-scoped request: limiting to patient {}", patientId);
-                // TODO: In future, add patient ID filter to search parameters
-                // This would require modifying the RequestDetails to add patient filter
+            String patientContext = scopeValidator.getPatientContext(authentication);
+            if (patientContext != null) {
+                logger.debug("📋 Patient-scoped request: enforcing patient context {}", patientContext);
+                enforcePatientContext(theRequestDetails, resourceType, operationType, patientContext);
             }
+        }
+        
+        // User-scope filtering - TODO: Implement provider/clinician context enforcement
+        if (scopeValidator.hasUserScope(authentication)) {
+            logger.debug("👤 User-scoped request: user context enforcement not yet implemented");
+            // TODO: Implement fhirUser-based access control (care team, organization, etc.)
+        }
+
+        // Enforce bulk-group restrictions for app clients (apz claim starting with "app-")
+        try {
+            if (authentication instanceof JwtAuthenticationToken) {
+                Jwt jwt = ((JwtAuthenticationToken) authentication).getToken();
+                Object apzClaim = jwt.getClaim("azp");
+                if (apzClaim != null) {
+                    String apz = apzClaim.toString();
+                    if (apz.startsWith("app-")) {
+                        Optional<OAuthClient> ocOpt = oauthClientService.getClientById(apz);
+                        if (ocOpt.isPresent()) {
+                            OAuthClient oc = ocOpt.get();
+                            String bulkGroupId = oc.getBulkGroupId();
+                            if (bulkGroupId != null && !bulkGroupId.isBlank()) {
+                                Optional<Group> bgOpt = oauthClientService.getBulkGroupById(bulkGroupId);
+                                if (bgOpt.isPresent()) {
+                                    Group group = bgOpt.get();
+                                    // Extract patient IDs from FHIR Group members
+                                    List<String> patientIds = group.getMember().stream()
+                                        .filter(m -> m.hasEntity() && m.getEntity().hasReference())
+                                        .map(m -> {
+                                            String ref = m.getEntity().getReference();
+                                            // Extract ID from "Patient/123" format
+                                            if (ref.startsWith("Patient/")) {
+                                                return ref.substring("Patient/".length());
+                                            }
+                                            return ref;
+                                        })
+                                        .collect(java.util.stream.Collectors.toList());
+
+                                    // Determine requested resource id from the request path
+                                    String resource = resourceType;
+                                    String resourceId = null;
+                                    if (reqPath != null && resource != null) {
+                                        String needle = "/" + resource + "/";
+                                        int idx = reqPath.indexOf(needle);
+                                        if (idx >= 0) {
+                                            String after = reqPath.substring(idx + needle.length());
+                                            int slash = after.indexOf('/');
+                                            resourceId = (slash > 0) ? after.substring(0, slash) : after;
+                                        }
+                                    }
+
+                                    if (resourceId != null && !resourceId.isBlank()) {
+                                        // Patient resource: id must be included in bulk group
+                                        if ("Patient".equals(resource)) {
+                                            if (!patientIds.contains(resourceId)) {
+                                                throw new AccessDeniedException("Forbidden: client app bulk group does not include Patient " + resourceId);
+                                            }
+                                        } else {
+                                            // For other resources: if it has a subject field, ensure it references a Patient in the bulk group
+                                            try {
+                                                String bucketName = TenantContextHolder.getTenantId();
+                                                Class<?> implClass = fhirContext.getResourceDefinition(resource).getImplementingClass();
+                                                FhirResourceDaoImpl dao = fhirResourceService.getService((Class) implClass);
+                                                Optional<?> resOpt = dao.read(resource, resourceId, bucketName);
+                                                if (resOpt.isPresent()) {
+                                                    Object resObj = resOpt.get();
+                                                    // Try reflection to call getSubject()
+                                                    try {
+                                                        Method getSubject = resObj.getClass().getMethod("getSubject");
+                                                        Object subj = getSubject.invoke(resObj);
+                                                        if (subj != null) {
+                                                            List<String> referencedPatientIds = new ArrayList<>();
+                                                            if (subj instanceof org.hl7.fhir.r4.model.Reference) {
+                                                                String ref = ((org.hl7.fhir.r4.model.Reference) subj).getReference();
+                                                                if (ref != null && ref.startsWith("Patient/")) {
+                                                                    referencedPatientIds.add(ref.substring("Patient/".length()));
+                                                                }
+                                                            } else if (subj instanceof java.util.List) {
+                                                                for (Object item : (java.util.List<?>) subj) {
+                                                                    if (item instanceof org.hl7.fhir.r4.model.Reference) {
+                                                                        String ref = ((org.hl7.fhir.r4.model.Reference) item).getReference();
+                                                                        if (ref != null && ref.startsWith("Patient/")) {
+                                                                            referencedPatientIds.add(ref.substring("Patient/".length()));
+                                                                        }
+                                                                    }
+                                                                }
+
+                                                                if (!referencedPatientIds.isEmpty()) {
+                                                                    boolean found = referencedPatientIds.stream().anyMatch(patientIds::contains);
+                                                                    if (!found) {
+                                                                        throw new AccessDeniedException("Forbidden: resource subject does not reference an allowed Patient");
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                    } catch (NoSuchMethodException nsme) {
+                                                        // Resource has no subject accessor - nothing to enforce
+                                                    }
+                                                }
+                                            } catch (Exception e) {
+                                                logger.warn("Failed to enforce bulk-group subject check: {}", e.getMessage());
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (AccessDeniedException ae) {
+            throw ae; // rethrow as-is
+        } catch (Exception e) {
+            logger.debug("Bulk-group enforcement skipped due to error: {}", e.getMessage());
         }
     }
     
@@ -175,6 +317,114 @@ public class SmartAuthorizationInterceptor {
                 logger.debug("Unknown operation type: {}", operationType);
                 return "read"; // Default to requiring read permission
         }
+    }
+    
+    /**
+     * Enforce patient context for patient-scoped tokens.
+     * Validates that searches and reads are restricted to the patient in the token.
+     * 
+     * @param requestDetails HAPI FHIR request details
+     * @param resourceType Resource type being accessed
+     * @param operationType Type of operation
+     * @param patientContext Patient ID from JWT token
+     */
+    private void enforcePatientContext(RequestDetails requestDetails, String resourceType, 
+                                       RestOperationTypeEnum operationType, String patientContext) {
+        
+        // For direct reads: GET /fhir/Patient/{id}
+        if (operationType == RestOperationTypeEnum.READ || operationType == RestOperationTypeEnum.VREAD) {
+            String resourceId = requestDetails.getId() != null ? requestDetails.getId().getIdPart() : null;
+            
+            if (resourceType.equals("Patient")) {
+                // Direct Patient read - must match token's patient context
+                if (resourceId != null && !resourceId.equals(patientContext)) {
+                    logger.warn("🚫 Patient-scoped token attempted to access Patient/{} (token patient: {})", 
+                               resourceId, patientContext);
+                    throw new AuthenticationException(
+                        String.format("Access denied: patient-scoped token can only access Patient/%s", patientContext)
+                    );
+                }
+            } else {
+                // Other resource types: validate subject/patient reference
+                // This will be checked in a post-processing hook if needed
+                // For now, we'll validate in SEARCH operations below
+            }
+        }
+        
+        // For searches: GET /fhir/Patient?_id=xyz or GET /fhir/Observation?patient=xyz
+        if (operationType == RestOperationTypeEnum.SEARCH_TYPE) {
+            // Check if searching for Patient resources
+            if (resourceType.equals("Patient")) {
+                // Get _id search parameter
+                String[] idParams = requestDetails.getParameters().get("_id");
+                if (idParams != null && idParams.length > 0) {
+                    for (String searchId : idParams) {
+                        if (!searchId.equals(patientContext)) {
+                            logger.warn("🚫 Patient-scoped token attempted to search Patient?_id={} (token patient: {})", 
+                                       searchId, patientContext);
+                            throw new AuthenticationException(
+                                String.format("Access denied: patient-scoped token can only search for Patient/%s", patientContext)
+                            );
+                        }
+                    }
+                }
+                
+                // If no _id parameter, add it to enforce patient context
+                if (idParams == null || idParams.length == 0) {
+                    logger.debug("🔒 Adding patient context filter: _id={}", patientContext);
+                    requestDetails.addParameter("_id", new String[]{patientContext});
+                }
+            } else {
+                // For other resources (Observation, Condition, etc.), enforce patient parameter
+                String[] patientParams = requestDetails.getParameters().get("patient");
+                String[] subjectParams = requestDetails.getParameters().get("subject");
+                
+                // Check patient parameter
+                if (patientParams != null && patientParams.length > 0) {
+                    for (String searchPatient : patientParams) {
+                        // Handle both "Patient/example" and "example" formats
+                        String patientId = searchPatient.startsWith("Patient/") 
+                            ? searchPatient.substring("Patient/".length()) 
+                            : searchPatient;
+                        
+                        if (!patientId.equals(patientContext)) {
+                            logger.warn("🚫 Patient-scoped token attempted to search {}?patient={} (token patient: {})", 
+                                       resourceType, patientId, patientContext);
+                            throw new AuthenticationException(
+                                String.format("Access denied: patient-scoped token can only access patient %s", patientContext)
+                            );
+                        }
+                    }
+                }
+                
+                // Check subject parameter (some resources use subject instead of patient)
+                if (subjectParams != null && subjectParams.length > 0) {
+                    for (String searchSubject : subjectParams) {
+                        String patientId = searchSubject.startsWith("Patient/") 
+                            ? searchSubject.substring("Patient/".length()) 
+                            : searchSubject;
+                        
+                        if (!patientId.equals(patientContext)) {
+                            logger.warn("🚫 Patient-scoped token attempted to search {}?subject={} (token patient: {})", 
+                                       resourceType, patientId, patientContext);
+                            throw new AuthenticationException(
+                                String.format("Access denied: patient-scoped token can only access patient %s", patientContext)
+                            );
+                        }
+                    }
+                }
+                
+                // If neither patient nor subject is specified, we need to add patient filter
+                // This ensures compartment-based access
+                if ((patientParams == null || patientParams.length == 0) && 
+                    (subjectParams == null || subjectParams.length == 0)) {
+                    logger.debug("🔒 Adding patient context filter: patient={}", patientContext);
+                    requestDetails.addParameter("patient", new String[]{patientContext});
+                }
+            }
+        }
+        
+        logger.debug("✅ Patient context enforcement passed for Patient/{}", patientContext);
     }
 }
 

@@ -30,6 +30,9 @@ public class OAuthClientResponse {
     // For newly created confidential clients only - shown once
     private String clientSecret;
     
+    // Optional bulk group id attached to this client
+    private String bulkGroupId;
+    
     public static OAuthClientResponse from(OAuthClient client) {
         OAuthClientResponse dto = new OAuthClientResponse();
         dto.setClientId(client.getClientId());
@@ -47,6 +50,7 @@ public class OAuthClientResponse {
         dto.setCreatedAt(client.getCreatedAt());
         dto.setLastUsed(client.getLastUsed());
         // Note: clientSecret is NOT included for security
+        dto.setBulkGroupId(client.getBulkGroupId());
         return dto;
     }
     
@@ -176,6 +180,14 @@ public class OAuthClientResponse {
     
     public void setClientSecret(String clientSecret) {
         this.clientSecret = clientSecret;
+    }
+
+    public String getBulkGroupId() {
+        return bulkGroupId;
+    }
+
+    public void setBulkGroupId(String bulkGroupId) {
+        this.bulkGroupId = bulkGroupId;
     }
 }
 

@@ -103,7 +103,7 @@ public class EverythingService {
             String baseUrl) {
         
         String bucketName = TenantContextHolder.getTenantId();
-        logger.info("🌍 $everything for Patient/{} (bucket: {}, start: {}, end: {}, types: {}, since: {}, count: {})", 
+        logger.debug("🌍 $everything for Patient/{} (bucket: {}, start: {}, end: {}, types: {}, since: {}, count: {})", 
                    patientId, bucketName, start, end, types, since, count);
         
         // Step 1: Validate patient exists and get the resource
@@ -111,7 +111,7 @@ public class EverythingService {
         
         // Step 2: Determine which collections to search
         List<String> collectionsToSearch = determineCollections(types);
-        logger.info("🌍 Searching {} collections for Patient/{}", collectionsToSearch.size(), patientId);
+        logger.debug("🌍 Searching {} collections for Patient/{}", collectionsToSearch.size(), patientId);
         
         // Step 3: Search for all related resource KEYS across all collections (don't fetch yet!)
         List<String> allDocumentKeys = searchRelatedResourceKeys(
@@ -132,7 +132,7 @@ public class EverythingService {
         List<String> firstPageKeys = allDocumentKeys.subList(0, firstPageSize);
         List<Resource> firstPageResources = fetchResourcesByKeys(firstPageKeys, bucketName);
         
-        logger.info("✅ $everything found {} total resources (1 Patient + {} related), returning first {} resources", 
+        logger.debug("✅ $everything found {} total resources (1 Patient + {} related), returning first {} resources", 
                    allDocumentKeys.size() + 1, allDocumentKeys.size(), firstPageResources.size() + 1);
         
         return new EverythingResult(
@@ -169,7 +169,7 @@ public class EverythingService {
         List<String> pageKeys = fromIndex < toIndex ? allDocumentKeys.subList(fromIndex, toIndex) : List.of();
         
         if (pageKeys.isEmpty()) {
-            logger.info("🔑 No more results for pagination token: {}", continuationToken);
+            logger.debug("🔑 No more results for pagination token: {}", continuationToken);
             return new ArrayList<>();
         }
         
@@ -177,7 +177,7 @@ public class EverythingService {
         int currentPage = (offset / pageSize) + 1;
         int totalPages = (int) Math.ceil((double) allDocumentKeys.size() / pageSize);
         
-        logger.info("🔑 Fetching {} resources for page {}/{}", 
+        logger.debug("🔑 Fetching {} resources for page {}/{}", 
                    pageKeys.size(), currentPage, totalPages);
         
         // Fetch resources for this page
@@ -282,7 +282,7 @@ public class EverythingService {
                     bucketName
                 );
                 
-                logger.info("🌍 Found {} keys in {} collection for Patient/{}", 
+                logger.debug("🌍 Found {} keys in {} collection for Patient/{}", 
                            keys.size(), collectionName, patientId);
                 allDocumentKeys.addAll(keys);
                 
@@ -292,7 +292,7 @@ public class EverythingService {
             }
         }
         
-        logger.info("🌍 Total keys found across {} collections: {}", collections.size(), allDocumentKeys.size());
+        logger.debug("🌍 Total keys found across {} collections: {}", collections.size(), allDocumentKeys.size());
         return allDocumentKeys;
     }
     

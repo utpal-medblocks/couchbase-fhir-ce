@@ -65,9 +65,10 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
     private final com.couchbase.fhir.resources.service.HistoryService historyService;
     private final com.couchbase.fhir.resources.service.EverythingService everythingService;
     private final com.couchbase.fhir.resources.search.SearchStateManager searchStateManager;
+    private final com.couchbase.common.config.FhirServerConfig fhirServerConfig;
 
 
-    public FhirCouchbaseResourceProvider(Class<T> resourceClass, FhirResourceDaoImpl<T> dao , FhirContext fhirContext, FhirSearchParameterPreprocessor searchPreprocessor, FhirBucketValidator bucketValidator, FhirBucketConfigService configService, FhirValidator strictValidator, FhirValidator lenientValidator, com.couchbase.admin.connections.service.ConnectionService connectionService, com.couchbase.fhir.resources.service.PutService putService, com.couchbase.fhir.resources.service.DeleteService deleteService, FhirMetaHelper metaHelper, com.couchbase.fhir.resources.service.SearchService searchService, com.couchbase.fhir.resources.service.PatchService patchService, com.couchbase.fhir.resources.service.ConditionalPutService conditionalPutService, com.couchbase.fhir.resources.service.HistoryService historyService, com.couchbase.fhir.resources.service.EverythingService everythingService, com.couchbase.fhir.resources.search.SearchStateManager searchStateManager) {
+    public FhirCouchbaseResourceProvider(Class<T> resourceClass, FhirResourceDaoImpl<T> dao , FhirContext fhirContext, FhirSearchParameterPreprocessor searchPreprocessor, FhirBucketValidator bucketValidator, FhirBucketConfigService configService, FhirValidator strictValidator, FhirValidator lenientValidator, com.couchbase.admin.connections.service.ConnectionService connectionService, com.couchbase.fhir.resources.service.PutService putService, com.couchbase.fhir.resources.service.DeleteService deleteService, FhirMetaHelper metaHelper, com.couchbase.fhir.resources.service.SearchService searchService, com.couchbase.fhir.resources.service.PatchService patchService, com.couchbase.fhir.resources.service.ConditionalPutService conditionalPutService, com.couchbase.fhir.resources.service.HistoryService historyService, com.couchbase.fhir.resources.service.EverythingService everythingService, com.couchbase.fhir.resources.search.SearchStateManager searchStateManager, com.couchbase.common.config.FhirServerConfig fhirServerConfig) {
         this.resourceClass = resourceClass;
         this.dao = dao;
         this.fhirContext = fhirContext;
@@ -87,6 +88,7 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
         this.historyService = historyService;
         this.everythingService = everythingService;
         this.searchStateManager = searchStateManager;
+        this.fhirServerConfig = fhirServerConfig;
     }
 
     /**
@@ -864,15 +866,31 @@ public class FhirCouchbaseResourceProvider <T extends Resource> implements IReso
     
     /**
      * Extract base URL from request details
+     * 
+     * IMPORTANT: Always prioritize the configured base URL from config.yaml to ensure
+     * the correct protocol (https vs http) is preserved, especially when behind
+     * a reverse proxy that terminates SSL.
      */
     private String extractBaseUrl(RequestDetails requestDetails, String bucketName) {
+        // Always use configured base URL to preserve protocol (https vs http)
+        // This is critical when behind HAProxy or other reverse proxies that terminate SSL
+        String configuredBaseUrl = fhirServerConfig.getNormalizedBaseUrl();
+        if (configuredBaseUrl != null && !configuredBaseUrl.equals("http://localhost/fhir")) {
+            return configuredBaseUrl;
+        }
+        
+        // Only fall back to request URL if no base URL is configured (development mode)
         if (requestDetails != null) {
             String serverBase = requestDetails.getFhirServerBase();
             if (serverBase != null && !serverBase.isBlank()) {
                 return serverBase;
             }
         }
-        // Deliberately no localhost fallback: configuration must supply base URL
+        
+        // Final fallback
+        if (configuredBaseUrl != null) {
+            return configuredBaseUrl;
+        }
         throw new IllegalStateException("Missing FHIR server base URL (configure app.baseUrl / server base)");
     }
     

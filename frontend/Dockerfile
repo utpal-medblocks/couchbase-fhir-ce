@@ -7,8 +7,28 @@ RUN chmod -R 777 /app
 # Copy package files first for better layer caching
 COPY package.json package-lock.json ./
 
+# Accept NODE_OPTIONS as build arg for memory tuning
+ARG NODE_OPTIONS=--max-old-space-size=4096
+ENV NODE_OPTIONS=$NODE_OPTIONS
+
 # Install dependencies - this layer will be cached unless package files change
-RUN npm ci --silent && \
+# Use single socket and prefer offline to avoid concurrency issues in QEMU
+# Retry logic for ARM64 builds via QEMU emulation
+RUN set -e; \
+    for i in 1 2 3; do \
+        echo "npm ci attempt $i/3..."; \
+        if npm ci --maxsockets=1 --prefer-offline --no-audit 2>&1; then \
+            echo "npm ci succeeded on attempt $i"; \
+            break; \
+        else \
+            if [ $i -eq 3 ]; then \
+                echo "npm ci failed after 3 attempts"; \
+                exit 1; \
+            fi; \
+            echo "npm ci failed, retrying in 5 seconds..."; \
+            sleep 5; \
+        fi; \
+    done && \
     npm cache clean --force
 
 # Copy source code - this layer changes most often

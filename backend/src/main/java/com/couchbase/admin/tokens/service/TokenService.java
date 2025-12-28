@@ -41,19 +41,25 @@ public class TokenService {
     @Value("${api.token.validity.days:90}")
     private int tokenValidityDays;
 
+    @Value("${app.security.use-keycloak:false}")
+    private boolean useKeycloak;
+
     private final ConnectionService connectionService;
     private final UserService userService;
     private final JwtEncoder jwtEncoder;
     private final JwtTokenCacheService jwtTokenCacheService;
+    private final KeycloakTokenIssuer keycloakTokenIssuer;
 
     public TokenService(ConnectionService connectionService,
                        UserService userService,
                        JwtEncoder jwtEncoder,
-                       JwtTokenCacheService jwtTokenCacheService) {
+                       JwtTokenCacheService jwtTokenCacheService,
+                       KeycloakTokenIssuer keycloakTokenIssuer) {
         this.connectionService = connectionService;
         this.userService = userService;
         this.jwtEncoder = jwtEncoder;
         this.jwtTokenCacheService = jwtTokenCacheService;
+        this.keycloakTokenIssuer = keycloakTokenIssuer;
     }
 
     private Collection getTokensCollection() {
@@ -120,6 +126,54 @@ public class TokenService {
         Map<String, Object> result = new HashMap<>();
         result.put("token", jwt); // The actual JWT to use in API calls
         result.put("tokenMetadata", tokenMetadata); // Metadata for display
+        result.put("expiresAt", expiresAt.toString());
+        result.put("validityDays", tokenValidityDays);
+
+        return result;
+    }
+
+    /**
+     * Generate a new token but request it from Keycloak when Keycloak mode is enabled.
+     * @param subjectToken incoming bearer token for the subject (may be null)
+     */
+    public Map<String, Object> generateTokenWithSubjectToken(String userId, String appName, String[] scopes,
+                                                             String createdBy, String subjectToken) {
+        if (!useKeycloak) {
+            return generateToken(userId, appName, scopes, createdBy);
+        }
+
+        logger.info("🔁 Keycloak mode: issuing token via Keycloak for user: {} (app: {})", userId, appName);
+
+        // Validate that requested scopes are allowed for this user
+        User user = userService.getUserById(userId)
+                .orElseThrow(() -> new IllegalArgumentException("User not found: " + userId));
+        validateScopes(scopes, user);
+
+        // Generate unique JWT ID
+        String jti = UUID.randomUUID().toString();
+
+        // Calculate expiration
+        Instant now = Instant.now();
+        Instant expiresAt = now.plus(Duration.ofDays(tokenValidityDays));
+
+        // Request token from Keycloak via token-exchange
+        String jwt = keycloakTokenIssuer.issueToken(subjectToken, userId, scopes, jti, appName, now, expiresAt);
+
+        // Create token metadata
+        Token tokenMetadata = new Token(jti, userId, appName, scopes, expiresAt, createdBy);
+
+        // Store metadata in Couchbase
+        Collection tokensCollection = getTokensCollection();
+        tokensCollection.insert(tokenMetadata.getId(), tokenMetadata);
+        logger.info("✅ Token metadata stored in fhir.Admin.tokens (id: {})", tokenMetadata.getId());
+
+        // Add JTI to active cache
+        jwtTokenCacheService.addToken(jti);
+        logger.debug("✅ JTI added to active cache");
+
+        Map<String, Object> result = new HashMap<>();
+        result.put("token", jwt);
+        result.put("tokenMetadata", tokenMetadata);
         result.put("expiresAt", expiresAt.toString());
         result.put("validityDays", tokenValidityDays);
 

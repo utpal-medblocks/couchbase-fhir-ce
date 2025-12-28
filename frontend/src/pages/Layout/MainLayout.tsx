@@ -147,6 +147,13 @@ const menuItems = [
     adminOnly: false,
   },
   {
+    id: "fhir-groups",
+    label: "FHIR Groups",
+    icon: BsPeople,
+    path: "/fhir-groups",
+    adminOnly: true,
+  },
+  {
     id: "users",
     label: "Users",
     icon: BsPeople,

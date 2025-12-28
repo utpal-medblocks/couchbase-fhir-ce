@@ -13,10 +13,12 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Value;
 
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
+import org.hl7.fhir.r4.model.Group;
 import java.util.UUID;
 
 /**
@@ -38,6 +40,12 @@ public class OAuthClientService {
     @Autowired
     private PasswordEncoder passwordEncoder;
     
+    @Autowired(required = false)
+    private KeycloakOAuthClientManager keycloakClientManager;
+
+    @Value("${app.security.use-keycloak:false}")
+    private boolean useKeycloak;
+
     /**
      * Get OAuth clients collection
      */
@@ -58,6 +66,11 @@ public class OAuthClientService {
     public OAuthClient createClient(OAuthClient client, String plainSecret, String createdBy) {
         logger.info("📱 Creating OAuth client: {}", client.getClientName());
         
+        if (useKeycloak && keycloakClientManager != null) {
+            logger.info("Keycloak enabled: delegating createClient to KeycloakOAuthClientManager");
+            return keycloakClientManager.createClient(client, plainSecret, createdBy);
+        }
+
         // Generate client ID
         String clientId = "app-" + UUID.randomUUID().toString();
         client.setClientId(clientId);
@@ -91,6 +104,10 @@ public class OAuthClientService {
      */
     public List<OAuthClient> getAllClients() {
         logger.debug("📋 Fetching all OAuth clients");
+        if (useKeycloak && keycloakClientManager != null) {
+            logger.debug("Keycloak enabled: fetching clients from Keycloak");
+            return keycloakClientManager.getAllClients();
+        }
         
         Cluster cluster = connectionService.getConnection(CONNECTION_NAME);
         String query = "SELECT c.* FROM `" + BUCKET_NAME + "`.`" + SCOPE_NAME + "`.`" + COLLECTION_NAME + "` c";
@@ -108,6 +125,9 @@ public class OAuthClientService {
      * @return Client if found
      */
     public Optional<OAuthClient> getClientById(String clientId) {
+        if (useKeycloak && keycloakClientManager != null) {
+            return keycloakClientManager.getClientById(clientId);
+        }
         try {
             Collection collection = getClientsCollection();
             OAuthClient client = collection.get(clientId).contentAs(OAuthClient.class);
@@ -126,7 +146,11 @@ public class OAuthClientService {
      */
     public OAuthClient updateClient(String clientId, OAuthClient updates) {
         logger.info("🔄 Updating OAuth client: {}", clientId);
-        
+        if (useKeycloak && keycloakClientManager != null) {
+            logger.info("Keycloak enabled: delegating updateClient to KeycloakOAuthClientManager");
+            return keycloakClientManager.updateClient(clientId, updates);
+        }
+
         Collection collection = getClientsCollection();
         OAuthClient existing = collection.get(clientId).contentAs(OAuthClient.class);
         
@@ -159,12 +183,17 @@ public class OAuthClientService {
      */
     public void revokeClient(String clientId) {
         logger.info("🚫 Revoking OAuth client: {}", clientId);
-        
+        if (useKeycloak && keycloakClientManager != null) {
+            logger.info("Keycloak enabled: delegating revokeClient to KeycloakOAuthClientManager");
+            keycloakClientManager.revokeClient(clientId);
+            return;
+        }
+
         Collection collection = getClientsCollection();
         OAuthClient client = collection.get(clientId).contentAs(OAuthClient.class);
         client.setStatus("revoked");
         collection.replace(clientId, client);
-        
+
         logger.info("✅ OAuth client revoked: {}", clientId);
     }
     
@@ -174,11 +203,95 @@ public class OAuthClientService {
      */
     public void deleteClient(String clientId) {
         logger.info("🗑️  Deleting OAuth client: {}", clientId);
-        
+        if (useKeycloak && keycloakClientManager != null) {
+            logger.info("Keycloak enabled: delegating deleteClient to KeycloakOAuthClientManager");
+            keycloakClientManager.deleteClient(clientId);
+            return;
+        }
+
         Collection collection = getClientsCollection();
         collection.remove(clientId);
-        
+
         logger.info("✅ OAuth client deleted: {}", clientId);
+    }
+
+    /**
+     * Attach a bulk group id to an OAuth client (provider or system/back-end clients only)
+     */
+    public OAuthClient attachBulkGroup(String clientId, String bulkGroupId) {
+        logger.info("🔗 Attaching bulkGroup {} to client {}", bulkGroupId, clientId);
+        if (useKeycloak && keycloakClientManager != null) {
+            keycloakClientManager.attachBulkGroup(clientId, bulkGroupId);
+            return getClientById(clientId).orElseThrow(() -> new IllegalArgumentException("Client not found: " + clientId));
+        }
+
+        Collection collection = getClientsCollection();
+        OAuthClient client = collection.get(clientId).contentAs(OAuthClient.class);
+        // Only allow attach for provider or system type
+        if (client.getClientType() == null) throw new IllegalArgumentException("Client type required for bulk group attach");
+        String ct = client.getClientType().toLowerCase();
+        if (!ct.contains("provider") && !ct.contains("system") && !ct.contains("backend")) {
+            throw new IllegalArgumentException("Bulk group can only be attached to provider or system/backend clients");
+        }
+
+        client.setBulkGroupId(bulkGroupId);
+        collection.replace(clientId, client);
+        return client;
+    }
+
+    public Optional<String> getBulkGroup(String clientId) {
+        if (useKeycloak && keycloakClientManager != null) {
+            return keycloakClientManager.getBulkGroup(clientId);
+        }
+        try {
+            Collection collection = getClientsCollection();
+            OAuthClient client = collection.get(clientId).contentAs(OAuthClient.class);
+            return Optional.ofNullable(client.getBulkGroupId());
+        } catch (Exception e) {
+            return Optional.empty();
+        }
+    }
+
+    /**
+     * Fetch a FHIR Group document by id from `fhir`.`Resources`.`General` collection
+     */
+    public Optional<Group> getBulkGroupById(String bulkGroupId) {
+        if (useKeycloak && keycloakClientManager != null) {
+            // Keycloak path doesn't manage bulk groups in Couchbase
+            return Optional.empty();
+        }
+        try {
+            Cluster cluster = connectionService.getConnection(CONNECTION_NAME);
+            Bucket bucket = cluster.bucket(BUCKET_NAME);
+            Scope scope = bucket.scope("Resources");
+            Collection collection = scope.collection("General");
+            
+            // FHIR Groups use key format: Group/[id]
+            String documentKey = "Group/" + bulkGroupId;
+            String json = collection.get(documentKey).contentAsObject().toString();
+            
+            // Parse as FHIR Group resource
+            ca.uhn.fhir.context.FhirContext fhirContext = ca.uhn.fhir.context.FhirContext.forR4();
+            Group group = fhirContext.newJsonParser().parseResource(Group.class, json);
+            
+            return Optional.ofNullable(group);
+        } catch (Exception e) {
+            logger.debug("FHIR Group not found: {} (err: {})", bulkGroupId, e.getMessage());
+            return Optional.empty();
+        }
+    }
+
+    public OAuthClient detachBulkGroup(String clientId) {
+        logger.info("🔗 Detaching bulkGroup from client {}", clientId);
+        if (useKeycloak && keycloakClientManager != null) {
+            keycloakClientManager.detachBulkGroup(clientId);
+            return getClientById(clientId).orElseThrow(() -> new IllegalArgumentException("Client not found: " + clientId));
+        }
+        Collection collection = getClientsCollection();
+        OAuthClient client = collection.get(clientId).contentAs(OAuthClient.class);
+        client.setBulkGroupId(null);
+        collection.replace(clientId, client);
+        return client;
     }
     
     /**
@@ -188,16 +301,20 @@ public class OAuthClientService {
      * @return True if secret matches
      */
     public boolean verifyClientSecret(String clientId, String plainSecret) {
+        if (useKeycloak && keycloakClientManager != null) {
+            return keycloakClientManager.verifyClientSecret(clientId, plainSecret);
+        }
+
         Optional<OAuthClient> clientOpt = getClientById(clientId);
         if (clientOpt.isEmpty()) {
             return false;
         }
-        
+
         OAuthClient client = clientOpt.get();
         if (client.getClientSecret() == null) {
             return false; // Public client has no secret
         }
-        
+
         return passwordEncoder.matches(plainSecret, client.getClientSecret());
     }
     
@@ -206,6 +323,11 @@ public class OAuthClientService {
      * @param clientId Client ID
      */
     public void updateLastUsed(String clientId) {
+        if (useKeycloak && keycloakClientManager != null) {
+            keycloakClientManager.updateLastUsed(clientId);
+            return;
+        }
+
         try {
             Collection collection = getClientsCollection();
             OAuthClient client = collection.get(clientId).contentAs(OAuthClient.class);

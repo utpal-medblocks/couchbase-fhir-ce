@@ -28,12 +28,6 @@ fhir:
         - name: "tokens"
           description: "Token management, authentication"
 
-        - name: "authorizations"
-          description: "Authorization codes, authentication"
-
-        - name: "consents"
-          description: "Consent management, authentication"
-
     resources:
       name: "Resources"
       description: "FHIR clinical and administrative resource collections"

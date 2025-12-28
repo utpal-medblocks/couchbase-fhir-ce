@@ -124,7 +124,7 @@ public class FastJsonBundleBuilder {
             byte[] result = baos.toByteArray();
             
             long elapsedMs = System.currentTimeMillis() - startMs;
-            logger.info("🚀 FASTPATH: Built Bundle in {} ms ({} bytes, {} entries)", 
+            logger.debug("🚀 FASTPATH: Built Bundle in {} ms ({} bytes, {} entries)", 
                        elapsedMs, result.length, totalEntries);
             
             return result;

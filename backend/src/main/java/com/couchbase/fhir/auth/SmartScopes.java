@@ -1,5 +1,8 @@
 package com.couchbase.fhir.auth;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.util.Arrays;
 import java.util.List;
 
@@ -7,19 +10,25 @@ import java.util.List;
  * SMART on FHIR scope definitions
  * Reference: http://hl7.org/fhir/smart-app-launch/scopes-and-launch-context.html
  * 
- * Format: {category}/{resource-type}.{access-level}
+ * SMART v2 Format: {category}/{resource-type}.{interactions}
  * 
  * Categories:
  * - patient: Access limited to patient's compartment
  * - user: Access by authenticated user (practitioner, etc.)
  * - system: Backend service access (no user context)
  * 
- * Access levels:
- * - read: Read access
- * - write: Write access (create, update)
- * - *: All access (read + write)
+ * SMART v2 Interactions (granular):
+ * - c = create
+ * - r = read
+ * - u = update
+ * - d = delete
+ * - s = search
+ * - Combinations: rs (read+search), cud (create+update+delete), cruds (all)
+ * - Or * for all interactions
  */
 public class SmartScopes {
+    
+    private static final Logger logger = LoggerFactory.getLogger(SmartScopes.class);
     
     // Launch contexts
     public static final String LAUNCH = "launch";
@@ -30,10 +39,10 @@ public class SmartScopes {
     public static final String FHIRUSER = "fhirUser";
     public static final String PROFILE = "profile";
     
-    // Patient scopes - access limited to patient compartment
-    public static final String PATIENT_ALL_READ = "patient/*.read";
-    public static final String PATIENT_ALL_WRITE = "patient/*.write";
-    public static final String PATIENT_ALL = "patient/*.*";
+    // Patient scopes - SMART v2 format (access limited to patient compartment)
+    public static final String PATIENT_ALL_READ = "patient/*.rs";      // read + search (v2)
+    public static final String PATIENT_ALL_WRITE = "patient/*.cud";    // create + update + delete (v2)
+    public static final String PATIENT_ALL = "patient/*.cruds";        // all operations (v2)
     
     // Common patient resource scopes
     public static final String PATIENT_PATIENT_READ = "patient/Patient.read";
@@ -42,10 +51,10 @@ public class SmartScopes {
     public static final String PATIENT_MEDICATION_READ = "patient/MedicationRequest.read";
     public static final String PATIENT_ALLERGY_READ = "patient/AllergyIntolerance.read";
     
-    // User scopes - access by authenticated user
-    public static final String USER_ALL_READ = "user/*.read";
-    public static final String USER_ALL_WRITE = "user/*.write";
-    public static final String USER_ALL = "user/*.*";
+    // User scopes - SMART v2 format (access by authenticated user)
+    public static final String USER_ALL_READ = "user/*.rs";        // read + search (v2)
+    public static final String USER_ALL_WRITE = "user/*.cud";      // create + update + delete (v2)
+    public static final String USER_ALL = "user/*.cruds";          // all operations (v2)
     
     // Common user resource scopes
     public static final String USER_PATIENT_READ = "user/Patient.read";
@@ -53,10 +62,10 @@ public class SmartScopes {
     public static final String USER_OBSERVATION_READ = "user/Observation.read";
     public static final String USER_OBSERVATION_WRITE = "user/Observation.write";
     
-    // System scopes - backend service access
-    public static final String SYSTEM_ALL_READ = "system/*.read";
-    public static final String SYSTEM_ALL_WRITE = "system/*.write";
-    public static final String SYSTEM_ALL = "system/*.*";
+    // System scopes - SMART v2 format (backend service access)
+    public static final String SYSTEM_ALL_READ = "system/*.rs";    // read + search (v2)
+    public static final String SYSTEM_ALL_WRITE = "system/*.cud";  // create + update + delete (v2)
+    public static final String SYSTEM_ALL = "system/*.cruds";      // all operations (v2)
     
     // All default scopes for testing
     public static final List<String> DEFAULT_TEST_SCOPES = Arrays.asList(
@@ -155,24 +164,69 @@ public class SmartScopes {
         }
         
         public boolean allowsRead() {
-            return "read".equals(action) || "*".equals(action);
+            // SMART v2 granular scopes: check if action contains 'r' (read) or 's' (search)
+            // Examples: "read", "rs", "cruds", "*"
+            return "read".equals(action) || 
+                   "*".equals(action) || 
+                   (action != null && (action.contains("r") || action.contains("s")));
         }
         
         public boolean allowsWrite() {
-            return "write".equals(action) || "*".equals(action);
+            // SMART v2 granular scopes: check if action contains 'c', 'u', or 'd'
+            // Examples: "write", "cud", "cruds", "*"
+            return "write".equals(action) || 
+                   "*".equals(action) || 
+                   (action != null && (action.contains("c") || action.contains("u") || action.contains("d")));
         }
         
         public boolean matches(String requestedResourceType, String requestedAction) {
-            // Check resource type match
+            // Check resource type match (must match explicitly or be wildcard)
             boolean resourceMatches = isWildcardResource() || 
                                      resourceType.equals(requestedResourceType);
             
-            // Check action match
-            boolean actionMatches = isWildcardAction() ||
-                                   action.equals(requestedAction) ||
-                                   ("*".equals(requestedAction) && (allowsRead() || allowsWrite()));
+            logger.trace("[SCOPE-MATCH] Checking scope '{}' against resource={}, action={} - resourceMatches={}", 
+                        originalScope, requestedResourceType, requestedAction, resourceMatches);
             
-            return resourceMatches && actionMatches;
+            if (!resourceMatches) {
+                logger.trace("[SCOPE-MATCH] ❌ Resource mismatch: scope resource '{}' != requested '{}'", 
+                           resourceType, requestedResourceType);
+                return false; // If resource doesn't match, deny immediately
+            }
+            
+            // Check action match
+            if (isWildcardAction()) {
+                logger.trace("[SCOPE-MATCH] ✅ Wildcard action '*' grants all permissions");
+                return true; // Wildcard action grants all permissions
+            }
+            
+            // SMART v2 granular action matching
+            boolean matches = false;
+            if ("read".equals(requestedAction)) {
+                matches = allowsRead();
+                logger.trace("[SCOPE-MATCH] Read permission check: scope action='{}', allowsRead={}", action, matches);
+            } else if ("write".equals(requestedAction)) {
+                matches = allowsWrite();
+                logger.trace("[SCOPE-MATCH] Write permission check: scope action='{}', allowsWrite={}", action, matches);
+            } else if ("*".equals(requestedAction)) {
+                matches = allowsRead() || allowsWrite();
+                logger.trace("[SCOPE-MATCH] Wildcard permission check: scope action='{}', allowsRead={}, allowsWrite={}", 
+                           action, allowsRead(), allowsWrite());
+            } else {
+                // Exact match for other actions
+                matches = action.equals(requestedAction);
+                logger.trace("[SCOPE-MATCH] Exact match check: scope action='{}', requested='{}', matches={}", 
+                           action, requestedAction, matches);
+            }
+            
+            if (matches) {
+                logger.debug("[SCOPE-MATCH] ✅ GRANTED: Scope '{}' allows {}.{}", 
+                           originalScope, requestedResourceType, requestedAction);
+            } else {
+                logger.trace("[SCOPE-MATCH] ❌ DENIED: Scope '{}' does not allow {}.{}", 
+                           originalScope, requestedResourceType, requestedAction);
+            }
+            
+            return matches;
         }
         
         @Override
