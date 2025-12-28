@@ -8,6 +8,7 @@ import com.couchbase.fhir.resources.provider.BulkImportProvider;
 import com.couchbase.fhir.resources.provider.USCoreCapabilityProvider;
 import com.couchbase.fhir.resources.interceptor.BucketAwareValidationInterceptor;
 import com.couchbase.fhir.resources.service.FhirBucketConfigService;
+import com.couchbase.fhir.resources.service.FhirBundleProcessingService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
@@ -76,6 +77,8 @@ public class FhirRestfulServer extends RestfulServer {
     @Autowired
     private com.couchbase.admin.connections.service.ConnectionService connectionService;
 
+    @Autowired
+    private FhirBundleProcessingService fhirBundleProcessingService;
 
     @Override
     protected void initialize() {
@@ -128,7 +131,7 @@ public class FhirRestfulServer extends RestfulServer {
             USCoreCapabilityProvider capabilityProvider = new USCoreCapabilityProvider(this, buildProperties, configuredBaseUrl);
             setServerConformanceProvider(capabilityProvider);
             registerProviders(allProviders); // Register all providers
-            registerProvider(new BulkImportProvider(fhirContext  , connectionService));
+            registerProvider(new BulkImportProvider(fhirContext  , connectionService , fhirBundleProcessingService));
 
 
         } catch (Exception e) {
