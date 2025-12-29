@@ -1,25 +1,31 @@
 package com.couchbase.fhir.resources.provider;
 
 import ca.uhn.fhir.context.FhirContext;
-import ca.uhn.fhir.parser.IParser;
 import ca.uhn.fhir.rest.annotation.Operation;
 import ca.uhn.fhir.rest.annotation.OperationParam;
 import ca.uhn.fhir.rest.annotation.ResourceParam;
 import ca.uhn.fhir.rest.api.server.RequestDetails;
 import com.couchbase.admin.connections.service.ConnectionService;
-import com.couchbase.admin.sampledata.service.SampleDataService;
-import com.couchbase.client.java.json.JsonObject;
+import com.couchbase.admin.users.bulkGroup.service.GroupAdminService;
+import com.couchbase.client.core.error.DocumentNotFoundException;
+import com.couchbase.client.java.kv.GetResult;
+import com.couchbase.client.java.search.SearchQuery;
+import com.couchbase.client.java.search.queries.TermQuery;
+import com.couchbase.common.config.FhirServerConfig;
 import com.couchbase.fhir.resources.config.TenantContextHolder;
 import com.couchbase.fhir.resources.service.FhirBucketConfigService;
 import com.couchbase.fhir.resources.service.FhirBundleProcessingService;
+import com.couchbase.fhir.resources.service.FtsSearchService;
 import com.couchbase.fhir.resources.util.BulkJob;
+import com.couchbase.fhir.resources.util.BulkOutput;
 import com.couchbase.fhir.resources.util.BulkTask;
+import com.couchbase.fhir.resources.util.NDJsonWrite;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.helger.commons.annotation.Singleton;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.hl7.fhir.instance.model.api.IBaseDatatype;
-import org.hl7.fhir.r4.model.Parameters;
-import org.hl7.fhir.r4.model.StringType;
-import org.hl7.fhir.r4.model.UriType;
+import org.hl7.fhir.r4.model.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -27,11 +33,12 @@ import org.springframework.stereotype.Component;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.net.URL;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
-import java.util.UUID;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.*;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.zip.ZipEntry;
@@ -44,6 +51,8 @@ public class BulkImportProvider {
 
     private static final Logger logger = LoggerFactory.getLogger(BulkImportProvider.class);
 
+    private static final String BULK_EXPORT_DIR = "data/exports";
+
     @Autowired
     private FhirBucketConfigService bucketConfigService;
 
@@ -55,10 +64,19 @@ public class BulkImportProvider {
 
     private final FhirBundleProcessingService fhirBundleProcessingService;
 
-    public BulkImportProvider(FhirContext fhirContext , ConnectionService connectionService , FhirBundleProcessingService fhirBundleProcessingService) {
+    private final GroupAdminService groupAdminService;
+
+    private final FhirServerConfig fhirServerConfig;
+
+    private FtsSearchService ftsSearchService;
+
+    public BulkImportProvider(FhirContext fhirContext , ConnectionService connectionService , FhirBundleProcessingService fhirBundleProcessingService , GroupAdminService groupAdminService , FhirServerConfig fhirServerConfig , FtsSearchService ftsSearchService) {
         this.fhirContext = fhirContext;
         this.connectionService = connectionService;
         this.fhirBundleProcessingService = fhirBundleProcessingService;
+        this.groupAdminService = groupAdminService;
+        this.fhirServerConfig = fhirServerConfig;
+        this.ftsSearchService = ftsSearchService;
     }
 
 
@@ -251,6 +269,161 @@ public class BulkImportProvider {
                     return null;
                 })
                 .orElse(null);
+    }
+
+
+
+    @Operation(name = "$export", idempotent = false, manualResponse = true)
+    public void exportBulkData(@ResourceParam Parameters parameters , RequestDetails requestDetails , HttpServletRequest request, HttpServletResponse response) throws IOException {
+        String bucketName = TenantContextHolder.getTenantId();
+        Map<String, String[]> params = requestDetails.getParameters();
+        String bulkGroupId = params.get("bulkgroupid")[0];
+
+        logger.info("📦 Starting bulk export for : {} , {}", bucketName , bulkGroupId);
+
+        Group bulkGroup = groupAdminService.getGroupById(bulkGroupId)
+                .orElseThrow(() -> new IllegalArgumentException("Group not found: " + bulkGroupId));
+
+
+        List<String> patientIds = bulkGroup.getMember().stream()
+                .map(Group.GroupMemberComponent::getEntity)
+                .filter(Objects::nonNull)
+                .map(Reference::getReference)
+                .filter(ref -> ref.startsWith("Patient/"))
+                .toList();
+
+        if (patientIds.isEmpty()) {
+            response.sendError(400, "Group has no Patient members");
+        }
+
+        BulkJob bulkJob = new BulkJob();
+        bulkJob.setJobId(UUID.randomUUID().toString());
+        bulkJob.setStatus("PENDING");
+        List<BulkOutput> outputs = new ArrayList<>();
+
+        Path baseDir = Paths.get(BULK_EXPORT_DIR);
+        Files.createDirectories(baseDir);
+
+        Path jobDir = baseDir.resolve(bulkJob.getJobId());
+        Files.createDirectories(jobDir);
+
+        com.couchbase.client.java.Cluster cluster = connectionService.getConnection("default");
+
+
+        //create patient file and write to it
+     /*   Path patientFile = jobDir.resolve("Patient.ndjson");
+
+        try (NDJsonWrite writer = new NDJsonWrite(patientFile)) {
+
+            com.couchbase.client.java.Collection patinetCollection = cluster.bucket(bucketName)
+                    .scope("Resources")
+                    .collection("Patient");
+
+            for (String patientId : patientIds) {
+
+                try {
+                    GetResult result = patinetCollection.get(patientId);
+                    String json = result.contentAsObject().toString();
+                    writer.writeLine(json);
+
+                } catch (DocumentNotFoundException e) {
+                    logger.warn("Patient not found: {}", patientId);
+                }
+            }
+
+            BulkOutput bulkOutput = new BulkOutput();
+            bulkOutput.setType("Patient");
+            String patientUrl =  fhirServerConfig.getNormalizedBaseUrl()+"/" + BULK_EXPORT_DIR+"/" + bulkJob.getJobId() + "/Patient.ndjson";
+            bulkOutput.setUrl(patientUrl);
+            outputs.add(bulkOutput);
+        }*/
+
+        //Write observations
+
+        SearchQuery observationQuery =
+                buildExactQuery( patientIds);
+
+        FtsSearchService.FtsSearchResult ftsResult = ftsSearchService.searchForKeys(
+                Collections.singletonList(observationQuery), "Observation", 0, 1, null);
+
+
+
+        System.out.println("here");
+
+        bulkJob.setOutput(outputs);
+        bulkJob.setStatus("COMPLETED");
+
+        //writing to DB
+        com.couchbase.client.java.Collection bulkCollection = cluster.bucket(bucketName)
+                .scope("Resources")
+                .collection("BulkJob");
+        String documentKey = "BulkJob" + "/" + bulkJob.getJobId();
+        bulkCollection.insert(documentKey , bulkJob);
+
+        response.setStatus(HttpServletResponse.SC_OK);
+        response.setContentType("application/json");
+        ObjectMapper objectMapper = new ObjectMapper();
+        String json = objectMapper.writeValueAsString(bulkJob);
+        response.getWriter().write(json);
+    }
+
+
+    @Operation(
+            name = "$download",
+            idempotent = true,
+            manualResponse = true
+    )
+    public void downloadBulkFile(
+            RequestDetails requestDetails,
+            HttpServletResponse response
+    ) throws IOException {
+
+        Map<String, String[]> params = requestDetails.getParameters();
+
+        String jobId = params.get("jobid")[0];
+        String fileName = params.get("filename")[0];
+
+        Path filePath = Paths.get(BULK_EXPORT_DIR, jobId, fileName);
+
+        if (!Files.exists(filePath)) {
+            response.sendError(404, "File not found");
+            return;
+        }
+
+        response.setStatus(HttpServletResponse.SC_OK);
+        response.setContentType("application/fhir+ndjson");
+        response.setHeader(
+                "Content-Disposition",
+                "attachment; filename=\"" + fileName + "\""
+        );
+
+        try (InputStream in = Files.newInputStream(filePath);
+             OutputStream out = response.getOutputStream()) {
+
+            in.transferTo(out);
+            out.flush();
+        }
+    }
+
+    private SearchQuery buildExactQuery( List<String> values) {
+
+        SearchQuery resourceTypeQuery =
+                SearchQuery.term("Observation").field("resourceType");
+
+        SearchQuery patientQuery =
+                SearchQuery.disjuncts(
+                        values.stream()
+                                .map(ref ->
+                                        SearchQuery.term(ref)
+                                                .field("subject.reference")
+                                )
+                                .toArray(SearchQuery[]::new)
+                );
+
+        SearchQuery finalQuery =
+                SearchQuery.conjuncts(resourceTypeQuery, patientQuery);
+        return finalQuery;
+
     }
 
 }

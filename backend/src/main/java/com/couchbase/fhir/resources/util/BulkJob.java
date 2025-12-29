@@ -7,6 +7,8 @@ public class BulkJob {
     private String jobId;
     private List<BulkTask> taskList;
     private String status;
+    private List<BulkOutput> output;
+
 
     public String getJobId() {
         return jobId;
@@ -30,5 +32,14 @@ public class BulkJob {
 
     public void setStatus(String status) {
         this.status = status;
+    }
+
+
+    public List<BulkOutput> getOutput() {
+        return output;
+    }
+
+    public void setOutput(List<BulkOutput> output) {
+        this.output = output;
     }
 }
