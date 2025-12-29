@@ -10,7 +10,6 @@ import com.couchbase.admin.users.bulkGroup.service.GroupAdminService;
 import com.couchbase.client.core.error.DocumentNotFoundException;
 import com.couchbase.client.java.kv.GetResult;
 import com.couchbase.client.java.search.SearchQuery;
-import com.couchbase.client.java.search.queries.TermQuery;
 import com.couchbase.common.config.FhirServerConfig;
 import com.couchbase.fhir.resources.config.TenantContextHolder;
 import com.couchbase.fhir.resources.service.FhirBucketConfigService;
@@ -43,8 +42,6 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
-
-import static com.couchbase.client.core.io.CollectionIdentifier.DEFAULT_SCOPE;
 
 @Component
 public class BulkImportProvider {
@@ -311,7 +308,7 @@ public class BulkImportProvider {
 
 
         //create patient file and write to it
-     /*   Path patientFile = jobDir.resolve("Patient.ndjson");
+        Path patientFile = jobDir.resolve("Patient.ndjson");
 
         try (NDJsonWrite writer = new NDJsonWrite(patientFile)) {
 
@@ -336,19 +333,20 @@ public class BulkImportProvider {
             String patientUrl =  fhirServerConfig.getNormalizedBaseUrl()+"/" + BULK_EXPORT_DIR+"/" + bulkJob.getJobId() + "/Patient.ndjson";
             bulkOutput.setUrl(patientUrl);
             outputs.add(bulkOutput);
-        }*/
-
-        //Write observations
-
-        SearchQuery observationQuery =
-                buildExactQuery( patientIds);
-
-        FtsSearchService.FtsSearchResult ftsResult = ftsSearchService.searchForKeys(
-                Collections.singletonList(observationQuery), "Observation", 0, 1, null);
+        }
 
 
 
-        System.out.println("here");
+        BulkOutput obsOutput = exportToFile(bulkJob.getJobId() , bucketName , jobDir , patientIds , cluster , "Observation");
+        outputs.add(obsOutput);
+
+        BulkOutput conditionOutput = exportToFile(bulkJob.getJobId() , bucketName , jobDir , patientIds , cluster , "Condition");
+        outputs.add(conditionOutput);
+        BulkOutput encounterOutput = exportToFile(bulkJob.getJobId() , bucketName , jobDir , patientIds , cluster , "Encounter");
+        outputs.add(encounterOutput);
+
+        BulkOutput procedureOutput = exportToFile(bulkJob.getJobId() , bucketName , jobDir , patientIds , cluster , "Procedure");
+        outputs.add(procedureOutput);
 
         bulkJob.setOutput(outputs);
         bulkJob.setStatus("COMPLETED");
@@ -367,6 +365,42 @@ public class BulkImportProvider {
         response.getWriter().write(json);
     }
 
+
+    public BulkOutput exportToFile(String jobId, String bucketName, Path jobDir , List<String> patientIds ,  com.couchbase.client.java.Cluster cluster , String resourceType) {
+        SearchQuery query = buildExactQuery( patientIds);
+        BulkOutput bulkOutput = new BulkOutput();
+        FtsSearchService.FtsSearchResult ftsResult = ftsSearchService.searchForKeys(
+                Collections.singletonList(query), resourceType, 0, 1, null);
+
+        Path fileName = jobDir.resolve(resourceType+".ndjson");
+
+        try (NDJsonWrite writer = new NDJsonWrite(fileName)) {
+
+            com.couchbase.client.java.Collection collection = cluster.bucket(bucketName)
+                    .scope("Resources")
+                    .collection(resourceType);
+
+            for (String encounterId : ftsResult.getDocumentKeys()) {
+
+                try {
+                    GetResult result = collection.get(encounterId);
+                    String json = result.contentAsObject().toString();
+                    writer.writeLine(json);
+
+                } catch (DocumentNotFoundException e) {
+                    logger.warn("Resource not found: {}", encounterId);
+                }
+            }
+
+
+            bulkOutput.setType(resourceType);
+            String encounterUrl =  fhirServerConfig.getNormalizedBaseUrl()+"/" + BULK_EXPORT_DIR+"/" + jobId + "/"+resourceType+".ndjson";
+            bulkOutput.setUrl(encounterUrl);
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+        return bulkOutput;
+    }
 
     @Operation(
             name = "$download",
@@ -407,23 +441,17 @@ public class BulkImportProvider {
 
     private SearchQuery buildExactQuery( List<String> values) {
 
-        SearchQuery resourceTypeQuery =
-                SearchQuery.term("Observation").field("resourceType");
-
         SearchQuery patientQuery =
                 SearchQuery.disjuncts(
                         values.stream()
                                 .map(ref ->
-                                        SearchQuery.term(ref)
+                                        SearchQuery.match(ref)
                                                 .field("subject.reference")
                                 )
                                 .toArray(SearchQuery[]::new)
                 );
 
-        SearchQuery finalQuery =
-                SearchQuery.conjuncts(resourceTypeQuery, patientQuery);
-        return finalQuery;
-
+        return patientQuery;
     }
 
 }
